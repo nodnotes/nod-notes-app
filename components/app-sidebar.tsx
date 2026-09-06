@@ -1043,21 +1043,98 @@ async function fetchProjects(): Promise<Project[]> {
 }
 
 const NAV_POPUP_TOP = 52 // Flush under top bar so hover can bridge from the menu icon
-const NAV_POPUP_MAX_CAP = 720 // Don't grow endlessly on tall screens
+const NAV_POPUP_MAX_CAP = 720 // Desktop tall-screen cap when fully avoiding bottom chrome
 const NAV_POPUP_CHROME_GAP = 8 // Air between the popup bottom and Free nav / minimap
 const NAV_POPUP_MIN_H = 160 // Search + a few boards still usable if chrome is tall
+/** Overlap blend: fully over nav/minimap below FULL, hold through HOLD, fade to avoid by NONE. */
+const NAV_POPUP_OVERLAP_VH_FULL = 900
+const NAV_POPUP_OVERLAP_VH_HOLD = 960
+const NAV_POPUP_OVERLAP_VH_NONE = 1080
+const NAV_POPUP_OVERLAP_VW_FULL = 840
+const NAV_POPUP_OVERLAP_VW_HOLD = 920
+const NAV_POPUP_OVERLAP_VW_NONE = 1024
 
-/** Cap the board nav popup so it never covers Free nav or an open minimap. */
-function measureNavPopupMaxHeight(popupTop: number): number {
-  const vh = window.innerHeight // Fallback when map chrome isn't on this page
-  let chromeTop = vh - NAV_POPUP_CHROME_GAP // Default: inset from the window bottom
+function smoothstep01(t: number): number {
+  const x = Math.max(0, Math.min(1, t))
+  return x * x * (3 - 2 * x)
+}
+
+/** 0 = stop above nav/minimap; 1 = may paint over them — plateau at the crossover avoids a snap. */
+function navPopupOverlapBlend(vh: number, vw: number): number {
+  let heightBlend = 1
+  if (vh >= NAV_POPUP_OVERLAP_VH_NONE) heightBlend = 0
+  else if (vh > NAV_POPUP_OVERLAP_VH_HOLD) {
+    heightBlend = 1 - smoothstep01((vh - NAV_POPUP_OVERLAP_VH_HOLD) / (NAV_POPUP_OVERLAP_VH_NONE - NAV_POPUP_OVERLAP_VH_HOLD))
+  } else if (vh > NAV_POPUP_OVERLAP_VH_FULL) {
+    heightBlend = 1 // Hold overlap height while crossing the old threshold
+  }
+
+  let widthBlend = 1
+  if (vw >= NAV_POPUP_OVERLAP_VW_NONE) widthBlend = 0
+  else if (vw > NAV_POPUP_OVERLAP_VW_HOLD) {
+    widthBlend = 1 - smoothstep01((vw - NAV_POPUP_OVERLAP_VW_HOLD) / (NAV_POPUP_OVERLAP_VW_NONE - NAV_POPUP_OVERLAP_VW_HOLD))
+  } else if (vw > NAV_POPUP_OVERLAP_VW_FULL) {
+    widthBlend = 1
+  }
+
+  return Math.max(heightBlend, widthBlend)
+}
+
+function measureMinimapChromeTop(vh: number): number {
+  let chromeTop = vh - NAV_POPUP_CHROME_GAP
   document.querySelectorAll('[data-minimap-toggle-context], [data-minimap-context], [data-minimap-pill-context]').forEach((el) => {
-    const r = (el as HTMLElement).getBoundingClientRect() // Screen box of Free nav / minimap / +/-
-    if (r.height < 1 || r.width < 1) return // Skip clipped (closed) minimap
-    chromeTop = Math.min(chromeTop, r.top) // Highest chrome edge in the bottom-left stack
+    const r = (el as HTMLElement).getBoundingClientRect()
+    if (r.height < 1 || r.width < 1) return
+    chromeTop = Math.min(chromeTop, r.top)
   })
-  const available = chromeTop - popupTop - NAV_POPUP_CHROME_GAP // Room between the top bar and that chrome
-  return Math.max(NAV_POPUP_MIN_H, Math.min(NAV_POPUP_MAX_CAP, available)) // Clamp to a usable range
+  return chromeTop
+}
+
+/** Bottom edge of the chat prompt card — boards nav may extend down to this line. */
+function measureChatPromptBottom(): number | null {
+  const dock = document.querySelector('[data-chat-map-dock]') as HTMLElement | null
+  if (dock) {
+    const prompt = dock.querySelector('[data-chat-prompt]') as HTMLElement | null
+    if (prompt) {
+      const r = prompt.getBoundingClientRect()
+      if (r.height > 1) return r.bottom
+    }
+  }
+  const sidebar = document.querySelector('[data-chat-sidebar]:not([data-chat-map-dock])') as HTMLElement | null
+  if (sidebar) {
+    const prompt = sidebar.querySelector('[data-chat-prompt]') as HTMLElement | null
+    if (prompt) {
+      const r = prompt.getBoundingClientRect()
+      if (r.width > 1 && r.height > 1) return r.bottom
+    }
+  }
+  return null
+}
+
+/** Cap the board nav popup — blend avoid/overlap heights so resize does not snap above nav. */
+function measureNavPopupMaxHeight(popupTop: number): number {
+  const vh = window.visualViewport?.height ?? window.innerHeight
+  const vw = window.innerWidth
+  const promptBottom = measureChatPromptBottom()
+  const overlapBlend = navPopupOverlapBlend(vh, vw)
+
+  let avoidTop = measureMinimapChromeTop(vh)
+  let overlapTop = vh - NAV_POPUP_CHROME_GAP
+  if (promptBottom != null) {
+    avoidTop = Math.min(avoidTop, promptBottom)
+    overlapTop = Math.min(overlapTop, promptBottom)
+  }
+
+  const bottomGap = promptBottom != null ? 0 : NAV_POPUP_CHROME_GAP
+  const avoidAvailable = avoidTop - popupTop - bottomGap
+  const overlapAvailable = overlapTop - popupTop - bottomGap
+  const available = avoidAvailable + (overlapAvailable - avoidAvailable) * overlapBlend
+
+  const maxCap =
+    overlapBlend > 0 && promptBottom == null
+      ? Math.max(NAV_POPUP_MAX_CAP, overlapAvailable)
+      : NAV_POPUP_MAX_CAP
+  return Math.max(NAV_POPUP_MIN_H, Math.min(maxCap, available))
 }
 
 export default function AppSidebar({ user }: AppSidebarProps) {
@@ -1110,7 +1187,7 @@ export default function AppSidebar({ user }: AppSidebarProps) {
   const queryClient = useQueryClient()
   const { isMobileMode, isSidebarOpen, isSidebarPinned, closeSidebar, openSidebar, scheduleCloseSidebar, cancelCloseSidebar, aiMapDockLiftPx } = useSidebarContext()
   const [navPopupMaxHeight, setNavPopupMaxHeight] = useState<number>(() =>
-    typeof window === 'undefined' ? NAV_POPUP_MAX_CAP : measureNavPopupMaxHeight(NAV_POPUP_TOP) // SSR: cap; client: already miss chrome
+    typeof window === 'undefined' ? NAV_POPUP_MAX_CAP : measureNavPopupMaxHeight(NAV_POPUP_TOP)
   )
 
   // Close hover-only nav on route change; click-pinned stays open across page switches
@@ -1119,13 +1196,16 @@ export default function AppSidebar({ user }: AppSidebarProps) {
     closeSidebar()
   }, [pathname, closeSidebar, isSidebarPinned])
 
-  // Keep the popup above Free nav / open minimap (height tween, phone dock lift, window resize)
+  // Desktop: keep the popup above Free nav / open minimap; phone/short viewports may overlap
   useLayoutEffect(() => {
     if (!isSidebarOpen) return // Closed — nothing to size
-    const update = () => setNavPopupMaxHeight(measureNavPopupMaxHeight(NAV_POPUP_TOP)) // Re-read chrome boxes
+    const update = () => setNavPopupMaxHeight(measureNavPopupMaxHeight(NAV_POPUP_TOP))
     update() // Before paint so the first open frame already misses the stack
     const ro = new ResizeObserver(update) // Minimap clip height 0→120 and Free nav size
     document.querySelectorAll('[data-minimap-toggle-context], [data-minimap-context]').forEach((el) => ro.observe(el))
+    document.querySelectorAll('[data-chat-map-dock], [data-chat-sidebar]:not([data-chat-map-dock]), [data-chat-prompt]').forEach((el) =>
+      ro.observe(el)
+    )
     window.addEventListener('resize', update) // Desktop window / top-bar wrap
     window.visualViewport?.addEventListener('resize', update) // iOS keyboard inset
     return () => {
@@ -2600,7 +2680,8 @@ export default function AppSidebar({ user }: AppSidebarProps) {
         style={{
           top: NAV_POPUP_TOP, // Flush under top bar so hover can bridge from logo
           left: '0.5rem',
-          maxHeight: navPopupMaxHeight, // Stops above Free nav / open minimap (measured)
+          maxHeight: navPopupMaxHeight, // Blended avoid/overlap — see navPopupOverlapBlend
+          transition: 'max-height 220ms ease-out',
         }}
         onMouseEnter={() => {
           cancelCloseSidebar() // Keep open while pointer is in menu
@@ -2622,7 +2703,7 @@ export default function AppSidebar({ user }: AppSidebarProps) {
       >
         {/* Search + mint a root Untitled board (no New project / New board dropdown) */}
         {!isCollapsed ? (
-          <div className="px-4 pt-2 pb-4">
+          <div className="px-4 pt-2 pb-2">
             <div className="flex items-center gap-2">
               <div className="relative flex-1">
                 <Search className="absolute left-1 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -2669,6 +2750,13 @@ export default function AppSidebar({ user }: AppSidebarProps) {
               )}
             </Button>
           </div>
+        )}
+
+        {!isCollapsed && (
+          <div
+            className="mx-4 h-px flex-shrink-0 bg-gray-200 dark:bg-[#2f2f2f]"
+            aria-hidden
+          />
         )}
 
         {/* Boards/Conversations List - hidden when collapsed */}
@@ -2898,12 +2986,6 @@ export default function AppSidebar({ user }: AppSidebarProps) {
 
         {/* Profile Section - fixed at bottom */}
         <div className="relative h-16 flex-shrink-0 mt-auto flex items-center">
-          {/* Divider - same width as divider below logo, fades out on collapse */}
-          <div className={cn(
-            "absolute top-0 left-4 right-4 h-px bg-gray-200 dark:bg-[#2f2f2f] transition-opacity duration-300",
-            isCollapsed ? "opacity-0" : "opacity-100"
-          )} />
-
           {/* Profile content - centered vertically */}
           <div className={cn(
             "w-full",

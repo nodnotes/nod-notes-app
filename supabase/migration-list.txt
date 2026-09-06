@@ -172,3 +172,4 @@
 20260904164423_toolbar_pill_chat_resize.sql
 20260905161311_notion_page_body_sync_ai_share_compact.sql
 20260905162405_connection_sync_top_bar_indicator.sql
+20260906153208_ai_model_picker_chat_import_map_undo.sql

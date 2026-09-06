@@ -10,25 +10,13 @@ import {
   Loader2,
   Type,
 } from 'lucide-react'
-import type { DbConvertLayoutId } from '@/components/block-actions-menu'
 import { useBoardLinkActions } from '@/lib/board-link-context'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { createClient } from '@/lib/supabase/client'
 import { CardConvertBringDialog } from '@/components/card-convert-bring-dialog'
 import {
-  collectRowsForCardConvert,
   cardedPageIdsFromMessages,
-  resolveParentRelationProperty,
-  rowIsNestedOrParent,
-  type CardConvertBringPrefs,
-} from '@/lib/notion/card-convert-bring'
-import { setGroupLocked, setSideStackEntry, sideStackGroupId } from '@/lib/frame-side-stacks'
-import {
-  appendPeeledCardToMessagesCache,
-  appendPeeledPageIdsOnHostFrame,
-  createRowCardOnBoard,
   readPeeledNotionPageIds,
-} from '@/lib/notion/row-to-card-client'
+} from '@/lib/notion/card-convert-bring'
 import {
   applyEditToCell,
   NOTION_DB_CLIENT_ROW_CAP,
@@ -68,7 +56,7 @@ import {
   useVisibleColumnRange,
   type SaveFn,
 } from '@/components/notion-db-virtual-body'
-import { rowTitleFromCells } from '@/lib/notion/property-map'
+import { useNotionDbConvertLayout } from '@/lib/notion/use-notion-db-convert-layout'
 import { notionDbFreeResizeScrollCap } from '@/lib/notion/db-table-scroll'
 import { cn } from '@/lib/utils'
 
@@ -192,8 +180,6 @@ export function NotionDatabaseTableView({
     if (initialActiveRowId) setSelectedRowId(initialActiveRowId)
   }, [initialActiveRowId])
   const [rowBusy, setRowBusy] = useState(false)
-  /** Nested/parent Card convert — pending row until bring-options dialog confirms. */
-  const [bringDialogRowId, setBringDialogRowId] = useState<string | null>(null)
   const [freeResizeScrollCap, setFreeResizeScrollCap] = useState<number | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const scrollWrapRef = useRef<HTMLDivElement>(null)
@@ -214,192 +200,6 @@ export function NotionDatabaseTableView({
     const url = row.url || `https://www.notion.so/${String(row.id).replace(/-/g, '')}`
     window.open(url, '_blank', 'noopener,noreferrer')
   }, [])
-
-  /** Peel one or more rows into stacked Card frames on this board (table stays). */
-  const convertRowsToCards = useCallback(
-    async (primaryRowId: string, prefs: CardConvertBringPrefs) => {
-      if (!conversationId || !data || !notionDatabaseId) {
-        console.error('Convert layout: missing board or table data', {
-          conversationId,
-          hasData: !!data,
-        })
-        return
-      }
-      const primary = data.rows.find((r) => r.id === primaryRowId)
-      if (!primary) {
-        console.error('Convert layout: row not in loaded table', primaryRowId)
-        return
-      }
-      try {
-        const supabase = createClient()
-        const {
-          data: { user },
-        } = await supabase.auth.getUser()
-        if (!user) return
-
-        // Prefer host frame position so the card sits to its right
-        let origin = { x: 80, y: 80 }
-        if (hostMessageId) {
-          const { data: hostMsg } = await supabase
-            .from('messages')
-            .select('metadata')
-            .eq('id', hostMessageId)
-            .maybeSingle()
-          const pos = (hostMsg?.metadata as { position?: { x?: number; y?: number } } | null)
-            ?.position
-          if (typeof pos?.x === 'number' && typeof pos?.y === 'number') {
-            origin = { x: pos.x, y: pos.y }
-          }
-        }
-
-        const parentRelation = resolveParentRelationProperty(
-          data.properties,
-          settings.subTasks.relationProperty
-        )
-        const { ordered } = collectRowsForCardConvert({
-          primary,
-          allRows: data.rows,
-          parentRelation,
-          prefs,
-        })
-        // Collapsed stack (Stack under): one visible host, mates hidden at the same XY
-        const hostCardId = crypto.randomUUID() // Stable id so groupId can reference the host
-        const stackSide = 'bottom' as const // Pack sits under the host
-        const stackGroupId =
-          ordered.length > 1 ? sideStackGroupId(hostCardId, stackSide) : null // Skip stack chrome for a lone frame
-        const position = { x: origin.x + 320, y: origin.y } // All frames share this park so they overlay
-
-        for (let i = 0; i < ordered.length; i++) {
-          const cardMessageId = i === 0 ? hostCardId : crypto.randomUUID() // Host id is the group seed
-          let frameMetadataExtras: Record<string, unknown> | undefined
-          if (stackGroupId) {
-            let meta = setSideStackEntry(
-              {},
-              stackSide,
-              i === 0
-                ? { groupId: stackGroupId, index: 0, anchor: true, expanded: true } // Visible top of stack
-                : { groupId: stackGroupId, index: i, expanded: false } // Hidden under host
-            )
-            meta = setGroupLocked(meta, stackGroupId, true) // Match first Stack-under lock
-            frameMetadataExtras = meta
-          }
-          const { cacheMessage } = await createRowCardOnBoard({
-            supabase,
-            userId: user.id,
-            conversationId,
-            sourceMessageId: hostMessageId || undefined,
-            notionDatabaseId,
-            databaseTitle: data.title,
-            properties: data.properties,
-            row: ordered[i],
-            origin,
-            position,
-            cardMessageId,
-            frameMetadataExtras,
-          })
-          // Hide row immediately — don't wait for messages refetch
-          appendPeeledCardToMessagesCache(queryClient, conversationId, cacheMessage)
-        }
-
-        setMessagesTick((n) => n + 1) // Recompute cardedRowIds now
-
-        if (hostMessageId) {
-          await appendPeeledPageIdsOnHostFrame({
-            supabase,
-            hostMessageId,
-            pageIds: ordered.map((r) => r.id),
-            queryClient,
-            conversationId,
-          })
-          setMessagesTick((n) => n + 1)
-        }
-
-        // Drop converted rows from the table cache so they don’t sit beside their cards
-        const peeled = new Set(ordered.map((r) => r.id.replace(/-/g, '').toLowerCase()))
-        setCachedTable((prev) => {
-          if (!prev) return prev
-          return {
-            ...prev,
-            rows: prev.rows.filter((r) => !peeled.has(r.id.replace(/-/g, '').toLowerCase())),
-          }
-        })
-
-        await queryClient.invalidateQueries({ queryKey: ['messages-for-panels', conversationId] })
-        await queryClient.refetchQueries({ queryKey: ['messages-for-panels', conversationId] })
-        await queryClient.invalidateQueries({ queryKey: ['panel-edges', conversationId] })
-        await queryClient.refetchQueries({ queryKey: ['panel-edges', conversationId] })
-        await queryClient.invalidateQueries({ queryKey: ['conversations'] })
-      } catch (err) {
-        console.error('Convert row to card failed:', err)
-      }
-    },
-    [
-      conversationId,
-      hostMessageId,
-      notionDatabaseId,
-      data,
-      queryClient,
-      settings.subTasks.relationProperty,
-      setCachedTable,
-    ]
-  )
-
-  /** One row → card on THIS board (client-side; table stays). Nested/parent → bring dialog. */
-  const handleConvertLayout = useCallback(
-    async (layout: DbConvertLayoutId, rowId?: string) => {
-      if (layout !== 'card' || !rowId) {
-        // Table view / full-DB convert still uses the API when no rowId
-        if (!conversationId || !hostMessageId || !notionDatabaseId) return
-        try {
-          const res = await fetch(
-            `/api/notion/database/${encodeURIComponent(notionDatabaseId)}/convert-layout`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ layout, conversationId, sourceMessageId: hostMessageId }),
-            }
-          )
-          if (!res.ok) {
-            const json = (await res.json().catch(() => ({}))) as { error?: string }
-            console.error('Convert layout failed:', json.error || res.statusText)
-            return
-          }
-          await queryClient.invalidateQueries({ queryKey: ['messages-for-panels', conversationId] })
-          await queryClient.refetchQueries({ queryKey: ['messages-for-panels', conversationId] })
-          await queryClient.invalidateQueries({ queryKey: ['panel-edges', conversationId] })
-          await queryClient.refetchQueries({ queryKey: ['panel-edges', conversationId] })
-        } catch (err) {
-          console.error('Convert layout failed:', err)
-        }
-        return
-      }
-
-      if (!data) {
-        console.error('Convert layout: missing table data')
-        return
-      }
-      const row = data.rows.find((r) => r.id === rowId)
-      if (!row) {
-        console.error('Convert layout: row not in loaded table', rowId)
-        return
-      }
-      const parentRelation = resolveParentRelationProperty(
-        data.properties,
-        settings.subTasks.relationProperty
-      )
-      // Nested or parent rows get a bring-along picker (prefs remembered)
-      if (rowIsNestedOrParent(row, data.rows, parentRelation)) {
-        setBringDialogRowId(rowId)
-        return
-      }
-      // Flat row — convert alone with default prefs (no related hierarchy)
-      await convertRowsToCards(rowId, {
-        subRows: false,
-        parentRows: false,
-      })
-    },
-    [conversationId, hostMessageId, notionDatabaseId, data, queryClient, settings.subTasks.relationProperty, convertRowsToCards]
-  )
 
   // Seed Thinktable view settings once when table data lands (cache hit or first fetch)
   useEffect(() => {
@@ -604,6 +404,21 @@ export function NotionDatabaseTableView({
     })
     return unsub
   }, [conversationId, queryClient])
+
+  const {
+    handleConvertLayout,
+    bringDialogRowId,
+    setBringDialogRowId,
+    convertRowsToCards,
+    bringDialogTitle,
+  } = useNotionDbConvertLayout({
+    notionDatabaseId,
+    conversationId,
+    hostMessageId,
+    data,
+    relationProperty: settings.subTasks.relationProperty,
+    onMessagesCacheBump: () => setMessagesTick((n) => n + 1),
+  })
 
   /** Rows already on the board as Card-view frames — hide from the live table. */
   const cardedRowIds = useMemo(() => {
@@ -1054,13 +869,6 @@ export function NotionDatabaseTableView({
           : settings.layout === 'calendar'
             ? renderCalendar()
             : renderTable()
-
-  const bringDialogRow = bringDialogRowId
-    ? data.rows.find((r) => r.id === bringDialogRowId) || null
-    : null
-  const bringDialogTitle = bringDialogRow
-    ? rowTitleFromCells(data.properties, bringDialogRow.cells)
-    : undefined
 
   return (
     <div

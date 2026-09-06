@@ -8,6 +8,7 @@ import {
 } from '@/lib/ai/context-pack'
 import { skillHintsForIds } from '@/lib/ai/skills'
 import { isSelectableAiMode } from '@/lib/ai/modes'
+import { resolveOpenAiModel, isAiModelId } from '@/lib/ai/models'
 import { newBlockMetadata } from '@/lib/blocks'
 import { markHtmlWithAiPending } from '@/lib/ai/wrap-ai-html'
 import { frameContentFromAi, markdownToTipTapHtml } from '@/lib/ai/markdown-to-tiptap'
@@ -52,6 +53,8 @@ export async function POST(request: NextRequest) {
   let threadId = typeof body.threadId === 'string' ? body.threadId : null
   const boardId = typeof body.boardId === 'string' ? body.boardId : null
   const mode = isSelectableAiMode(body.mode) ? body.mode : 'ask'
+  const modelId = typeof body.modelId === 'string' && isAiModelId(body.modelId) ? body.modelId : 'auto'
+  const openaiModel = resolveOpenAiModel(modelId)
   const selectedFrameIds = Array.isArray(body.selectedFrameIds)
     ? body.selectedFrameIds.filter((id: unknown) => typeof id === 'string')
     : []
@@ -244,7 +247,7 @@ export async function POST(request: NextRequest) {
 
         if (mode === 'edit') {
           const completion = await openai.chat.completions.create({
-            model: 'gpt-4o-mini',
+            model: openaiModel,
             messages: openaiMessages,
             temperature: 0.5,
             max_tokens: 3000,
@@ -577,7 +580,7 @@ export async function POST(request: NextRequest) {
           }
         } else {
           const completion = await openai.chat.completions.create({
-            model: 'gpt-4o-mini',
+            model: openaiModel,
             messages: openaiMessages,
             stream: true,
             temperature: 0.7,

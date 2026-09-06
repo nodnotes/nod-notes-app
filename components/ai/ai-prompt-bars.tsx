@@ -5,7 +5,6 @@ import { useEffect, useMemo, useRef, useState } from 'react' // Hover + fetch
 import { createPortal } from 'react-dom' // Hover list escapes overflow-hidden shells
 import type { AiMessage, AiThread } from '@/lib/ai/types' // Prompt sources
 import { AI_STARTER_PROMPTS } from '@/lib/ai/starter-prompts' // Empty-chat seeds
-import type { AiThreadFilter } from './ai-thread-picker' // Same filter as the thread picker
 import { cn } from '@/lib/utils' // className merge
 
 const MAX_BARS = 6 // Cap so the tick cluster stays small
@@ -38,8 +37,7 @@ export type PromptBarItem = {
 }
 
 interface AiPromptBarsProps {
-  boardId?: string // This-board filter for recent chats
-  filter: AiThreadFilter // all | board — match the picker
+  boardId?: string // Reserved for future board-scoped recents
   thread: AiThread | null // Active thread (skip it in the recent fallback)
   messages: AiMessage[] // Current transcript — user turns become ticks
   refreshKey?: number // Bump after send so recent-chat fetch refreshes
@@ -84,8 +82,7 @@ function buildItems(
 }
 
 export function AiPromptBars({
-  boardId,
-  filter,
+  boardId: _boardId,
   thread,
   messages,
   refreshKey = 0,
@@ -111,10 +108,7 @@ export function AiPromptBars({
     if (!needsThreads) return // In-thread prompts already fill the ticks
     let cancelled = false // Unmount guard
     const load = async () => {
-      const params = new URLSearchParams() // Same query as the thread picker
-      params.set('filter', filter) // all | board
-      if (filter === 'board' && boardId) params.set('boardId', boardId) // Scope
-      const res = await fetch(`/api/ai/threads?${params.toString()}`) // List
+      const res = await fetch('/api/ai/threads?filter=all') // List
       if (!res.ok) return // Soft fail → starters
       const data = await res.json() // Parse
       if (!cancelled) setThreads(data.threads || []) // Apply
@@ -123,7 +117,7 @@ export function AiPromptBars({
     return () => {
       cancelled = true // Drop late apply
     }
-  }, [needsThreads, filter, boardId, refreshKey]) // Refetch when the chat set changes
+  }, [needsThreads, refreshKey]) // Refetch when the chat set changes
 
   const items = useMemo(
     () => buildItems(messages, threads, thread?.id ?? null), // Prefer turns → recents → starters

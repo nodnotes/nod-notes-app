@@ -1,13 +1,23 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (thinkable)
-- Snapped at: `2026-09-05T16:24:05Z`
+- Snapped at: `2026-09-06T15:32:08Z`
 - Source: local `supabase/migrations/` + remote applied tops (thinkable) + `.temp` service versions
 - Service versions (from `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.184.0`, rest `v13.0.5`, storage `v1.33.0`
 - CLI: `supabase` `2.90.0` (marker via `migration new`; newer CLI available)
 - Remote applied tops out at `20260811225342_conversations_owner_select_for_insert_returning`
 
 ## This save
+
+- No DDL. Marker `20260906153208_ai_model_picker_chat_import_map_undo.sql`.
+- **AI model picker** in composer (`lib/ai/models.ts`, `AiModelSelect`; persisted `thinktable-ai-model-id`; routed on `POST /api/ai/chat`).
+- **ChatGPT export import** via composer **+ → File** (`parse-chat-export.ts`, `POST /api/ai/threads/import`).
+- **Thread picker** → boards-nav-style panel (search, pin, duplicate; pointer-tracked hover on portaled panel).
+- **Map undo/redo** re-upserts / re-deletes Supabase `messages`, `panel_edges`, `canvas_nodes` (`lib/board-map-undo-db.ts`).
+- Boards nav max-height blends toward chat prompt on short viewports; Notion DB convert-layout hook extracted.
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: Connection sync top bar
 
 - No DDL. Marker `20260905162405_connection_sync_top_bar_indicator.sql`.
 - Top-bar **sync icon** left of Connections pin (`ConnectionSyncTopBarIndicator`, `SyncIcon`); blue when any frame has `metadata.notionUpdatesPending`.

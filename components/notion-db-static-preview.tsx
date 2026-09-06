@@ -32,7 +32,9 @@ import {
   caretIndexFromColdClick,
   useVisibleColumnRange,
 } from '@/components/notion-db-virtual-body'
+import { CardConvertBringDialog } from '@/components/card-convert-bring-dialog'
 import { useNotionDbCellSave } from '@/lib/notion/use-notion-db-cell-save'
+import { useNotionDbConvertLayout } from '@/lib/notion/use-notion-db-convert-layout'
 import { cn } from '@/lib/utils'
 
 const ROW_GUTTER = 20
@@ -138,6 +140,7 @@ export function NotionDbStaticPreview({
   warmCaretIndex = null,
   warmEpoch = 0,
   conversationId = null,
+  hostMessageId = null,
   minWidth,
   minHeight,
 }: {
@@ -166,6 +169,8 @@ export function NotionDbStaticPreview({
   /** Bumps when engage retargets so the armed editor remounts. */
   warmEpoch?: number
   conversationId?: string | null
+  /** Host frame message id — row ⋮⋮ Convert layout threads from here. */
+  hostMessageId?: string | null
   minWidth?: number
   minHeight?: number
 }) {
@@ -196,6 +201,21 @@ export function NotionDbStaticPreview({
     () => normalizeViewSettings(parseViewSettings(viewSettingsJson), data?.properties ?? []),
     [viewSettingsJson, data?.properties]
   )
+  const canConvertLayout = !!(conversationId && hostMessageId)
+  const {
+    handleConvertLayout,
+    bringDialogRowId,
+    setBringDialogRowId,
+    convertRowsToCards,
+    bringDialogTitle,
+  } = useNotionDbConvertLayout({
+    notionDatabaseId,
+    conversationId: canConvertLayout ? conversationId : null,
+    hostMessageId: canConvertLayout ? hostMessageId : null,
+    data,
+    relationProperty: settings.subTasks.relationProperty,
+  })
+  const onConvertLayout = canConvertLayout ? handleConvertLayout : undefined
 
   // Columns must be derived before the loading/empty returns below, because the windowing hook cannot
   // sit after a conditional return. An expanded preview is the whole table, so it pays the same
@@ -359,6 +379,7 @@ export function NotionDbStaticPreview({
           onSave={onSave}
           onDelete={() => {}}
           onOpen={openRow}
+          onConvertLayout={onConvertLayout}
           onCreateRow={(afterId) => void createRow(afterId)}
           rowBackground={rowBgFn(row)}
           hydrated
@@ -457,6 +478,7 @@ export function NotionDbStaticPreview({
                     onDelete={() => {}}
                     onOpen={() => openRow(row)}
                     onDuplicate={() => void createRow(row.id)}
+                    onConvertLayout={onConvertLayout}
                     onMenuOpenChange={(open) => onColdMenuOpenChange(row.id, open)}
                     dragPayload={{
                       source: 'notion-db-row',
@@ -543,6 +565,20 @@ export function NotionDbStaticPreview({
           )}
         </table>
       </div>
+      {canConvertLayout ? (
+        <CardConvertBringDialog
+          open={!!bringDialogRowId}
+          onOpenChange={(open) => {
+            if (!open) setBringDialogRowId(null)
+          }}
+          rowTitle={bringDialogTitle}
+          onConfirm={(prefs) => {
+            const id = bringDialogRowId
+            setBringDialogRowId(null)
+            if (id) void convertRowsToCards(id, prefs)
+          }}
+        />
+      ) : null}
       {showRevealFooter ? (
         <DbRowsRevealFooter
           hiddenLoaded={hiddenLoaded}

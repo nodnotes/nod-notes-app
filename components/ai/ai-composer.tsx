@@ -51,6 +51,13 @@ import {
   type AiLiveContextPill,
 } from '@/lib/ai/selection-bridge'
 import { createClient } from '@/lib/supabase/client'
+import { parseChatExportJson } from '@/lib/ai/parse-chat-export'
+import {
+  loadAiModelId,
+  saveAiModelId,
+  type AiModelId,
+} from '@/lib/ai/models'
+import { AiModelSelect } from '@/components/ai/ai-model-select'
 import { cn } from '@/lib/utils'
 import { useSidebarContext } from '@/components/sidebar-context'
 
@@ -110,6 +117,8 @@ interface AiComposerProps {
   onSeedSkillsConsumed?: () => void
   /** When true, focus the textarea after mount (phone map-dock opens the soft keyboard). */
   autoFocus?: boolean
+  /** ChatGPT export picked from the + menu opens as a new imported thread. */
+  onChatImported?: (thread: AiThread) => void
   onEdits?: (
     edits: Array<{
       kind?: 'update_frame' | 'create_frame' | 'create_thread'
@@ -260,6 +269,7 @@ export function AiComposer({
   seedSkillIds,
   onSeedSkillsConsumed,
   autoFocus = false,
+  onChatImported,
   onEdits,
 }: AiComposerProps) {
   const { registerAiComposerFocus } = useSidebarContext()
@@ -271,6 +281,7 @@ export function AiComposer({
   const [menuQuery, setMenuQuery] = useState('')
   const [menuPos, setMenuPos] = useState<{ left: number; bottom: number } | null>(null)
   const [attachedSkills, setAttachedSkills] = useState<AiSkill[]>([])
+  const [modelId, setModelId] = useState<AiModelId>(() => loadAiModelId())
   const chatCaptures = useSyncExternalStore(subscribeChatCaptures, getChatCaptures, getChatCaptures) // Capture-menu attachments
   // Live page/frame/block/text pills from the selection bridge (page on open + selection)
   const [livePills, setLivePills] = useState<AiLiveContextPill[]>(() => getAiLiveContextPills())
@@ -548,6 +559,7 @@ export function AiComposer({
             text: c.text,
           })),
           skillIds: attachedSkills.map((s) => s.id),
+          modelId,
           skipUserInsert: opts?.skipUserInsert === true,
         }),
       })
@@ -645,6 +657,41 @@ export function AiComposer({
     e.target.value = ''
     setPlusOpen(false)
     if (!file) return
+
+    if (/\.zip$/i.test(file.name)) {
+      window.alert('Unzip your ChatGPT export and choose conversations.json')
+      return
+    }
+
+    if (/\.json$/i.test(file.name) && file.size < 50_000_000) {
+      try {
+        const text = await file.text()
+        const parsed = JSON.parse(text) as unknown
+        if (parseChatExportJson(parsed).length > 0) {
+          const res = await fetch('/api/ai/threads/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ boardId, export: parsed }),
+          })
+          const data = (await res.json().catch(() => ({}))) as {
+            thread?: AiThread
+            error?: string
+          }
+          if (res.ok && data.thread) {
+            onChatImported?.(data.thread)
+            textareaRef.current?.focus()
+            return
+          }
+          if (!res.ok) {
+            window.alert(typeof data.error === 'string' ? data.error : 'Import failed')
+            return
+          }
+        }
+      } catch {
+        // Not a chat export — fall through to attach as a file
+      }
+    }
+
     // Text-ish files → drop contents into the draft as context; others name-tag only
     const isText =
       file.type.startsWith('text/') ||
@@ -845,14 +892,23 @@ export function AiComposer({
                     <div className="border-t border-black/5 dark:border-white/10 py-1">
                       {(!menuQuery.trim() ||
                         'file'.includes(menuQuery.trim().toLowerCase()) ||
-                        menuQuery.trim().toLowerCase().includes('file')) && (
+                        menuQuery.trim().toLowerCase().includes('file') ||
+                        menuQuery.trim().toLowerCase().includes('export') ||
+                        menuQuery.trim().toLowerCase().includes('chat')) && (
                         <button
                           type="button"
                           onClick={() => fileInputRef.current?.click()}
-                          className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
+                          className="w-full flex items-start gap-2.5 px-3 py-2 text-left hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
                         >
-                          <Paperclip className="h-4 w-4 text-gray-500" />
-                          File
+                          <Paperclip className="h-4 w-4 mt-0.5 flex-shrink-0 text-gray-500 dark:text-gray-400" />
+                          <span className="min-w-0 flex flex-col gap-0.5">
+                            <span className="text-sm font-medium text-gray-900 dark:text-gray-50">
+                              File
+                            </span>
+                            <span className="text-xs text-gray-500 dark:text-gray-400 leading-snug">
+                              Attach notes, or import a ChatGPT export (conversations.json from the ZIP)
+                            </span>
+                          </span>
                         </button>
                       )}
                       {(!menuQuery.trim() ||
@@ -879,6 +935,7 @@ export function AiComposer({
               <input
                 ref={fileInputRef}
                 type="file"
+                accept=".json,application/json,.zip,application/zip,.md,.txt,.csv,text/*"
                 className="hidden"
                 onChange={(e) => void onFilePicked(e)}
               />
@@ -915,6 +972,21 @@ export function AiComposer({
                 'px-1 py-[6px]'
               )}
             />
+
+            <AiModelSelect
+              value={modelId}
+              onChange={(id) => {
+                setModelId(id)
+                saveAiModelId(id)
+              }}
+            />
+
+            <span
+              className="text-xs text-gray-400 dark:text-gray-500 flex-shrink-0 select-none"
+              aria-hidden
+            >
+              /
+            </span>
 
             <button
               type="button"
@@ -1082,6 +1154,7 @@ export async function regenerateAfterEdit(opts: {
       boardId: opts.boardId || null,
       selectedFrameIds: getAiSelectedFrameIds(),
       snapshotIds: opts.snapshotIds || [],
+      modelId: loadAiModelId(),
       skipUserInsert: true,
     }),
   })

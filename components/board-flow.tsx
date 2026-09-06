@@ -168,6 +168,13 @@ import { FreehandNode } from './freehand/FreehandNode' // Freehand drawing node 
 import { Freehand, retryFailedSaves } from './freehand/Freehand' // Freehand drawing overlay component and retry function
 import { ShapeNode } from './shapes/ShapeNode' // Shape node component
 import { useUndoRedo } from './use-undo-redo' // Undo/redo hook for map actions
+import {
+  diffMapNodesById,
+  messagesStructuralKey,
+  primeRestoredMapNodesInCache,
+  removeMessagesFromCache,
+  syncMapUndoRedoToDatabase,
+} from '@/lib/board-map-undo-db'
 import { useHelperLines } from './helper-lines/useHelperLines' // Helper lines hook for snap-to-grid functionality
 import { useUserPreference } from '@/lib/hooks/use-user-preferences'
 // Dynamic layouting hooks for adding child nodes and inserting nodes
@@ -1418,9 +1425,50 @@ function BoardFlowInner({
 
   // Initialize undo/redo hook for map actions (node drag, add, delete, edge changes)
   // takeSnapshot should be called BEFORE any action that modifies the map
+  const deleteNodesByIdsRef = useRef<
+    (nodeIds: string[], nodesSnapshot?: Node[]) => Promise<boolean | void>
+  >(async () => {})
+  const queryClientRef = useRef<ReturnType<typeof useQueryClient> | null>(null)
+  /** Bumped when undo restores frames — stale delete refetches must not overwrite the cache. */
+  const mapMessageCacheEpochRef = useRef(0)
+  const mapUndoDbSyncRef = useRef(false)
+  const onMapUndoRedoApply = useCallback(
+    (detail: {
+      from: { nodes: Node[]; edges: Edge[] }
+      to: { nodes: Node[]; edges: Edge[] }
+      kind: 'undo' | 'redo'
+    }) => {
+      const qc = queryClientRef.current
+      if (!qc || !conversationId) return
+
+      const nodeDiff = diffMapNodesById(detail.from.nodes, detail.to.nodes)
+      if (nodeDiff.appeared.length > 0) {
+        mapMessageCacheEpochRef.current += 1
+        primeRestoredMapNodesInCache(qc, conversationId, nodeDiff.appeared)
+        const cached = qc.getQueryData<Message[]>(['messages-for-panels', conversationId])
+        if (cached?.length) {
+          prevMessagesKeyRef.current = messagesStructuralKey(cached)
+        }
+      }
+
+      mapUndoDbSyncRef.current = true
+      void syncMapUndoRedoToDatabase({
+        conversationId,
+        queryClient: qc,
+        from: detail.from,
+        to: detail.to,
+        deleteNodesByIds: (ids, snapshot) => deleteNodesByIdsRef.current(ids, snapshot),
+      }).finally(() => {
+        mapUndoDbSyncRef.current = false
+      })
+    },
+    [conversationId]
+  )
+
   const { undo: mapUndo, redo: mapRedo, takeSnapshot, canUndo: canMapUndo, canRedo: canMapRedo } = useUndoRedo({
     maxHistorySize: 100, // Keep last 100 snapshots
     enableShortcuts: false, // Disable shortcuts - TipTap handles Ctrl+Z for editor
+    onApply: onMapUndoRedoApply,
   })
 
   // Register undo/redo functions with context so EditorToolbar can access them
@@ -1648,6 +1696,7 @@ function BoardFlowInner({
   const prevArrowDirectionRef = useRef<'down' | 'up' | 'left' | 'right'>('down') // Track previous arrow direction
   const supabase = createClient() // Create Supabase client for creating notes
   const queryClient = useQueryClient() // Query client for invalidating queries
+  queryClientRef.current = queryClient
   const router = useRouter()
   
   // Handle placeholder click events - create note or flashcard at placeholder position
@@ -3787,11 +3836,15 @@ function BoardFlowInner({
   }, [conversationId, viewMode, scrollToBottom]) // Only trigger on conversation change, not on every node change
 
   // Helper function to delete nodes by their IDs (works for both context menu and backspace deletion)
-  const deleteNodesByIds = useCallback(async (nodeIdsToDelete: string[]) => {
+  const deleteNodesByIds = useCallback(async (nodeIdsToDelete: string[], nodesSnapshot?: Node[]) => {
     if (!conversationId || nodeIdsToDelete.length === 0) return
 
     // Find the nodes to delete (ref — avoid stale closure when menu Delete fires)
-    const nodesToDelete = nodesRef.current.filter((n) => nodeIdsToDelete.includes(n.id))
+    const nodesToDelete = (
+      nodesSnapshot?.length
+        ? nodesSnapshot
+        : nodesRef.current.filter((n) => nodeIdsToDelete.includes(n.id))
+    ).filter((n) => nodeIdsToDelete.includes(n.id))
     if (nodesToDelete.length === 0) return
 
     // Separate freehand nodes from chat panel nodes
@@ -3812,10 +3865,13 @@ function BoardFlowInner({
 
     // Collect canvas node IDs to delete (only for freehand nodes)
     const canvasNodeIdsToDelete = freehandNodes.map((n) => n.id) // Freehand node IDs match database IDs
+    const cacheEpochAtStart = mapMessageCacheEpochRef.current
 
-    // Delete from React Flow state immediately (optimistic update)
+    // Delete from React Flow state immediately (optimistic update) — skip when redo already removed them
     const nodeIdsSet = new Set(nodeIdsToDelete)
-    setNodes((nds) => nds.filter((n) => !nodeIdsSet.has(n.id)))
+    if (!nodesSnapshot?.length) {
+      setNodes((nds) => nds.filter((n) => !nodeIdsSet.has(n.id)))
+    }
 
     try {
       const supabase = createClient()
@@ -3852,10 +3908,13 @@ function BoardFlowInner({
           messagesDeleted = false
         } else {
           console.log('✅ Deleted messages from database')
-          // Clear cache and invalidate queries to refresh the UI
-          queryClient.removeQueries({ queryKey: ['messages-for-panels', conversationId] })
-          await queryClient.invalidateQueries({ queryKey: ['messages-for-panels', conversationId] })
-          await queryClient.refetchQueries({ queryKey: ['messages-for-panels', conversationId] })
+          if (cacheEpochAtStart === mapMessageCacheEpochRef.current) {
+            removeMessagesFromCache(queryClient, conversationId, messageIdsToDelete)
+            const cached = queryClient.getQueryData<Message[]>(['messages-for-panels', conversationId])
+            if (cached) {
+              prevMessagesKeyRef.current = messagesStructuralKey(cached)
+            }
+          }
         }
       }
 
@@ -3890,6 +3949,8 @@ function BoardFlowInner({
       return false
     }
   }, [conversationId, setNodes, queryClient])
+
+  deleteNodesByIdsRef.current = deleteNodesByIds
 
   // Frames with a sole empty TipTap block ask to be removed when clicked off (deselected)
   useEffect(() => {
@@ -4465,6 +4526,7 @@ function BoardFlowInner({
 
   // Create panels from messages (group into prompt+response pairs)
   useEffect(() => {
+    if (mapUndoDbSyncRef.current) return // Undo restore owns RF + cache until DB upsert finishes
     // Check cache for optimistic updates even if query isn't enabled yet
     let messagesToUse = messages
     if (conversationId && messages.length === 0) {

@@ -453,6 +453,7 @@ export function DatabaseBlockView({ node, updateAttributes, editor }: NodeViewPr
               warmCaretIndex={warmCaretIndex}
               warmEpoch={engageEpoch}
               conversationId={hostConversationId}
+              hostMessageId={hostMessageId}
               minWidth={freezeToLastBox ? lastBox?.w : undefined}
               minHeight={freezeToLastBox ? lastBox?.h : undefined}
             />

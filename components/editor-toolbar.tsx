@@ -1295,7 +1295,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
 
       const shareLeft = rightSectionRect.left // Share cluster; phone path runs to here
       const centerEl = toolbar.querySelector('[data-toolbar-center]') as HTMLElement | null // Board-centered undo/tools
-      if (centerEl) centerEl.style.transform = '' // Clear any leftover slide from before tools stayed centered
+      if (centerEl) centerEl.style.transform = '' // Center cluster — right chrome width is in rightW / sideInset
       const liveClusterW = centerEl?.getBoundingClientRect().width ?? 70 // DOM cluster — still the pre-setState size this pass
       const centeredLeft = barCenter - liveClusterW / 2 // Undo’s left while centered
       if (bar) bar.style.setProperty('--tt-path-min', `${minPathW}px`) // Path box never shrinks through the current icon
@@ -1342,12 +1342,16 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     if (barEl) resizeObserver.observe(barEl)
     const leftEl = barEl?.querySelector('[data-top-bar-left]') // Title path width changes the center inset
     if (leftEl) resizeObserver.observe(leftEl)
+    const rightEl = toolbarRef.current.querySelector('[data-right-section]') as HTMLElement | null
+    if (rightEl) resizeObserver.observe(rightEl) // Sync / Notion pin mount without bar width change
     const attrObserver = leftEl
       ? new MutationObserver(() => checkVisibility()) // Path shimmer → real title may not change width
       : null
     if (attrObserver && leftEl) attrObserver.observe(leftEl, { attributes: true, attributeFilter: ['data-path-ready'] })
 
     window.addEventListener('resize', checkVisibility)
+    const onNotionStatus = () => checkVisibility()
+    window.addEventListener('thinktable-notion-status', onNotionStatus)
 
     return () => {
       window.cancelAnimationFrame(raf1)
@@ -1356,6 +1360,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       resizeObserver.disconnect()
       attrObserver?.disconnect()
       window.removeEventListener('resize', checkVisibility)
+      window.removeEventListener('thinktable-notion-status', onNotionStatus)
     }
   }, [editor, editMenuPillMode, boardSearchOpen, chatChromeReady, isChatSidebarOpen, isMobileMode, hasAiContent, aiTopBarPinned, setPhoneTools, setShareCompact]) // Re-run when the map column’s final width is known
 

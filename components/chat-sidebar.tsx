@@ -8,7 +8,7 @@ import {
   TT_CHAT_THREAD_ID_KEY,
 } from './sidebar-context' // Open state + logo + thread persist key + resizable width
 import { ThinktableBrandMark, PersonalizeAiModal } from './personalize-ai-modal' // Brand
-import { AiThreadPicker, type AiThreadFilter } from './ai/ai-thread-picker' // History
+import { AiThreadPicker } from './ai/ai-thread-picker' // History
 import { AiTranscript } from './ai/ai-transcript' // Turns
 import { CustomizeAgentPanel } from './ai/customize-agent-panel' // Brand → customize agent
 import {
@@ -222,7 +222,6 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
   const [agentIconRevision, setAgentIconRevision] = useState(0) // Reload custom icons after Done
   const [hoverBrand, setHoverBrand] = useState(false) // Customize pill on empty state
   const [thread, setThread] = useState<AiThread | null>(null) // Active thread
-  const [filter, setFilter] = useState<AiThreadFilter>('all') // History filter
   const [messages, setMessages] = useState<AiMessage[]>([]) // Transcript
   const [streamingId, setStreamingId] = useState<string | null>(null) // Live assistant
   const [mode, setMode] = useState<'ask' | 'edit'>('ask') // Composer mode
@@ -755,6 +754,13 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
     setRefreshKey((k) => k + 1) // Show the copy in the thread list
   }, [])
 
+  /** Open an imported chat from the composer + menu File picker. */
+  const handleChatImported = useCallback((t: AiThread) => {
+    setThread(t)
+    setMode(isSelectableAiMode(t.mode) ? t.mode : 'ask')
+    setRefreshKey((k) => k + 1)
+  }, [])
+
   /** Scroll the transcript to a user prompt picked from the compact bars. */
   const handleJumpToMessage = useCallback((messageId: string) => {
     const el = document.querySelector(`[data-ai-turn="${messageId}"]`) // Row stamped in AiTranscript
@@ -947,8 +953,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
   if (!isChatSidebarOpen && !isMobileMode) return null // Desktop: unmount when closed; phone: keep dock mounted for same-tap focus
 
   const promptBarProps = {
-    boardId: conversationId, // This-board recents when the picker is filtered
-    filter, // Match the thread picker
+    boardId: conversationId,
     thread, // Skip the open chat in the recent fallback
     messages, // In-thread user prompts
     refreshKey, // Refetch recents after send
@@ -983,6 +988,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
       seedSkillIds={seedSkillIds}
       onSeedSkillsConsumed={() => setSeedSkillIds(undefined)}
       autoFocus={false} // Brand tap focuses via registerAiComposerFocus (same user gesture)
+      onChatImported={handleChatImported}
       onEdits={async (edits) => {
         const mapped = edits
           .map((e) => {
@@ -1150,13 +1156,10 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                   <AiThreadPicker
                     boardId={conversationId}
                     thread={thread}
-                    filter={filter}
-                    onFilterChange={setFilter}
                     onSelect={(t) => {
                       setThread(t)
                       setMode(isSelectableAiMode(t.mode) ? t.mode : 'ask')
                     }}
-                    onNew={handleNew}
                     onFork={handleFork}
                     refreshKey={refreshKey}
                   />
@@ -1181,7 +1184,10 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                 </button>
               </div>
             )}
-            <div className="rounded-xl overflow-hidden bg-white dark:bg-[#202020] border border-black/10 dark:border-white/10 shadow-lg">
+            <div
+              data-chat-prompt
+              className="rounded-xl overflow-hidden bg-white dark:bg-[#202020] border border-black/10 dark:border-white/10 shadow-lg"
+            >
               <div className="px-1 pt-1">{composer}</div>
             </div>
               </>
@@ -1247,13 +1253,10 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
               <AiThreadPicker
                 boardId={conversationId}
                 thread={thread}
-                filter={filter}
-                onFilterChange={setFilter}
                 onSelect={(t) => {
                   setThread(t)
                   setMode(isSelectableAiMode(t.mode) ? t.mode : 'ask')
                 }}
-                onNew={handleNew}
                 onFork={handleFork}
                 refreshKey={refreshKey}
               />
@@ -1398,7 +1401,10 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
         </div>
 
         <div className="relative z-10 flex-shrink-0 px-3 pb-3 pt-1 pointer-events-auto">
-          <div className="rounded-xl overflow-hidden bg-white dark:bg-[#202020] border border-black/10 dark:border-white/10 shadow-sm">
+          <div
+            data-chat-prompt
+            className="rounded-xl overflow-hidden bg-white dark:bg-[#202020] border border-black/10 dark:border-white/10 shadow-sm"
+          >
             <div className="px-1 pt-1">{composer}</div>
           </div>
         </div>

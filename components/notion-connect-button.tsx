@@ -50,7 +50,7 @@ export function useNotionConnect(): NotionConnectApi | null {
 }
 
 /** Read pin preference; default true so a fresh connect appears left of Share. */
-function readTopBarPinned(): boolean {
+export function readNotionTopBarPinned(): boolean {
   if (typeof window === 'undefined') return true
   try {
     const raw = window.localStorage.getItem(TOPBAR_PIN_KEY)
@@ -134,7 +134,7 @@ export function NotionConnectProvider({ children }: { children: React.ReactNode 
   const authHref = useMemo(() => buildAuthHref(pathname), [pathname])
 
   useEffect(() => {
-    setTopBarPinnedState(readTopBarPinned()) // Client-only preference
+    setTopBarPinnedState(readNotionTopBarPinned()) // Client-only preference
   }, [])
 
   useEffect(() => {
@@ -148,6 +148,7 @@ export function NotionConnectProvider({ children }: { children: React.ReactNode 
         }
         const data = (await res.json()) as NotionStatus // Typed payload
         if (!cancelled) setStatus(data) // Update UI
+        if (!cancelled) window.dispatchEvent(new CustomEvent('thinktable-notion-status')) // Top bar re-measures connection chrome
       } catch {
         if (!cancelled) setStatus({ configured: false, connected: false }) // Offline / misconfig
       } finally {
@@ -228,6 +229,7 @@ export function NotionConnectProvider({ children }: { children: React.ReactNode 
     try {
       await fetch('/api/notion/disconnect', { method: 'POST' }) // Remove stored tokens
       setStatus((prev) => ({ configured: prev?.configured ?? true, connected: false, workspaceName: null })) // Clear connected UI
+      window.dispatchEvent(new CustomEvent('thinktable-notion-status'))
       setPickerOpen(false)
       setTopBarPinnedState(true) // Next connect defaults pinned again
       try {
@@ -365,6 +367,7 @@ export function ConnectionSyncTopBarIndicator({ conversationId }: { conversation
 
   return (
     <span
+      data-top-bar-connection-sync
       className="h-7 w-7 inline-flex items-center justify-center flex-shrink-0"
       title={pending ? 'Connection updates available' : 'Connections in sync'}
       aria-label={pending ? 'Connection updates available' : 'Connections in sync'}
@@ -395,6 +398,7 @@ export function NotionTopBarPin({ className }: { className?: string }) {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
+          data-notion-topbar-pin
           title={label}
           aria-label={label}
           disabled={api.loading}
