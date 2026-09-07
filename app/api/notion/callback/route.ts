@@ -64,7 +64,7 @@ export async function GET(request: NextRequest) {
         raw_token_response: token, // Full payload for future fields
         updated_at: new Date().toISOString(), // Touch timestamp
       },
-      { onConflict: 'user_id' } // Reconnect replaces prior install
+      { onConflict: 'user_id,workspace_id' }
     )
 
     if (upsertError) {

@@ -25,13 +25,13 @@ export type NotionPageTreeNode = NotionSearchPage & {
   children: NotionPageTreeNode[] // Nested pages/databases (Notion sidebar order)
 }
 
-/** Notion sidebar sections used by the Import pages picker (same labels / order as Notion). */
-export type NotionPickerSectionId = 'recents' | 'favorites' | 'shared' | 'private'
+/** Import picker sections — labels match what the public API can actually provide. */
+export type NotionPickerSectionId = 'recently_edited' | 'library'
 
 export type NotionPickerSection = {
   id: NotionPickerSectionId // Stable section key for collapse state
-  title: string // Recents / Favorites / Shared / Private
-  nodes: NotionPageTreeNode[] // Pages under this heading (trees start collapsed in the UI)
+  title: string // Recently edited / Library
+  nodes: NotionPageTreeNode[] // Pages under this heading
 }
 
 const PICKER_RECENTS_LIMIT = 10 // Notion Recents shows a short flat list, not the full tree
@@ -166,40 +166,29 @@ export function buildNotionPageTree(pages: NotionSearchPage[]): NotionPageTreeNo
   return roots
 }
 
-/** Copy a search hit as a Recents leaf (Notion Recents is flat — no nested chevrons). */
+/** Copy a search hit as a Recently edited leaf (flat — no nested chevrons). */
 function clonePickerLeaf(page: NotionSearchPage): NotionPageTreeNode {
-  return { ...page, children: [] } // Drop children so Recents cannot expand into the private tree
+  return { ...page, children: [] } // Drop children so Recently edited cannot expand into Library
 }
 
 /**
- * Group accessible pages like Notion's sidebar: Recents, Favorites, Shared, Private.
- * Favorites is omitted — the public API does not expose starred pages.
- * Recents uses last_edited_time (closest public-API stand-in for last viewed).
- * Private = workspace-parented roots + their nested tree.
- * Shared = roots whose parent is not in the accessible set (shared-with-me style).
+ * Group accessible pages for the import picker: Recently edited + Library.
+ * Recently edited uses last_edited_time (public API has no last-viewed).
+ * Library = full nested tree of everything the connection can access.
  */
 export function buildNotionPickerSections(pages: NotionSearchPage[]): NotionPickerSection[] {
-  const tree = buildNotionPageTree(pages) // Full nested tree; roots are workspace + orphans
-  const privateRoots: NotionPageTreeNode[] = [] // parent.type === workspace (or missing)
-  const sharedRoots: NotionPageTreeNode[] = [] // Parent page/db not shared with the connection
-  for (const node of tree) {
-    const parentType = node.parent?.type // workspace / page_id / database_id / …
-    if (!parentType || parentType === 'workspace') {
-      privateRoots.push(node) // Personal-workspace top level lives under Private
-    } else {
-      sharedRoots.push(node) // Orphan root → Shared (parent not in the accessible set)
-    }
+  const tree = buildNotionPageTree(pages) // Workspace roots + orphans (parent not in granted set)
+
+  const recentlyEdited = [...pages]
+    .sort((a, b) => (b.lastEditedTime || '').localeCompare(a.lastEditedTime || ''))
+    .slice(0, PICKER_RECENTS_LIMIT)
+    .map(clonePickerLeaf) // Flat rows — same page may also appear under Library
+
+  const sections: NotionPickerSection[] = []
+  if (recentlyEdited.length) {
+    sections.push({ id: 'recently_edited', title: 'Recently edited', nodes: recentlyEdited })
   }
-
-  const recents = [...pages] // Shallow copy so sort does not mutate search order
-    .sort((a, b) => (b.lastEditedTime || '').localeCompare(a.lastEditedTime || '')) // Newest first
-    .slice(0, PICKER_RECENTS_LIMIT) // Cap like Notion Recents
-    .map(clonePickerLeaf) // Flat rows — same page may also appear under Private/Shared
-
-  const sections: NotionPickerSection[] = [] // Skip empty sections the way Notion hides unused sidebar groups
-  if (recents.length) sections.push({ id: 'recents', title: 'Recents', nodes: recents })
-  if (sharedRoots.length) sections.push({ id: 'shared', title: 'Shared', nodes: sharedRoots })
-  if (privateRoots.length) sections.push({ id: 'private', title: 'Private', nodes: privateRoots })
+  if (tree.length) sections.push({ id: 'library', title: 'Library', nodes: tree })
   return sections
 }
 

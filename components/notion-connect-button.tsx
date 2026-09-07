@@ -5,16 +5,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { useQueryClient } from '@tanstack/react-query'
-import { ExternalLink, LayoutGrid, PinOff, Sparkles } from 'lucide-react' // Connections + import (magic) / edit / unpin
+import { LayoutGrid, Sparkles } from 'lucide-react' // Connections + import
 import {
-  DropdownMenu,
-  DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
 } from './ui/dropdown-menu'
 import { NotionImportModal } from './notion-import-modal'
 import { NotionMarkIcon } from './notion-mark-icon' // Monochrome — matches other top-bar icons
@@ -24,22 +21,37 @@ import { useConnectionSyncPending } from '@/lib/notion/use-connection-sync-pendi
 
 /** localStorage — whether the connected Notion mark stays left of Share. */
 const TOPBAR_PIN_KEY = 'thinktable-notion-topbar-pinned'
+/** localStorage — last-selected Notion workspace in the connection panel. */
+const ACTIVE_WORKSPACE_KEY = 'thinktable-notion-active-workspace-id'
+
+export type NotionWorkspaceSummary = {
+  workspaceId: string
+  workspaceName: string | null
+  workspaceIcon: string | null
+  updatedAt: string | null
+}
 
 type NotionStatus = {
-  configured: boolean // Whether server has OAuth secrets
-  connected: boolean // Whether this user has a stored install
-  workspaceName?: string | null // Connected workspace label
+  configured: boolean
+  connected: boolean
+  workspaces?: NotionWorkspaceSummary[]
+  workspaceId?: string | null
+  workspaceName?: string | null
+  workspaceIcon?: string | null
 }
 
 type NotionConnectApi = {
-  status: NotionStatus | null // Latest /api/notion/status payload
-  loading: boolean // Status fetch or disconnect in flight
-  topBarPinned: boolean // Show Notion mark left of Share when connected
-  authHref: string // /api/notion/auth?returnTo=… → 302 to Notion page picker
-  startConnect: () => void // Kick off hosted Notion OAuth (first connect / edit permissions)
-  disconnect: () => Promise<void> // Drop stored tokens
-  openPicker: () => void // Open Import pages modal
-  setTopBarPinned: (pinned: boolean) => void // Pin / unpin without disconnecting
+  status: NotionStatus | null
+  loading: boolean
+  topBarPinned: boolean
+  authHref: string
+  workspaces: NotionWorkspaceSummary[]
+  activeWorkspaceId: string | null
+  setActiveWorkspaceId: (workspaceId: string) => void
+  startConnect: () => void
+  disconnect: (workspaceId?: string) => Promise<void>
+  openPicker: () => void
+  setTopBarPinned: (pinned: boolean) => void
 }
 
 const NotionConnectContext = createContext<NotionConnectApi | null>(null) // Shared by host + menu rows
@@ -61,6 +73,26 @@ export function readNotionTopBarPinned(): boolean {
   }
 }
 
+/** Read active workspace id from localStorage. */
+function readActiveWorkspaceId(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    return window.localStorage.getItem(ACTIVE_WORKSPACE_KEY)
+  } catch {
+    return null
+  }
+}
+
+/** Persist the workspace selected in the connection panel. */
+function writeActiveWorkspaceId(workspaceId: string) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(ACTIVE_WORKSPACE_KEY, workspaceId)
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Build the OAuth start URL for the current board path. */
 function buildAuthHref(pathname: string | null): string {
   const returnTo = pathname && pathname.startsWith('/') ? pathname : '/board'
@@ -68,50 +100,12 @@ function buildAuthHref(pathname: string | null): string {
 }
 
 /**
- * Shared connected-Notion actions (More → Connections + top-bar connection popup).
- * Edit permissions is a real <a href> so the browser always follows /api/notion/auth → Notion.
+ * More → Connections — open the Notion connection panel when connected.
  */
 function NotionConnectedActions() {
   const api = useNotionConnect()
-  const queryClient = useQueryClient()
-  const [restoring, setRestoring] = useState(false)
   if (!api?.status?.connected) return null
-  const { status, authHref, openPicker, disconnect, topBarPinned, setTopBarPinned } = api
-
-  const restoreArchivedPages = async () => {
-    if (
-      !window.confirm(
-        'Restore all archived database rows in your connected Notion workspace? Pages archived outside Thinktable may be included.'
-      )
-    ) {
-      return
-    }
-    setRestoring(true)
-    try {
-      const res = await fetch('/api/notion/restore-archived', { method: 'POST' })
-      const json = (await res.json().catch(() => ({}))) as {
-        restored?: number
-        scannedDataSources?: number
-        errors?: string[]
-        error?: string
-      }
-      if (!res.ok) throw new Error(json.error || 'Restore failed')
-      const restored = json.restored ?? 0
-      const scanned = json.scannedDataSources ?? 0
-      const errCount = json.errors?.length ?? 0
-      window.alert(
-        errCount > 0
-          ? `Restored ${restored} page(s) from ${scanned} database(s). ${errCount} item(s) could not be restored — check the console.`
-          : `Restored ${restored} page(s) from ${scanned} database(s).`
-      )
-      if (json.errors?.length) console.warn('[notion restore]', json.errors)
-      await queryClient.invalidateQueries({ queryKey: ['notion-database'] })
-    } catch (e) {
-      window.alert(e instanceof Error ? e.message : 'Restore failed')
-    } finally {
-      setRestoring(false)
-    }
-  }
+  const { status, openPicker } = api
 
   return (
     <>
@@ -120,49 +114,12 @@ function NotionConnectedActions() {
       </DropdownMenuItem>
       <DropdownMenuItem
         onSelect={(e) => {
-          e.preventDefault() // Keep parent menus from fighting the modal open
-          window.setTimeout(() => openPicker(), 0) // Defer so the dropdown can finish closing
+          e.preventDefault()
+          window.setTimeout(() => openPicker(), 0)
         }}
       >
         <Sparkles className="h-4 w-4 mr-2 shrink-0" />
-        Import pages
-      </DropdownMenuItem>
-      {/* Native link — full document navigation; nested menus cannot cancel it */}
-      <DropdownMenuItem asChild>
-        <a href={authHref} className="cursor-pointer">
-          <ExternalLink className="h-4 w-4 mr-2 shrink-0" />
-          Edit permissions
-        </a>
-      </DropdownMenuItem>
-      {topBarPinned ? (
-        <DropdownMenuItem onSelect={() => setTopBarPinned(false)}>
-          <PinOff className="h-4 w-4 mr-2" />
-          Unpin
-        </DropdownMenuItem>
-      ) : (
-        <DropdownMenuItem onSelect={() => setTopBarPinned(true)}>
-          <NotionMarkIcon className="h-4 w-4 mr-2" />
-          Pin to top bar
-        </DropdownMenuItem>
-      )}
-      <DropdownMenuSeparator />
-      <DropdownMenuItem
-        disabled={restoring}
-        onSelect={(e) => {
-          e.preventDefault()
-          void restoreArchivedPages()
-        }}
-      >
-        {restoring ? 'Restoring…' : 'Restore archived pages'}
-      </DropdownMenuItem>
-      <DropdownMenuSeparator />
-      <DropdownMenuItem
-        onSelect={() => {
-          void disconnect()
-        }}
-        className="text-red-600 focus:text-red-600"
-      >
-        Disconnect Notion
+        Manage connection
       </DropdownMenuItem>
     </>
   )
@@ -175,8 +132,10 @@ export function NotionConnectProvider({ children }: { children: React.ReactNode 
   const queryClient = useQueryClient() // Refresh note panels after import
   const [status, setStatus] = useState<NotionStatus | null>(null) // Connection state from API
   const [loading, setLoading] = useState(true) // Initial fetch in flight
-  const [pickerOpen, setPickerOpen] = useState(false) // Import pages modal
-  const [topBarPinned, setTopBarPinnedState] = useState(true) // Hydrate from localStorage after mount
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [topBarPinned, setTopBarPinnedState] = useState(true)
+  const [workspaces, setWorkspaces] = useState<NotionWorkspaceSummary[]>([])
+  const [activeWorkspaceId, setActiveWorkspaceIdState] = useState<string | null>(null)
 
   const authHref = useMemo(() => buildAuthHref(pathname), [pathname])
 
@@ -193,8 +152,20 @@ export function NotionConnectProvider({ children }: { children: React.ReactNode 
           if (!cancelled) setStatus({ configured: true, connected: false }) // Treat 401 as disconnected
           return
         }
-        const data = (await res.json()) as NotionStatus // Typed payload
-        if (!cancelled) setStatus(data) // Update UI
+        const data = (await res.json()) as NotionStatus
+        if (!cancelled) {
+          setStatus(data)
+          const list = data.workspaces ?? []
+          setWorkspaces(list)
+          const saved = readActiveWorkspaceId()
+          const nextActive =
+            list.find((w) => w.workspaceId === saved)?.workspaceId ??
+            list.find((w) => w.workspaceId === data.workspaceId)?.workspaceId ??
+            list[0]?.workspaceId ??
+            null
+          setActiveWorkspaceIdState(nextActive)
+          if (nextActive) writeActiveWorkspaceId(nextActive)
+        }
         if (!cancelled) window.dispatchEvent(new CustomEvent('thinktable-notion-status')) // Top bar re-measures connection chrome
       } catch {
         if (!cancelled) setStatus({ configured: false, connected: false }) // Offline / misconfig
@@ -243,6 +214,7 @@ export function NotionConnectProvider({ children }: { children: React.ReactNode 
         returnTo: pathname || '/board',
         pageIds: opts.pageIds,
         mode: opts.mode,
+        workspaceId: activeWorkspaceId,
       }),
       signal: opts.signal, // Cancel from the picker aborts this request
     })
@@ -271,23 +243,46 @@ export function NotionConnectProvider({ children }: { children: React.ReactNode 
     }
   }
 
-  const disconnect = useCallback(async () => {
-    setLoading(true) // Disable UI while deleting
+  const disconnect = useCallback(async (workspaceId?: string) => {
+    const targetId = workspaceId ?? activeWorkspaceId
+    setLoading(true)
     try {
-      await fetch('/api/notion/disconnect', { method: 'POST' }) // Remove stored tokens
-      setStatus((prev) => ({ configured: prev?.configured ?? true, connected: false, workspaceName: null })) // Clear connected UI
+      await fetch('/api/notion/disconnect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId: targetId }),
+      })
+      const res = await fetch('/api/notion/status')
+      const data = (res.ok ? await res.json() : null) as NotionStatus | null
+      const list = data?.workspaces ?? []
+      setWorkspaces(list)
+      setStatus(
+        data ?? { configured: true, connected: false, workspaces: [], workspaceName: null, workspaceId: null }
+      )
+      const nextActive = list[0]?.workspaceId ?? null
+      setActiveWorkspaceIdState(nextActive)
+      if (nextActive) writeActiveWorkspaceId(nextActive)
+      else {
+        try {
+          window.localStorage.removeItem(ACTIVE_WORKSPACE_KEY)
+        } catch {
+          /* ignore */
+        }
+      }
       window.dispatchEvent(new CustomEvent('thinktable-notion-status'))
-      setPickerOpen(false)
-      setTopBarPinnedState(true) // Next connect defaults pinned again
-      try {
-        window.localStorage.removeItem(TOPBAR_PIN_KEY) // Forget unpin so reconnect uses default
-      } catch {
-        /* ignore */
+      if (!list.length) {
+        setPickerOpen(false)
+        setTopBarPinnedState(true)
+        try {
+          window.localStorage.removeItem(TOPBAR_PIN_KEY)
+        } catch {
+          /* ignore */
+        }
       }
     } finally {
-      setLoading(false) // Re-enable
+      setLoading(false)
     }
-  }, [])
+  }, [activeWorkspaceId])
 
   const openPicker = useCallback(() => {
     setPickerOpen(true) // Import pages from More / top-bar connection popup
@@ -312,18 +307,49 @@ export function NotionConnectProvider({ children }: { children: React.ReactNode 
     return () => window.removeEventListener('thinktable-open-notion-connect', onOpen)
   }, [status?.connected, startConnect])
 
+  const setActiveWorkspaceId = useCallback((workspaceId: string) => {
+    setActiveWorkspaceIdState(workspaceId)
+    writeActiveWorkspaceId(workspaceId)
+    const hit = workspaces.find((w) => w.workspaceId === workspaceId)
+    setStatus((prev) =>
+      prev
+        ? {
+            ...prev,
+            workspaceId,
+            workspaceName: hit?.workspaceName ?? prev.workspaceName,
+            workspaceIcon: hit?.workspaceIcon ?? prev.workspaceIcon,
+          }
+        : prev
+    )
+  }, [workspaces])
+
   const api = useMemo<NotionConnectApi>(
     () => ({
       status,
       loading,
       topBarPinned,
       authHref,
+      workspaces,
+      activeWorkspaceId,
+      setActiveWorkspaceId,
       startConnect,
       disconnect,
       openPicker,
       setTopBarPinned,
     }),
-    [status, loading, topBarPinned, authHref, startConnect, disconnect, openPicker, setTopBarPinned]
+    [
+      status,
+      loading,
+      topBarPinned,
+      authHref,
+      workspaces,
+      activeWorkspaceId,
+      setActiveWorkspaceId,
+      startConnect,
+      disconnect,
+      openPicker,
+      setTopBarPinned,
+    ]
   )
 
   return (
@@ -341,7 +367,19 @@ export function NotionConnectProvider({ children }: { children: React.ReactNode 
         }}
       />
       {children}
-      <NotionImportModal open={pickerOpen} onOpenChange={setPickerOpen} onImport={handleImport} />
+      <NotionImportModal
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        onImport={handleImport}
+        authHref={authHref}
+        workspaces={workspaces}
+        activeWorkspaceId={activeWorkspaceId}
+        onWorkspaceChange={setActiveWorkspaceId}
+        topBarPinned={topBarPinned}
+        onSetTopBarPinned={setTopBarPinned}
+        onDisconnect={() => disconnect(activeWorkspaceId ?? undefined)}
+        disconnecting={loading}
+      />
     </NotionConnectContext.Provider>
   )
 }
@@ -430,37 +468,29 @@ export function ConnectionSyncTopBarIndicator({ conversationId }: { conversation
 }
 
 /**
- * Top-bar pin left of Share — connection popup with Import / Edit permissions / Unpin / Disconnect.
+ * Top-bar pin left of Share — opens the Notion connection panel.
  */
 export function NotionTopBarPin({ className }: { className?: string }) {
   const api = useNotionConnect()
-  const [open, setOpen] = useState(false)
-  if (!api?.status?.connected || !api.topBarPinned) return null // Hidden until connected + pinned
+  if (!api?.status?.connected || !api.topBarPinned) return null
   const label = api.status.workspaceName
     ? `Notion · ${api.status.workspaceName}`
     : 'Notion connection'
 
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          data-notion-topbar-pin
-          title={label}
-          aria-label={label}
-          disabled={api.loading}
-          className={cn(
-            'h-7 w-7 p-0 inline-flex items-center justify-center rounded-md text-gray-700 hover:text-gray-900 hover:bg-gray-100 flex-shrink-0 disabled:opacity-50',
-            open && 'bg-gray-100',
-            className
-          )}
-        >
-          <NotionMarkIcon className="h-4 w-4" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56" onCloseAutoFocus={(e) => e.preventDefault()}>
-        <NotionConnectedActions />
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <button
+      type="button"
+      data-notion-topbar-pin
+      title={label}
+      aria-label={label}
+      disabled={api.loading}
+      onClick={() => api.openPicker()}
+      className={cn(
+        'h-7 w-7 p-0 inline-flex items-center justify-center rounded-md text-gray-700 hover:text-gray-900 hover:bg-gray-100 flex-shrink-0 disabled:opacity-50',
+        className
+      )}
+    >
+      <NotionMarkIcon className="h-4 w-4" />
+    </button>
   )
 }

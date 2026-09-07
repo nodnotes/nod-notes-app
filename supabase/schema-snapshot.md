@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (thinkable)
-- Snapped at: `2026-09-06T15:32:08Z`
+- Snapped at: `2026-09-07T22:12:00Z`
 - Source: local `supabase/migrations/` + remote applied tops (thinkable) + `.temp` service versions
 - Service versions (from `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.184.0`, rest `v13.0.5`, storage `v1.33.0`
 - CLI: `supabase` `2.90.0` (marker via `migration new`; newer CLI available)
@@ -9,15 +9,13 @@
 
 ## This save
 
-- No DDL. Marker `20260906153208_ai_model_picker_chat_import_map_undo.sql`.
-- **AI model picker** in composer (`lib/ai/models.ts`, `AiModelSelect`; persisted `thinktable-ai-model-id`; routed on `POST /api/ai/chat`).
-- **ChatGPT export import** via composer **+ → File** (`parse-chat-export.ts`, `POST /api/ai/threads/import`).
-- **Thread picker** → boards-nav-style panel (search, pin, duplicate; pointer-tracked hover on portaled panel).
-- **Map undo/redo** re-upserts / re-deletes Supabase `messages`, `panel_edges`, `canvas_nodes` (`lib/board-map-undo-db.ts`).
-- Boards nav max-height blends toward chat prompt on short viewports; Notion DB convert-layout hook extracted.
-- Schema unchanged; remote applied still tops out at `20260811225342`.
+- DDL: `20260907180000_notion_multi_workspace.sql` — drop `notion_connections_user_id_unique`; add `UNIQUE (user_id, workspace_id)` for multiple Notion workspaces per user.
+- **Notion connection panel** replaces top-bar dropdown (`notion-import-modal.tsx`, `notion-connect-button.tsx`): left sidebar (connection types), main **Add Notion pages** with board-menu search, workspace switcher dropdown, **···** Unpin, danger-zone Disconnect.
+- Picker sections: **Recently edited** + **Library** (no Shared); expand state in `localStorage`.
+- Import actions renamed: **Add page as frame** / **Add page tree**; `lib/notion/connection.ts` resolves workspace-scoped OAuth tokens.
+- Removed unused `restore-archived` Notion API/helpers.
 
-## Prior: Connection sync top bar
+## Prior: AI model picker
 
 - No DDL. Marker `20260905162405_connection_sync_top_bar_indicator.sql`.
 - Top-bar **sync icon** left of Connections pin (`ConnectionSyncTopBarIndicator`, `SyncIcon`); blue when any frame has `metadata.notionUpdatesPending`.
