@@ -153,6 +153,7 @@ import {
 } from '@/lib/preview-focus-context' // Style sync + ready/resize handshake for iframe previews
 import {
   PREVIEW_HOST_TOOLS_MESSAGE,
+  PREVIEW_IDLE_HOST_TOOLS,
   type PreviewHostTools,
   postPreviewHostTools,
 } from '@/lib/preview-host-tools' // Host top bar → nested preview board tools
@@ -1218,6 +1219,7 @@ function BoardFlowInner({
 
   const previewHostTools = useMemo(
     (): PreviewHostTools => ({
+      interactive: true,
       isScrollMode,
       isDrawing,
       drawTool,
@@ -1251,11 +1253,16 @@ function BoardFlowInner({
       if (!data || data.type !== PREVIEW_READY_MESSAGE || !data.pageId) return
       const source = event.source as Window | null
       if (!source || source === window) return
-      postPreviewHostTools(source, data.pageId, previewHostTools)
+      const selected = previewFocus?.focusedBoardId === data.pageId
+      postPreviewHostTools(
+        source,
+        data.pageId,
+        selected ? previewHostTools : PREVIEW_IDLE_HOST_TOOLS
+      )
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [embedded, previewHostTools])
+  }, [embedded, previewHostTools, previewFocus?.focusedBoardId])
 
   useEffect(() => {
     if (embedded || typeof window === 'undefined') return
@@ -1264,12 +1271,23 @@ function BoardFlowInner({
       const win = iframe.contentWindow
       const pageId = iframe.getAttribute('data-page-preview-frame')
       if (!win || !pageId) continue
-      postPreviewHostTools(win, pageId, previewHostTools)
+      const selected = previewFocus?.focusedBoardId === pageId
+      postPreviewHostTools(win, pageId, selected ? previewHostTools : PREVIEW_IDLE_HOST_TOOLS)
     }
-  }, [embedded, previewHostTools])
+  }, [embedded, previewHostTools, previewFocus?.focusedBoardId])
 
-  const navScrollMode = embedded ? (embedHostTools?.isScrollMode ?? true) : isScrollMode
-  const navPointerTool = embedded ? (embedHostTools?.mapPointerTool ?? 'pan') : mapPointerTool
+  const embedInteractive = embedded && embedHostTools?.interactive === true
+  const navScrollMode = embedded
+    ? embedInteractive
+      ? (embedHostTools?.isScrollMode ?? true)
+      : true
+    : isScrollMode
+  const navPointerTool = embedded
+    ? embedInteractive
+      ? (embedHostTools?.mapPointerTool ?? 'pan')
+      : 'pan'
+    : mapPointerTool
+  const previewLive = !embedded || embedInteractive
 
   const boardRule = embedStyleOverride?.boardRule ?? contextBoardRule
   const boardStyle = embedStyleOverride?.boardStyle ?? contextBoardStyle
@@ -10060,19 +10078,19 @@ function BoardFlowInner({
           if (embedded) setEmbedFlowReady(true) // Host can drop loading veil once messages also resolve
         }}
         // Sticky tool / Draw Lasso owns plain left-drag; Shift flips for one gesture (marquee↔pan). Embed always pans.
-        panOnDrag={panOnDragSetting}
+        panOnDrag={previewLive ? panOnDragSetting : false}
         selectionOnDrag={
-          !embedded && marqueeArmed && !shiftHeld // Shift held → pan, not marquee
+          previewLive && !embedded && marqueeArmed && !shiftHeld // Shift held → pan, not marquee
         }
-        zoomOnScroll={!navScrollMode && !isDrawing}
-        zoomOnPinch={!isDrawing} // Pinch always zooms; Scroll nav only changes wheel pan vs wheel zoom
+        zoomOnScroll={previewLive && !navScrollMode && !isDrawing}
+        zoomOnPinch={previewLive && !isDrawing} // Pinch always zooms; Scroll nav only changes wheel pan vs wheel zoom
         zoomOnDoubleClick={false}
         minZoom={embedded ? Math.max(0.05, zoomRange.minZoom) : zoomRange.minZoom}
         maxZoom={embedded ? Math.min(2.5, zoomRange.maxZoom) : zoomRange.maxZoom}
         preventScrolling // RF consumes wheel so the host page/map doesn’t scroll
         autoPanOnNodeDrag={false}
         onlyRenderVisibleElements // Bound DOM + composited layers to frames currently in/near the pane
-        selectNodesOnDrag={!isDrawing}
+        selectNodesOnDrag={previewLive && !isDrawing}
         multiSelectionKeyCode={MULTI_SELECT_KEYS}
         selectionKeyCode={
           isDrawing || lassoArmed || marqueeArmed
@@ -10272,7 +10290,7 @@ function BoardFlowInner({
         )}
 
         {/* Freehand drawing overlay - only shown when drawing mode is active and drawTool is pencil */}
-        {isDrawing && drawTool === 'pencil' && <Freehand conversationId={conversationId} onBeforeCreate={takeSnapshot} />}
+        {previewLive && isDrawing && drawTool === 'pencil' && <Freehand conversationId={conversationId} onBeforeCreate={takeSnapshot} />}
         
         {/* Helper lines for snap-to-grid functionality */}
         <HelperLines />

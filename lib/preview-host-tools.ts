@@ -3,6 +3,7 @@ import type { DrawTool } from '@/components/react-flow-context'
 export const PREVIEW_HOST_TOOLS_MESSAGE = 'thinktable-preview-host-tools'
 
 export type PreviewHostTools = {
+  interactive: boolean // false = view-only thumbnail inside the preview shell
   isScrollMode: boolean
   isDrawing: boolean
   drawTool: DrawTool | null
@@ -13,6 +14,21 @@ export type PreviewHostTools = {
   borderWeight: number
   borderStyle: string
   snapEnabled: boolean
+}
+
+/** Deselected preview: static embed — no pan/zoom/draw until the user selects it. */
+export const PREVIEW_IDLE_HOST_TOOLS: PreviewHostTools = {
+  interactive: false,
+  isScrollMode: true,
+  isDrawing: false,
+  drawTool: null,
+  drawShape: 'rectangle',
+  mapPointerTool: 'pan',
+  fillColor: '',
+  borderColor: '',
+  borderWeight: 1,
+  borderStyle: 'solid',
+  snapEnabled: false,
 }
 
 export function postPreviewHostTools(

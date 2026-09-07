@@ -6,7 +6,7 @@
 // an in-item spacer. Keeping chrome+iframe in one fixed box stops the map from
 // painting over the title bar.
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useReactFlow } from 'reactflow'
 import { Expand, Loader2, X } from 'lucide-react'
@@ -69,7 +69,9 @@ export function NestedBoardPreview({
   const router = useRouter()
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const chromeRef = useRef<HTMLDivElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
   const spacerRef = useRef<HTMLDivElement>(null) // In-item box the portaled shell mirrors
+  const wasVisibleRef = useRef(false)
   const dragRef = useRef<{
     startX: number
     startY: number
@@ -83,6 +85,20 @@ export function NestedBoardPreview({
   const [mounted, setMounted] = useState(false)
   const isFocused = previewFocus?.focusedBoardId === conversationId
   const embedSrc = `/embed/${conversationId}`
+
+  // Select on open only — clicking away deselects until the user clicks the preview again
+  useEffect(() => {
+    if (!previewFocus) return
+    const justOpened = visible && !wasVisibleRef.current
+    wasVisibleRef.current = visible
+    if (!justOpened) return
+    previewFocus.selectPreview({
+      pageId: conversationId,
+      title,
+      boardRule: loadedRule,
+      boardStyle: loadedStyle,
+    })
+  }, [visible, conversationId, title, loadedRule, loadedStyle, previewFocus])
 
   useEffect(() => {
     setMounted(true)
@@ -226,7 +242,7 @@ export function NestedBoardPreview({
     }
   }, [conversationId, previewFocus])
 
-  // Chrome is portaled outside RF — wheel there must hit the host map, not the browser
+  // Chrome wheel always hits the host map; deselected body wheel does too (embed is static)
   useEffect(() => {
     const chrome = chromeRef.current
     if (!chrome || !visible) return
@@ -237,7 +253,17 @@ export function NestedBoardPreview({
     return () => chrome.removeEventListener('wheel', onWheel, { capture: true })
   }, [visible])
 
-  const handleSelectChrome = () => {
+  useEffect(() => {
+    const body = bodyRef.current
+    if (!body || !visible || isFocused) return
+    const onWheel = (e: WheelEvent) => {
+      forwardWheelToHostBoard(e)
+    }
+    body.addEventListener('wheel', onWheel, { passive: false, capture: true })
+    return () => body.removeEventListener('wheel', onWheel, { capture: true })
+  }, [visible, isFocused])
+
+  const handleSelectChrome = useCallback(() => {
     if (!previewFocus) return
     previewFocus.selectPreview({
       pageId: conversationId,
@@ -246,54 +272,70 @@ export function NestedBoardPreview({
       boardStyle: loadedStyle,
     })
     setEditMenuPillMode('view')
-  }
+  }, [
+    conversationId,
+    title,
+    loadedRule,
+    loadedStyle,
+    previewFocus,
+    setEditMenuPillMode,
+  ])
 
-  // Chrome is outside the RF node — drag here moves the host item manually
-  const onChromePointerDown = (e: React.PointerEvent) => {
-    if ((e.target as HTMLElement).closest('button')) return
-    if (!hostNodeId) return
-    const node = getNode(hostNodeId)
-    if (!node) return
-    e.preventDefault()
-    e.stopPropagation()
-    dragRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      origX: node.position.x,
-      origY: node.position.y,
-    }
-    ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
-  }
+  // Portaled preview sits outside RF — drag moves the host frame like an unselected frame (no select on drag)
+  const onHostDragPointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      if ((e.target as HTMLElement).closest('button')) return
+      if (!hostNodeId) return
+      const node = getNode(hostNodeId)
+      if (!node) return
+      e.preventDefault()
+      e.stopPropagation()
+      previewFocus?.clearPreviewFocus()
+      dragRef.current = {
+        startX: e.clientX,
+        startY: e.clientY,
+        origX: node.position.x,
+        origY: node.position.y,
+      }
+      ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
+    },
+    [getNode, hostNodeId, previewFocus]
+  )
 
-  const onChromePointerMove = (e: React.PointerEvent) => {
-    if (!dragRef.current || !hostNodeId) return
-    const setNodes = getSetNodes()
-    if (!setNodes) return
-    // Convert screen delta → flow delta using current host zoom
-    const zoom = reactFlowInstance?.getViewport?.()?.zoom || 1
-    const dx = (e.clientX - dragRef.current.startX) / zoom
-    const dy = (e.clientY - dragRef.current.startY) / zoom
-    const nextX = dragRef.current.origX + dx
-    const nextY = dragRef.current.origY + dy
-    setNodes((nodes: any[]) =>
-      nodes.map((n) =>
-        n.id === hostNodeId ? { ...n, position: { x: nextX, y: nextY } } : n
+  const onHostDragPointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (!dragRef.current || !hostNodeId) return
+      const setNodes = getSetNodes()
+      if (!setNodes) return
+      const zoom = reactFlowInstance?.getViewport?.()?.zoom || 1
+      const dx = (e.clientX - dragRef.current.startX) / zoom
+      const dy = (e.clientY - dragRef.current.startY) / zoom
+      const nextX = dragRef.current.origX + dx
+      const nextY = dragRef.current.origY + dy
+      setNodes((nodes: any[]) =>
+        nodes.map((n) =>
+          n.id === hostNodeId ? { ...n, position: { x: nextX, y: nextY } } : n
+        )
       )
-    )
-  }
+    },
+    [getSetNodes, hostNodeId, reactFlowInstance]
+  )
 
-  const onChromePointerUp = (e: React.PointerEvent) => {
-    if (!dragRef.current) {
-      // Click (no drag) → style focus
-      handleSelectChrome()
-      return
-    }
-    const moved =
-      Math.abs(e.clientX - dragRef.current.startX) > 3 ||
-      Math.abs(e.clientY - dragRef.current.startY) > 3
+  const onHostDragPointerEnd = useCallback(
+    (e: React.PointerEvent) => {
+      if (!dragRef.current) return
+      const moved =
+        Math.abs(e.clientX - dragRef.current.startX) > 3 ||
+        Math.abs(e.clientY - dragRef.current.startY) > 3
+      dragRef.current = null
+      if (!moved) handleSelectChrome()
+    },
+    [handleSelectChrome]
+  )
+
+  const cancelHostDrag = useCallback(() => {
     dragRef.current = null
-    if (!moved) handleSelectChrome()
-  }
+  }, [])
 
   const shell =
     mounted &&
@@ -334,13 +376,11 @@ export function NestedBoardPreview({
               : 'border-gray-200 dark:border-[#2f2f2f] bg-white/80 dark:bg-[#1f1f1f]/80'
           )}
           style={{ height: CHROME_HEIGHT }}
-          onPointerDown={onChromePointerDown}
-          onPointerMove={onChromePointerMove}
-          onPointerUp={onChromePointerUp}
-          onPointerCancel={() => {
-            dragRef.current = null
-          }}
-          title="Drag to move item · click to edit page style"
+          onPointerDown={onHostDragPointerDown}
+          onPointerMove={onHostDragPointerMove}
+          onPointerUp={onHostDragPointerEnd}
+          onPointerCancel={cancelHostDrag}
+          title="Drag to move item · click to select preview"
         >
           <span className="text-xs font-medium text-gray-700 dark:text-gray-200 truncate">
             {title || 'Board'}
@@ -374,13 +414,22 @@ export function NestedBoardPreview({
           </div>
         </div>
 
-        <div className="relative flex-1 min-h-0">
+        <div
+          ref={bodyRef}
+          className={cn('relative flex-1 min-h-0', !isFocused && 'cursor-grab active:cursor-grabbing')}
+          onPointerDown={!isFocused ? onHostDragPointerDown : undefined}
+          onPointerMove={!isFocused ? onHostDragPointerMove : undefined}
+          onPointerUp={!isFocused ? onHostDragPointerEnd : undefined}
+          onPointerCancel={!isFocused ? cancelHostDrag : undefined}
+        >
           <iframe
             ref={iframeRef}
             data-page-preview-frame={conversationId}
+            data-preview-selected={isFocused ? 'true' : 'false'}
             title={title || 'Board preview'}
             src={embedSrc}
             className="absolute inset-0 w-full h-full border-0 bg-gray-50 dark:bg-[#0f0f0f]"
+            style={{ pointerEvents: isFocused ? 'auto' : 'none' }}
             onLoad={() => {
               const win = iframeRef.current?.contentWindow
               if (!win) return
