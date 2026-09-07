@@ -73,8 +73,45 @@ function buildAuthHref(pathname: string | null): string {
  */
 function NotionConnectedActions() {
   const api = useNotionConnect()
+  const queryClient = useQueryClient()
+  const [restoring, setRestoring] = useState(false)
   if (!api?.status?.connected) return null
   const { status, authHref, openPicker, disconnect, topBarPinned, setTopBarPinned } = api
+
+  const restoreArchivedPages = async () => {
+    if (
+      !window.confirm(
+        'Restore all archived database rows in your connected Notion workspace? Pages archived outside Thinktable may be included.'
+      )
+    ) {
+      return
+    }
+    setRestoring(true)
+    try {
+      const res = await fetch('/api/notion/restore-archived', { method: 'POST' })
+      const json = (await res.json().catch(() => ({}))) as {
+        restored?: number
+        scannedDataSources?: number
+        errors?: string[]
+        error?: string
+      }
+      if (!res.ok) throw new Error(json.error || 'Restore failed')
+      const restored = json.restored ?? 0
+      const scanned = json.scannedDataSources ?? 0
+      const errCount = json.errors?.length ?? 0
+      window.alert(
+        errCount > 0
+          ? `Restored ${restored} page(s) from ${scanned} database(s). ${errCount} item(s) could not be restored — check the console.`
+          : `Restored ${restored} page(s) from ${scanned} database(s).`
+      )
+      if (json.errors?.length) console.warn('[notion restore]', json.errors)
+      await queryClient.invalidateQueries({ queryKey: ['notion-database'] })
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : 'Restore failed')
+    } finally {
+      setRestoring(false)
+    }
+  }
 
   return (
     <>
@@ -108,6 +145,16 @@ function NotionConnectedActions() {
           Pin to top bar
         </DropdownMenuItem>
       )}
+      <DropdownMenuSeparator />
+      <DropdownMenuItem
+        disabled={restoring}
+        onSelect={(e) => {
+          e.preventDefault()
+          void restoreArchivedPages()
+        }}
+      >
+        {restoring ? 'Restoring…' : 'Restore archived pages'}
+      </DropdownMenuItem>
       <DropdownMenuSeparator />
       <DropdownMenuItem
         onSelect={() => {

@@ -14,6 +14,14 @@ import { useBoardLinkActions } from '@/lib/board-link-context'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { CardConvertBringDialog } from '@/components/card-convert-bring-dialog'
 import {
+  NotionSyncDeleteDialog,
+  type NotionSyncDeleteStep,
+} from '@/components/notion-sync-delete-dialog'
+import {
+  hideRowThinktableOnly,
+  readThinktableHiddenRowIds,
+} from '@/lib/notion/thinktable-only-hidden-rows'
+import {
   cardedPageIdsFromMessages,
   readPeeledNotionPageIds,
 } from '@/lib/notion/card-convert-bring'
@@ -61,6 +69,13 @@ import { notionDbFreeResizeScrollCap } from '@/lib/notion/db-table-scroll'
 import { cn } from '@/lib/utils'
 
 const ROW_GUTTER = 20 // Left padding so overlay ⋮⋮ / + sit outside the first property column
+
+function rowDisplayTitle(row: NotionDbRow): string {
+  for (const cell of Object.values(row.cells)) {
+    if (cell.type === 'title' && cell.text?.trim()) return cell.text.trim()
+  }
+  return 'Untitled'
+}
 
 type NotionDatabaseTableViewProps = {
   notionDatabaseId: string // Notion DB UUID to load
@@ -180,6 +195,12 @@ export function NotionDatabaseTableView({
     if (initialActiveRowId) setSelectedRowId(initialActiveRowId)
   }, [initialActiveRowId])
   const [rowBusy, setRowBusy] = useState(false)
+  const [hiddenRowTick, setHiddenRowTick] = useState(0) // Re-read local hidden-row ids
+  const [pendingDelete, setPendingDelete] = useState<{
+    pageId: string
+    title: string
+    step: NotionSyncDeleteStep
+  } | null>(null)
   const [freeResizeScrollCap, setFreeResizeScrollCap] = useState<number | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const scrollWrapRef = useRef<HTMLDivElement>(null)
@@ -349,23 +370,60 @@ export function NotionDatabaseTableView({
     [data, notionDatabaseId, rowBusy, setCachedTable]
   )
 
-  /** Archive a Notion page (row) and remove it from the table. */
-  const deleteRow = useCallback(
+  const hiddenRowIds = useMemo(
+    () => readThinktableHiddenRowIds(notionDatabaseId),
+    [notionDatabaseId, hiddenRowTick]
+  )
+
+  const removeRowFromTable = useCallback(
+    (pageId: string) => {
+      setCachedTable((prev) =>
+        prev ? { ...prev, rows: prev.rows.filter((r) => r.id !== pageId) } : prev
+      )
+      if (selectedRowId === pageId) setSelectedRowId(null)
+    },
+    [selectedRowId, setCachedTable]
+  )
+
+  /** Open delete chooser — synced rows never archive Notion without explicit confirmation. */
+  const requestDeleteRow = useCallback(
+    (pageId: string) => {
+      if (rowBusy) return
+      const row = data?.rows.find((r) => r.id === pageId)
+      setPendingDelete({
+        pageId,
+        title: row ? rowDisplayTitle(row) : 'Untitled',
+        step: 'choose',
+      })
+    },
+    [data?.rows, rowBusy]
+  )
+
+  const removeRowThinktableOnly = useCallback(
+    (pageId: string) => {
+      hideRowThinktableOnly(notionDatabaseId, pageId)
+      setHiddenRowTick((t) => t + 1)
+      removeRowFromTable(pageId)
+      setPendingDelete(null)
+    },
+    [notionDatabaseId, removeRowFromTable]
+  )
+
+  /** Archive the Notion page after the second confirmation step. */
+  const deleteRowInNotion = useCallback(
     async (pageId: string) => {
       if (rowBusy) return
       setRowBusy(true)
       setSaveError(null)
       const prevRows = data?.rows
-      setCachedTable((prev) =>
-        prev ? { ...prev, rows: prev.rows.filter((r) => r.id !== pageId) } : prev
-      )
-      if (selectedRowId === pageId) setSelectedRowId(null)
+      removeRowFromTable(pageId)
       try {
         const res = await fetch(`/api/notion/page/${encodeURIComponent(pageId)}`, {
           method: 'DELETE',
         })
         const json = await res.json().catch(() => ({}))
         if (!res.ok) throw new Error(json.error || 'Failed to delete row')
+        setPendingDelete(null)
       } catch (e) {
         setSaveError(e instanceof Error ? e.message : 'Failed to delete row')
         if (prevRows && data) {
@@ -375,7 +433,7 @@ export function NotionDatabaseTableView({
         setRowBusy(false)
       }
     },
-    [data, rowBusy, selectedRowId, setCachedTable]
+    [data, rowBusy, removeRowFromTable, setCachedTable]
   )
 
   const columns = useMemo(
@@ -446,10 +504,13 @@ export function NotionDatabaseTableView({
 
   const filteredRows = useMemo(() => {
     if (!data) return []
-    const viewed = applyViewRows(data.rows, settings)
+    let viewed = applyViewRows(data.rows, settings)
+    if (hiddenRowIds.size > 0) {
+      viewed = viewed.filter((r) => !hiddenRowIds.has(r.id.replace(/-/g, '').toLowerCase()))
+    }
     if (cardedRowIds.size === 0) return viewed
     return viewed.filter((r) => !cardedRowIds.has(r.id.replace(/-/g, '').toLowerCase()))
-  }, [data, settings, cardedRowIds])
+  }, [data, settings, cardedRowIds, hiddenRowIds])
   // Parent owns paging (12 → 50 → +50…). Default to the compact preview when no cap is passed.
   const effectiveRowCap = rowCap ?? COMPACT_PREVIEW_ROWS
   const displayRows = useMemo(
@@ -702,7 +763,7 @@ export function NotionDatabaseTableView({
           onSelect={handleSelectRow}
           onToggleExpand={handleToggleExpand}
           onSave={onSave}
-          onDelete={(id) => void deleteRow(id)}
+          onDelete={(id) => requestDeleteRow(id)}
           onOpen={openRow}
           onCreateRow={(afterId) => void createRow(afterId)}
           onConvertLayout={
@@ -927,6 +988,26 @@ export function NotionDatabaseTableView({
           const id = bringDialogRowId
           setBringDialogRowId(null)
           if (id) void convertRowsToCards(id, prefs)
+        }}
+      />
+      <NotionSyncDeleteDialog
+        open={!!pendingDelete}
+        step={pendingDelete?.step ?? 'choose'}
+        rowTitle={pendingDelete?.title}
+        busy={rowBusy}
+        onOpenChange={(open) => {
+          if (!open && !rowBusy) setPendingDelete(null)
+        }}
+        onThinktableOnly={() => {
+          if (!pendingDelete) return
+          removeRowThinktableOnly(pendingDelete.pageId)
+        }}
+        onChooseNotion={() => {
+          setPendingDelete((prev) => (prev ? { ...prev, step: 'confirm-notion' } : null))
+        }}
+        onConfirmNotion={() => {
+          if (!pendingDelete) return
+          void deleteRowInNotion(pendingDelete.pageId)
         }}
       />
     </div>

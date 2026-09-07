@@ -18,6 +18,7 @@ import {
   PREVIEW_STYLE_MESSAGE,
   usePreviewFocus,
 } from '@/lib/preview-focus-context'
+import { forwardWheelToHostBoard } from '@/lib/preview-host-input'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
 
@@ -67,6 +68,7 @@ export function NestedBoardPreview({
   const { getNode } = useReactFlow() // Host node position for chrome-drag
   const router = useRouter()
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const chromeRef = useRef<HTMLDivElement>(null)
   const spacerRef = useRef<HTMLDivElement>(null) // In-item box the portaled shell mirrors
   const dragRef = useRef<{
     startX: number
@@ -224,6 +226,17 @@ export function NestedBoardPreview({
     }
   }, [conversationId, previewFocus])
 
+  // Chrome is portaled outside RF — wheel there must hit the host map, not the browser
+  useEffect(() => {
+    const chrome = chromeRef.current
+    if (!chrome || !visible) return
+    const onWheel = (e: WheelEvent) => {
+      forwardWheelToHostBoard(e)
+    }
+    chrome.addEventListener('wheel', onWheel, { passive: false, capture: true })
+    return () => chrome.removeEventListener('wheel', onWheel, { capture: true })
+  }, [visible])
+
   const handleSelectChrome = () => {
     if (!previewFocus) return
     previewFocus.selectPreview({
@@ -312,6 +325,8 @@ export function NestedBoardPreview({
         onDoubleClick={(e) => e.stopPropagation()}
       >
         <div
+          ref={chromeRef}
+          data-preview-style-chrome
           className={cn(
             'flex items-center justify-between px-2 border-b shrink-0 cursor-grab active:cursor-grabbing',
             isFocused

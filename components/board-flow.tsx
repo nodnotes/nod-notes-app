@@ -151,6 +151,11 @@ import {
   PREVIEW_STYLE_MESSAGE,
   usePreviewFocus,
 } from '@/lib/preview-focus-context' // Style sync + ready/resize handshake for iframe previews
+import {
+  PREVIEW_HOST_TOOLS_MESSAGE,
+  type PreviewHostTools,
+  postPreviewHostTools,
+} from '@/lib/preview-host-tools' // Host top bar → nested preview board tools
 import { BoardEmbedProvider } from '@/lib/board-embed-context' // Hide nested preview controls inside embed
 import { useBoardAccess } from '@/lib/share/board-access-context' // Shared view/comment → read-only map
 import { ThinktableBrandMark } from './personalize-ai-modal'
@@ -1006,7 +1011,7 @@ function BoardFlowInner({
   const reactFlowInstance = useReactFlow()
   const rfStore = useStoreApi() // Embed: force pane width/height when CSS % height collapses
   const updateNodeInternals = useUpdateNodeInternals() // Remeasure Handles after connect so paths attach
-  const { setReactFlowInstance, registerSetNodes, isLocked, layoutMode, setLayoutMode, setIsDeterministicMapping, panelWidth: contextPanelWidth, isPromptBoxCentered, lineStyle, setLineStyle, arrowDirection, setArrowDirection, boardRule: contextBoardRule, boardStyle: contextBoardStyle, boardFont, clickedEdge: contextClickedEdge, setClickedEdge: setContextClickedEdge, fillColor, borderColor, borderWeight, borderStyle, flashcardMode, setFlashcardMode, selectedTag, setSelectedTag, isDrawing, drawTool, drawShape, registerMapUndoRedo, registerMapTakeSnapshot, snapEnabled } = useReactFlowContext()
+  const { setReactFlowInstance, registerSetNodes, isLocked, layoutMode, setLayoutMode, setIsDeterministicMapping, panelWidth: contextPanelWidth, isPromptBoxCentered, lineStyle, setLineStyle, arrowDirection, setArrowDirection, boardRule: contextBoardRule, boardStyle: contextBoardStyle, boardFont, clickedEdge: contextClickedEdge, setClickedEdge: setContextClickedEdge, fillColor, borderColor, borderWeight, borderStyle, flashcardMode, setFlashcardMode, selectedTag, setSelectedTag, isDrawing, setIsDrawing, drawTool, setDrawTool, drawShape, setDrawShape, setFillColor, setBorderColor, setBorderWeight, setBorderStyle, registerMapUndoRedo, registerMapTakeSnapshot, snapEnabled, setSnapEnabled } = useReactFlowContext()
   const { rotation: boardRotation, setScrollMode } = useBoardRotation() // Subscribe so I-bar / overlays re-place when the camera twists
 
   const chatPanelCountRef = useRef(0) // Frame count is stable mid-drag — skip the O(n) scan per tick
@@ -1134,6 +1139,7 @@ function BoardFlowInner({
     boardRule: 'wide' | 'college' | 'narrow'
     boardStyle: 'none' | 'dotted' | 'lined' | 'grid'
   } | null>(null)
+  const [embedHostTools, setEmbedHostTools] = useState<PreviewHostTools | null>(null)
 
   useEffect(() => {
     if (!embedded) return
@@ -1157,6 +1163,113 @@ function BoardFlowInner({
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
   }, [embedded])
+
+  // Nested preview boards mirror the host top bar (draw, scroll/zoom nav, select/pan, …)
+  useEffect(() => {
+    if (!embedded) return
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return
+      const data = event.data as {
+        type?: string
+        pageId?: string
+        tools?: PreviewHostTools
+      } | null
+      if (!data || data.type !== PREVIEW_HOST_TOOLS_MESSAGE || !data.tools) return
+      if (data.pageId && data.pageId !== conversationId) return
+      const tools = data.tools
+      setEmbedHostTools(tools)
+      setIsDrawing(tools.isDrawing)
+      setDrawTool(tools.drawTool)
+      setDrawShape(
+        tools.drawShape as
+          | 'rectangle'
+          | 'circle'
+          | 'line'
+          | 'arrow'
+          | 'round-rectangle'
+          | 'hexagon'
+          | 'diamond'
+          | 'arrow-rectangle'
+          | 'cylinder'
+          | 'triangle'
+          | 'parallelogram'
+          | 'plus'
+      )
+      setFillColor(tools.fillColor)
+      setBorderColor(tools.borderColor)
+      setBorderWeight(tools.borderWeight)
+      setBorderStyle(tools.borderStyle as 'solid' | 'dashed' | 'dotted' | 'none')
+      setSnapEnabled(tools.snapEnabled)
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [
+    embedded,
+    conversationId,
+    setIsDrawing,
+    setDrawTool,
+    setDrawShape,
+    setFillColor,
+    setBorderColor,
+    setBorderWeight,
+    setBorderStyle,
+    setSnapEnabled,
+  ])
+
+  const previewHostTools = useMemo(
+    (): PreviewHostTools => ({
+      isScrollMode,
+      isDrawing,
+      drawTool,
+      drawShape,
+      mapPointerTool,
+      fillColor,
+      borderColor,
+      borderWeight,
+      borderStyle,
+      snapEnabled,
+    }),
+    [
+      isScrollMode,
+      isDrawing,
+      drawTool,
+      drawShape,
+      mapPointerTool,
+      fillColor,
+      borderColor,
+      borderWeight,
+      borderStyle,
+      snapEnabled,
+    ]
+  )
+
+  useEffect(() => {
+    if (embedded || typeof window === 'undefined') return
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return
+      const data = event.data as { type?: string; pageId?: string } | null
+      if (!data || data.type !== PREVIEW_READY_MESSAGE || !data.pageId) return
+      const source = event.source as Window | null
+      if (!source || source === window) return
+      postPreviewHostTools(source, data.pageId, previewHostTools)
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [embedded, previewHostTools])
+
+  useEffect(() => {
+    if (embedded || typeof window === 'undefined') return
+    const iframes = document.querySelectorAll<HTMLIFrameElement>('[data-page-preview-frame]')
+    for (const iframe of iframes) {
+      const win = iframe.contentWindow
+      const pageId = iframe.getAttribute('data-page-preview-frame')
+      if (!win || !pageId) continue
+      postPreviewHostTools(win, pageId, previewHostTools)
+    }
+  }, [embedded, previewHostTools])
+
+  const navScrollMode = embedded ? (embedHostTools?.isScrollMode ?? true) : isScrollMode
+  const navPointerTool = embedded ? (embedHostTools?.mapPointerTool ?? 'pan') : mapPointerTool
 
   const boardRule = embedStyleOverride?.boardRule ?? contextBoardRule
   const boardStyle = embedStyleOverride?.boardStyle ?? contextBoardStyle
@@ -1585,21 +1698,19 @@ function BoardFlowInner({
       : 'bg-gray-50 dark:bg-[#0f0f0f]'
   // Draw bar Lasso: freehand trail owns left-drag (`lib/freehand-lasso-select`), not RF's rect marquee
   const lassoArmed = drawTool === 'lasso' && !isDrawing
-  // Draw bar insert-space: armed tool turns plain left-drag into "open a gap" (embed keeps plain pan)
-  const insertSpaceAxis: InsertSpaceAxis | null = embedded
-    ? null
-    : drawTool === 'insert-v'
+  // Draw bar insert-space: armed tool turns plain left-drag into "open a gap"
+  const insertSpaceAxis: InsertSpaceAxis | null =
+    drawTool === 'insert-v'
       ? 'vertical'
       : drawTool === 'insert-h'
         ? 'horizontal'
         : null
   const insertSpaceArmed = insertSpaceAxis !== null // Suppresses pan / marquee / node drag / I-bar for the gesture
   // RF rect marquee — sticky Select tool only; Lasso replaces it while armed
-  const marqueeArmed = !isDrawing && !lassoArmed && !insertSpaceArmed && mapPointerTool === 'select'
+  const marqueeArmed = !isDrawing && !lassoArmed && !insertSpaceArmed && navPointerTool === 'select'
   // Who owns plain left-drag; Shift flips to pan for one gesture in both select flavors
-  const panOnDragSetting: boolean | number[] = embedded
-    ? true
-    : insertSpaceArmed || isDrawing
+  const panOnDragSetting: boolean | number[] =
+    insertSpaceArmed || isDrawing
       ? false // Insert-space gap drag / freehand-ink strokes own left-drag
       : lassoArmed
         ? isMobileMode
@@ -2118,8 +2229,8 @@ function BoardFlowInner({
   }, [viewMode, isScrollMode])
 
   useEffect(() => {
-    setScrollMode(isScrollMode) // Phone two-finger: Scroll nav pans like trackpad; Zoom nav pinches
-  }, [isScrollMode, setScrollMode])
+    setScrollMode(navScrollMode) // Phone two-finger: Scroll nav pans like trackpad; Zoom nav pinches
+  }, [navScrollMode, setScrollMode])
 
   // Track Shift for the pan↔select drag flip (ignore while typing in inputs / TipTap)
   useEffect(() => {
@@ -5449,7 +5560,6 @@ function BoardFlowInner({
     // In Linear mode, enable chronological panel navigation
     // In Canvas mode, own Scroll pan + Zoom alternate-pan (plain Zoom wheel stays with RF)
     if (!(viewMode === 'linear' || viewMode === 'canvas') || isDrawing) return
-    if (viewMode === 'canvas' && embedded) return // Embed keeps RF-only wheel
 
     // Wheel bursts have no gesture end, so begin+debounced-end runs per tick: `begin` no-ops while
     // already navigating (and cancels the pending release), so the freeze holds for the burst and
@@ -5489,7 +5599,7 @@ function BoardFlowInner({
       }
 
       // Selected Notion DB — plain wheel scrolls rows (Scroll nav); pinch/Cmd+wheel still zoom
-      if (notionDbConsumeWheelScroll(target, e, { isScrollMode })) {
+      if (notionDbConsumeWheelScroll(target, e, { isScrollMode: navScrollMode })) {
         return
       }
 
@@ -5571,7 +5681,7 @@ function BoardFlowInner({
       }
 
       // Canvas — Zoom sticky: only own Cmd/Ctrl→pan; pinch + plain wheel stay with RF / other handlers
-      if (!isScrollMode) {
+      if (!navScrollMode) {
         if (isMacTrackpadPinch(e)) return // Pinch always zooms (RF zoomOnPinch / ctrl+wheel)
         if (!isWheelAlternateMod(e)) return // Plain wheel → RF zoomOnScroll
         e.preventDefault()
@@ -5639,7 +5749,7 @@ function BoardFlowInner({
       document.removeEventListener('wheel', handleWheel, { capture: true })
       if (settleTimer) clearTimeout(settleTimer) // Don't settle into an unmounted board
     }
-  }, [isScrollMode, viewMode, reactFlowInstance, getBottomScrollLimit, checkIfAtBottom, chronologicalPanels, focusedPanelIndex, centerPanelAbovePrompt, boardRotation, isDrawing, embedded])
+  }, [navScrollMode, viewMode, reactFlowInstance, getBottomScrollLimit, checkIfAtBottom, chronologicalPanels, focusedPanelIndex, centerPanelAbovePrompt, boardRotation, isDrawing, embedded])
 
   // Check if at bottom when viewport changes in linear mode
   // Don't run when nodes change due to selection - only run when nodes are added/removed or viewMode changes
@@ -6556,7 +6666,7 @@ function BoardFlowInner({
 
   // Draw bar Lasso: freehand trail (mouse + touch), auto-closed start→cursor with a straight line
   useEffect(() => {
-    if (embedded || !lassoArmed) return
+    if (!lassoArmed) return
     const root = boardRootRef.current
     if (!root) return
     return attachFreehandLassoSelect(root, rfStore) // Owns left-drag while armed (RF marquee is off)
@@ -9308,14 +9418,14 @@ function BoardFlowInner({
     // Selected DB is interactive (overflow-auto); own wheel so the table doesn’t eat Zoom-nav
     const DB_ZOOM_SEL = '.tt-notion-db'
     // Zoom nav: regular wheel should zoom over the table too (Scroll nav has its own capture)
-    const zoomNav = embedded ? true : !isScrollMode && !isDrawing
+    const zoomNav = !navScrollMode && !isDrawing
 
     const onWheel = (e: WheelEvent) => {
       const target = e.target as Element | null
       if (!target?.closest?.('.react-flow')) return // Outside the page map
       if (propertyStripConsumeWheelScroll(target, e)) return
       // Selected capped DB — plain wheel scroll (Scroll nav); pinch / Cmd+wheel still zoom
-      if (notionDbConsumeWheelScroll(target, e, { isScrollMode: embedded ? false : isScrollMode }))
+      if (notionDbConsumeWheelScroll(target, e, { isScrollMode: navScrollMode }))
         return
       const overHandle = !!target.closest(HANDLE_ZOOM_SEL)
       const overDb = !!target.closest(DB_ZOOM_SEL)
@@ -9372,7 +9482,7 @@ function BoardFlowInner({
 
     root.addEventListener('wheel', onWheel, { passive: false, capture: true })
     return () => root.removeEventListener('wheel', onWheel, { capture: true })
-  }, [reactFlowInstance, embedded, boardRotation, isScrollMode, isDrawing, zoomRange])
+  }, [reactFlowInstance, embedded, boardRotation, navScrollMode, isDrawing, zoomRange])
 
   return (
     <PhoneFrameDragProvider manualDragNodeId={phoneManualDragNodeId}>
@@ -9954,18 +10064,18 @@ function BoardFlowInner({
         selectionOnDrag={
           !embedded && marqueeArmed && !shiftHeld // Shift held → pan, not marquee
         }
-        zoomOnScroll={embedded ? true : !isScrollMode && !isDrawing}
-        zoomOnPinch={embedded ? true : !isDrawing} // Pinch always zooms; Scroll nav only changes wheel pan vs wheel zoom
+        zoomOnScroll={!navScrollMode && !isDrawing}
+        zoomOnPinch={!isDrawing} // Pinch always zooms; Scroll nav only changes wheel pan vs wheel zoom
         zoomOnDoubleClick={false}
         minZoom={embedded ? Math.max(0.05, zoomRange.minZoom) : zoomRange.minZoom}
         maxZoom={embedded ? Math.min(2.5, zoomRange.maxZoom) : zoomRange.maxZoom}
         preventScrolling // RF consumes wheel so the host page/map doesn’t scroll
         autoPanOnNodeDrag={false}
         onlyRenderVisibleElements // Bound DOM + composited layers to frames currently in/near the pane
-        selectNodesOnDrag={embedded ? false : !isDrawing} // Preview: drag starts pan, not selection box
+        selectNodesOnDrag={!isDrawing}
         multiSelectionKeyCode={MULTI_SELECT_KEYS}
         selectionKeyCode={
-          embedded || isDrawing || lassoArmed || marqueeArmed
+          isDrawing || lassoArmed || marqueeArmed
             ? null // Select tool / Lasso: plain drag selects; Shift flips to pan above
             : SELECTION_BOX_KEYS // Pan tool: Shift+drag draws a selection box
         }

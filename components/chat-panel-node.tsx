@@ -422,17 +422,28 @@ function measureNaturalContentWidth(contentFit: HTMLElement): number {
 }
 
 /** Unscaled content height — prefer scrollHeight so clipped/wrapped overflow still counts. */
-function measureNaturalContentHeight(contentFit: HTMLElement): number {
-  const dbExtents = measureDatabaseBlockExtents(contentFit)
+function measureNaturalContentHeight(
+  contentFit: HTMLElement,
+  reserveConnectionsStrip = false
+): number {
+  const dbExtents = measureDatabaseBlockExtents(contentFit, reserveConnectionsStrip)
   if (dbExtents) return dbExtents.height
   return Math.max(1, Math.ceil(contentFit.scrollHeight || contentFit.offsetHeight))
 }
 
-const CLIP_FADE_PX = 16 // Soft edge so half-cut glyphs fade instead of chopping
-const DB_TABLE_ROW_GUTTER = 20 // Keep in sync with notion-database-table ROW_GUTTER
+/** h-7 Notion connections band when present (or reserved while Notion-linked). */
+function measureConnectionsStripHeight(contentFit: HTMLElement): number {
+  const el = contentFit.querySelector(
+    '[data-tt-connections-header], [data-tt-notion-hug]'
+  ) as HTMLElement | null
+  return el && el.offsetHeight > 0 ? el.offsetHeight : 0
+}
 
 /** Full Notion table box (all columns × rows + title/toolbar) — not the free-resize clip viewport. */
-function measureDatabaseBlockExtents(contentFit: HTMLElement): { width: number; height: number } | null {
+function measureDatabaseBlockExtents(
+  contentFit: HTMLElement,
+  reserveConnectionsStrip = false
+): { width: number; height: number } | null {
   const dbBlock = contentFit.querySelector('.tt-database-block') as HTMLElement | null
   if (!dbBlock) return null
   const table = dbBlock.querySelector('.tt-notion-db table') as HTMLElement | null
@@ -451,6 +462,11 @@ function measureDatabaseBlockExtents(contentFit: HTMLElement): { width: number; 
   const titleH = titleRow ? titleRow.offsetHeight + 8 : 0 // mb-2 under title row
   const notionH = notionDb.scrollHeight // Toolbar + full row stack (not scroll cap)
 
+  let connectionsH = measureConnectionsStripHeight(contentFit)
+  if (connectionsH === 0 && reserveConnectionsStrip) {
+    connectionsH = CONNECTIONS_GROUP_H // Footer not mounted yet — still reserve the in-fill band
+  }
+
   const cs = getComputedStyle(contentFit)
   const padL = parseFloat(cs.paddingLeft) || 0
   const padR = parseFloat(cs.paddingRight) || 0
@@ -463,9 +479,12 @@ function measureDatabaseBlockExtents(contentFit: HTMLElement): { width: number; 
 
   return {
     width: Math.ceil(padL + gripGutter + Math.max(tableW, 420) + rightInset),
-    height: Math.ceil(padT + padB + titleH + notionH),
+    height: Math.ceil(padT + padB + titleH + notionH + connectionsH),
   }
 }
+
+const CLIP_FADE_PX = 16 // Soft edge so half-cut glyphs fade instead of chopping
+const DB_TABLE_ROW_GUTTER = 20 // Keep in sync with notion-database-table ROW_GUTTER
 
 /** Mask style that fades content out at overflowing frame edges (right / bottom). */
 function clipFadeMaskStyle(
@@ -4109,7 +4128,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         const rowCard = isRowCardAtomHtml(promptContent)
         // Prefer DB scrollHeight extents — contentFit border-box stays fixed when the frame
         // already has resizeDimensions, so RO on contentFit alone never sees live-table growth.
-        const dbBox = measureDatabaseBlockExtents(el)
+        const dbBox = measureDatabaseBlockExtents(el, notionConnected)
         const width = Math.max(
           1,
           Math.round(
@@ -4119,7 +4138,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         )
         const height = Math.max(
           1,
-          Math.round(dbBox?.height ?? measureNaturalContentHeight(el))
+          Math.round(dbBox?.height ?? measureNaturalContentHeight(el, notionConnected))
         )
         setDatabaseExtents(dbBox)
         if (
@@ -4162,11 +4181,19 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     if (dbHost) ro.observe(dbHost)
     const notionDb = dbHost?.querySelector('.tt-notion-db') as HTMLElement | null
     if (notionDb) ro.observe(notionDb)
+    const connStrip = el.querySelector(
+      '[data-tt-connections-header], [data-tt-notion-hug]'
+    ) as HTMLElement | null
+    if (connStrip) ro.observe(connStrip)
     const onDbResize = () => measure()
     el.addEventListener('tt-db-content-resize', onDbResize)
     const mo = new MutationObserver(() => {
       const nextDb = el.querySelector('.tt-notion-db') as HTMLElement | null
       if (nextDb) ro.observe(nextDb)
+      const conn = el.querySelector(
+        '[data-tt-connections-header], [data-tt-notion-hug]'
+      ) as HTMLElement | null
+      if (conn) ro.observe(conn)
       measure()
     })
     if (dbHost) {
@@ -4178,7 +4205,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       el.removeEventListener('tt-db-content-resize', onDbResize)
       mo.disconnect()
     }
-  }, [isBlock, dragging, promptContent, frameUnlocked, frameTextWrap, frameScale, selected, contentDeferred])
+  }, [isBlock, dragging, promptContent, frameUnlocked, frameTextWrap, frameScale, selected, contentDeferred, notionConnected])
   // Note: do NOT depend on resizeDimensions — hug writes that and would loop
   // `contentDeferred` is a dep so the frame re-measures the moment real content replaces the shell
 
@@ -4948,7 +4975,15 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       setUnlockedFrameSize({ width: freeSnapshot.width, height: freeSnapshot.height })
       setUnlockedFrameScale(freeSnapshot.scale)
       const fitEl = contentFitRef.current
-      const naturalH = fitEl ? measureNaturalContentHeight(fitEl) : intrinsicSize.height
+      const dbBox = fitEl ? measureDatabaseBlockExtents(fitEl, notionConnected) : null
+      if (dbBox) {
+        setDatabaseExtents(dbBox)
+        setIntrinsicMeasured(true)
+        setIntrinsicSize({ width: dbBox.width, height: dbBox.height })
+      }
+      const naturalH =
+        dbBox?.height ??
+        (fitEl ? measureNaturalContentHeight(fitEl, notionConnected) : intrinsicSize.height)
       if (frameTextWrap && resizeDimensionsRef.current) {
         const keepW = resizeDimensionsRef.current.width
         const wrapH = Math.max(
@@ -4967,11 +5002,13 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           unlockedFrameScale: freeSnapshot.scale,
         }
       } else {
-        const naturalW = fitEl
-          ? isRowCardAtomHtml(promptContent)
-            ? measureRowCardContentWidth(fitEl)
-            : measureNaturalContentWidth(fitEl)
-          : intrinsicSize.width
+        const naturalW =
+          dbBox?.width ??
+          (fitEl
+            ? isRowCardAtomHtml(promptContent)
+              ? measureRowCardContentWidth(fitEl)
+              : measureNaturalContentWidth(fitEl)
+            : intrinsicSize.width)
         const minW = blockMinFrameWidth(promptContent)
         const hugged = scaledFrameSize(
           { width: naturalW, height: naturalH },
@@ -5120,11 +5157,13 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // shrink/grow both dimensions on lock/type instead of keeping the taller resize box.
   useEffect(() => {
     const rowCard = isRowCardAtomHtml(promptContent)
+    const dbFrame = isDbFrame
     if (!isBlock || frameUnlocked || pagePreviewOpen || dragging) return
     if (!intrinsicMeasured || isResizingRef.current) return
-    if (!isUserResized && !rowCard) return // Row cards hug as soon as content is measured
+    if (!isUserResized && !rowCard && !dbFrame) return // Row/DB cards hug as soon as content is measured
     const minW = blockMinFrameWidth(promptContent, false) // Fill hug — no ⋮⋮ column inside the frame
-    const natural = scaledFrameSize(intrinsicSize, frameScale, minW)
+    const hugSource = dbFrame && databaseExtents ? databaseExtents : intrinsicSize
+    const natural = scaledFrameSize(hugSource, frameScale, minW)
     // Never hug a databaseBlock frame down to the remount stub — that persists as a permanent clip.
     if (
       hasDatabaseBlockHtml(promptContent) &&
@@ -5174,7 +5213,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       return next
     })
     if (!changed) return
-    if (rowCard && !isUserResized) setIsUserResized(true) // RF node sync uses resizeDimensions
+    if ((rowCard || dbFrame) && !isUserResized) setIsUserResized(true) // RF node sync uses resizeDimensions
     if (persistFrameMetaTimerRef.current) clearTimeout(persistFrameMetaTimerRef.current)
     persistFrameMetaTimerRef.current = setTimeout(() => {
       void persistFrameMeta({
@@ -5199,7 +5238,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     wrapColWidth,
     persistFrameMeta,
     promptContent,
-    isUserResized,
+    isDbFrame,
+    databaseExtents,
   ])
 
   // Unlocked WRAP no longer auto-hugs height: like non-wrap clip, the frame keeps the user's box
@@ -5833,7 +5873,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     usesFitContent &&
     !isUserResized &&
     !pagePreviewOpen &&
-    !isRowCardAtomHtml(promptContent) // Row cards live-hug — max-content blows out to icon-row width
+    !isRowCardAtomHtml(promptContent) && // Row cards live-hug — max-content blows out to icon-row width
+    !isDbFrame // DB tables live-hug from measureDatabaseBlockExtents — max-content clips the table
   // Empty unresized: explicit px (not max-content) — CSS % children used to inflate ~120×160 boxes
   const emptyLineHug = growsWithLine && isBlockContentEmpty(promptContent)
   const hasBlockContent = isBlock && !isBlockContentEmpty(promptContent) // Lock only when a content block exists
@@ -6065,8 +6106,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       return
     }
     if (isUserResized && resizeDimensions) return // Explicit box owns width
-    // Row cards: layoutBox / rowCardLiveBox owns width — never stomp with panelWidthRef.
-    if (isBlock && isRowCardAtomHtml(promptContent)) return
+    // Row/DB cards: layoutBox live-hug owns width — never stomp with panelWidthRef.
+    if (isBlock && (isRowCardAtomHtml(promptContent) || isDbFrame)) return
     if (panelRef.current && panelWidthRef.current) {
       const next = `${panelWidthRef.current}px`
       if (panelRef.current.style.width !== next) panelRef.current.style.width = next
@@ -6132,8 +6173,13 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // Expand/shrink panel width from longest line — sync DOM before React paint to avoid wrap
   const expandPanelWidth = useCallback((newContent?: string) => {
     if (pagePreviewOpen) return
-    // Row cards live-hug from measureRowCardContentWidth — concatenated textContent here is bogus wide.
-    if (isRowCardAtomHtml(newContent !== undefined ? newContent : promptContent)) return
+    // Row/DB cards live-hug from intrinsic measure — concatenated textContent here is bogus wide.
+    if (
+      isRowCardAtomHtml(newContent !== undefined ? newContent : promptContent) ||
+      hasDatabaseBlockHtml(newContent !== undefined ? newContent : promptContent)
+    ) {
+      return
+    }
     // Unresized blocks: empty → one-line hug px; typed → max-content (don’t force chat widths)
     if (growsWithLine) {
       if (panelRef.current) {
@@ -6189,7 +6235,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // Shrink block/flashcard to longest line on blur
   const handleEditorBlur = useCallback(() => {
     if (isRegularChatPanel) return // Chat stays wide
-    if (isRowCardAtomHtml(promptContent)) return // Row cards hug via intrinsic measure
+    if (isRowCardAtomHtml(promptContent) || isDbFrame) return // Row/DB cards hug via intrinsic measure
     if ((isUserResized && resizeDimensions) || pagePreviewOpen) return
 
     setTimeout(() => {
@@ -6373,7 +6419,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // Debounced width adjust when content changes (blocks grow/shrink with longest line)
   useEffect(() => {
     if ((isUserResized && resizeDimensions) || pagePreviewOpen) return
-    if (isRowCardAtomHtml(promptContent)) return // Intrinsic hug owns width
+    if (isRowCardAtomHtml(promptContent) || isDbFrame) return // Intrinsic hug owns width
     if (!promptContent && !responseContent) return
     if (isRegularChatPanel && !promptContent && !responseContent) return
 
@@ -6868,13 +6914,13 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     const el = contentFitRef.current
     if (!el) return
     const run = () => {
-      const dbBox = measureDatabaseBlockExtents(el)
+      const dbBox = measureDatabaseBlockExtents(el, notionConnected)
       if (dbBox) setDatabaseExtents(dbBox)
     }
     run()
     const raf = requestAnimationFrame(run)
     return () => cancelAnimationFrame(raf)
-  }, [showClipPreview])
+  }, [showClipPreview, notionConnected])
 
   // Hover clip-preview: lift this RF node above siblings so spilled blocks paint on top
   useEffect(() => {
@@ -6946,10 +6992,14 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // Logical (unrotated) content box — never use outer AABB measure when rotated
   const rowCardLockedHug =
     isBlock && isRowCardAtomHtml(promptContent) && intrinsicMeasured && !frameUnlocked
+  const dbLockedHug = isDbFrame && intrinsicMeasured && !frameUnlocked
+  const lockedDbSize = scaledDbSize ?? huggedSize
   const contentBoxW =
     (rowCardLockedHug
       ? huggedSize.width
-      : isUserResized && resizeDimensions?.width) ||
+      : dbLockedHug
+        ? lockedDbSize.width
+        : isUserResized && resizeDimensions?.width) ||
     (Math.abs(rotation) > 0.5
       ? Math.max(intrinsicSize.width + 8, BLOCK_MIN_FRAME_W) // +pad; outer RO is AABB — don't use it
       : itemBoxSize.width) ||
@@ -6957,7 +7007,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const contentBoxH =
     (rowCardLockedHug
       ? huggedSize.height
-      : isUserResized && resizeDimensions?.height) ||
+      : dbLockedHug
+        ? lockedDbSize.height
+        : isUserResized && resizeDimensions?.height) ||
     (Math.abs(rotation) > 0.5
       ? Math.max(intrinsicSize.height + 8, BLOCK_MIN_FRAME_H)
       : itemBoxSize.height) ||
@@ -6981,6 +7033,17 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           height: huggedSize.height + adjustChromeYTop + adjustChromeYBottom,
         }
       : null
+  const dbLiveBox =
+    isBlock &&
+    isDbFrame &&
+    intrinsicMeasured &&
+    !pagePreviewOpen &&
+    !frameUnlocked
+      ? {
+          width: lockedDbSize.width + adjustChromeX * 2,
+          height: lockedDbSize.height + adjustChromeYTop + adjustChromeYBottom,
+        }
+      : null
   const atomExplicitBox =
     isBlock &&
     isRowCardAtomHtml(promptContent) &&
@@ -6995,6 +7058,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const layoutBox =
     layoutBoxFreeze ||
     rowCardLiveBox ||
+    dbLiveBox ||
     atomExplicitBox ||
     (contentDeferred && !intrinsicMeasured && deferredLayoutBox ? deferredLayoutBox : null)
   const shapeBoxW = contentBoxW
@@ -7063,7 +7127,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               ? `${resizeDimensions.width + adjustChromeX * 2}px`
               : emptyLineHug
                 ? `${frameMinW + adjustChromeX * 2}px`
-                : isRowCardAtomHtml(promptContent) && !intrinsicMeasured
+                : (isRowCardAtomHtml(promptContent) || isDbFrame) && !intrinsicMeasured
                   ? `${frameMinW + adjustChromeX * 2}px`
                 : growsWithLine
                   ? 'max-content'
@@ -7766,8 +7830,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                 ? undefined
                 : !frameUnlocked && isUserResized
                   ? 'w-max'
-                  : isRowCardAtomHtml(promptContent)
-                    ? 'w-max' // Never stretch the measure box to a stale wide panel
+                  : isRowCardAtomHtml(promptContent) || (isDbFrame && !frameUnlocked)
+                    ? 'w-max' // Never stretch the measure box to a stale wide panel / clipped DB table
                     : isUserResized || !growsWithLine || emptyLineHug
                       ? 'w-full' // Fill explicit empty hug / resized box for full-row clicks
                       : 'w-max',
