@@ -20,6 +20,7 @@ import type { AiMessage, AiChatBlockDragPayload, AiChatBlockDragItem } from '@/l
 import { AI_CHAT_BLOCK_MIME } from '@/lib/ai/types'
 import { markdownToTipTapHtml } from '@/lib/ai/markdown-to-tiptap'
 import { createPanelExtensions } from '@/lib/tiptap/extensions'
+import { handleCaptureLinkPaste } from '@/lib/tiptap/capture-link-paste'
 import { TipTapBlockHandles } from '@/components/tiptap-block-handles'
 import {
   BlockActionsMenu,
@@ -227,6 +228,9 @@ export function AiChatTurn({
         attributes: {
           class:
             'prose prose-sm dark:prose-invert max-w-none focus:outline-none nokey text-sm text-gray-900 dark:text-gray-100',
+        },
+        handleDOMEvents: {
+          paste: (view, event) => handleCaptureLinkPaste(view, event as ClipboardEvent),
         },
       },
       onUpdate: ({ editor: ed }) => {

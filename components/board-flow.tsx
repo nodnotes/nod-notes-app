@@ -105,7 +105,17 @@ import {
   clearFrameTextEditActive,
   isFrameTextEditActive,
 } from '@/lib/frame-text-edit' // First-select Delete vs TipTap text edit
-import { takeBoardCapture } from '@/lib/captures' // Board-menu Capture view
+import { takeBoardCapture, getCaptures, readCaptureCameraInput } from '@/lib/captures' // Board-menu Capture view
+import { captureLinkHtmlFromText } from '@/lib/capture-link-html' // I-bar paste → capture chip not raw URL
+import {
+  captureCameraMatches,
+  captureLinkCleanPath,
+  CAPTURE_NAV_EVENT,
+  extractCaptureUrlFromClipboard,
+  parseCaptureLinkParams,
+  readScrollModePreference,
+  type CaptureCamera,
+} from '@/lib/capture-link' // ?capture= deep links restore camera
 import { htmlToPlain } from '@/lib/ai/context-pack' // Frame hover previews from content
 import { AI_CHAT_BLOCK_MIME, aiChatDragItems, type AiChatBlockDragPayload } from '@/lib/ai/types' // Drag chat turn onto page
 import {
@@ -163,7 +173,7 @@ import { ThinktableBrandMark } from './personalize-ai-modal'
 import { NavZoomControl } from './nav-zoom-control' // Zoom % lives in bottom nav (not top bar)
 import { NavRotateControl } from './nav-rotate-control' // Board rotate icon — right of zoom %
 import { BoardRotationProvider, useBoardRotation } from './board-rotation-context' // Two-finger twist + nav camera heading
-import { applyBoardRotationToPositionChanges, viewportKeepingPanePoint } from '@/lib/board-rotation' // Camera-aware pane ↔ flow
+import { applyBoardRotationToPositionChanges, boardRotationRef, viewportKeepingPanePoint } from '@/lib/board-rotation' // Camera-aware pane ↔ flow
 import { computeMinimapViewScale, panViewportFromMinimapDrag } from '@/lib/minimap-viewport-pan' // Phone minimap drag (RF only pans on mousemove)
 import { PreviewMinimap } from './preview-minimap' // Host minimap for selected nested preview
 import {
@@ -1025,7 +1035,7 @@ function BoardFlowInner({
   const rfStore = useStoreApi() // Embed: force pane width/height when CSS % height collapses
   const updateNodeInternals = useUpdateNodeInternals() // Remeasure Handles after connect so paths attach
   const { setReactFlowInstance, registerSetNodes, isLocked, layoutMode, setLayoutMode, setIsDeterministicMapping, panelWidth: contextPanelWidth, isPromptBoxCentered, lineStyle, setLineStyle, arrowDirection, setArrowDirection, boardRule: contextBoardRule, boardStyle: contextBoardStyle, boardFont, clickedEdge: contextClickedEdge, setClickedEdge: setContextClickedEdge, fillColor, borderColor, borderWeight, borderStyle, flashcardMode, setFlashcardMode, selectedTag, setSelectedTag, isDrawing, setIsDrawing, drawTool, setDrawTool, drawShape, setDrawShape, setFillColor, setBorderColor, setBorderWeight, setBorderStyle, registerMapUndoRedo, registerMapTakeSnapshot, snapEnabled, setSnapEnabled } = useReactFlowContext()
-  const { rotation: boardRotation, setScrollMode } = useBoardRotation() // Subscribe so I-bar / overlays re-place when the camera twists
+  const { rotation: boardRotation, setScrollMode, setRotationAroundViewCenter } = useBoardRotation() // Subscribe so I-bar / overlays re-place when the camera twists
 
   const chatPanelCountRef = useRef(0) // Frame count is stable mid-drag — skip the O(n) scan per tick
   const chatPanelCount = useMemo(() => {
@@ -4826,6 +4836,61 @@ function BoardFlowInner({
     }
   }, [conversationId, searchParams, flashcardMode, setFlashcardMode, hasFlashcardsInBoard, nodes, reactFlowInstance, setNodes, router])
 
+  // Restore board camera from ?capture= link (viewport + rotation + nav mode)
+  const captureLinkAppliedRef = useRef<string | null>(null)
+  const applyCaptureCameraRef = useRef<(target: CaptureCamera) => void>(() => {})
+  applyCaptureCameraRef.current = (target: CaptureCamera) => {
+    if (!reactFlowInstance) return
+    const current = {
+      viewport: reactFlowInstance.getViewport(),
+      rotation: boardRotationRef.current,
+      scrollMode: readScrollModePreference(),
+    }
+    if (captureCameraMatches(target, current)) return
+    if (target.scrollMode !== current.scrollMode) {
+      setIsScrollMode(target.scrollMode)
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('thinktable-scroll-mode', String(target.scrollMode))
+      }
+    }
+    if (Math.abs(target.rotation - boardRotationRef.current) > 0.05) {
+      setRotationAroundViewCenter(target.rotation)
+    }
+    reactFlowInstance.setViewport(target.viewport, { duration: 200 })
+  }
+  useEffect(() => {
+    captureLinkAppliedRef.current = null
+  }, [conversationId])
+  useEffect(() => {
+    const onCaptureNav = (event: Event) => {
+      const detail = (event as CustomEvent<{ boardId: string; camera: CaptureCamera }>).detail
+      if (!detail || detail.boardId !== conversationId) return
+      applyCaptureCameraRef.current(detail.camera)
+    }
+    window.addEventListener(CAPTURE_NAV_EVENT, onCaptureNav)
+    return () => window.removeEventListener(CAPTURE_NAV_EVENT, onCaptureNav)
+  }, [conversationId])
+  useEffect(() => {
+    if (!conversationId || !reactFlowInstance || !searchParams) return
+    const hasCameraParams =
+      searchParams.get('capture') ||
+      (searchParams.get('x') && searchParams.get('y') && searchParams.get('z'))
+    if (!hasCameraParams) return
+    const linkKey = searchParams.toString()
+    if (captureLinkAppliedRef.current === linkKey) return
+
+    const target = parseCaptureLinkParams(searchParams, conversationId, getCaptures())
+    if (!target) return
+
+    const timeoutId = window.setTimeout(() => {
+      applyCaptureCameraRef.current(target)
+      captureLinkAppliedRef.current = linkKey
+      router.replace(captureLinkCleanPath(conversationId))
+    }, 320)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [conversationId, searchParams, reactFlowInstance, setIsScrollMode, setRotationAroundViewCenter, router])
+
   // Load canvas positions from localStorage when conversation changes
   useEffect(() => {
     if (!conversationId || viewMode !== 'canvas') return
@@ -7283,7 +7348,11 @@ function BoardFlowInner({
         case 'capture': {
           if (!conversationId) return
           const vp = reactFlowInstance?.getViewport() || { x: 0, y: 0, zoom: 1 }
-          void takeBoardCapture((key) => queryClient.getQueryData(key), conversationId, vp)
+          void takeBoardCapture(
+            (key) => queryClient.getQueryData(key),
+            conversationId,
+            readCaptureCameraInput(vp)
+          )
           break
         }
         default:
@@ -9082,6 +9151,8 @@ function BoardFlowInner({
 
     const bufferToHtml = (text: string) => {
       if (!text) return '<p></p>'
+      const captureHtml = captureLinkHtmlFromText(text)
+      if (captureHtml) return captureHtml
       // Enter during capture becomes a soft break inside the first block (frame opens single-line)
       const safe = escapeHtml(text).replace(/\n/g, '<br>')
       return `<p>${safe}</p>`
@@ -10966,6 +11037,14 @@ function BoardFlowInner({
         tabIndex={-1}
         className="tt-ibar-capture nodrag nopan nokey"
         onInput={(e) => iBarApplyTextRef.current(e.currentTarget.value)}
+        onPaste={(e) => {
+          const url = extractCaptureUrlFromClipboard(e.clipboardData)
+          if (!url) return
+          e.preventDefault()
+          const el = e.currentTarget
+          el.value = url
+          iBarApplyTextRef.current(url)
+        }}
         onCompositionEnd={(e) => iBarApplyTextRef.current(e.currentTarget.value)}
         onBlur={() => {
           // Phone: keyboard dismissed — release create capture without focusing edge TipTap (avoids Safari zoom)

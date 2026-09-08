@@ -21,6 +21,7 @@ import { useEditor, EditorContent } from '@tiptap/react'
 import { DOMParser as PMDOMParser } from '@tiptap/pm/model' // Parse stored HTML → PM doc for exact (non-string) sync compare
 import { TextSelection } from '@tiptap/pm/state' // Only text ranges keep a frame "active" — not boardLink NodeSelection
 import { createPanelExtensions } from '@/lib/tiptap/extensions' // StarterKit + Turn into nodes
+import { handleCaptureLinkPaste } from '@/lib/tiptap/capture-link-paste' // Paste capture URL → named link
 import { TipTapBlockHandles } from '@/components/tiptap-block-handles' // Per-content-block ⋮⋮ (Notion)
 import { FrameStackRevealLine } from '@/components/frame-stack-reveal-line' // Stack edge dashed line → reveal
 import { FrameShapeBackdrop } from '@/components/frame-shape-backdrop' // SVG silhouette behind TipTap
@@ -112,7 +113,7 @@ import {
   useFrameContentMountReason,
   useWarmFrameContentMount,
 } from '@/components/frame-viewport-mount-context' // Defer TipTap until the frame is interacted with
-import { pruneEmptyTextblocks } from '@/lib/tiptap/empty-block-backspace' // Strip blank lines on frame deselect
+import { pruneEmptyTextblocks, isEmptyTextblock } from '@/lib/tiptap/empty-block-backspace' // Strip blank lines on frame deselect
 import { setAiTextSelection } from '@/lib/ai/selection-bridge' // Live highlighted-text pills in AI composer
 import { BlockActionsMenu, type BoardInTarget } from '@/components/block-actions-menu'
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, Fragment, memo } from 'react'
@@ -143,7 +144,7 @@ const FRAME_CORNER_RADIUS = 6
 const CONNECTIONS_GROUP_H = 28 // h-7 footer strip — hug spacer + pinned group when the free frame clips
 const DATABASE_BLOCK_HTML_RE = /data-type=["']databaseBlock["']/i // TipTap Notion DB atom in frame HTML
 const FRAME_ATOM_HTML_RE =
-  /data-type=["'](?:boardLink|pageLink|databaseBlock|imageBlock|videoBlock|audioBlock|fileBlock|bookmarkBlock|propertyBlock)["']/i // Attr-only TipTap atoms
+  /data-type=["'](?:boardLink|pageLink|captureLink|databaseBlock|imageBlock|videoBlock|audioBlock|fileBlock|bookmarkBlock|propertyBlock)["']/i // Attr-only TipTap atoms
 const MIN_DATABASE_FRAME_W = 240 // Below this a DB frame is a collapsed stub (grip + title only)
 const MIN_DATABASE_FRAME_H = 120 // Title row alone is ~40; table needs more height than that
 
@@ -1213,7 +1214,7 @@ function TipTapContentLive({
           const target = pe.target as HTMLElement | null
           if (
             target?.closest?.(
-              '[data-tt-block-handle], [data-tt-insert-line], .block-actions-menu, [data-page-link-preview], .tt-database-block, .tt-notion-db'
+              '[data-tt-block-handle], [data-tt-insert-line], .block-actions-menu, [data-page-link-preview], .tt-capture-link, .tt-database-block, .tt-notion-db'
             )
           ) {
             return false
@@ -1274,13 +1275,12 @@ function TipTapContentLive({
           return false
         },
         paste: (view: any, event: Event) => {
+          if (handleCaptureLinkPaste(view, event as ClipboardEvent)) return true
+          const clipboardData = (event as ClipboardEvent).clipboardData
           // Single-line frames: paste as one visual line (Enter still creates blocks)
           if (view.dom.getAttribute('data-single-line') !== 'true') return false // Wrap mode keeps normal multi-line paste
-          const clipboardData = (event as ClipboardEvent).clipboardData
           if (clipboardData) {
-            // Get plain text from clipboard
             const pastedText = clipboardData.getData('text/plain')
-            // Replace newlines and multiple spaces with single space to keep on same line
             const normalizedText = pastedText.replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim()
             if (normalizedText) {
               // Insert text at current cursor position
@@ -5833,18 +5833,15 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     if (meta.linkedBoardId) return
     if (typeof meta.blockTitle === 'string' && meta.blockTitle.trim()) return
 
-    // Must be exactly one empty textblock after prune (not a boardLink-only frame)
+    // Must be exactly one empty textblock after prune (not captureLink / boardLink-only body)
     let soleEmpty = false
     if (ed && !ed.isDestroyed) {
       const doc = ed.state.doc
       const only = doc.childCount === 1 ? doc.firstChild : null
-      const blockText = only?.textContent ?? ''
       soleEmpty = !!(
         only &&
         only.isTextblock &&
-        (only.content.size === 0 ||
-          blockText.length === 0 ||
-          blockText === '/') // I-bar / menu dismissed without choosing an item
+        (isEmptyTextblock(only) || only.textContent === '/') // `/` spawn dismissed without choosing
       )
     } else {
       soleEmpty = isBlockContentEmpty(promptContent)
@@ -6500,6 +6497,25 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     }
   }
 
+  // Frame deselect: flush TipTap → promptContent/DB before sync can wipe a just-pasted captureLink.
+  const prevSelectedFlushRef = useRef(selected)
+  useLayoutEffect(() => {
+    const wasSelected = prevSelectedFlushRef.current
+    prevSelectedFlushRef.current = selected
+    if (!wasSelected || selected) return
+    if (!isBlock || isFlashcard || isProjectBoard) return
+    const ed = promptEditorRef.current
+    if (!ed || ed.isDestroyed) return
+    let liveHtml: string
+    try {
+      liveHtml = ed.getHTML()
+    } catch {
+      return // Doc mid-mutation (e.g. atom serialize) — skip flush this tick
+    }
+    if (!liveHtml || liveHtml === promptContentRef.current) return
+    void handlePromptChange(liveHtml)
+  }, [selected, isBlock, isFlashcard, isProjectBoard])
+
   const handlePromptRevert = async () => {
     // Revert to original content
     if (isProjectBoard) {
@@ -6688,7 +6704,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
 
     // TipTap iOS focus() omits preventScroll; pin page + overflow ancestors so edge creates don’t jump
     const focusFrameEditor = (ed: NonNullable<typeof promptEditorRef.current>) => {
-      if (hostNodeId) setFrameTextEditActive(hostNodeId) // I-bar / fadeIn handoff — Backspace edits text
+      if (id) setFrameTextEditActive(id) // I-bar / fadeIn handoff — Backspace edits text
       const sx = window.scrollX // Document scroll (rare on board, but cheap to pin)
       const sy = window.scrollY
       // Board shell uses overflow-auto main — Safari pans that when the caret is near the edge

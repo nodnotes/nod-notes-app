@@ -1966,6 +1966,31 @@ span[data-added="true"] {
     color: #9ca3af;
   }
 
+  .ProseMirror .tt-capture-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    max-width: 100%;
+  }
+  .ProseMirror .tt-capture-link-label {
+    outline: none;
+    text-decoration: underline;
+    text-decoration-color: rgba(55, 53, 47, 0.28);
+    text-underline-offset: 2px;
+    cursor: pointer;
+    border-radius: 3px;
+    min-width: 1ch;
+    white-space: pre-wrap;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+  }
+  .dark .ProseMirror .tt-capture-link-label {
+    text-decoration-color: rgba(255, 255, 255, 0.28);
+  }
+
   /* Deferred TipTap shell — boardLink title/icon without mounting the NodeView (semantic zoom / near-miss). */
   .tt-board-link-deferred {
     display: inline-flex;

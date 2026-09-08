@@ -4,6 +4,7 @@
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react' // Search, selection, store
 import { useQueryClient } from '@tanstack/react-query' // Board path + frame text
+import { useRouter } from 'next/navigation' // Client-side board / capture nav
 import { getRectOfNodes, getViewportForBounds } from 'reactflow' // Selected-frame bounds + viewport
 import {
   ListFilter, // Filter control
@@ -32,12 +33,15 @@ import {
   formatCaptureTimestamp,
   getCaptures,
   getPresentations,
+  readCaptureCameraInput,
   subscribeCaptures,
   takeBoardCapture,
   takeBoardCaptureSelected,
 } from '@/lib/captures' // Local capture/presentation store
+import { navigateToCapture } from '@/lib/capture-link' // In-tab camera nav (no full reload)
 import { cn } from '@/lib/utils' // Class merge
 import { TOOLBAR_MENU_PLACEMENT } from '@/lib/menu-placement' // Under the trigger, never over the board path
+import { CaptureRowMoreMenu } from './capture-row-more-menu' // Row hover ⋯ — copy link
 import { ToolbarTitle } from './toolbar-title' // Animated icon-adjacent title
 
 type CapturesMenuProps = {
@@ -56,6 +60,7 @@ export function CapturesMenu({
   showLabel = true, // Icon+title until the top bar condenses
 }: CapturesMenuProps) {
   const queryClient = useQueryClient() // Path + messages cache
+  const router = useRouter() // Cross-board capture nav stays in-tab
   const { reactFlowInstance } = useReactFlowContext() // Viewport at Capture view
   const { setChatSidebarOpen } = useSidebarContext() // Reveal chat when attaching
   const captures = useSyncExternalStore(subscribeCaptures, getCaptures, getCaptures) // List
@@ -123,7 +128,7 @@ export function CapturesMenu({
       const created = await takeBoardCapture(
         (key) => queryClient.getQueryData(key),
         conversationId,
-        vp
+        readCaptureCameraInput(vp)
       )
       setSelected((prev) => new Set(prev).add(created.id)) // Select the new row
     } finally {
@@ -151,7 +156,7 @@ export function CapturesMenu({
       const created = await takeBoardCaptureSelected(
         (key) => queryClient.getQueryData(key),
         conversationId,
-        vp,
+        readCaptureCameraInput(vp),
         messageIds
       )
       setSelected((prev) => new Set(prev).add(created.id))
@@ -311,7 +316,7 @@ export function CapturesMenu({
                 <div
                   key={item.id}
                   className={cn(
-                    'flex w-full flex-col rounded-lg px-2 py-2 hover:bg-gray-50',
+                    'group/capture flex w-full flex-col rounded-lg px-2 py-2 hover:bg-gray-50',
                     on && 'bg-gray-100 hover:bg-gray-100'
                   )}
                 >
@@ -354,7 +359,10 @@ export function CapturesMenu({
                       type="button"
                       className="min-w-0 flex-1 text-left"
                       onPointerDown={(e) => e.preventDefault()}
-                      onClick={() => toggleRow(item.id)}
+                      onClick={() => {
+                        navigateToCapture(item, conversationId, router)
+                        onOpenChange(false)
+                      }}
                     >
                       <span className="block text-[13px] font-medium text-gray-900">
                         {formatCaptureTimestamp(item.createdAt)}
@@ -363,6 +371,14 @@ export function CapturesMenu({
                         {item.boardPath}
                       </span>
                     </button>
+                    <CaptureRowMoreMenu
+                      capture={item}
+                      conversationId={conversationId}
+                      onNavigate={() => onOpenChange(false)}
+                      className={cn(
+                        'mt-0.5 opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/capture:opacity-100'
+                      )}
+                    />
                   </div>
                   {tags.length > 0 && (
                     <div className="mt-1.5 flex flex-wrap gap-1">

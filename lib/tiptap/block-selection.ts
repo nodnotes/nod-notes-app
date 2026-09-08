@@ -74,6 +74,7 @@ export function isHandleBlockType(name: string): boolean {
     name === 'syncedBlock' ||
     name === 'columns' ||
     name === 'boardLink' || // Linked-page block (inline/title) gets the ⋮⋮ grip too
+    name === 'captureLink' || // Saved capture link block
     name === 'databaseBlock' || // Notion database block gets the ⋮⋮ grip too
     name === 'imageBlock' || // Image (placeholder or <img>) gets the ⋮⋮ grip too
     name === 'videoBlock' ||

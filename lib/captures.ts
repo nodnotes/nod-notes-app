@@ -2,6 +2,8 @@
 
 import { htmlToPlain } from '@/lib/ai/context-pack' // Strip frame HTML → searchable text
 import { boardTitleOrDefault, DEFAULT_BOARD_TITLE } from '@/lib/board-title' // Capture path uses the same empty-board name
+import { boardRotationRef } from '@/lib/board-rotation' // Live camera heading at capture time
+import { readScrollModePreference } from '@/lib/capture-link' // Free-nav Scroll vs Zoom at capture time
 
 const CAPTURES_KEY = 'thinktable-board-captures' // localStorage: capture list
 const PRESENTATIONS_KEY = 'thinktable-board-presentations' // localStorage: presentation list
@@ -14,7 +16,16 @@ export type BoardCapture = {
   boardPath: string // Ancestor / … / board label
   text: string // Plain words from frames (search + chat)
   viewport: { x: number; y: number; zoom: number } // RF camera for later present/nav
+  rotation?: number // Board heading at capture (degrees)
+  scrollMode?: boolean // Free nav Scroll vs Zoom at capture
   imageDataUrl?: string // JPEG of the visible board (mini + expanded preview)
+}
+
+/** Camera payload when taking a new capture. */
+export type CaptureCameraInput = {
+  viewport: { x: number; y: number; zoom: number }
+  rotation?: number
+  scrollMode?: boolean
 }
 
 /** Ordered set of captures to step through later. */
@@ -219,11 +230,22 @@ function boardMessagesForCapture(getQueryData: QueryDataGetter, boardId: string)
   )
 }
 
+/** Current board camera for a new capture (RF viewport + heading + nav mode). */
+export function readCaptureCameraInput(
+  viewport: { x: number; y: number; zoom: number }
+): CaptureCameraInput {
+  return {
+    viewport,
+    rotation: boardRotationRef.current,
+    scrollMode: readScrollModePreference(),
+  }
+}
+
 /** Gather path + frame words + viewport for a new capture of the current view. */
 export function buildCaptureInput(
   getQueryData: QueryDataGetter,
   boardId: string,
-  viewport: { x: number; y: number; zoom: number },
+  camera: CaptureCameraInput,
   messageIds?: string[]
 ): Omit<BoardCapture, 'id' | 'createdAt'> {
   const boards = (getQueryData(['path-board-menu']) as CapturePathBoard[] | undefined) || []
@@ -236,7 +258,14 @@ export function buildCaptureInput(
     .map((m) => htmlToPlain(m.content))
     .filter((t) => t.length > 0)
     .join('\n')
-  return { boardId, boardPath, text, viewport }
+  return {
+    boardId,
+    boardPath,
+    text,
+    viewport: camera.viewport,
+    rotation: camera.rotation ?? 0,
+    scrollMode: camera.scrollMode ?? true,
+  }
 }
 
 const VIEW_JPEG_MAX_W = 480 // Expanded-preview width; mini uses the same file via CSS
@@ -328,9 +357,9 @@ export async function captureBoardSelectionImage(): Promise<string | undefined> 
 export async function takeBoardCapture(
   getQueryData: QueryDataGetter,
   boardId: string,
-  viewport: { x: number; y: number; zoom: number }
+  camera: CaptureCameraInput
 ): Promise<BoardCapture> {
-  const input = buildCaptureInput(getQueryData, boardId, viewport)
+  const input = buildCaptureInput(getQueryData, boardId, camera)
   const imageDataUrl = await captureBoardViewImage()
   return addCapture({ ...input, imageDataUrl })
 }
@@ -339,10 +368,10 @@ export async function takeBoardCapture(
 export async function takeBoardCaptureSelected(
   getQueryData: QueryDataGetter,
   boardId: string,
-  viewport: { x: number; y: number; zoom: number },
+  camera: CaptureCameraInput,
   messageIds: string[]
 ): Promise<BoardCapture> {
-  const input = buildCaptureInput(getQueryData, boardId, viewport, messageIds)
+  const input = buildCaptureInput(getQueryData, boardId, camera, messageIds)
   const imageDataUrl = await captureBoardSelectionImage()
   return addCapture({ ...input, imageDataUrl })
 }

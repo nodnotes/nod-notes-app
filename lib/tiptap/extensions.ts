@@ -19,6 +19,8 @@ import {
   ToggleList,
 } from '@/lib/tiptap/block-nodes'
 import { BoardLink } from '@/lib/tiptap/board-link' // Linked-page block (inline + title + preview)
+import { CaptureLink } from '@/lib/tiptap/capture-link' // Pasted capture URL → named link
+import { CaptureLinkPaste } from '@/lib/tiptap/capture-link-paste' // Paste handler for capture URLs
 import { DatabaseBlock } from '@/lib/tiptap/database-block' // Notion database as a compact TipTap block
 import { ImageBlock } from '@/lib/tiptap/image-block' // Slash / → Image atom
 import { PropertyBlock } from '@/lib/tiptap/property-block' // Turn into → Property atom (icon + Empty cell)
@@ -76,6 +78,8 @@ export function createPanelExtensions(placeholder?: string): any[] {
     SyncedBlock,
     Columns,
     BoardLink, // Block that links to a child page (Notion child-page block)
+    CaptureLink, // Block that links to a saved board capture
+    CaptureLinkPaste, // Paste capture URL → captureLink (not raw text)
     DatabaseBlock, // Notion database stays one block (no map-frame sprawl of rows)
     ImageBlock, // Image block (slash / → Image; placeholder until src is set)
     VideoBlock, // Slash → Video

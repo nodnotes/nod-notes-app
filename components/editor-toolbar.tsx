@@ -2026,6 +2026,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
             <PresentationsMenu
               open={openDropdown === 'presentation'}
               onOpenChange={(open) => handleDropdownOpenChange('presentation', open)}
+              conversationId={conversationId}
               triggerVisible={!isItemHidden('presentation')}
               showLabel={!compactLabels} // Title condenses to icon on shrink
             />
