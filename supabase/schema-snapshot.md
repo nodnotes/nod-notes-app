@@ -1,13 +1,19 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-08T06:38:00Z`
+- Snapped at: `2026-09-08T08:01:00Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.184.0`, rest `v13.0.5`, storage `v1.33.0`
-- CLI: `supabase` `2.117.0`
+- CLI: `supabase` `2.90.0`
 - Remote applied tops out at `20260811225342_conversations_owner_select_for_insert_returning`
 
 ## This save
+
+- DDL: none. Marker `20260908080113_homepage_showcase_landing.sql`.
+- **Homepage**: marketing landing page with hero + public showcase board previews (`/api/public-board/[boardId]`, `/view/{id}`, `lib/public-showcase-boards.ts`); logo in top bar, brand row in hero.
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: restore drawn T logo
 
 - DDL: none. Marker `20260908063803_restore_drawn_t_logo.sql`.
 - **Brand mark**: restore default hand-drawn T + table-dot in `personalize-ai-modal.tsx` (revert mistaken N strokes during rebrand).

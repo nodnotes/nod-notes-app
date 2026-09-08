@@ -23,7 +23,7 @@ export const NN_LOGO_DRAWING_STORAGE_KEY = 'nodnotes-ai-logo-drawing'
 /** Legacy topper key — cleared on hydrate so old toppers do not linger */
 const NN_TOPPER_STORAGE_KEY_LEGACY = 'nodnotes-ai-topper'
 
-/** Logo circle fill — matches public/nod-notes-logo.svg .cls-1 */
+/** Logo disc fill for the personalize draw canvas */
 export const LOGO_CIRCLE_COLOR = '#a2a7af'
 
 /** AI sparkles fill — light blue (prompt-wash family) on every logo that shows stars */

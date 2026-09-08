@@ -248,13 +248,7 @@ interface Message {
   metadata?: Record<string, any> // Optional metadata field (e.g., isFlashcard)
 }
 
-/** Public homepage board id from env — only that board may use /api/homepage-board. */
-const HOMEPAGE_BOARD_ID = process.env.NEXT_PUBLIC_HOMEPAGE_BOARD_ID || ''
-
-/** True when this conversation is the configured public homepage map. */
-function isHomepageBoardId(conversationId: string): boolean {
-  return Boolean(HOMEPAGE_BOARD_ID && conversationId === HOMEPAGE_BOARD_ID)
-}
+import { isPublicBoardId } from '@/lib/public-showcase-boards'
 
 interface ChatPanelNodeData {
   promptMessage: Message
@@ -336,20 +330,18 @@ async function fetchMessagesForPanels(
   const supabase = createClient()
   const isEmbed = options?.embed === true
 
-  // Only hit the public homepage API when this id is the configured homepage board
-  if (!isEmbed && isHomepageBoardId(conversationId)) {
+  // Public showcase boards — service-role API, no auth
+  if (!isEmbed && isPublicBoardId(conversationId)) {
     try {
-      const response = await fetch('/api/homepage-board')
+      const response = await fetch(`/api/public-board/${conversationId}`)
       if (response.ok) {
         const data = await response.json()
-        if (data.conversation?.id === conversationId) {
-          const homepageMessages = (data.messages || []) as Message[]
-          await migrateMessagesToBlockFlag(supabase, homepageMessages) // In-memory fast; DB persist async
-          return homepageMessages
-        }
+        const publicMessages = (data.messages || []) as Message[]
+        await migrateMessagesToBlockFlag(supabase, publicMessages) // In-memory fast; DB persist async
+        return publicMessages
       }
     } catch (error) {
-      console.error('Error fetching homepage messages from API:', error)
+      console.error('Error fetching public board messages from API:', error)
     }
   }
 
@@ -418,22 +410,19 @@ async function fetchEdgesForConversation(conversationId: string): Promise<
 > {
   const supabase = createClient()
   
-  // Public homepage edges only when id matches env — skip probe on every normal board
-  if (isHomepageBoardId(conversationId)) {
+  if (isPublicBoardId(conversationId)) {
     try {
-      const response = await fetch('/api/homepage-board')
+      const response = await fetch(`/api/public-board/${conversationId}`)
       if (response.ok) {
         const data = await response.json()
-        if (data.conversation?.id === conversationId) {
-          return (data.edges || []) as Array<{
-            source_message_id: string
-            target_message_id: string
-            metadata?: ThreadEdgeData | null
-          }>
-        }
+        return (data.edges || []) as Array<{
+          source_message_id: string
+          target_message_id: string
+          metadata?: ThreadEdgeData | null
+        }>
       }
     } catch (error) {
-      console.error('Error fetching homepage edges from API:', error)
+      console.error('Error fetching public board edges from API:', error)
     }
   }
 
@@ -481,26 +470,23 @@ async function fetchCanvasNodesForConversation(conversationId: string): Promise<
 }>> {
   const supabase = createClient()
   
-  // Public homepage canvas only when id matches env — skip probe on every normal board
-  if (isHomepageBoardId(conversationId)) {
+  if (isPublicBoardId(conversationId)) {
     try {
-      const response = await fetch('/api/homepage-board')
+      const response = await fetch(`/api/public-board/${conversationId}`)
       if (response.ok) {
         const data = await response.json()
-        if (data.conversation?.id === conversationId) {
-          return (data.canvasNodes || []) as Array<{
-            id: string
-            node_type: string
-            position_x: number
-            position_y: number
-            width: number
-            height: number
-            data: any
-          }>
-        }
+        return (data.canvasNodes || []) as Array<{
+          id: string
+          node_type: string
+          position_x: number
+          position_y: number
+          width: number
+          height: number
+          data: any
+        }>
       }
     } catch (error) {
-      console.error('Error fetching homepage canvas nodes from API:', error)
+      console.error('Error fetching public board canvas nodes from API:', error)
     }
   }
 

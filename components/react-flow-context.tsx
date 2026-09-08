@@ -7,13 +7,7 @@ import { createClient } from '@/lib/supabase/client'
 import { usePathname } from 'next/navigation'
 import { parseBoardFontId, type BoardFontId } from '@/lib/board-font'
 
-/** Public homepage board id from env — only that board may probe /api/homepage-board. */
-const HOMEPAGE_BOARD_ID = process.env.NEXT_PUBLIC_HOMEPAGE_BOARD_ID || ''
-
-/** True when this conversation is the configured public homepage map. */
-function isHomepageBoardId(conversationId?: string): boolean {
-  return Boolean(HOMEPAGE_BOARD_ID && conversationId === HOMEPAGE_BOARD_ID)
-}
+import { isPublicBoardId } from '@/lib/public-showcase-boards'
 
 interface ReactFlowContextType {
   reactFlowInstance: ReactFlowInstance | null
@@ -246,17 +240,14 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
     const supabase = createClient()
 
     try {
-      // Check if this is the homepage board (public access via API route).
-      // Gate on the env id like board-flow: this probe returns the whole public board
-      // (service-role query, ~400ms) and ran on every board load before the real prefs fetch.
-      let homepageBoardPrefs: any = null
-      if (isHomepageBoardId(currentConversationId)) {
+      let publicBoardPrefs: any = null
+      if (currentConversationId && isPublicBoardId(currentConversationId)) {
         try {
-          const homepageResponse = await fetch('/api/homepage-board')
-          if (homepageResponse.ok) {
-            const homepageData = await homepageResponse.json()
-            if (homepageData.conversation?.id === currentConversationId && homepageData.conversation?.metadata) {
-              homepageBoardPrefs = homepageData.conversation.metadata
+          const publicResponse = await fetch(`/api/public-board/${currentConversationId}`)
+          if (publicResponse.ok) {
+            const publicData = await publicResponse.json()
+            if (publicData.conversation?.metadata) {
+              publicBoardPrefs = publicData.conversation.metadata
             }
           }
         } catch (e) {
@@ -264,48 +255,46 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
         }
       }
 
-      // If we got homepage board prefs, use them (works even if unauthenticated)
-      if (homepageBoardPrefs) {
-        if (homepageBoardPrefs.boardRule && ['wide', 'college', 'narrow'].includes(homepageBoardPrefs.boardRule)) {
-          setBoardRule(homepageBoardPrefs.boardRule)
+      if (publicBoardPrefs) {
+        if (publicBoardPrefs.boardRule && ['wide', 'college', 'narrow'].includes(publicBoardPrefs.boardRule)) {
+          setBoardRule(publicBoardPrefs.boardRule)
           const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
           const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
-          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardRule: homepageBoardPrefs.boardRule }))
+          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardRule: publicBoardPrefs.boardRule }))
         }
-        if (homepageBoardPrefs.boardStyle && ['none', 'dotted', 'lined', 'grid'].includes(homepageBoardPrefs.boardStyle)) {
-          setBoardStyle(homepageBoardPrefs.boardStyle)
+        if (publicBoardPrefs.boardStyle && ['none', 'dotted', 'lined', 'grid'].includes(publicBoardPrefs.boardStyle)) {
+          setBoardStyle(publicBoardPrefs.boardStyle)
           const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
           const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
-          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardStyle: homepageBoardPrefs.boardStyle }))
+          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardStyle: publicBoardPrefs.boardStyle }))
         }
-        const homepageFont = parseBoardFontId(homepageBoardPrefs.boardFont)
-        if (homepageFont) {
-          setBoardFont(homepageFont)
+        const publicFont = parseBoardFontId(publicBoardPrefs.boardFont)
+        if (publicFont) {
+          setBoardFont(publicFont)
           const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
           const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
-          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardFont: homepageFont }))
+          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardFont: publicFont }))
         }
-        // Also load other preferences from homepage board if they exist
-        if (homepageBoardPrefs.layoutMode && ['auto', 'tree', 'cluster', 'none'].includes(homepageBoardPrefs.layoutMode)) {
-          setLayoutMode(homepageBoardPrefs.layoutMode)
-          setIsDeterministicMapping(homepageBoardPrefs.layoutMode !== 'none')
+        if (publicBoardPrefs.layoutMode && ['auto', 'tree', 'cluster', 'none'].includes(publicBoardPrefs.layoutMode)) {
+          setLayoutMode(publicBoardPrefs.layoutMode)
+          setIsDeterministicMapping(publicBoardPrefs.layoutMode !== 'none')
           const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
           const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
-          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, layoutMode: homepageBoardPrefs.layoutMode }))
+          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, layoutMode: publicBoardPrefs.layoutMode }))
         }
-        if (homepageBoardPrefs.lineStyle && ['solid', 'dotted'].includes(homepageBoardPrefs.lineStyle)) {
-          setLineStyle(homepageBoardPrefs.lineStyle)
+        if (publicBoardPrefs.lineStyle && ['solid', 'dotted'].includes(publicBoardPrefs.lineStyle)) {
+          setLineStyle(publicBoardPrefs.lineStyle)
           const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
           const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
-          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, lineStyle: homepageBoardPrefs.lineStyle }))
+          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, lineStyle: publicBoardPrefs.lineStyle }))
         }
-        if (homepageBoardPrefs.arrowDirection && ['down', 'up', 'left', 'right'].includes(homepageBoardPrefs.arrowDirection)) {
-          setArrowDirection(homepageBoardPrefs.arrowDirection)
+        if (publicBoardPrefs.arrowDirection && ['down', 'up', 'left', 'right'].includes(publicBoardPrefs.arrowDirection)) {
+          setArrowDirection(publicBoardPrefs.arrowDirection)
           const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
           const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
-          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, arrowDirection: homepageBoardPrefs.arrowDirection }))
+          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, arrowDirection: publicBoardPrefs.arrowDirection }))
         }
-        return // Homepage board loaded, skip authenticated fetch
+        return
       }
 
       // For non-homepage boards, require authentication
