@@ -25,6 +25,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260908063803_restore_drawn_t_logo` — Restore default hand-drawn T + table-dot brand mark
 - `20260908063357_rebrand_nod_notes` — Rebrand ThinkTable → Nod Notes (product, GitHub org/repos, identifiers)
 - `20260908045105_shaped_frame_fill_border_colors` — Shaped frame SVG fill/border; softer preset borders; fit-to-text inflation; shape select chrome
 - `20260908041754_frame_empty_chrome_drag_fixes` — Empty frame backspace/clear; keep styled empty frames on deselect; single empty border; fill-origin chrome pad; fix select/drag jump

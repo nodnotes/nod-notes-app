@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-08T06:34:02Z`
+- Snapped at: `2026-09-08T06:38:00Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.184.0`, rest `v13.0.5`, storage `v1.33.0`
 - CLI: `supabase` `2.117.0`
@@ -9,7 +9,13 @@
 
 ## This save
 
-- DDL: none. Marker `20260908063357_rebrand_nod_notes.sql`.
+- DDL: none. Marker `20260908063803_restore_drawn_t_logo.sql`.
+- **Brand mark**: restore default hand-drawn T + table-dot in `personalize-ai-modal.tsx` (revert mistaken N strokes during rebrand).
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: Nod Notes rebrand
+
+- No DDL. Marker `20260908063357_rebrand_nod_notes.sql`.
 - **Rebrand**: ThinkTable → Nod Notes (wordmark, identifiers, GitHub `nodnotes` org/repos, Supabase project display name).
 - Schema unchanged; remote applied still tops out at `20260811225342`.
 
