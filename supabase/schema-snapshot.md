@@ -1,13 +1,19 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-08T22:05:00Z`
+- Snapped at: `2026-09-08T22:36:00Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.184.0`, rest `v13.0.5`, storage `v1.33.0`
 - CLI: `supabase` `2.90.0`
 - Remote applied tops out at `20260811225342_conversations_owner_select_for_insert_returning`
 
 ## This save
+
+- DDL: none. Marker `20260908223635_homepage_hero_icon_size.sql`.
+- **Homepage hero**: brand icon left of **Nod** sized to `0.79cap`.
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: homepage hero lockup thread
 
 - DDL: none. Marker `20260908220531_homepage_hero_lockup_thread.sql`.
 - **Homepage hero**: refined brand lockup (icon cap-height aligned to **Nod**, Asap **NOTES** highlight); Young Serif headline (“built for Notion”); decorative thread from **Nod** to headline; Asap subhead; Young Serif CTA.

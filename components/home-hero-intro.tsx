@@ -208,7 +208,7 @@ export function HomeHeroIntro() {
             className="relative block font-young-serif font-normal text-blue-500"
           >
             Nod
-            <NodNotesIcon className="absolute right-full top-1/2 mr-2 h-[1cap] w-auto -translate-y-[calc(50%+0.03em)] shrink-0 text-gray-700" />
+            <NodNotesIcon className="absolute right-full top-1/2 mr-2 h-[0.79cap] w-auto -translate-y-[calc(50%+0.03em)] shrink-0 text-gray-700" />
           </span>
           <span
             className="absolute left-[0.1em] top-full -translate-y-[0.52em] inline-block bg-[#fef9c3] px-[0.1em] py-[0.1em] font-notes-sans text-[0.24em] font-semibold leading-none tracking-normal text-gray-700 uppercase"

@@ -1,0 +1,2 @@
+-- Homepage hero: tune brand icon size left of Nod (0.79cap).
+-- No DDL — schema unchanged; remote applied still tops out at 20260811225342.
