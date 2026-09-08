@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { Menu } from 'lucide-react'
 import { HomeBoardPreview } from '@/components/home-board-preview'
+import { HomeHeroIntro } from '@/components/home-hero-intro'
 import { NodNotesIcon } from '@/components/nod-notes-icon'
 import { getResolvedShowcaseBoards } from '@/lib/public-showcase-boards'
 import {
@@ -55,32 +56,15 @@ export default function Home() {
 
       <main>
         <section className="container mx-auto px-4 min-[900px]:px-6 py-20 min-[900px]:py-28 text-center">
-          <div className="mb-10 flex justify-center">
-            <div className="inline-flex items-center gap-3 text-5xl min-[900px]:text-6xl lg:text-7xl">
-              <NodNotesIcon className="h-[1.05em] w-auto shrink-0 text-gray-700" />
-              <span className="relative inline-block pb-[0.06em] leading-none">
-                <span className="block font-young-serif font-normal leading-none text-blue-500">Nod</span>
-                <span
-                  className="absolute left-[0.1em] top-full -translate-y-[0.44em] w-[0.55em] text-center font-notes-sans text-[0.24em] font-semibold leading-none tracking-normal text-gray-600 uppercase"
-                  aria-hidden
-                >
-                  Notes
-                </span>
-              </span>
-            </div>
-          </div>
+          <HomeHeroIntro />
 
-          <h1 className="mx-auto mb-6 max-w-3xl font-serif text-4xl min-[900px]:text-5xl lg:text-6xl font-bold tracking-tight text-foreground">
-            The visual workspace for Notion
-          </h1>
-
-          <p className="mx-auto mb-10 max-w-xl font-sans text-base min-[900px]:text-lg text-gray-600">
+          <p className="mx-auto mb-10 max-w-xl font-notes-sans text-base min-[900px]:text-lg text-gray-600">
             Turn your pages and databases into connected visual boards.
           </p>
 
           <Link
             href="/login"
-            className="inline-flex items-center justify-center rounded-full bg-gray-950 px-8 py-3 font-serif text-sm min-[900px]:text-base text-white hover:opacity-90 transition-opacity"
+            className="inline-flex items-center justify-center rounded-full bg-gray-950 px-8 py-3 font-young-serif text-sm min-[900px]:text-base text-white hover:opacity-90 transition-opacity"
           >
             Get started free
           </Link>

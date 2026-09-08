@@ -3,7 +3,7 @@ import "./globals.css";
 import { ReactQueryProvider } from "@/lib/react-query-provider";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ViewportHeightFix } from "@/components/viewport-height-fix";
-import { Inter, Plus_Jakarta_Sans, Young_Serif } from "next/font/google";
+import { Asap, Inter, Young_Serif } from "next/font/google";
 
 const inter = Inter({ 
   subsets: ["latin"],
@@ -18,9 +18,9 @@ const youngSerif = Young_Serif({
   display: "swap",
 });
 
-const notesSans = Plus_Jakarta_Sans({
+const notesSans = Asap({
   subsets: ["latin"],
-  weight: ["600", "700"],
+  weight: ["600"],
   variable: "--font-notes-sans",
   display: "swap",
 });
