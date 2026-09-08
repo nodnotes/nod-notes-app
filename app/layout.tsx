@@ -12,10 +12,10 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "ThinkTable - AI Chat for Visual Mind Mapping",
+  title: "Nod Notes - AI Chat for Visual Mind Mapping",
   description: "Transform conversations into smart visual mind maps. Learn visually with AI-powered chat and interactive diagrams.",
   icons: {
-    icon: "/thinktable-logo.svg",
+    icon: "/nod-notes-logo.svg",
   },
 };
 

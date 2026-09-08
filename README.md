@@ -1,6 +1,6 @@
-# thinktable-app
+# nod-notes-app
 
-Frontend web application for ThinkTable.
+Frontend web application for Nod Notes.
 
 ## Setup
 

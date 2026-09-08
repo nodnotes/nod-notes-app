@@ -83,8 +83,8 @@ interface AiEditSessionValue {
 
 const AiEditSessionContext = createContext<AiEditSessionValue | null>(null)
 
-const SHOW_AI_ORIGIN_KEY = 'thinktable-show-ai-origin'
-const AI_TOPBAR_PIN_KEY = 'thinktable-ai-topbar-pinned'
+const SHOW_AI_ORIGIN_KEY = 'nodnotes-show-ai-origin'
+const AI_TOPBAR_PIN_KEY = 'nodnotes-ai-topbar-pinned'
 
 /** Default unpinned — AI highlight toggle starts in More menu. */
 function readAiTopBarPinned(): boolean {

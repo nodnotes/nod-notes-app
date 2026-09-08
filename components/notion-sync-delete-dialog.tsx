@@ -1,6 +1,6 @@
 'use client'
 
-// Confirm delete for synced Notion database rows — Thinktable-only vs archive in Notion.
+// Confirm delete for synced Notion database rows — NodNotes-only vs archive in Notion.
 
 import {
   Dialog,
@@ -18,7 +18,7 @@ type NotionSyncDeleteDialogProps = {
   rowTitle?: string
   busy?: boolean
   onOpenChange: (open: boolean) => void
-  onThinktableOnly: () => void
+  onNodNotesOnly: () => void
   onChooseNotion: () => void
   onConfirmNotion: () => void
 }
@@ -29,7 +29,7 @@ export function NotionSyncDeleteDialog({
   rowTitle,
   busy = false,
   onOpenChange,
-  onThinktableOnly,
+  onNodNotesOnly,
   onChooseNotion,
   onConfirmNotion,
 }: NotionSyncDeleteDialogProps) {
@@ -57,9 +57,9 @@ export function NotionSyncDeleteDialog({
                 type="button"
                 disabled={busy}
                 className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-left text-[13px] font-medium text-gray-900 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
-                onClick={onThinktableOnly}
+                onClick={onNodNotesOnly}
               >
-                Delete only in Thinktable
+                Delete only in Nod Notes
                 <span className="mt-0.5 block text-[11px] font-normal text-gray-500">
                   Hides the row here. Notion is unchanged.
                 </span>

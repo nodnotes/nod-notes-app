@@ -497,7 +497,7 @@ export async function fetchNotionDatabaseTable(
   if (!dataSourceId) {
     if (emptySources) {
       throw new Error(
-        'Linked Notion view — share the original database with Thinktable (••• → Connections), not only this view.'
+        'Linked Notion view — share the original database with NodNotes (••• → Connections), not only this view.'
       )
     }
     if (dbErrorMessage) throw new Error(dbErrorMessage)
@@ -1081,7 +1081,7 @@ function pagePropertiesFromRow(
 
 /**
  * Create a new Notion database (same copyable schema) under the source DB's parent page,
- * seed it with one page copied from `row`, return ids for a Thinktable databaseBlock frame.
+ * seed it with one page copied from `row`, return ids for a NodNotes databaseBlock frame.
  */
 export async function createNotionDatabaseFromRow(
   accessToken: string,
@@ -1133,7 +1133,7 @@ export async function createNotionDatabaseFromRow(
       parentBody = { type: 'page_id', page_id: pageParent.page_id }
     } else {
       throw new Error(
-        'Cannot create a new database — share a parent page with Thinktable (not only this database).'
+        'Cannot create a new database — share a parent page with NodNotes (not only this database).'
       )
     }
   }

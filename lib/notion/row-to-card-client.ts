@@ -86,7 +86,7 @@ export function appendPeeledCardToMessagesCache(
   queryClient.setQueriesData({ queryKey: ['messages-for-panels', conversationId, 'embed'] }, patch)
 }
 
-export const NOTION_ROW_DRAG_MIME = 'application/x-thinktable-notion-row'
+export const NOTION_ROW_DRAG_MIME = 'application/x-nodnotes-notion-row'
 
 export type NotionRowDragPayload = {
   source: 'notion-db-row'

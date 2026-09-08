@@ -11,7 +11,7 @@
 // Notion DB frames are snapshotted only while idle (static preview inside TipTap) — never while the
 // interactive live table is up. See `snapshotEligible`.
 
-const STORE_PREFIX = 'thinktable-frame-dom-'
+const STORE_PREFIX = 'nodnotes-frame-dom-'
 const MAX_ENTRY_CHARS = 250_000 // Idle always-expanded tables are wider than text frames
 const MAX_STORE_CHARS = 1_200_000 // Rough localStorage budget per board
 

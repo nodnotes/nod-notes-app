@@ -1,4 +1,4 @@
-# Database Schema - ThinkTable SaaS
+# Database Schema - Nod Notes SaaS
 
 ## Overview
 

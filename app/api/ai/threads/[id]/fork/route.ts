@@ -60,8 +60,9 @@ export async function POST(
     return NextResponse.json({ thread: forked }, { status: 201 }) // Created
   }
 
+  type SourceMessage = (typeof rows)[number]
   const idMap = new Map<string, string>() // old message id → new message id
-  const inserts = rows.map((m) => {
+  const inserts = rows.map((m: SourceMessage) => {
     const newId = crypto.randomUUID() // Stable id so we can remap parent_id in one insert
     idMap.set(m.id, newId) // Record mapping
     const status =

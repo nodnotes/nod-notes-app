@@ -113,7 +113,7 @@ export function ThreadActionsMenu({
     return watchMenuSafeRect(place)
   }, [x, y, openSubmenu, edgeId, sourceId, targetId])
 
-  // FigJam-shaped list, product terms (thread / frame), Thinktable row chrome
+  // FigJam-shaped list, product terms (thread / frame), NodNotes row chrome
   const rows: RowDef[] = [
     {
       kind: 'action',

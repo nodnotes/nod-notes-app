@@ -12,7 +12,7 @@ export function WelcomeText() {
 
   // Phrases to rotate through
   const phrases = [
-    'Welcome to ThinkTable!',
+    'Welcome to Nod Notes!',
     'Think outside the box.',
     'Organize your thoughts.',
     'Think for yourself.',

@@ -3,10 +3,12 @@
 // Fix viewport height for mobile Safari/iPad
 // Updates CSS variable --vh when viewport height changes (address bar show/hide)
 import { useLayoutEffect } from 'react'
+import { migrateNodNotesStorageKeys } from '@/lib/nodnotes-storage-migrate'
 
 export function ViewportHeightFix() {
   // useLayoutEffect: set --vh before paint so board chrome (minimap/nav/brand) doesn't start high then jump
   useLayoutEffect(() => {
+    migrateNodNotesStorageKeys()
     function setViewportHeight() {
       // Calculate 1% of actual viewport height
       const vh = window.innerHeight * 0.01

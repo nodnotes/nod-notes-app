@@ -1,10 +1,10 @@
 # Remote Supabase migration/version snapshot
 # project_ref=yhsyhtnnklpkfcpydbst
-# project_name=thinkable
+# project_name=nod-notes
 # snapped_at=2026-09-08T04:51:05Z
 # postgres=17.6.1.052 gotrue=v2.184.0 rest=v13.0.5 storage=v1.33.0
 # local_marker=20260908045105_shaped_frame_fill_border_colors (no DDL)
-# Remote applied (via Supabase MCP / Management API on thinkable):
+# Remote applied (via Supabase MCP / Management API on nod-notes):
 # 20251124231547 create_saas_schema
 # 20251124231600 fix_function_security
 # 20251204170108 create_panel_edges

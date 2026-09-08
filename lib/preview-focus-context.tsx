@@ -14,9 +14,9 @@ import {
 } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
-export const PREVIEW_STYLE_MESSAGE = 'thinktable-preview-style' // Host → iframe board style sync
-export const PREVIEW_READY_MESSAGE = 'thinktable-preview-ready' // Iframe → host when pan/zoom is live
-export const PREVIEW_RESIZE_MESSAGE = 'thinktable-preview-resize' // Host → iframe: container shown / size changed
+export const PREVIEW_STYLE_MESSAGE = 'nodnotes-preview-style' // Host → iframe board style sync
+export const PREVIEW_READY_MESSAGE = 'nodnotes-preview-ready' // Iframe → host when pan/zoom is live
+export const PREVIEW_RESIZE_MESSAGE = 'nodnotes-preview-resize' // Host → iframe: container shown / size changed
 
 type BoardRule = 'wide' | 'college' | 'narrow'
 type BoardStyle = 'none' | 'dotted' | 'lined' | 'grid'
@@ -64,7 +64,7 @@ async function persistBoardStyle(
     .eq('user_id', user.id)
 
   // Keep local prefs cache in sync for the next open
-  const storageKey = `thinktable-prefs-${pageId}`
+  const storageKey = `nodnotes-prefs-${pageId}`
   const local = JSON.parse(localStorage.getItem(storageKey) || '{}')
   localStorage.setItem(storageKey, JSON.stringify({ ...local, ...patch }))
 }

@@ -12,7 +12,7 @@ import { navigationZoom } from '@/lib/board-navigating' // Freeze preview mid-pi
 function preferredAlgorithm() {
   if (typeof window === 'undefined') return ThreadAlgorithm.BezierCatmullRom
   return threadAlgorithmFromStyle(
-    localStorage.getItem('thinktable-horizontal-line-style')
+    localStorage.getItem('nodnotes-horizontal-line-style')
   )
 }
 

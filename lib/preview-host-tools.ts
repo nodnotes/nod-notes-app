@@ -1,6 +1,6 @@
 import type { DrawTool } from '@/components/react-flow-context'
 
-export const PREVIEW_HOST_TOOLS_MESSAGE = 'thinktable-preview-host-tools'
+export const PREVIEW_HOST_TOOLS_MESSAGE = 'nodnotes-preview-host-tools'
 
 export type PreviewHostTools = {
   interactive: boolean // false = view-only thumbnail inside the preview shell

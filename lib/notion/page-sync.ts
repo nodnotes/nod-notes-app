@@ -74,7 +74,7 @@ async function appendPageChildren(
   }
 }
 
-/** Replace page body in Notion with HTML from Thinktable. */
+/** Replace page body in Notion with HTML from NodNotes. */
 export async function pushNotionPageBody(
   accessToken: string,
   pageId: string,

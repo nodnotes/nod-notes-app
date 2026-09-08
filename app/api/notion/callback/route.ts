@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
 
     const { error: upsertError } = await admin.from('notion_connections').upsert(
       {
-        user_id: user.id, // Thinktable owner
+        user_id: user.id, // NodNotes owner
         access_token: token.access_token, // Secret token
         refresh_token: token.refresh_token ?? null, // Optional refresh
         workspace_id: token.workspace_id ?? null, // Workspace id

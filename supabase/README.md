@@ -17,7 +17,7 @@ The database includes the following tables:
 
 See `migration-list.txt` + `schema-snapshot.md` for the full local/remote snapshot.
 
-Latest on thinkable (DDL):
+Latest on nod-notes (DDL):
 - `20260811225342_conversations_owner_select_for_insert_returning` (+ local `20260811225322_…`) — conversations SELECT/UPDATE allow owner `user_id` or share rank (INSERT…RETURNING)
 - `rename_page_to_board_share_and_ai` / remote `20260811223628_…` (+ local `20260811220510_…`) — `board_share_*`, `user_board_*` RPCs, `ai_threads.board_id`
 - `20260811103152_page_share_links_and_people` (+ local `20260811063000_…`) — original share tables (renamed above)
@@ -121,7 +121,7 @@ Earlier foundation:
 ## Project Information
 
 - **Project ID**: `yhsyhtnnklpkfcpydbst`
-- **Project Name**: thinkable
+- **Project Name**: nod-notes
 - **Region**: us-east-2
 - **Database Version**: PostgreSQL 17.6.1
 

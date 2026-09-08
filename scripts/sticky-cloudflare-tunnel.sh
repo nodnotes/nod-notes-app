@@ -2,14 +2,14 @@
 # Quick tunnel that survives Cursor agent shell abort (own process group).
 # Each run replaces any previous sticky (and agent-tied) quick tunnel.
 # Usage: scripts/sticky-cloudflare-tunnel.sh [port]
-# State: /tmp/thinktable-cloudflared.{pid,url,log}
+# State: /tmp/nodnotes-cloudflared.{pid,url,log}
 
 set -euo pipefail
 
 PORT="${1:-3031}"
-PIDFILE="/tmp/thinktable-cloudflared.pid"
-URLFILE="/tmp/thinktable-cloudflared.url"
-LOGFILE="/tmp/thinktable-cloudflared.log"
+PIDFILE="/tmp/nodnotes-cloudflared.pid"
+URLFILE="/tmp/nodnotes-cloudflared.url"
+LOGFILE="/tmp/nodnotes-cloudflared.log"
 MATCH='cloudflared tunnel --url http://localhost:'
 
 stop_cloudflared() {

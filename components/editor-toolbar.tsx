@@ -263,13 +263,13 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
   const [layoutForkAlign, setLayoutForkAlign] = useState<LayoutForkAlign>('center') // Single arrow, or left / center / right fork
   const [layoutLinkUi, setLayoutLinkUi] = useState({ linked: false, stacked: false }) // Magnet / stack toggles (independent of align/direction)
   useEffect(() => {
-    const saved = localStorage.getItem('thinktable-layout-fork-align') // Sticky across reload; UI-only until layout is wired
+    const saved = localStorage.getItem('nodnotes-layout-fork-align') // Sticky across reload; UI-only until layout is wired
     if (saved === 'single' || saved === 'left' || saved === 'center' || saved === 'right') setLayoutForkAlign(saved)
     // Legacy 'snap' was an align pick — magnet is now a separate toggle; keep default center
   }, [])
   const pickLayoutForkAlign = (next: LayoutForkAlign) => {
     setLayoutForkAlign(next) // Update the open menu + trigger icon
-    localStorage.setItem('thinktable-layout-fork-align', next) // Remember without waiting on board prefs
+    localStorage.setItem('nodnotes-layout-fork-align', next) // Remember without waiting on board prefs
   }
   
   // Handler to manage dropdown open state - closes other dropdowns when one opens
@@ -453,12 +453,12 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     if (typeof window === 'undefined') return
 
     // STEP 1: Load from localStorage FIRST (synchronous, instant) - ensures UI shows saved prefs immediately
-    const savedLineStyle = localStorage.getItem('thinktable-horizontal-line-style') as ThreadStylePref | null
+    const savedLineStyle = localStorage.getItem('nodnotes-horizontal-line-style') as ThreadStylePref | null
     if (savedLineStyle && ['curved', 'boxed', 'linear'].includes(savedLineStyle)) {
       setLineStyle(savedLineStyle)
     }
 
-    const savedEditMode = localStorage.getItem('thinktable-edit-mode') as 'editing' | 'suggesting' | 'viewing' | null
+    const savedEditMode = localStorage.getItem('nodnotes-edit-mode') as 'editing' | 'suggesting' | 'viewing' | null
     if (savedEditMode && ['editing', 'suggesting', 'viewing'].includes(savedEditMode)) {
       setEditMode(savedEditMode)
     }
@@ -485,12 +485,12 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
             // Update from Supabase if values exist (Supabase is source of truth for cross-device sync)
             if (prefs.horizontalLineStyle && ['curved', 'boxed', 'linear'].includes(prefs.horizontalLineStyle)) {
               setLineStyle(prefs.horizontalLineStyle)
-              localStorage.setItem('thinktable-horizontal-line-style', prefs.horizontalLineStyle)
+              localStorage.setItem('nodnotes-horizontal-line-style', prefs.horizontalLineStyle)
             }
 
             if (prefs.editMode && ['editing', 'suggesting', 'viewing'].includes(prefs.editMode)) {
               setEditMode(prefs.editMode)
-              localStorage.setItem('thinktable-edit-mode', prefs.editMode)
+              localStorage.setItem('nodnotes-edit-mode', prefs.editMode)
             }
           }
         }
@@ -505,12 +505,12 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     // Also reload when conversation is created (to maintain selections on new boards)
     const handleConversationCreated = async () => {
       // Load from localStorage first (instant)
-      const savedLineStyle = localStorage.getItem('thinktable-horizontal-line-style') as ThreadStylePref | null
+      const savedLineStyle = localStorage.getItem('nodnotes-horizontal-line-style') as ThreadStylePref | null
       if (savedLineStyle && ['curved', 'boxed', 'linear'].includes(savedLineStyle)) {
         setLineStyle(savedLineStyle)
       }
 
-      const savedEditMode = localStorage.getItem('thinktable-edit-mode') as 'editing' | 'suggesting' | 'viewing' | null
+      const savedEditMode = localStorage.getItem('nodnotes-edit-mode') as 'editing' | 'suggesting' | 'viewing' | null
       if (savedEditMode && ['editing', 'suggesting', 'viewing'].includes(savedEditMode)) {
         setEditMode(savedEditMode)
       }
@@ -535,12 +535,12 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
               // Update from Supabase if values exist
               if (prefs.horizontalLineStyle && ['curved', 'boxed', 'linear'].includes(prefs.horizontalLineStyle)) {
                 setLineStyle(prefs.horizontalLineStyle)
-                localStorage.setItem('thinktable-horizontal-line-style', prefs.horizontalLineStyle)
+                localStorage.setItem('nodnotes-horizontal-line-style', prefs.horizontalLineStyle)
               }
 
               if (prefs.editMode && ['editing', 'suggesting', 'viewing'].includes(prefs.editMode)) {
                 setEditMode(prefs.editMode)
-                localStorage.setItem('thinktable-edit-mode', prefs.editMode)
+                localStorage.setItem('nodnotes-edit-mode', prefs.editMode)
               }
             }
           }
@@ -565,7 +565,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     if (typeof window === 'undefined') return
 
     // Save to localStorage immediately (lightweight, instant)
-    localStorage.setItem('thinktable-horizontal-line-style', lineStyle)
+    localStorage.setItem('nodnotes-horizontal-line-style', lineStyle)
 
     // Save to Supabase in background (for cross-device sync)
     const saveToSupabase = async () => {
@@ -603,7 +603,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     if (typeof window === 'undefined') return
 
     // Save to localStorage immediately (lightweight, instant)
-    localStorage.setItem('thinktable-edit-mode', editMode)
+    localStorage.setItem('nodnotes-edit-mode', editMode)
 
     // Save to Supabase in background (for cross-device sync)
     const saveToSupabase = async () => {
@@ -1351,7 +1351,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
 
     window.addEventListener('resize', checkVisibility)
     const onNotionStatus = () => checkVisibility()
-    window.addEventListener('thinktable-notion-status', onNotionStatus)
+    window.addEventListener('nodnotes-notion-status', onNotionStatus)
 
     return () => {
       window.cancelAnimationFrame(raf1)
@@ -1360,7 +1360,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       resizeObserver.disconnect()
       attrObserver?.disconnect()
       window.removeEventListener('resize', checkVisibility)
-      window.removeEventListener('thinktable-notion-status', onNotionStatus)
+      window.removeEventListener('nodnotes-notion-status', onNotionStatus)
     }
   }, [editor, editMenuPillMode, boardSearchOpen, chatChromeReady, isChatSidebarOpen, isMobileMode, hasAiContent, aiTopBarPinned, setPhoneTools, setShareCompact]) // Re-run when the map column’s final width is known
 

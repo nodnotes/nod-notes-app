@@ -99,7 +99,7 @@ export type FrameLayoutEntry = {
 export type FrameLayoutCache = Record<string, FrameLayoutEntry>
 
 const layoutKey = (conversationId: string) =>
-  `thinktable-canvas-positions-${conversationId}` // Same key as before; values may include size / text flags
+  `nodnotes-canvas-positions-${conversationId}` // Same key as before; values may include size / text flags
 
 /** Read last-visit frame positions (and optional size / text flags). */
 export function readFrameLayoutCache(conversationId: string): FrameLayoutCache {

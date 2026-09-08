@@ -95,7 +95,7 @@ type FrameLastColor = {
   label: string
 }
 
-const FRAME_LAST_COLOR_KEY = 'thinktable-frame-last-color' // localStorage key
+const FRAME_LAST_COLOR_KEY = 'nodnotes-frame-last-color' // localStorage key
 
 /** Case-insensitive hex/empty match for active swatch highlighting. */
 function colorsMatch(a: string, b: string): boolean {

@@ -1,4 +1,4 @@
-// Map Notion database property types ↔ Thinktable propertyBlock cells (Convert layout → Card view).
+// Map Notion database property types ↔ NodNotes propertyBlock cells (Convert layout → Card view).
 
 import type { PropertyTypeId } from '@/lib/blocks/property' // Frame property cell kinds
 import { propertyBlockHtml } from '@/lib/tiptap/property-block-html' // Serialized property cell HTML (server-safe — no TipTap)
@@ -9,7 +9,7 @@ function escapeAttr(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
 }
 
-/** Notion API property type → Thinktable PropertyTypeId (best-effort). */
+/** Notion API property type → NodNotes PropertyTypeId (best-effort). */
 export function notionPropTypeToPropertyType(notionType: string): PropertyTypeId {
   switch (notionType) {
     case 'title':
@@ -74,7 +74,7 @@ export function propertyCellHtmlForNotion(
   cell: NotionDbCell | undefined,
   opts?: { inlineNames?: ReadonlySet<string> | null } // Names that stay inline when empty
 ): string {
-  const type = notionPropTypeToPropertyType(prop.type) // Map Notion → Thinktable type
+  const type = notionPropTypeToPropertyType(prop.type) // Map Notion → NodNotes type
   const value = notionCellDisplayValue(cell) // Plain value for the cell
   const inline = !!opts?.inlineNames?.has(prop.name) // Restored from prior card layout
   return propertyBlockHtml(type, value, {
@@ -104,7 +104,7 @@ export function allPropertyCellsHtml(
   return properties.map((p) => propertyCellHtmlForNotion(p, cells[p.name], opts)).join('')
 }
 
-/** Title-variant boardLink HTML for a row’s name → linked Thinktable board. */
+/** Title-variant boardLink HTML for a row’s name → linked NodNotes board. */
 export function rowBoardLinkHtml(opts: {
   boardId: string
   title: string

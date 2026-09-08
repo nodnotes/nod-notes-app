@@ -1,4 +1,4 @@
-// Fetch Notion block trees for a page (why: import page body into one Thinktable frame)
+// Fetch Notion block trees for a page (why: import page body into one NodNotes frame)
 
 import { NOTION_VERSION } from './config'
 

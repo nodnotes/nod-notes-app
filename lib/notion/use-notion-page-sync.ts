@@ -1,7 +1,7 @@
 'use client'
 
-// Connected frames always push Thinktable → Notion (debounced).
-// Notion → Thinktable is detect-only (notification UI designed later).
+// Connected frames always push NodNotes → Notion (debounced).
+// Notion → NodNotes is detect-only (notification UI designed later).
 
 import { useCallback, useEffect, useRef } from 'react'
 

@@ -29,7 +29,7 @@ export function buildNotionAuthorizeUrl(state: string): string {
     throw new Error('NOTION_CLIENT_ID is not configured') // Fail fast in start route
   }
   const params = new URLSearchParams({
-    client_id: clientId, // Identifies Thinktable's public connection
+    client_id: clientId, // Identifies NodNotes's public connection
     response_type: 'code', // OAuth authorization-code flow
     owner: 'user', // User-owned install (required by Notion public connections)
     redirect_uri: getNotionRedirectUri(), // Where Notion returns after page picker

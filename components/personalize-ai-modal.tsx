@@ -1,6 +1,6 @@
 'use client'
 
-// Personalize Thinktable AI — default mark is a hand-drawn T; saved PNG stays editable
+// Personalize Nod Notes AI — default mark is a hand-drawn N; saved PNG stays editable
 import {
   useCallback,
   useEffect,
@@ -18,12 +18,12 @@ import {
 import { cn } from '@/lib/utils'
 
 /** localStorage key for the custom logo drawing (PNG data URL) */
-export const TT_LOGO_DRAWING_STORAGE_KEY = 'thinktable-ai-logo-drawing'
+export const NN_LOGO_DRAWING_STORAGE_KEY = 'nodnotes-ai-logo-drawing'
 
 /** Legacy topper key — cleared on hydrate so old toppers do not linger */
-const TT_TOPPER_STORAGE_KEY_LEGACY = 'thinktable-ai-topper'
+const NN_TOPPER_STORAGE_KEY_LEGACY = 'nodnotes-ai-topper'
 
-/** Logo circle fill — matches public/thinktable-logo.svg .cls-1 */
+/** Logo circle fill — matches public/nod-notes-logo.svg .cls-1 */
 export const LOGO_CIRCLE_COLOR = '#a2a7af'
 
 /** AI sparkles fill — light blue (prompt-wash family) on every logo that shows stars */
@@ -38,19 +38,19 @@ const CANVAS_SIZE = 256
 /** Pen width presets in canvas pixels */
 const THICKNESSES = [4, 8, 14, 22] as const
 
-/** Marker weight for the default T — matches the filled logo bar at 256px */
-const DRAWN_T_WIDTH = 26
+/** Marker weight for the default N — matches the filled logo bar at 256px */
+const DRAWN_N_WIDTH = 26
 
-/** Crossbar: left → stem, slight sag so it reads as a pen stroke */
-const DRAWN_T_BAR = 'M 48 64 C 72 56, 94 72, 124 61'
+/** Left stem of the N */
+const DRAWN_N_LEFT = 'M 78 48 C 72 102, 78 152, 74 198'
 
-/** Stem: overlaps the bar, wobbles down the left-of-center column */
-const DRAWN_T_STEM = 'M 110 48 C 104 102, 118 152, 108 198'
+/** Diagonal stroke of the N */
+const DRAWN_N_DIAG = 'M 74 48 C 118 88, 132 130, 152 198'
 
-/** Small right hook at the stem foot (logo’s table-leg serif) */
-const DRAWN_T_FOOT = 'M 108 186 C 118 192, 134 194, 150 188'
+/** Right stem of the N */
+const DRAWN_N_RIGHT = 'M 152 48 C 158 102, 152 152, 156 198'
 
-/** Lumpy table-dot to the right of the stem (filled, not a perfect circle) */
+/** Lumpy nod-dot to the right (filled, not a perfect circle) */
 const DRAWN_DOT =
   'M 206 104 C 208 85, 194 69, 176 70 C 156 71, 144 90, 147 108 C 150 128, 168 140, 186 136 C 202 132, 206 118, 206 104 Z'
 
@@ -61,7 +61,7 @@ function clipLogoDisc(ctx: CanvasRenderingContext2D) {
   ctx.clip() // Keep marker inside the circle
 }
 
-/** Paint the default hand-drawn T + table-dot in white (disc already filled) */
+/** Paint the default hand-drawn N + nod-dot in white (disc already filled) */
 function strokeDefaultDrawnMark(ctx: CanvasRenderingContext2D) {
   ctx.save() // Restore clip + style after
   clipLogoDisc(ctx) // Stay inside the grey disc
@@ -69,11 +69,11 @@ function strokeDefaultDrawnMark(ctx: CanvasRenderingContext2D) {
   ctx.fillStyle = DRAW_WHITE // Dot is a filled blob
   ctx.lineCap = 'round' // Marker ends
   ctx.lineJoin = 'round' // Marker corners
-  ctx.lineWidth = DRAWN_T_WIDTH // T bar/stem weight
-  ctx.stroke(new Path2D(DRAWN_T_BAR)) // Crossbar
-  ctx.stroke(new Path2D(DRAWN_T_STEM)) // Vertical stem
-  ctx.stroke(new Path2D(DRAWN_T_FOOT)) // Foot hook
-  ctx.fill(new Path2D(DRAWN_DOT)) // Table-dot
+  ctx.lineWidth = DRAWN_N_WIDTH // N stroke weight
+  ctx.stroke(new Path2D(DRAWN_N_LEFT)) // Left stem
+  ctx.stroke(new Path2D(DRAWN_N_DIAG)) // Diagonal
+  ctx.stroke(new Path2D(DRAWN_N_RIGHT)) // Right stem
+  ctx.fill(new Path2D(DRAWN_DOT)) // Nod-dot
   ctx.restore() // Drop clip
 }
 
@@ -95,18 +95,18 @@ function DefaultDrawnLogoSvg({
       height={size}
       className={cn(onBoard && 'text-gray-900 dark:text-white', className)}
       role="img"
-      aria-label="Thinktable"
+      aria-label="Nod Notes"
     >
       <g
         fill="none"
         stroke={stroke}
         strokeLinecap="round"
         strokeLinejoin="round"
-        strokeWidth={DRAWN_T_WIDTH}
+        strokeWidth={DRAWN_N_WIDTH}
       >
-        <path d={DRAWN_T_BAR} />
-        <path d={DRAWN_T_STEM} />
-        <path d={DRAWN_T_FOOT} />
+        <path d={DRAWN_N_LEFT} />
+        <path d={DRAWN_N_DIAG} />
+        <path d={DRAWN_N_RIGHT} />
       </g>
       <path d={DRAWN_DOT} fill={stroke} />
     </svg>
@@ -117,14 +117,14 @@ function DefaultDrawnLogoSvg({
 export function getStoredLogoDrawing(): string | null {
   if (typeof window === 'undefined') return null
   try {
-    localStorage.removeItem(TT_TOPPER_STORAGE_KEY_LEGACY)
+    localStorage.removeItem(NN_TOPPER_STORAGE_KEY_LEGACY)
   } catch {
     // Ignore storage errors
   }
-  return localStorage.getItem(TT_LOGO_DRAWING_STORAGE_KEY)
+  return localStorage.getItem(NN_LOGO_DRAWING_STORAGE_KEY)
 }
 
-type ThinktableBrandMarkProps = {
+type NodNotesBrandMarkProps = {
   drawingUrl?: string | null // Saved composite PNG (solid circle + white strokes)
   size?: number
   className?: string
@@ -135,17 +135,17 @@ type ThinktableBrandMarkProps = {
 }
 
 /**
- * Brand mark — default hand-drawn T + table-dot, or a saved circle PNG.
+ * Brand mark — default hand-drawn N + nod-dot, or a saved circle PNG.
  * Solid circle behind the mark so any transparency still reads as the logo disc.
  * AI sparkles badge sits top-right with a white border (outside the disc clip).
  */
-export function ThinktableBrandMark({
+export function NodNotesBrandMark({
   drawingUrl = null,
   size = 56,
   className,
   discVariant = 'board',
   showAiStar = true,
-}: ThinktableBrandMarkProps) {
+}: NodNotesBrandMarkProps) {
   const badgeSize = Math.max(14, Math.round(size * 0.34)) // Scales with logo
   const onBoard = discVariant === 'board'
 
@@ -168,7 +168,7 @@ export function ThinktableBrandMark({
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={drawingUrl}
-            alt="Thinktable"
+            alt="Nod Notes"
             width={size}
             height={size}
             className="h-full w-full object-cover"
@@ -418,14 +418,14 @@ export function PersonalizeAiModal({
           '[&>button]:hidden'
         )}
       >
-        <DialogTitle className="sr-only">Personalize your Thinktable AI</DialogTitle>
+        <DialogTitle className="sr-only">Personalize your Nod Notes AI</DialogTitle>
         <DialogDescription className="sr-only">
           Draw on the solid logo circle; your image is saved and can be edited later
         </DialogDescription>
 
         <div className="relative flex items-center justify-center px-4 pt-4 pb-2">
           <h2 className="text-base font-semibold text-gray-100">
-            Personalize your Thinktable AI
+            Personalize your Nod Notes AI
           </h2>
           <button
             type="button"

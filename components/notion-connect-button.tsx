@@ -20,9 +20,9 @@ import { cn } from '@/lib/utils'
 import { useConnectionSyncPending } from '@/lib/notion/use-connection-sync-pending'
 
 /** localStorage — whether the connected Notion mark stays left of Share. */
-const TOPBAR_PIN_KEY = 'thinktable-notion-topbar-pinned'
+const TOPBAR_PIN_KEY = 'nodnotes-notion-topbar-pinned'
 /** localStorage — last-selected Notion workspace in the connection panel. */
-const ACTIVE_WORKSPACE_KEY = 'thinktable-notion-active-workspace-id'
+const ACTIVE_WORKSPACE_KEY = 'nodnotes-notion-active-workspace-id'
 
 export type NotionWorkspaceSummary = {
   workspaceId: string
@@ -166,7 +166,7 @@ export function NotionConnectProvider({ children }: { children: React.ReactNode 
           setActiveWorkspaceIdState(nextActive)
           if (nextActive) writeActiveWorkspaceId(nextActive)
         }
-        if (!cancelled) window.dispatchEvent(new CustomEvent('thinktable-notion-status')) // Top bar re-measures connection chrome
+        if (!cancelled) window.dispatchEvent(new CustomEvent('nodnotes-notion-status')) // Top bar re-measures connection chrome
       } catch {
         if (!cancelled) setStatus({ configured: false, connected: false }) // Offline / misconfig
       } finally {
@@ -269,7 +269,7 @@ export function NotionConnectProvider({ children }: { children: React.ReactNode 
           /* ignore */
         }
       }
-      window.dispatchEvent(new CustomEvent('thinktable-notion-status'))
+      window.dispatchEvent(new CustomEvent('nodnotes-notion-status'))
       if (!list.length) {
         setPickerOpen(false)
         setTopBarPinnedState(true)
@@ -303,8 +303,8 @@ export function NotionConnectProvider({ children }: { children: React.ReactNode 
       if (status?.connected) setPickerOpen(true)
       else startConnect()
     }
-    window.addEventListener('thinktable-open-notion-connect', onOpen)
-    return () => window.removeEventListener('thinktable-open-notion-connect', onOpen)
+    window.addEventListener('nodnotes-open-notion-connect', onOpen)
+    return () => window.removeEventListener('nodnotes-open-notion-connect', onOpen)
   }, [status?.connected, startConnect])
 
   const setActiveWorkspaceId = useCallback((workspaceId: string) => {

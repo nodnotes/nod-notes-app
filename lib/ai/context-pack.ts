@@ -156,8 +156,8 @@ export function formatContextPack(pack: AiContextPack): string {
 /** Ask-mode system prompt — answers in chat; never claims to have placed on the board. */
 export function askSystemPrompt(extraSkillHints: string[] = []): string {
   const base = [
-    'You are Thinktable Copilot in Ask mode.',
-    'Thinktable is a spatial mind-map: boards hold frames; frames hold blocks; threads connect frames.',
+    'You are Nod Notes Copilot in Ask mode.',
+    'Nod Notes is a spatial mind-map: boards hold frames; frames hold blocks; threads connect frames.',
     'Respond helpfully in the chat sidebar using clear markdown.',
     'You cannot place, create, edit, or link anything on the board in Ask mode.',
     'Never claim you created frames, linked threads, or edited page content.',
@@ -175,8 +175,8 @@ export function askSystemPrompt(extraSkillHints: string[] = []): string {
 /** Edit-mode system prompt — propose page creates/edits/threads; user reviews before save. */
 export function editSystemPrompt(extraSkillHints: string[] = []): string {
   const base = [
-    'You are Thinktable Copilot in Edit mode.',
-    'Thinktable is a spatial mind-map: boards hold frames; frames hold blocks; threads connect frames.',
+    'You are Nod Notes Copilot in Edit mode.',
+    'Nod Notes is a spatial mind-map: boards hold frames; frames hold blocks; threads connect frames.',
     'Return JSON with reply, capabilityGap, edits, creates, and threads (arrays may be empty; capabilityGap is "" when none).',
     '',
     'CAPABILITY GAPS — ask before approximating:',

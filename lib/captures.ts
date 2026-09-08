@@ -5,8 +5,8 @@ import { boardTitleOrDefault, DEFAULT_BOARD_TITLE } from '@/lib/board-title' // 
 import { boardRotationRef } from '@/lib/board-rotation' // Live camera heading at capture time
 import { readScrollModePreference } from '@/lib/capture-link' // Free-nav Scroll vs Zoom at capture time
 
-const CAPTURES_KEY = 'thinktable-board-captures' // localStorage: capture list
-const PRESENTATIONS_KEY = 'thinktable-board-presentations' // localStorage: presentation list
+const CAPTURES_KEY = 'nodnotes-board-captures' // localStorage: capture list
+const PRESENTATIONS_KEY = 'nodnotes-board-presentations' // localStorage: presentation list
 
 /** Saved camera/region of a board (timestamp + path + words). */
 export type BoardCapture = {

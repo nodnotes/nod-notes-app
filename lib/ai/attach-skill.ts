@@ -6,7 +6,7 @@ export type AiAttachSkillDetail = {
   prompt?: string
 }
 
-export const AI_ATTACH_SKILL_EVENT = 'thinktable-ai-attach-skill'
+export const AI_ATTACH_SKILL_EVENT = 'nodnotes-ai-attach-skill'
 
 /** Open chat, attach the skill, optionally seed the composer. */
 export function requestAiSkill(detail: AiAttachSkillDetail) {

@@ -4,13 +4,13 @@ import { setChatTurnSelected } from '@/lib/ai/chat-turn-selected'
 import { resolveChatTurnForBoardLink } from '@/lib/ai/chat-frame-link-cues'
 import type { ChatTurnSide } from '@/lib/ai/chat-board-links'
 
-/** Detail for thinktable-ai-open-chat-turn. */
+/** Detail for nodnotes-ai-open-chat-turn. */
 export type AiOpenChatTurnDetail = {
   threadId: string // ai_threads id that owns the turn
   messageId: string // ai_messages id to select
 }
 
-export const AI_OPEN_CHAT_TURN_EVENT = 'thinktable-ai-open-chat-turn'
+export const AI_OPEN_CHAT_TURN_EVENT = 'nodnotes-ai-open-chat-turn'
 
 /** Select the turn and ask ChatSidebar to open + scroll it into view. */
 export function requestOpenChatTurn(detail: AiOpenChatTurnDetail) {

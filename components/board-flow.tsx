@@ -170,7 +170,7 @@ import {
 } from '@/lib/preview-host-tools' // Host top bar → nested preview board tools
 import { BoardEmbedProvider } from '@/lib/board-embed-context' // Hide nested preview controls inside embed
 import { useBoardAccess } from '@/lib/share/board-access-context' // Shared view/comment → read-only map
-import { ThinktableBrandMark } from './personalize-ai-modal'
+import { NodNotesBrandMark } from './personalize-ai-modal'
 import { NavZoomControl } from './nav-zoom-control' // Zoom % lives in bottom nav (not top bar)
 import { NavRotateControl } from './nav-rotate-control' // Board rotate icon — right of zoom %
 import { BoardRotationProvider, useBoardRotation } from './board-rotation-context' // Two-finger twist + nav camera heading
@@ -696,14 +696,14 @@ function BoardFlowInner({
     const next = mode === 'linear' ? 'canvas' : mode
     setViewModeState(next)
     if (typeof window !== 'undefined') {
-      localStorage.setItem('thinktable-view-mode', next)
+      localStorage.setItem('nodnotes-view-mode', next)
     }
   }
   
   // Load linear navigation mode preference from localStorage
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('thinktable-linear-nav-mode')
+      const saved = localStorage.getItem('nodnotes-linear-nav-mode')
       if (saved === 'chat' || saved === 'all') {
         setLinearNavMode(saved)
       }
@@ -713,7 +713,7 @@ function BoardFlowInner({
   // Save linear navigation mode preference
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      localStorage.setItem('thinktable-linear-nav-mode', linearNavMode)
+      localStorage.setItem('nodnotes-linear-nav-mode', linearNavMode)
     }
   }, [linearNavMode])
   
@@ -766,19 +766,19 @@ function BoardFlowInner({
     if (typeof window === 'undefined') return
 
     // STEP 1: Load from localStorage FIRST (synchronous, instant) - ensures UI shows saved prefs immediately
-    const savedViewMode = localStorage.getItem('thinktable-view-mode') as 'linear' | 'canvas' | null
+    const savedViewMode = localStorage.getItem('nodnotes-view-mode') as 'linear' | 'canvas' | null
     if (savedViewMode === 'linear' || savedViewMode === 'canvas') {
       setViewMode(savedViewMode)
     }
 
-    const savedScrollMode = localStorage.getItem('thinktable-scroll-mode')
+    const savedScrollMode = localStorage.getItem('nodnotes-scroll-mode')
     if (savedScrollMode === 'true') {
       setIsScrollMode(true)
     } else if (savedScrollMode === 'false') {
       setIsScrollMode(false)
     }
 
-    const savedMinimapHidden = localStorage.getItem('thinktable-minimap-hidden')
+    const savedMinimapHidden = localStorage.getItem('nodnotes-minimap-hidden')
     if (savedMinimapHidden === 'true') {
       setIsMinimapHidden(true)
       setIsMinimapManuallyHidden(true)
@@ -808,18 +808,18 @@ function BoardFlowInner({
             // Only update if preferences haven't been loaded yet (to prevent conflicts)
             if (!preferencesLoadedRef.current && prefs.viewMode && ['linear', 'canvas'].includes(prefs.viewMode)) {
               setViewMode(prefs.viewMode)
-              localStorage.setItem('thinktable-view-mode', prefs.viewMode)
+              localStorage.setItem('nodnotes-view-mode', prefs.viewMode)
             }
 
             if (typeof prefs.isScrollMode === 'boolean') {
               setIsScrollMode(prefs.isScrollMode)
-              localStorage.setItem('thinktable-scroll-mode', String(prefs.isScrollMode))
+              localStorage.setItem('nodnotes-scroll-mode', String(prefs.isScrollMode))
             }
 
             if (typeof prefs.isMinimapHidden === 'boolean') {
               setIsMinimapHidden(prefs.isMinimapHidden)
               setIsMinimapManuallyHidden(prefs.isMinimapHidden)
-              localStorage.setItem('thinktable-minimap-hidden', String(prefs.isMinimapHidden))
+              localStorage.setItem('nodnotes-minimap-hidden', String(prefs.isMinimapHidden))
             }
           }
         }
@@ -865,18 +865,18 @@ function BoardFlowInner({
             // Load view mode from Supabase if available
             if (prefs.viewMode && ['linear', 'canvas'].includes(prefs.viewMode)) {
               setViewMode(prefs.viewMode)
-              localStorage.setItem('thinktable-view-mode', prefs.viewMode)
+              localStorage.setItem('nodnotes-view-mode', prefs.viewMode)
             }
 
             if (typeof prefs.isScrollMode === 'boolean') {
               setIsScrollMode(prefs.isScrollMode)
-              localStorage.setItem('thinktable-scroll-mode', String(prefs.isScrollMode))
+              localStorage.setItem('nodnotes-scroll-mode', String(prefs.isScrollMode))
             }
 
             if (typeof prefs.isMinimapHidden === 'boolean') {
               setIsMinimapHidden(prefs.isMinimapHidden)
               setIsMinimapManuallyHidden(prefs.isMinimapHidden)
-              localStorage.setItem('thinktable-minimap-hidden', String(prefs.isMinimapHidden))
+              localStorage.setItem('nodnotes-minimap-hidden', String(prefs.isMinimapHidden))
             }
           }
         }
@@ -887,20 +887,20 @@ function BoardFlowInner({
 
     // Load from localStorage first (instant) - only if preferences haven't been loaded yet
     if (!preferencesLoadedRef.current) {
-      const savedViewMode = localStorage.getItem('thinktable-view-mode') as 'linear' | 'canvas' | null
+      const savedViewMode = localStorage.getItem('nodnotes-view-mode') as 'linear' | 'canvas' | null
       if (savedViewMode && ['linear', 'canvas'].includes(savedViewMode)) {
         setViewMode(savedViewMode)
       }
     }
 
-    const savedScrollMode = localStorage.getItem('thinktable-scroll-mode')
+    const savedScrollMode = localStorage.getItem('nodnotes-scroll-mode')
     if (savedScrollMode === 'true') {
       setIsScrollMode(true)
     } else if (savedScrollMode === 'false') {
       setIsScrollMode(false)
     }
 
-    const savedMinimapHidden = localStorage.getItem('thinktable-minimap-hidden')
+    const savedMinimapHidden = localStorage.getItem('nodnotes-minimap-hidden')
     if (savedMinimapHidden === 'true') {
       setIsMinimapHidden(true)
       setIsMinimapManuallyHidden(true)
@@ -941,20 +941,20 @@ function BoardFlowInner({
             // Load view mode - only if preferences haven't been loaded yet
             if (prefs.viewMode && ['linear', 'canvas'].includes(prefs.viewMode)) {
               setViewMode(prefs.viewMode)
-              localStorage.setItem('thinktable-view-mode', prefs.viewMode)
+              localStorage.setItem('nodnotes-view-mode', prefs.viewMode)
             }
 
             // Load scroll mode
             if (typeof prefs.isScrollMode === 'boolean') {
               setIsScrollMode(prefs.isScrollMode)
-              localStorage.setItem('thinktable-scroll-mode', String(prefs.isScrollMode))
+              localStorage.setItem('nodnotes-scroll-mode', String(prefs.isScrollMode))
             }
 
             // Load minimap visibility
             if (typeof prefs.isMinimapHidden === 'boolean') {
               setIsMinimapHidden(prefs.isMinimapHidden)
               setIsMinimapManuallyHidden(prefs.isMinimapHidden)
-              localStorage.setItem('thinktable-minimap-hidden', String(prefs.isMinimapHidden))
+              localStorage.setItem('nodnotes-minimap-hidden', String(prefs.isMinimapHidden))
             }
 
             return // Successfully loaded from Supabase, skip localStorage fallback
@@ -966,19 +966,19 @@ function BoardFlowInner({
 
       // Fallback to localStorage - only if preferences haven't been loaded yet
       if (!preferencesLoadedRef.current) {
-        const savedScrollMode = localStorage.getItem('thinktable-scroll-mode')
+        const savedScrollMode = localStorage.getItem('nodnotes-scroll-mode')
         if (savedScrollMode === 'true') {
           setIsScrollMode(true)
         } else {
           setIsScrollMode(false)
         }
 
-        const savedViewMode = localStorage.getItem('thinktable-view-mode') as 'linear' | 'canvas' | null
+        const savedViewMode = localStorage.getItem('nodnotes-view-mode') as 'linear' | 'canvas' | null
         if (savedViewMode && ['linear', 'canvas'].includes(savedViewMode)) {
           setViewMode(savedViewMode)
         }
 
-        const savedMinimapHidden = localStorage.getItem('thinktable-minimap-hidden')
+        const savedMinimapHidden = localStorage.getItem('nodnotes-minimap-hidden')
         if (savedMinimapHidden === 'true') {
           setIsMinimapHidden(true)
           setIsMinimapManuallyHidden(true)
@@ -1942,18 +1942,18 @@ function BoardFlowInner({
     if (!conversationId || typeof window === 'undefined') return
 
     // Load from localStorage first (instant) - ensures UI shows saved prefs immediately
-    const savedLayoutMode = localStorage.getItem('thinktable-layout-mode') as 'auto' | 'tree' | 'cluster' | 'none' | null
+    const savedLayoutMode = localStorage.getItem('nodnotes-layout-mode') as 'auto' | 'tree' | 'cluster' | 'none' | null
     if (savedLayoutMode && ['auto', 'tree', 'cluster', 'none'].includes(savedLayoutMode)) {
       setLayoutMode(savedLayoutMode)
       setIsDeterministicMapping(savedLayoutMode !== 'none')
     }
 
-    const savedLineStyle = localStorage.getItem('thinktable-line-style') as 'solid' | 'dotted' | null
+    const savedLineStyle = localStorage.getItem('nodnotes-line-style') as 'solid' | 'dotted' | null
     if (savedLineStyle && ['solid', 'dotted'].includes(savedLineStyle)) {
       setLineStyle(savedLineStyle)
     }
 
-    const savedArrowDirection = localStorage.getItem('thinktable-arrow-direction') as 'down' | 'up' | 'left' | 'right' | null
+    const savedArrowDirection = localStorage.getItem('nodnotes-arrow-direction') as 'down' | 'up' | 'left' | 'right' | null
     if (savedArrowDirection && ['down', 'up', 'left', 'right'].includes(savedArrowDirection)) {
       setArrowDirection(savedArrowDirection)
     }
@@ -1981,17 +1981,17 @@ function BoardFlowInner({
             if (prefs.layoutMode && ['auto', 'tree', 'cluster', 'none'].includes(prefs.layoutMode)) {
               setLayoutMode(prefs.layoutMode)
               setIsDeterministicMapping(prefs.layoutMode !== 'none')
-              localStorage.setItem('thinktable-layout-mode', prefs.layoutMode)
+              localStorage.setItem('nodnotes-layout-mode', prefs.layoutMode)
             }
 
             if (prefs.lineStyle && ['solid', 'dotted'].includes(prefs.lineStyle)) {
               setLineStyle(prefs.lineStyle)
-              localStorage.setItem('thinktable-line-style', prefs.lineStyle)
+              localStorage.setItem('nodnotes-line-style', prefs.lineStyle)
             }
 
             if (prefs.arrowDirection && ['down', 'up', 'left', 'right'].includes(prefs.arrowDirection)) {
               setArrowDirection(prefs.arrowDirection)
-              localStorage.setItem('thinktable-arrow-direction', prefs.arrowDirection)
+              localStorage.setItem('nodnotes-arrow-direction', prefs.arrowDirection)
             }
           }
         }
@@ -2160,7 +2160,7 @@ function BoardFlowInner({
   // Sync from localStorage on first client render so nav bottom isn't wrong before effects run
   const [isMinimapHidden, setIsMinimapHidden] = useState(() => {
     if (typeof window === 'undefined') return false
-    return localStorage.getItem('thinktable-minimap-hidden') === 'true'
+    return localStorage.getItem('nodnotes-minimap-hidden') === 'true'
   })
   // Phone AI dock open (= Free nav "jumped"): minimap auto-closes but can still be peeked / pinned
   const phoneAiOpen = isMobileMode && isChatSidebarOpen
@@ -2402,8 +2402,8 @@ function BoardFlowInner({
     if (typeof window === 'undefined') return
 
     // Save to localStorage immediately (lightweight, instant)
-    localStorage.setItem('thinktable-view-mode', viewMode)
-    localStorage.setItem('thinktable-scroll-mode', String(isScrollMode))
+    localStorage.setItem('nodnotes-view-mode', viewMode)
+    localStorage.setItem('nodnotes-scroll-mode', String(isScrollMode))
 
     // Save to Supabase in background (for cross-device sync)
     const saveToSupabase = async () => {
@@ -2474,7 +2474,7 @@ function BoardFlowInner({
     if (typeof window === 'undefined') return
 
     // Save to localStorage immediately
-    localStorage.setItem('thinktable-minimap-hidden', String(isMinimapHidden))
+    localStorage.setItem('nodnotes-minimap-hidden', String(isMinimapHidden))
   }, [isMinimapHidden])
 
   // Sync minimap visibility with mode (only after loading is complete)
@@ -3832,7 +3832,7 @@ function BoardFlowInner({
               data: {
                 algorithm: threadAlgorithmFromStyle(
                   typeof window !== 'undefined'
-                    ? localStorage.getItem('thinktable-horizontal-line-style')
+                    ? localStorage.getItem('nodnotes-horizontal-line-style')
                     : null
                 ),
                 points: [],
@@ -4851,7 +4851,7 @@ function BoardFlowInner({
     if (target.scrollMode !== current.scrollMode) {
       setIsScrollMode(target.scrollMode)
       if (typeof window !== 'undefined') {
-        localStorage.setItem('thinktable-scroll-mode', String(target.scrollMode))
+        localStorage.setItem('nodnotes-scroll-mode', String(target.scrollMode))
       }
     }
     if (Math.abs(target.rotation - boardRotationRef.current) > 0.05) {
@@ -5022,7 +5022,7 @@ function BoardFlowInner({
       // Clear saved positions for this conversation
       if (typeof window !== 'undefined') {
         try {
-          localStorage.removeItem(`thinktable-canvas-positions-${conversationId}`)
+          localStorage.removeItem(`nodnotes-canvas-positions-${conversationId}`)
         } catch (error) {
           console.error('Failed to clear canvas positions from localStorage:', error)
         }
@@ -10077,7 +10077,7 @@ function BoardFlowInner({
               data: {
                 algorithm: threadAlgorithmFromStyle(
                   typeof window !== 'undefined'
-                    ? localStorage.getItem('thinktable-horizontal-line-style')
+                    ? localStorage.getItem('nodnotes-horizontal-line-style')
                     : null
                 ),
                 points: [],
@@ -10910,7 +10910,7 @@ function BoardFlowInner({
           title="Show chat"
           aria-label="Show chat sidebar"
         >
-          <ThinktableBrandMark drawingUrl={logoDrawing} size={42} />
+          <NodNotesBrandMark drawingUrl={logoDrawing} size={42} />
         </button>
       )}
 

@@ -7,7 +7,7 @@ import {
 } from '@/lib/notion/database-view'
 
 /** localStorage key — remembered checkbox picks for Card convert bring-along. */
-export const CARD_CONVERT_BRING_PREFS_KEY = 'thinktable-card-convert-bring-v3'
+export const CARD_CONVERT_BRING_PREFS_KEY = 'nodnotes-card-convert-bring-v3'
 
 export type CardConvertBringPrefs = {
   subRows: boolean // Bring nested children (default on)

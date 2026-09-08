@@ -27,7 +27,7 @@ async function prepareNotionAuthorize(request: NextRequest): Promise<
   const {
     data: { user },
     error: userError,
-  } = await supabase.auth.getUser() // Require signed-in Thinktable user
+  } = await supabase.auth.getUser() // Require signed-in NodNotes user
 
   if (userError || !user) {
     const loginUrl = new URL('/login', request.url) // Send anonymous users to login

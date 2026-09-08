@@ -1,4 +1,4 @@
-// Parse ChatGPT data-export conversations.json into Thinktable AI turns
+// Parse ChatGPT data-export conversations.json into NodNotes AI turns
 
 export type ParsedChatTurn = {
   role: 'user' | 'assistant' // Only user/assistant are imported

@@ -24,7 +24,7 @@ export default async function BoardLayout({
   // Always render the layout - handle all errors gracefully
   // Get user safely - if it fails, just render without sidebar
   const user = await getSafeUser()
-  const initialChatOpen = (await cookies()).get('thinktable-chat-sidebar-open')?.value === 'true' // Column already in first HTML
+  const initialChatOpen = (await cookies()).get('nodnotes-chat-sidebar-open')?.value === 'true' // Column already in first HTML
 
   // Always render - never throw errors
   return (

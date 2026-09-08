@@ -163,7 +163,7 @@ export function frameHasChromeProperties(
   return false
 }
 
-/** Notion connection sync — connected frames always live-sync Thinktable → Notion. */
+/** Notion connection sync — connected frames always live-sync NodNotes → Notion. */
 export type NotionSyncMode = 'live'
 
 /** Coerce stored metadata (legacy `manual` / `two-way` → `live`). */
@@ -176,7 +176,7 @@ export function isNotionAutoSync(_sync?: NotionSyncMode): boolean {
   return true
 }
 
-/** True when Thinktable edits should push to the Notion page body. */
+/** True when NodNotes edits should push to the Notion page body. */
 export function shouldPushNotionPage(_sync?: NotionSyncMode): boolean {
   return true
 }

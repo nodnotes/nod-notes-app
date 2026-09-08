@@ -1,8 +1,8 @@
 # Supabase schema snapshot
 
-- Project: `yhsyhtnnklpkfcpydbst` (thinkable)
+- Project: `yhsyhtnnklpkfcpydbst` (nod-notes)
 - Snapped at: `2026-09-08T04:51:05Z`
-- Source: local `supabase/migrations/` + remote applied tops (thinkable) + `.temp` service versions
+- Source: local `supabase/migrations/` + remote applied tops (nod-notes) + `.temp` service versions
 - Service versions (from `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.184.0`, rest `v13.0.5`, storage `v1.33.0`
 - CLI: `supabase` `2.90.0` (marker via `migration new`; newer CLI available)
 - Remote applied tops out at `20260811225342_conversations_owner_select_for_insert_returning`
@@ -35,7 +35,7 @@
 ## Prior: Notion page body live-sync
 
 - No DDL. Marker `20260905161311_notion_page_body_sync_ai_share_compact.sql`.
-- Notion imported **page body** live-sync Thinktable → Notion (`lib/notion/page-sync.ts`, `html-to-blocks.ts`, `useNotionPageBodySync`, `PUT /api/notion/page/[id]/content`); background Notion → Thinktable detect sets `metadata.notionUpdatesPending`.
+- Notion imported **page body** live-sync NodNotes → Notion (`lib/notion/page-sync.ts`, `html-to-blocks.ts`, `useNotionPageBodySync`, `PUT /api/notion/page/[id]/content`); background Notion → NodNotes detect sets `metadata.notionUpdatesPending`.
 - Connected frames always **Live Sync** — Manual sync mode removed (`normalizeNotionSyncMode`).
 - Pinned **AI sparkles** fold into board More on `shareCompact` (with copy/star); toolbar measure includes `data-top-bar-ai-origin`.
 - Chat header `h-[52px]`; empty-state `w-full min-w-0`; `ChatLoadStage` width; prompt bar waits for `chatChromeReady` + ResizeObserver on map/chat column.
@@ -193,7 +193,7 @@
 ## Prior: Brand mark board fill and theme strokes
 
 - No DDL. Marker `20260826170715_brand_mark_board_fill_theme_strokes.sql`.
-- Brand mark: board-fill disc + grey border; default T/dot **black (light) / white (dark)** (`components/personalize-ai-modal.tsx` `ThinktableBrandMark`).
+- Brand mark: board-fill disc + grey border; default T/dot **black (light) / white (dark)** (`components/personalize-ai-modal.tsx` `NodNotesBrandMark`).
 - Map chat toggle + chat sidebar share the same mark styling (`discVariant` board default).
 - Schema unchanged; remote applied still tops out at `20260811225342`.
 
@@ -355,7 +355,7 @@
 ## Prior: card convert bring collapsed stack
 
 - No DDL. Marker `20260818013815_card_convert_bring_collapsed_stack.sql`.
-- Nested/parent Card convert: **Bring related rows?** (sub-rows + parent rows, both default on; `thinktable-card-convert-bring-v3`); collapsed `sideStacks` pack (Stack under); peeled rows hidden from the live table; DB row gutter overflow + selected-DB pinch/zoom hygiene.
+- Nested/parent Card convert: **Bring related rows?** (sub-rows + parent rows, both default on; `nodnotes-card-convert-bring-v3`); collapsed `sideStacks` pack (Stack under); peeled rows hidden from the live table; DB row gutter overflow + selected-DB pinch/zoom hygiene.
 - Schema unchanged.
 
 ## Prior: board nav notion db widths subtasks
@@ -614,14 +614,14 @@
 
 ## Prior: conversations INSERT RETURNING RLS
 
-- **DDL (thinkable, applied via MCP):**
+- **DDL (nod-notes, applied via MCP):**
   - Local `20260811225322_conversations_owner_select_for_insert_returning.sql` ↔ remote `20260811225342_conversations_owner_select_for_insert_returning`
   - `conversations` SELECT/UPDATE RLS: allow `auth.uid() = user_id` **or** share rank (fixes INSERT…RETURNING when STABLE `user_board_role_rank` misses the new row)
 - App: linked-board content isolation (sole `boardLink` after Turn into Board; strip board name from child body; restore open-menu CSS; repair polluted frames)
 
 ## Prior: Page → Board rename
 
-- **DDL (thinkable, applied via MCP):**
+- **DDL (nod-notes, applied via MCP):**
   - Local `20260811220510_rename_page_to_board_share_and_ai.sql` ↔ remote `20260811223628_rename_page_to_board_share_and_ai`
   - `page_share_*` → `board_share_*` (tables, `board_id` columns, indexes, triggers, policies)
   - RPCs `user_page_access_role` / `user_page_role_rank` → `user_board_access_role` / `user_board_role_rank` (RLS policies updated)
@@ -630,7 +630,7 @@
 
 ## Prior: page share + side-stack snap polish
 
-- **DDL (thinkable, applied via MCP; local filenames differ):**
+- **DDL (nod-notes, applied via MCP; local filenames differ):**
   - Local `20260811063000_page_share_links_and_people.sql` ↔ remote `20260811103152_page_share_links_and_people`
   - Local `20260811070000_secure_page_share_access.sql` ↔ remote `20260811104322_secure_page_share_access` + `20260811104342_secure_page_share_rls_policies`
   - Tables/helpers: then `page_share_links`, `page_share_people`, hashed tokens, conversation-scoped RLS (renamed in this save)
@@ -670,7 +670,7 @@
 
 ## Prior: AI copilot foundation
 
-- **DDL** `20260810020000_ai_copilot_foundation.sql` applied on thinkable:
+- **DDL** `20260810020000_ai_copilot_foundation.sql` applied on nod-notes:
   - `ai_threads` — universal per-user sidebar chats (`board_id` filter association; was `page_id`)
   - `ai_messages` — Ask/Plan/Edit turns (never board frames)
   - `ai_context_snapshots` — reusable context packs
@@ -723,7 +723,7 @@
 ## Prior: card convert bring collapsed stack
 
 - No DDL. Marker `20260818013815_card_convert_bring_collapsed_stack.sql`.
-- Nested/parent Card convert: **Bring related rows?** (sub-rows + parent rows, both default on; `thinktable-card-convert-bring-v3`); collapsed `sideStacks` pack (Stack under); peeled rows hidden from the live table; DB row gutter overflow + selected-DB pinch/zoom hygiene.
+- Nested/parent Card convert: **Bring related rows?** (sub-rows + parent rows, both default on; `nodnotes-card-convert-bring-v3`); collapsed `sideStacks` pack (Stack under); peeled rows hidden from the live table; DB row gutter overflow + selected-DB pinch/zoom hygiene.
 - Schema unchanged.
 
 ## Prior: board nav notion db widths subtasks
@@ -982,14 +982,14 @@
 
 ## Prior: conversations INSERT RETURNING RLS
 
-- **DDL (thinkable, applied via MCP):**
+- **DDL (nod-notes, applied via MCP):**
   - Local `20260811225322_conversations_owner_select_for_insert_returning.sql` ↔ remote `20260811225342_conversations_owner_select_for_insert_returning`
   - `conversations` SELECT/UPDATE RLS: allow `auth.uid() = user_id` **or** share rank (fixes INSERT…RETURNING when STABLE `user_board_role_rank` misses the new row)
 - App: linked-board content isolation (sole `boardLink` after Turn into Board; strip board name from child body; restore open-menu CSS; repair polluted frames)
 
 ## Prior: Page → Board rename
 
-- **DDL (thinkable, applied via MCP):**
+- **DDL (nod-notes, applied via MCP):**
   - Local `20260811220510_rename_page_to_board_share_and_ai.sql` ↔ remote `20260811223628_rename_page_to_board_share_and_ai`
   - `page_share_*` → `board_share_*` (tables, `board_id` columns, indexes, triggers, policies)
   - RPCs `user_page_access_role` / `user_page_role_rank` → `user_board_access_role` / `user_board_role_rank` (RLS policies updated)
@@ -998,7 +998,7 @@
 
 ## Prior: page share + side-stack snap polish
 
-- **DDL (thinkable, applied via MCP; local filenames differ):**
+- **DDL (nod-notes, applied via MCP; local filenames differ):**
   - Local `20260811063000_page_share_links_and_people.sql` ↔ remote `20260811103152_page_share_links_and_people`
   - Local `20260811070000_secure_page_share_access.sql` ↔ remote `20260811104322_secure_page_share_access` + `20260811104342_secure_page_share_rls_policies`
   - Tables/helpers: then `page_share_links`, `page_share_people`, hashed tokens, conversation-scoped RLS (renamed in this save)
@@ -1038,7 +1038,7 @@
 
 ## Prior: AI copilot foundation
 
-- **DDL** `20260810020000_ai_copilot_foundation.sql` applied on thinkable:
+- **DDL** `20260810020000_ai_copilot_foundation.sql` applied on nod-notes:
   - `ai_threads` — universal per-user sidebar chats (`board_id` filter association; was `page_id`)
   - `ai_messages` — Ask/Plan/Edit turns (never board frames)
   - `ai_context_snapshots` — reusable context packs

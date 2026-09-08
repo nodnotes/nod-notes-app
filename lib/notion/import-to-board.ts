@@ -1,4 +1,4 @@
-// Import selected Notion pages onto a Thinktable page as boardLink frames (body on nested pages)
+// Import selected Notion pages onto a NodNotes page as boardLink frames (body on nested pages)
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { newBlockMetadata } from '@/lib/blocks'
@@ -45,7 +45,7 @@ function databaseBlockHtml(page: NotionSearchPage): string {
 
 /** Title-variant boardLink HTML — same chrome as local page blocks (icon + title + open menu). */
 function boardLinkHtml(opts: {
-  boardId: string // Thinktable child board id
+  boardId: string // NodNotes child board id
   title: string // Display label
   icon?: string | null // Emoji when Notion had one
 }): string {
@@ -159,7 +159,7 @@ export type ImportNotionResult = {
   importedCount: number // Newly created frames
   skippedCount: number // Already-linked Notion pages skipped
   pages: NotionSearchPage[] // Pages that were considered for import
-  nestedPageCount?: number // Child Thinktable pages created in the nav
+  nestedPageCount?: number // Child NodNotes pages created in the nav
 }
 
 function parseBoardIdFromReturnTo(returnTo: string): string | null {
@@ -267,7 +267,7 @@ function layoutPositions(
 }
 
 export async function importNotionPagesToBoard(opts: {
-  userId: string // Thinktable user
+  userId: string // NodNotes user
   accessToken: string // Notion OAuth token
   returnTo?: string // Path user started connect from
   workspaceName?: string | null // Optional board title seed
@@ -337,7 +337,7 @@ export async function importNotionPagesToBoard(opts: {
 
   // Fetch Notion trees for map frames + discover nested child_pages (their own boards, not inlined)
   const treesByNotionId = new Map<string, NotionBlock[]>() // notion id → block tree
-  const bodyPagesNeeded = new Map<string, NotionSearchPage>() // every page/DB that gets a Thinktable board
+  const bodyPagesNeeded = new Map<string, NotionSearchPage>() // every page/DB that gets a NodNotes board
   for (const page of framePages) {
     bodyPagesNeeded.set(normalizeNotionId(page.id), page)
   }
@@ -398,13 +398,13 @@ export async function importNotionPagesToBoard(opts: {
         notionObject: page.object, // page vs database
         notionUrl: page.url ?? null, // Deep link for Open in Notion
         notionIcon: page.icon ?? null, // Optional icon payload
-        isBoard: true, // Map frame links a nested Thinktable board
+        isBoard: true, // Map frame links a nested NodNotes board
         blockType: 'board', // Title boardLink chrome after patch
       }),
     }
   })
 
-  // notion id → inserted message id (for linking nested Thinktable boards)
+  // notion id → inserted message id (for linking nested NodNotes boards)
   const notionIdToMessageId = new Map<string, string>()
 
   if (rows.length > 0) {
@@ -487,13 +487,13 @@ export async function importNotionPagesToBoard(opts: {
     }
   }
 
-  // Create nested Thinktable boards (map frames + discovered child_pages) under the current board
+  // Create nested NodNotes boards (map frames + discovered child_pages) under the current board
   const { data: existingConvs } = await admin
     .from('conversations')
     .select('id, metadata')
     .eq('user_id', opts.userId)
 
-  const notionIdToConvId = new Map<string, string>() // Notion id → Thinktable board id
+  const notionIdToConvId = new Map<string, string>() // Notion id → NodNotes board id
   // Reuse existing boards already linked to these Notion pages
   for (const conv of existingConvs || []) {
     const meta = (conv.metadata as { notionPageId?: string } | null) || {}
@@ -525,11 +525,11 @@ export async function importNotionPagesToBoard(opts: {
 
     // Create a board only when we don't already have one for this Notion page
     if (!notionIdToConvId.has(nid)) {
-      // Resolve Thinktable parent: import board, or the board created for this Notion page's parent
+      // Resolve NodNotes parent: import board, or the board created for this Notion page's parent
       let parentId = conversationId
       const notionParent = notionParentKey(page)
       if (notionParent && notionIdToConvId.has(notionParent)) {
-        parentId = notionIdToConvId.get(notionParent)! // Nest under parent’s Thinktable board
+        parentId = notionIdToConvId.get(notionParent)! // Nest under parent’s NodNotes board
       }
 
       const iconMeta = page.icon

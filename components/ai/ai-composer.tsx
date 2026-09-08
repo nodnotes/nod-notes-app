@@ -722,7 +722,7 @@ export function AiComposer({
       btn.click()
       return
     }
-    window.dispatchEvent(new CustomEvent('thinktable-open-notion-connect'))
+    window.dispatchEvent(new CustomEvent('nodnotes-open-notion-connect'))
   }
 
   const selectableMode = mode === 'edit' ? 'edit' : 'ask'

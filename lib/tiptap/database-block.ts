@@ -46,7 +46,7 @@ export const DatabaseBlock = Node.create<DatabaseBlockOptions>({
         renderHTML: (attrs) => (attrs.url ? { 'data-url': attrs.url } : {}),
       },
       viewSettings: {
-        default: null, // JSON DatabaseViewSettings (Thinktable-owned view config)
+        default: null, // JSON DatabaseViewSettings (NodNotes-owned view config)
         parseHTML: (el) => (el as HTMLElement).getAttribute('data-view-settings') || null,
         renderHTML: (attrs) =>
           attrs.viewSettings ? { 'data-view-settings': attrs.viewSettings } : {},

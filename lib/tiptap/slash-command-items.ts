@@ -520,7 +520,7 @@ export const SLASH_COMMAND_ITEMS: SlashCommandItem[] = [
         badge: name === 'Google Docs' ? 'New' : undefined,
         preview:
           name === 'ZIP'
-            ? 'Bring data from other tools into Thinktable'
+            ? 'Bring data from other tools into Nod Notes'
             : `Import from ${name}`,
       }
     )

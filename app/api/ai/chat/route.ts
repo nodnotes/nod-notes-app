@@ -254,7 +254,7 @@ export async function POST(request: NextRequest) {
             response_format: {
               type: 'json_schema',
               json_schema: {
-                name: 'thinktable_edit_response',
+                name: 'nodnotes_edit_response',
                 strict: true,
                 schema: {
                   type: 'object',

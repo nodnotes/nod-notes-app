@@ -1,6 +1,6 @@
 // Pinned AI chats — local order hint for the thread picker (not persisted server-side yet)
 
-const PINNED_KEY = 'thinktable-pinned-ai-threads'
+const PINNED_KEY = 'nodnotes-pinned-ai-threads'
 
 export function getPinnedChatThreadIds(): Set<string> {
   if (typeof window === 'undefined') return new Set()

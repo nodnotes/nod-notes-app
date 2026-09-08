@@ -1,6 +1,6 @@
 'use client'
 
-// Editable Notion database with Thinktable view settings (layout / filter / sort / group / color / sub-tasks).
+// Editable Notion database with NodNotes view settings (layout / filter / sort / group / color / sub-tasks).
 
 import { useCallback, useEffect, useMemo, useRef, useState, memo, type CSSProperties } from 'react'
 import {
@@ -18,13 +18,13 @@ import {
   type NotionSyncDeleteStep,
 } from '@/components/notion-sync-delete-dialog'
 import {
-  hideRowThinktableOnly,
-  readThinktableHiddenRowIds,
-} from '@/lib/notion/thinktable-only-hidden-rows'
+  hideRowNodNotesOnly,
+  readNodNotesHiddenRowIds,
+} from '@/lib/notion/nod-notes-only-hidden-rows'
 import {
   cardedPageIdsFromMessages,
-  readPeeledNotionPageIds,
 } from '@/lib/notion/card-convert-bring'
+import { readPeeledNotionPageIds } from '@/lib/notion/row-to-card-client'
 import {
   applyEditToCell,
   NOTION_DB_CLIENT_ROW_CAP,
@@ -222,7 +222,7 @@ export function NotionDatabaseTableView({
     window.open(url, '_blank', 'noopener,noreferrer')
   }, [])
 
-  // Seed Thinktable view settings once when table data lands (cache hit or first fetch)
+  // Seed NodNotes view settings once when table data lands (cache hit or first fetch)
   useEffect(() => {
     if (!data) return
     const saved = parseViewSettings(viewSettingsJson)
@@ -371,7 +371,7 @@ export function NotionDatabaseTableView({
   )
 
   const hiddenRowIds = useMemo(
-    () => readThinktableHiddenRowIds(notionDatabaseId),
+    () => readNodNotesHiddenRowIds(notionDatabaseId),
     [notionDatabaseId, hiddenRowTick]
   )
 
@@ -399,9 +399,9 @@ export function NotionDatabaseTableView({
     [data?.rows, rowBusy]
   )
 
-  const removeRowThinktableOnly = useCallback(
+  const removeRowNodNotesOnly = useCallback(
     (pageId: string) => {
-      hideRowThinktableOnly(notionDatabaseId, pageId)
+      hideRowNodNotesOnly(notionDatabaseId, pageId)
       setHiddenRowTick((t) => t + 1)
       removeRowFromTable(pageId)
       setPendingDelete(null)
@@ -998,9 +998,9 @@ export function NotionDatabaseTableView({
         onOpenChange={(open) => {
           if (!open && !rowBusy) setPendingDelete(null)
         }}
-        onThinktableOnly={() => {
+        onNodNotesOnly={() => {
           if (!pendingDelete) return
-          removeRowThinktableOnly(pendingDelete.pageId)
+          removeRowNodNotesOnly(pendingDelete.pageId)
         }}
         onChooseNotion={() => {
           setPendingDelete((prev) => (prev ? { ...prev, step: 'confirm-notion' } : null))

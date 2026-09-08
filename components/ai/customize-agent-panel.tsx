@@ -10,7 +10,7 @@ import {
   Sparkles,
   Wrench,
 } from 'lucide-react' // Section + action glyphs
-import { ThinktableBrandMark } from '@/components/personalize-ai-modal' // Agent icon (top-left)
+import { NodNotesBrandMark } from '@/components/personalize-ai-modal' // Agent icon (top-left)
 import {
   AI_CONNECTORS,
   type AiConnector,
@@ -37,9 +37,9 @@ type CustomizeAgentPanelProps = {
   iconRevision?: number
 }
 
-/** True when the name is still a stock "(…) ThinkTable agent" label. */
+/** True when the name is still a stock "(…) Nod Notes agent" label. */
 function isDefaultWorkspaceLabel(name: string): boolean {
-  return /^\([^)]*\)\s*ThinkTable agent$/.test(name.trim()) // Stock pattern only
+  return /^\([^)]*\)\s*(Nod Notes|ThinkTable|Thinktable) agent$/.test(name.trim()) // Stock pattern (legacy + current)
 }
 
 /** Merge saved drafts with a guaranteed workspace default row. */
@@ -179,7 +179,7 @@ export function CustomizeAgentPanel({
           title="Personalize icon"
           aria-label="Personalize agent icon"
         >
-          <ThinktableBrandMark drawingUrl={iconUrl} size={40} showAiStar={false} />
+          <NodNotesBrandMark drawingUrl={iconUrl} size={40} showAiStar={false} />
         </button>
         <input
           type="text"
@@ -190,7 +190,7 @@ export function CustomizeAgentPanel({
             'text-gray-900 dark:text-gray-50 outline-none',
             'placeholder:text-gray-400'
           )}
-          placeholder="(workspace) ThinkTable agent"
+          placeholder="(workspace) Nod Notes agent"
           aria-label="Agent name"
         />
         <button

@@ -78,8 +78,8 @@ export function PreviewMinimap({
     }
 
     const zoomAndPanHandler = zoom<SVGSVGElement, unknown>()
-      .on('zoom', onPan ? panHandler : null)
-      .on('zoom.wheel', onWheelZoom ? wheelHandler : null)
+    if (onPan) zoomAndPanHandler.on('zoom', panHandler)
+    if (onWheelZoom) zoomAndPanHandler.on('zoom.wheel', wheelHandler)
 
     selection.call(zoomAndPanHandler)
 

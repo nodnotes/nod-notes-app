@@ -11,13 +11,13 @@ import {
   useLayoutEffect,
   ReactNode,
 } from 'react'
-import { getStoredLogoDrawing, TT_LOGO_DRAWING_STORAGE_KEY } from './personalize-ai-modal'
+import { getStoredLogoDrawing, NN_LOGO_DRAWING_STORAGE_KEY } from './personalize-ai-modal'
 
 /** Default / minimum width of the right chat sidebar when open (Notion-like). */
 export const CHAT_SIDEBAR_WIDTH = 360
 
 /** localStorage — preferred chat column width (half-window clamp is display-only). */
-export const TT_CHAT_SIDEBAR_WIDTH_KEY = 'thinktable-chat-sidebar-width'
+export const NN_CHAT_SIDEBAR_WIDTH_KEY = 'nodnotes-chat-sidebar-width'
 
 /** Max chat width = half the window; never below the min (small windows can’t shrink the panel). */
 export function chatSidebarMaxWidth(windowWidth = typeof window !== 'undefined' ? window.innerWidth : 1200) {
@@ -37,7 +37,7 @@ function normalizePreferredChatWidth(width: number) {
 
 function getStoredChatSidebarWidth(): number {
   if (typeof window === 'undefined') return CHAT_SIDEBAR_WIDTH
-  const raw = localStorage.getItem(TT_CHAT_SIDEBAR_WIDTH_KEY)
+  const raw = localStorage.getItem(NN_CHAT_SIDEBAR_WIDTH_KEY)
   const n = raw ? Number(raw) : NaN
   if (!Number.isFinite(n)) return CHAT_SIDEBAR_WIDTH
   return normalizePreferredChatWidth(n) // Do not clamp to this window’s half — restore widens later
@@ -45,47 +45,47 @@ function getStoredChatSidebarWidth(): number {
 
 function persistChatSidebarWidth(width: number) {
   if (typeof window === 'undefined') return
-  localStorage.setItem(TT_CHAT_SIDEBAR_WIDTH_KEY, String(normalizePreferredChatWidth(width)))
+  localStorage.setItem(NN_CHAT_SIDEBAR_WIDTH_KEY, String(normalizePreferredChatWidth(width)))
 }
 
 /** Viewport width below which chat uses the phone map dock (not the desktop column). */
 export const PHONE_LAYOUT_MAX_WIDTH = 768
 
 /** localStorage + cookie key — reopen chat column after reload when it was open. */
-export const TT_CHAT_SIDEBAR_OPEN_KEY = 'thinktable-chat-sidebar-open'
+export const NN_CHAT_SIDEBAR_OPEN_KEY = 'nodnotes-chat-sidebar-open'
 
 /** Cookie twin of the localStorage flag so SSR can paint the column already open. */
-export const TT_CHAT_SIDEBAR_COOKIE = 'thinktable-chat-sidebar-open'
+export const NN_CHAT_SIDEBAR_COOKIE = 'nodnotes-chat-sidebar-open'
 
 /** Read whether chat was open last session (SSR-safe → false). */
 function getStoredChatSidebarOpen(): boolean {
   if (typeof window === 'undefined') return false // SSR: stay closed until client
-  return localStorage.getItem(TT_CHAT_SIDEBAR_OPEN_KEY) === 'true' // Persist open across reload
+  return localStorage.getItem(NN_CHAT_SIDEBAR_OPEN_KEY) === 'true' // Persist open across reload
 }
 
 /** Persist chat open/closed so reload restores the column (localStorage + cookie for SSR). */
 function persistChatSidebarOpen(open: boolean) {
   if (typeof window === 'undefined') return // No storage on server
-  localStorage.setItem(TT_CHAT_SIDEBAR_OPEN_KEY, open ? 'true' : 'false') // Client restore
-  document.cookie = `${TT_CHAT_SIDEBAR_COOKIE}=${open ? 'true' : 'false'}; Path=/; Max-Age=31536000; SameSite=Lax` // First HTML paint
+  localStorage.setItem(NN_CHAT_SIDEBAR_OPEN_KEY, open ? 'true' : 'false') // Client restore
+  document.cookie = `${NN_CHAT_SIDEBAR_COOKIE}=${open ? 'true' : 'false'}; Path=/; Max-Age=31536000; SameSite=Lax` // First HTML paint
 }
 
 /** localStorage key — restore the same AI thread after reload. */
-export const TT_CHAT_THREAD_ID_KEY = 'thinktable-chat-thread-id'
+export const NN_CHAT_THREAD_ID_KEY = 'nodnotes-chat-thread-id'
 
 /** localStorage — click-pinned boards nav so reload keeps the menu open. */
-export const TT_BOARDS_NAV_PINNED_KEY = 'thinktable-boards-nav-pinned'
+export const NN_BOARDS_NAV_PINNED_KEY = 'nodnotes-boards-nav-pinned'
 
 /** Read whether the boards nav was click-pinned (SSR-safe → closed). */
 function getStoredBoardsNavPinned(): boolean {
   if (typeof window === 'undefined') return false // Server: stay closed until client
-  return localStorage.getItem(TT_BOARDS_NAV_PINNED_KEY) === 'true' // Persist pin across reload
+  return localStorage.getItem(NN_BOARDS_NAV_PINNED_KEY) === 'true' // Persist pin across reload
 }
 
 /** Remember boards-nav pin so reload restores the popup. */
 function persistBoardsNavPinned(pinned: boolean) {
   if (typeof window === 'undefined') return // No storage on server
-  localStorage.setItem(TT_BOARDS_NAV_PINNED_KEY, pinned ? 'true' : 'false') // Client restore
+  localStorage.setItem(NN_BOARDS_NAV_PINNED_KEY, pinned ? 'true' : 'false') // Client restore
 }
 
 interface SidebarContextType {
@@ -208,8 +208,8 @@ export function SidebarContextProvider({
   const setLogoDrawing = useCallback((url: string | null) => {
     setLogoDrawingState(url) // Sync map open icon + chat brand mark
     if (typeof window === 'undefined') return
-    if (url) localStorage.setItem(TT_LOGO_DRAWING_STORAGE_KEY, url)
-    else localStorage.removeItem(TT_LOGO_DRAWING_STORAGE_KEY)
+    if (url) localStorage.setItem(NN_LOGO_DRAWING_STORAGE_KEY, url)
+    else localStorage.removeItem(NN_LOGO_DRAWING_STORAGE_KEY)
   }, [])
 
   const cancelCloseSidebar = useCallback(() => {

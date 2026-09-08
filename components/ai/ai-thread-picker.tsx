@@ -247,7 +247,7 @@ export function AiThreadPicker({
                       setFilterOpen((v) => !v)
                     }}
                   >
-                    <ListFilter className="h-5 w-5 text-gray-500 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-gray-100 transition-colors" />
+                    <ListFilter className="h-4 w-4 text-gray-500 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-gray-100 transition-colors" />
                   </Button>
                   {filterOpen && (
                     <div className="absolute right-0 top-full z-50 mt-0.5 min-w-[9.5rem] overflow-hidden rounded-md border border-gray-200 dark:border-[#2f2f2f] bg-white dark:bg-[#171717] py-1 shadow-md">

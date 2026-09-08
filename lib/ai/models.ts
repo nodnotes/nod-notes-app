@@ -57,7 +57,7 @@ export const AI_MODELS: AiModel[] = [
   },
 ]
 
-export const TT_AI_MODEL_KEY = 'thinktable-ai-model-id'
+export const NN_AI_MODEL_KEY = 'nodnotes-ai-model-id'
 
 export function getAiModel(id: string): AiModel {
   return AI_MODELS.find((m) => m.id === id) ?? AI_MODELS[0]
@@ -74,7 +74,7 @@ export function resolveOpenAiModel(id: string): string {
 export function loadAiModelId(): AiModelId {
   if (typeof window === 'undefined') return 'auto'
   try {
-    const raw = localStorage.getItem(TT_AI_MODEL_KEY)
+    const raw = localStorage.getItem(NN_AI_MODEL_KEY)
     return raw && isAiModelId(raw) ? raw : 'auto'
   } catch {
     return 'auto'
@@ -84,7 +84,7 @@ export function loadAiModelId(): AiModelId {
 export function saveAiModelId(id: AiModelId): void {
   if (typeof window === 'undefined') return
   try {
-    localStorage.setItem(TT_AI_MODEL_KEY, id)
+    localStorage.setItem(NN_AI_MODEL_KEY, id)
   } catch {
     // Quota / private mode
   }

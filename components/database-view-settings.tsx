@@ -1,7 +1,7 @@
 'use client'
 
 // Database view settings panel — layout, property visibility/order, filter, sort,
-// group, conditional color, sub-tasks. Thinktable chrome (not a Notion pixel clone).
+// group, conditional color, sub-tasks. NodNotes chrome (not a Notion pixel clone).
 
 import { memo, useMemo, useState } from 'react'
 import {

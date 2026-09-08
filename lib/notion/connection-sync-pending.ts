@@ -1,4 +1,4 @@
-// Whether any frame on a board has pending Notion → Thinktable updates.
+// Whether any frame on a board has pending Notion → NodNotes updates.
 
 import type { QueryClient } from '@tanstack/react-query'
 

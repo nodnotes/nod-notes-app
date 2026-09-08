@@ -1,4 +1,4 @@
-// Barrel export for Thinktable AI foundation
+// Barrel export for NodNotes AI foundation
 export * from './modes'
 export * from './skills'
 export * from './agents'

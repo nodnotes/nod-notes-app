@@ -1,13 +1,13 @@
 'use client'
 
-// Full-height right chat column — Thinktable AI copilot (Ask in sidebar; drag blocks onto page)
+// Full-height right chat column — NodNotes AI copilot (Ask in sidebar; drag blocks onto page)
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react' // Hooks + seam drag types
 import { createPortal } from 'react-dom' // Phone dock must paint on the map, not inside clipped main
 import {
   useSidebarContext,
-  TT_CHAT_THREAD_ID_KEY,
+  NN_CHAT_THREAD_ID_KEY,
 } from './sidebar-context' // Open state + logo + thread persist key + resizable width
-import { ThinktableBrandMark, PersonalizeAiModal } from './personalize-ai-modal' // Brand
+import { NodNotesBrandMark, PersonalizeAiModal } from './personalize-ai-modal' // Brand
 import { AiThreadPicker } from './ai/ai-thread-picker' // History
 import { AiTranscript } from './ai/ai-transcript' // Turns
 import { CustomizeAgentPanel } from './ai/customize-agent-panel' // Brand → customize agent
@@ -65,8 +65,8 @@ interface ChatSidebarProps {
 /** Write / clear the active thread id so reload restores the same chat. */
 function persistActiveThreadId(threadId: string | null) {
   if (typeof window === 'undefined') return // No storage on server
-  if (threadId) localStorage.setItem(TT_CHAT_THREAD_ID_KEY, threadId) // Remember thread
-  else localStorage.removeItem(TT_CHAT_THREAD_ID_KEY) // New chat / cleared
+  if (threadId) localStorage.setItem(NN_CHAT_THREAD_ID_KEY, threadId) // Remember thread
+  else localStorage.removeItem(NN_CHAT_THREAD_ID_KEY) // New chat / cleared
 }
 
 /**
@@ -478,7 +478,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
       setThreadHydrated(true) // Nothing to restore on server
       return
     }
-    const storedId = localStorage.getItem(TT_CHAT_THREAD_ID_KEY) // Last thread id
+    const storedId = localStorage.getItem(NN_CHAT_THREAD_ID_KEY) // Last thread id
     if (!storedId) {
       setThreadHydrated(true) // No saved chat — allow later persists
       return
@@ -1146,11 +1146,11 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                   type="button"
                   onClick={openCustomize}
                   className="relative z-10 flex-shrink-0 rounded-full overflow-visible focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 opacity-90 hover:opacity-100 transition-opacity"
-                  title="Customize Thinktable AI"
-                  aria-label="Customize Thinktable AI"
+                  title="Customize Nod Notes AI"
+                  aria-label="Customize Nod Notes AI"
                 >
                   {/* Open chat: sparkles on (same light blue as map toggle) */}
-                  <ThinktableBrandMark drawingUrl={logoDrawing} size={28} showAiStar />
+                  <NodNotesBrandMark drawingUrl={logoDrawing} size={28} showAiStar />
                 </button>
                 <div className="flex-1 min-w-0 overflow-hidden bg-transparent">
                   <AiThreadPicker
@@ -1242,11 +1242,11 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                 type="button"
                 onClick={openCustomize}
                 className="relative z-10 flex-shrink-0 rounded-full overflow-visible focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 opacity-90 hover:opacity-100 transition-opacity"
-                title="Customize Thinktable AI"
-                aria-label="Customize Thinktable AI"
+                title="Customize Nod Notes AI"
+                aria-label="Customize Nod Notes AI"
               >
                 {/* Open chat: sparkles on (same light blue as map toggle) */}
-                <ThinktableBrandMark drawingUrl={logoDrawing} size={28} showAiStar />
+                <NodNotesBrandMark drawingUrl={logoDrawing} size={28} showAiStar />
               </button>
             )}
             <div className="min-w-0 flex-1 overflow-hidden">
@@ -1306,11 +1306,11 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                     type="button"
                     onClick={openCustomize}
                     className="relative z-10 rounded-full overflow-visible focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50"
-                    title="Customize Thinktable AI"
-                    aria-label="Customize Thinktable AI"
+                    title="Customize Nod Notes AI"
+                    aria-label="Customize Nod Notes AI"
                   >
                     {/* Open chat empty state: sparkles on (same light blue as map toggle) */}
-                    <ThinktableBrandMark drawingUrl={logoDrawing} size={52} showAiStar />
+                    <NodNotesBrandMark drawingUrl={logoDrawing} size={52} showAiStar />
                   </button>
                   <button
                     type="button"

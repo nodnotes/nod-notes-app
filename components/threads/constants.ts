@@ -13,7 +13,7 @@ export const THREAD_SELECTED_COLOR = '#0375ff'
 export const THREAD_DEFAULT_COLOR = '#6b7280' // gray-500
 
 /** localStorage key for the Style-bar Thread color board default. */
-export const THREAD_STROKE_COLOR_KEY = 'thinktable-thread-stroke-color'
+export const THREAD_STROKE_COLOR_KEY = 'nodnotes-thread-stroke-color'
 
 /** Notion-style stroke swatches for the Thread style color picker (empty = default gray). */
 export const THREAD_COLOR_SWATCHES = [
@@ -41,7 +41,7 @@ export const THREAD_DEFAULT_STROKE_WIDTH = 2
 /** Algorithm used for new threads. */
 export const DEFAULT_THREAD_ALGORITHM: ThreadAlgorithm = ThreadAlgorithm.BezierCatmullRom
 
-/** Toolbar thread style prefs (localStorage `thinktable-horizontal-line-style`). */
+/** Toolbar thread style prefs (localStorage `nodnotes-horizontal-line-style`). */
 export type ThreadStylePref = 'curved' | 'boxed' | 'linear'
 
 /** Map toolbar Smooth / Sharp / Linear → path algorithm. */

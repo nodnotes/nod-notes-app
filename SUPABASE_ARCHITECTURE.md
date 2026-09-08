@@ -7,10 +7,10 @@
 ### Recommended: Shared Supabase Project
 
 ```
-thinktable/
+nod-notes/
   apps/
-    web/              → Same Supabase project (thinktable-app)
-    backend/          → Same Supabase project (thinktable-app)
+    web/              → Same Supabase project (nod-notes-app)
+    backend/          → Same Supabase project (nod-notes-app)
   packages/
     map-engine/       → No Supabase config (library)
     design-system/    → No Supabase config (library)

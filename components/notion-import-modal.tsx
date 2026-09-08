@@ -100,7 +100,7 @@ const NOTION_CONNECTION_TYPES: Array<{
   },
 ]
 
-const PICKER_EXPANDED_KEY = 'thinktable-notion-import-picker-expanded'
+const PICKER_EXPANDED_KEY = 'nodnotes-notion-import-picker-expanded'
 
 function readSavedPickerExpanded(): Set<string> | null {
   if (typeof window === 'undefined') return null
@@ -771,7 +771,7 @@ export function NotionImportModal({
                 <p className="mt-1 text-gray-500">
                   {activeType === 'ai-connector'
                     ? 'Ink AI can use your connected workspace as a source for answers.'
-                    : 'Expose Thinktable tools to Ink AI through the MCP server connection.'}
+                    : 'Expose Nod Notes tools to Ink AI through the MCP server connection.'}
                 </p>
               </div>
             )}

@@ -1,6 +1,6 @@
-// Rows removed from Thinktable only (still live in Notion) — hide until user clears storage.
+// Rows removed from NodNotes only (still live in Notion) — hide until user clears storage.
 
-const STORAGE_KEY = 'thinktable-notion-hidden-rows'
+const STORAGE_KEY = 'nodnotes-notion-hidden-rows'
 
 function norm(id: string): string {
   return id.replace(/-/g, '').toLowerCase()
@@ -25,15 +25,15 @@ function writeMap(map: Record<string, string[]>): void {
   }
 }
 
-/** Page ids hidden for this database in Thinktable (not archived in Notion). */
-export function readThinktableHiddenRowIds(databaseId: string): Set<string> {
+/** Page ids hidden for this database in NodNotes (not archived in Notion). */
+export function readNodNotesHiddenRowIds(databaseId: string): Set<string> {
   const map = readMap()
   const list = map[norm(databaseId)] || []
   return new Set(list.map(norm))
 }
 
-/** Hide a row in Thinktable only — it may reappear if storage is cleared or on another device. */
-export function hideRowThinktableOnly(databaseId: string, pageId: string): void {
+/** Hide a row in NodNotes only — it may reappear if storage is cleared or on another device. */
+export function hideRowNodNotesOnly(databaseId: string, pageId: string): void {
   const key = norm(databaseId)
   const id = norm(pageId)
   const map = readMap()
@@ -44,7 +44,7 @@ export function hideRowThinktableOnly(databaseId: string, pageId: string): void 
 }
 
 /** Clear hidden rows for one database (e.g. after restoring from Notion). */
-export function clearThinktableHiddenRows(databaseId: string): void {
+export function clearNodNotesHiddenRows(databaseId: string): void {
   const map = readMap()
   delete map[norm(databaseId)]
   writeMap(map)

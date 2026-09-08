@@ -388,7 +388,7 @@ async function convertRowToCard(opts: ConvertDbLayoutOpts): Promise<ConvertDbLay
     admin,
     accessToken,
     userId,
-    cardsConversationId: boardId, // Same Thinktable board as the table
+    cardsConversationId: boardId, // Same NodNotes board as the table
     databaseId,
     dbTitle,
     table,

@@ -1,7 +1,7 @@
 import { getBoundsOfRects } from '@reactflow/core'
 
-export const PREVIEW_MINIMAP_STATE_MESSAGE = 'thinktable-preview-minimap-state'
-export const PREVIEW_MINIMAP_COMMAND_MESSAGE = 'thinktable-preview-minimap-command'
+export const PREVIEW_MINIMAP_STATE_MESSAGE = 'nodnotes-preview-minimap-state'
+export const PREVIEW_MINIMAP_COMMAND_MESSAGE = 'nodnotes-preview-minimap-command'
 
 export type PreviewMinimapNode = {
   id: string

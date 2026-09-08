@@ -13,6 +13,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { NodNotesWordmark } from '@/components/nod-notes-wordmark'
 
 // Homepage - displays public homepage board (read-only)
 // To edit: Navigate to /board/[homepage-board-id] as system user
@@ -51,15 +52,16 @@ export default function Home() {
       {/* Logo · Get started · menu (Help / Developer / Pricing) — phone + desktop */}
       <nav className="sticky top-0 z-50 h-[52px] bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 border-b border-border">
         <div className="container mx-auto h-full px-4 min-[900px]:px-6 flex justify-between items-center">
-          <Link href="/" className="opacity-80 hover:opacity-100 transition-opacity" aria-label="ThinkTable">
+          <Link href="/" className="flex items-center gap-2 opacity-90 hover:opacity-100 transition-opacity" aria-label="Nod Notes">
             <Image
-              src="/thinktable-logo.svg"
-              alt="ThinkTable"
+              src="/nod-notes-logo.svg"
+              alt=""
               width={24}
               height={24}
               className="h-6 w-6"
               priority
             />
+            <NodNotesWordmark sizeClass="text-lg min-[900px]:text-xl" />
           </Link>
 
           <div className="flex items-center gap-2">

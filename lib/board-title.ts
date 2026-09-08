@@ -1,4 +1,4 @@
-// Shared default name for a new Thinktable board (nav +, empty `/board`, untitled fallback).
+// Shared default name for a new NodNotes board (nav +, empty `/board`, untitled fallback).
 
 export const DEFAULT_BOARD_TITLE = 'New board' // Product default — not the app name, not Untitled
 

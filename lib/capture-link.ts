@@ -23,7 +23,7 @@ const ROT_EPS = 0.4 // degrees
 /** Read Free-nav Scroll vs Zoom from localStorage (default Scroll). */
 export function readScrollModePreference(): boolean {
   if (typeof window === 'undefined') return true
-  return localStorage.getItem('thinktable-scroll-mode') !== 'false'
+  return localStorage.getItem('nodnotes-scroll-mode') !== 'false'
 }
 
 /** Round floats for stable share URLs. */
