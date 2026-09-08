@@ -62,9 +62,15 @@ import {
   clearFrameTextEditActive,
   setFrameTextEditActive,
 } from '@/lib/frame-text-edit' // Select-before-caret: Delete removes frame until caret is placed
+import {
+  fillOriginFromFlowPosition,
+  flowPositionFromFillOrigin,
+  readFrameChromePad,
+} from '@/lib/frame-chrome-offset' // Fill-origin vs RF position when ⋮⋮ gutter is on
 import { readOnThread } from '@/lib/threads/on-thread-frame' // Compact chip layout for frames on threads
 import {
   deleteLinkedBoardForBlock,
+  frameHasChromeProperties,
   getLinkedBoardId,
   isBlockContentEmpty,
   isBlockMeta,
@@ -594,6 +600,7 @@ interface ChatPanelNodeData {
   // Readers normalize with parseFloat(String(...)); CSS borderWidth takes either.
   borderWeight?: string | number
   frameShape?: FrameShapeType | null // Silhouette when frames act as shapes
+  frameChromePad?: { x: number; y: number } // RF position shift while ⋮⋮ gutter is visible
 }
 
 interface ProjectBoardPanelNodeData {
@@ -3569,7 +3576,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const showDragBorderOnly = Boolean((dragging || manualDragNodeId === id) && isBlock)
   // Blue-box L/R gutters when selected. Property / connections strips paint INSIDE the fill,
   // so the blue box never reserves an empty band above or below the frame.
-  const showFrameChrome = Boolean(isBlock && (selected || dragging) && !isThreadConnecting)
+  // Full L/R gutters + RF position shift only when selected — not on unselected drag (showDragBorderOnly).
+  // Turning chrome on at drag-start used to shift RF position while d3 already had the grab point → jump.
+  const showFrameChrome = Boolean(isBlock && selected && !isThreadConnecting)
   // Screen-relative L/R gutter fits the ⋮⋮ (zoom comfort) — not × frameScale (that left empty
   // blue pad when grips counter-scaled). Grips use localGutter = adjustChromeX/chromeScale so
   // after contentFit CSS scale they still sit centered in this strip.
@@ -3597,26 +3606,26 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // jumped the frame (looked like the board slid) after phone pinch over DB tables.
   const frameChromeOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   useLayoutEffect(() => {
-    if (!isBlock) return
+    if (!isBlock || dragging) return // RF owns position during drag — never re-shift mid-gesture
     const wantX = showFrameChrome ? adjustChromeX : 0
     const wantY = showFrameChrome ? adjustChromeYTop : 0
     const prev = frameChromeOffsetRef.current
-    const wasOn = prev.x > 0 || prev.y > 0
-    const nowOn = wantX > 0 || wantY > 0
-    // Still selected (or still idle): zoom only resizes chrome visually — leave node put
-    if (wasOn === nowOn) return
-    const dx = wantX - prev.x
-    const dy = wantY - prev.y
-    if (dx === 0 && dy === 0) return
-    frameChromeOffsetRef.current = { x: wantX, y: wantY }
+    if (prev.x === wantX && prev.y === wantY) return
+
     const setNodesFunc = getSetNodes()
     if (!setNodesFunc) return
     setNodesFunc((nds: any[]) =>
-      nds.map((n) =>
-        n.id === id
-          ? { ...n, position: { x: n.position.x - dx, y: n.position.y - dy } }
-          : n
-      )
+      nds.map((n) => {
+        if (n.id !== id) return n
+        const applied = readFrameChromePad(n.data)
+        const fill = fillOriginFromFlowPosition(n.position, applied)
+        frameChromeOffsetRef.current = { x: wantX, y: wantY }
+        const nextPos = flowPositionFromFillOrigin(fill, { x: wantX, y: wantY })
+        const data = { ...(n.data || {}) }
+        if (wantX || wantY) data.frameChromePad = { x: wantX, y: wantY }
+        else delete data.frameChromePad
+        return { ...n, position: nextPos, data }
+      })
     )
     updateNodeInternals(id)
   }, [
@@ -3625,6 +3634,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     showFrameChrome,
     adjustChromeX,
     adjustChromeYTop,
+    dragging,
     getSetNodes,
     updateNodeInternals,
   ])
@@ -3633,17 +3643,20 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   useLayoutEffect(() => {
     if (!isBlock) return
     return () => {
-      const applied = frameChromeOffsetRef.current // Chrome still baked into RF position
-      if (applied.x === 0 && applied.y === 0) return
-      frameChromeOffsetRef.current = { x: 0, y: 0 } // Remount starts from fill origin
+      const baked = frameChromeOffsetRef.current
+      if (baked.x === 0 && baked.y === 0) return
+      frameChromeOffsetRef.current = { x: 0, y: 0 }
       const setNodesFunc = getSetNodes()
       if (!setNodesFunc) return
       setNodesFunc((nds: any[]) =>
-        nds.map((n) =>
-          n.id === id
-            ? { ...n, position: { x: n.position.x + applied.x, y: n.position.y + applied.y } }
-            : n
-        )
+        nds.map((n) => {
+          if (n.id !== id) return n
+          const pad = readFrameChromePad(n.data)
+          const fill = fillOriginFromFlowPosition(n.position, pad)
+          const data = { ...(n.data || {}) }
+          delete data.frameChromePad
+          return { ...n, position: fill, data }
+        })
       )
     }
   }, [isBlock, id, getSetNodes])
@@ -5832,6 +5845,19 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     const meta = (promptMessage?.metadata || {}) as Record<string, unknown>
     if (meta.linkedBoardId) return
     if (typeof meta.blockTitle === 'string' && meta.blockTitle.trim()) return
+    // Color, resize, shape, rotation, lock, or property type — keep the empty box
+    if (
+      frameHasChromeProperties(meta, {
+        fillColor: data.fillColor,
+        borderColor: data.borderColor,
+        borderStyle: data.borderStyle,
+        isUserResized,
+        frameShape,
+        rotation,
+      })
+    ) {
+      return
+    }
 
     // Must be exactly one empty textblock after prune (not captureLink / boardLink-only body)
     let soleEmpty = false
@@ -5860,6 +5886,12 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     isBoardBody,
     promptContent,
     promptMessage?.metadata,
+    data.fillColor,
+    data.borderColor,
+    data.borderStyle,
+    isUserResized,
+    frameShape,
+    rotation,
     id,
   ])
 
@@ -5915,7 +5947,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     showDragBorderOnly ||
     frameShape ||
     Math.abs(rotation) > 0.5 ||
-    (isBorderNone && !showEmptyFrameBorder)
+    isBorderNone ||
+    showEmptyFrameBorder // Grey empty outline is inset on the fill shell — not a panel border
       ? 0
       : 2 * (parseFloat(String(data.borderWeight)) || 1) // borderWeight is typed as a string ('2px')
   const unlockedInnerW = resizeDimensions
@@ -6443,7 +6476,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       !newContent ||
       newContent.trim() === '' ||
       newContent.trim() === '<p></p>'
-    const prevHasAtoms = hasFrameAtomHtml(prev) || !isBlockContentEmpty(prev)
+    const prevHasAtoms = hasFrameAtomHtml(prev) // boardLink / DB / property atoms only — not plain typed text
     const lostPropertyCells =
       countPropertyBlocks(prev) > 0 && countPropertyBlocks(newContent) < countPropertyBlocks(prev)
     const lostAtoms = hasFrameAtomHtml(prev) && !hasFrameAtomHtml(newContent)
@@ -7116,7 +7149,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             ? 'border-transparent'
             : selected
               ? 'border-blue-500 dark:border-blue-400'
-              : (data.borderColor || frameShape || showEmptyFrameBorder ? '' : 'border-transparent'), // Empty → grey via style; styled/shape → style; else transparent
+              : (data.borderColor || frameShape ? '' : 'border-transparent'), // Empty chrome → inset on fill; styled/shape → style
           isBookmarked
             ? 'shadow-[0_0_8px_rgba(250,204,21,0.6)] dark:shadow-[0_0_8px_rgba(250,204,21,0.4)]'
             : isBorderNone || frameShape || isContentRotated || showEmptyFrameBorder
@@ -7206,29 +7239,33 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           frameShape || isContentRotated || isBlock ? 'transparent' : panelBackgroundColor,
         borderColor:
           // Blue adjust / drag rect owns the outline — keep panel border off so chrome isn't inset
-          showAdjustFrame || showDragBorderOnly || frameShape || isContentRotated
+          showAdjustFrame ||
+          showDragBorderOnly ||
+          frameShape ||
+          isContentRotated ||
+          showEmptyFrameBorder
             ? 'transparent'
             : data.borderColor
               ? data.borderColor // Custom border when idle
-              : showEmptyFrameBorder
-                ? emptyFrameBorderColor // Thin grey outline for blank frames
-                : 'transparent',
+              : 'transparent',
         borderStyle:
           showAdjustFrame ||
           showDragBorderOnly ||
           frameShape ||
           isContentRotated ||
-          (isBorderNone && !showEmptyFrameBorder)
+          isBorderNone ||
+          showEmptyFrameBorder
             ? 'none'
-            : ((data.borderStyle as React.CSSProperties['borderStyle']) || 'solid'), // Color / empty chrome → solid
+            : ((data.borderStyle as React.CSSProperties['borderStyle']) || 'solid'), // Custom color → solid
         borderWidth:
           showAdjustFrame ||
           showDragBorderOnly ||
           frameShape ||
           isContentRotated ||
-          (isBorderNone && !showEmptyFrameBorder)
+          isBorderNone ||
+          showEmptyFrameBorder
             ? 0
-            : (data.borderWeight || 1), // 1px for empty chrome or when a border color is set
+            : (data.borderWeight || 1),
         ['--tt-frame-ui-scale' as string]: frameUiScale,
         ['--tt-frame-line-w' as string]: `${frameLineW}px`,
         ['--tt-frame-line-hit' as string]: `${frameLineHit}px`,
@@ -7738,7 +7775,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           backgroundColor: frameShape ? 'transparent' : responseAreaBackgroundColor || panelBackgroundColor,
           // Live radius: property cells sit inside CSS scale (6px grows); fill must match
           borderRadius: frameCornerRadius || undefined,
-          // Empty-frame outline on the fill shell (panel border is off while adjust chrome is on)
+          // Empty-frame outline on the fill shell (single rounded stroke — no panel border duplicate)
           boxShadow:
             showEmptyFrameBorder && !frameShape
               ? `inset 0 0 0 1px ${emptyFrameBorderColor}`

@@ -105,6 +105,7 @@ import {
   clearFrameTextEditActive,
   isFrameTextEditActive,
 } from '@/lib/frame-text-edit' // First-select Delete vs TipTap text edit
+import { readFrameChromePad } from '@/lib/frame-chrome-offset' // Persist fill-origin, not chrome-shifted RF xy
 import { takeBoardCapture, getCaptures, readCaptureCameraInput } from '@/lib/captures' // Board-menu Capture view
 import { captureLinkHtmlFromText } from '@/lib/capture-link-html' // I-bar paste → capture chip not raw URL
 import {
@@ -4924,6 +4925,7 @@ function BoardFlowInner({
           if (node.type === 'frameShimmer' || node.type === 'placeholder') return // Don’t persist load shells
           if (node.type !== 'chatPanel' && node.type !== 'blockGroup') return // Frames (+ legacy groups) only
           const abs = absFlowPosition(node, nodes) // Always page-absolute (grouped nodes are relative in RF)
+          const chromePad = readFrameChromePad(node.data)
           const data = node.data as ChatPanelNodeData | undefined
           const html = data?.promptMessage?.content
           const hasText = frameHasVisibleText(html)
@@ -4940,8 +4942,8 @@ function BoardFlowInner({
                 ? (node.style as { height: number }).height
                 : undefined
           layout[node.id] = {
-            x: abs.x,
-            y: abs.y,
+            x: abs.x + chromePad.x,
+            y: abs.y + chromePad.y,
             width: w,
             height: h,
             hasText,
@@ -4963,7 +4965,12 @@ function BoardFlowInner({
     if (nodes && Array.isArray(nodes) && nodes.length > 0) {
       // Update stored positions with current positions in both modes
       nodes.forEach((node) => {
-        originalPositionsRef.current.set(node.id, absFlowPosition(node, nodes)) // Cache absolute so reload doesn’t double-subtract group origin
+        const abs = absFlowPosition(node, nodes)
+        const pad = readFrameChromePad(node.data)
+        originalPositionsRef.current.set(node.id, {
+          x: abs.x + pad.x,
+          y: abs.y + pad.y,
+        }) // Fill-origin — chrome pad is not part of the saved anchor
       })
 
       // Save to localStorage (debounced) - works for both canvas and linear modes
@@ -5923,9 +5930,12 @@ function BoardFlowInner({
     }
 
     const handleWheel = (e: WheelEvent) => {
-      // Check if we're over the React Flow canvas
       const target = e.target as HTMLElement
-      const reactFlowElement = target.closest('.react-flow')
+      // Pre-frame I-bar chrome is positioned outside `.react-flow` — still board zoom/pan, not browser zoom
+      let reactFlowElement = target.closest('.react-flow') as HTMLElement | null
+      if (!reactFlowElement && target.closest('[data-tt-ibar-grip], [data-tt-ibar-chrome]')) {
+        reactFlowElement = document.querySelector('[data-board-root] .react-flow') as HTMLElement | null
+      }
       if (!reactFlowElement) {
         return
       }
@@ -10915,6 +10925,7 @@ function BoardFlowInner({
         >
           {({ left, top, paneScale }) => (
         <div
+          data-tt-ibar-chrome
           className="absolute flex items-start"
           style={{
             // Convert flow coordinates back to pane coordinates (rotation-aware); grip sits left of caret

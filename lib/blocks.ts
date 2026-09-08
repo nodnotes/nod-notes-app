@@ -2,6 +2,7 @@
 // A titled frame links to a child page. `isBlock` ≠ TipTap block. See DEFINITIONS.md.
 
 import type { SupabaseClient } from '@supabase/supabase-js' // Typed client for sync helpers
+import { parseFrameShape } from '@/lib/frame-shape' // Silhouette on frame metadata
 
 /** RF node id for a block-group message (`block-group-{messageId}`). */
 export function blockGroupNodeId(groupMessageId: string): string {
@@ -102,6 +103,64 @@ export function isBlockContentEmpty(content: string | undefined | null): boolean
     .replace(/\s+/g, ' ')
     .trim()
   return plain.length === 0
+}
+
+/** Live RF node / React state that may lead persisted metadata on the same gesture. */
+export type FrameChromeLive = {
+  fillColor?: string | null
+  borderColor?: string | null
+  borderStyle?: string | null
+  isUserResized?: boolean
+  frameShape?: unknown
+  rotation?: number
+}
+
+function hasFrameColorValue(value: unknown): boolean {
+  return typeof value === 'string' && value.trim() !== ''
+}
+
+/**
+ * True when the frame has user-set color, resize, shape, rotation, lock, or property type.
+ * Sole-empty frames with chrome stay on the board when deselected (unlike plain empty spawns).
+ */
+export function frameHasChromeProperties(
+  meta?: Record<string, unknown> | null,
+  live?: FrameChromeLive | null
+): boolean {
+  const m = meta || {}
+  const l = live || {}
+
+  if (hasFrameColorValue(l.fillColor ?? m.fillColor)) return true
+  if (hasFrameColorValue(l.borderColor ?? m.borderColor)) return true
+
+  const borderStyle = l.borderStyle ?? m.borderStyle
+  if (typeof borderStyle === 'string' && borderStyle !== '' && borderStyle !== 'none') return true
+
+  if (l.isUserResized) return true
+  const dims = m.resizeDimensions as { width?: number; height?: number } | null | undefined
+  if (
+    dims &&
+    typeof dims.width === 'number' &&
+    dims.width > 0 &&
+    typeof dims.height === 'number' &&
+    dims.height > 0
+  ) {
+    return true
+  }
+
+  if (parseFrameShape(l.frameShape ?? m.frameShape)) return true
+
+  const rot = typeof l.rotation === 'number' ? l.rotation : m.rotation
+  if (typeof rot === 'number' && Math.abs(rot) > 0.01) return true
+
+  if (m.frameUnlocked === true) return true
+  if (m.frameTextWrap === true) return true
+  if (typeof m.frameScale === 'number' && Math.abs(m.frameScale - 1) > 0.001) return true
+  if (m.unlockedFrameSize && typeof m.unlockedFrameSize === 'object') return true
+  if (typeof m.wrapColWidth === 'number' && m.wrapColWidth > 0) return true
+  if (typeof m.propertyType === 'string' && m.propertyType.trim() !== '') return true
+
+  return false
 }
 
 /** Notion connection sync — connected frames always live-sync Thinktable → Notion. */
