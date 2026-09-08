@@ -17,7 +17,7 @@ The database includes the following tables:
 
 See `migration-list.txt` + `schema-snapshot.md` for the full local/remote snapshot.
 
-Latest on nod-notes (DDL):
+Latest on Nod Notes (DDL):
 - `20260811225342_conversations_owner_select_for_insert_returning` (+ local `20260811225322_…`) — conversations SELECT/UPDATE allow owner `user_id` or share rank (INSERT…RETURNING)
 - `rename_page_to_board_share_and_ai` / remote `20260811223628_…` (+ local `20260811220510_…`) — `board_share_*`, `user_board_*` RPCs, `ai_threads.board_id`
 - `20260811103152_page_share_links_and_people` (+ local `20260811063000_…`) — original share tables (renamed above)
@@ -25,6 +25,7 @@ Latest on nod-notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260908063357_rebrand_nod_notes` — Rebrand ThinkTable → Nod Notes (product, GitHub org/repos, identifiers)
 - `20260908045105_shaped_frame_fill_border_colors` — Shaped frame SVG fill/border; softer preset borders; fit-to-text inflation; shape select chrome
 - `20260908041754_frame_empty_chrome_drag_fixes` — Empty frame backspace/clear; keep styled empty frames on deselect; single empty border; fill-origin chrome pad; fix select/drag jump
 - `20260906153208_ai_model_picker_chat_import_map_undo` — AI model picker; ChatGPT export import; thread picker panel; map undo/redo Supabase sync
@@ -121,7 +122,7 @@ Earlier foundation:
 ## Project Information
 
 - **Project ID**: `yhsyhtnnklpkfcpydbst`
-- **Project Name**: nod-notes
+- **Project Name**: Nod Notes
 - **Region**: us-east-2
 - **Database Version**: PostgreSQL 17.6.1
 

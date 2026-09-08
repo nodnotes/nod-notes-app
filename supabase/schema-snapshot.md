@@ -1,15 +1,21 @@
 # Supabase schema snapshot
 
-- Project: `yhsyhtnnklpkfcpydbst` (nod-notes)
-- Snapped at: `2026-09-08T04:51:05Z`
-- Source: local `supabase/migrations/` + remote applied tops (nod-notes) + `.temp` service versions
+- Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
+- Snapped at: `2026-09-08T06:34:02Z`
+- Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.184.0`, rest `v13.0.5`, storage `v1.33.0`
-- CLI: `supabase` `2.90.0` (marker via `migration new`; newer CLI available)
+- CLI: `supabase` `2.117.0`
 - Remote applied tops out at `20260811225342_conversations_owner_select_for_insert_returning`
 
 ## This save
 
-- DDL: none. Marker `20260908045105_shaped_frame_fill_border_colors.sql`.
+- DDL: none. Marker `20260908063357_rebrand_nod_notes.sql`.
+- **Rebrand**: ThinkTable → Nod Notes (wordmark, identifiers, GitHub `nodnotes` org/repos, Supabase project display name).
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: shaped frame fill/border
+
+- No DDL. Marker `20260908045105_shaped_frame_fill_border_colors.sql`.
 - **Shaped frame fill/border**: SVG silhouette fill (not rectangular CSS clip); softer preset borders via `lib/frame-colors.ts`; shape-aware fit-to-text inflation; centered text in silhouettes; blue SVG selection chrome while dragging shaped frames.
 - Schema unchanged; remote applied still tops out at `20260811225342`.
 
