@@ -20,6 +20,8 @@ const config = {
     extend: {
       fontFamily: {
         sans: ["var(--font-inter)", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "Helvetica Neue", "Arial", "sans-serif"],
+        "young-serif": ["var(--font-young-serif)", "Georgia", "serif"],
+        "notes-sans": ["var(--font-notes-sans)", "system-ui", "sans-serif"],
       },
       fontSize: {
         'xs': ['12px', { lineHeight: '1.5' }],

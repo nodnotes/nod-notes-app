@@ -1,0 +1,2 @@
+-- Homepage hero brand lockup: Young Serif + Plus Jakarta Sans, new icon mark.
+-- No DDL — schema unchanged; remote applied still tops out at 20260811225342.

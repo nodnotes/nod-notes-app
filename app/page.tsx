@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { Menu } from 'lucide-react'
 import { HomeBoardPreview } from '@/components/home-board-preview'
-import { NodNotesWordmark } from '@/components/nod-notes-wordmark'
+import { NodNotesIcon } from '@/components/nod-notes-icon'
 import { getResolvedShowcaseBoards } from '@/lib/public-showcase-boards'
 import {
   DropdownMenu,
@@ -18,22 +18,7 @@ export default function Home() {
       <nav className="sticky top-0 z-50 h-[52px] bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 border-b border-border">
         <div className="container mx-auto h-full px-4 min-[900px]:px-6 flex justify-between items-center gap-2">
           <Link href="/" className="opacity-90 hover:opacity-100 transition-opacity" aria-label="Nod Notes">
-            <svg
-              viewBox="0 0 106.13 105.51"
-              width={24}
-              height={24}
-              className="h-6 w-6 text-foreground"
-              aria-hidden
-            >
-              <path
-                fill="currentColor"
-                d="M79.57,52.24c-6.93,7.29-18.63,1.62-17.56-8.27.46-4.25,4.79-8.21,8.99-8.63,8.84-.89,14.98,10.17,8.57,16.9Z"
-              />
-              <path
-                fill="currentColor"
-                d="M62.28,71.24v11.2c-3.27.01-6.5.15-9.7-.61-7.33-1.76-12.24-7.5-12.85-15.03V31.06s-19.26,0-19.26,0v-10.52h30.2v44.48c0,2.39,2.5,6.22,5.12,6.22h6.49Z"
-              />
-            </svg>
+            <NodNotesIcon className="h-6 w-6" />
           </Link>
           <div className="flex items-center gap-2">
           <Link
@@ -69,36 +54,33 @@ export default function Home() {
       </nav>
 
       <main>
-        <section className="container mx-auto px-4 min-[900px]:px-6 py-16 min-[900px]:py-24 text-center">
-          <h1 className="text-4xl min-[900px]:text-5xl font-bold tracking-tight mb-4">
-            AI chat for visual mind mapping
-          </h1>
-          <div className="inline-flex items-center justify-center gap-0.5 mb-4">
-            <svg
-              viewBox="0 0 106.13 105.51"
-              width={48}
-              height={48}
-              className="h-11 w-11 min-[900px]:h-14 min-[900px]:w-14 text-foreground shrink-0"
-              aria-hidden
-            >
-              <path
-                fill="currentColor"
-                d="M79.57,52.24c-6.93,7.29-18.63,1.62-17.56-8.27.46-4.25,4.79-8.21,8.99-8.63,8.84-.89,14.98,10.17,8.57,16.9Z"
-              />
-              <path
-                fill="currentColor"
-                d="M62.28,71.24v11.2c-3.27.01-6.5.15-9.7-.61-7.33-1.76-12.24-7.5-12.85-15.03V31.06s-19.26,0-19.26,0v-10.52h30.2v44.48c0,2.39,2.5,6.22,5.12,6.22h6.49Z"
-              />
-            </svg>
-            <NodNotesWordmark sizeClass="text-4xl min-[900px]:text-5xl" />
+        <section className="container mx-auto px-4 min-[900px]:px-6 py-20 min-[900px]:py-28 text-center">
+          <div className="mb-10 flex justify-center">
+            <div className="inline-flex items-center gap-3 text-5xl min-[900px]:text-6xl lg:text-7xl">
+              <NodNotesIcon className="h-[1.05em] w-auto shrink-0 text-gray-700" />
+              <span className="relative inline-block pb-[0.06em] leading-none">
+                <span className="block font-young-serif font-normal leading-none text-blue-500">Nod</span>
+                <span
+                  className="absolute left-[0.1em] top-full -translate-y-[0.44em] w-[0.55em] text-center font-notes-sans text-[0.24em] font-semibold leading-none tracking-normal text-gray-600 uppercase"
+                  aria-hidden
+                >
+                  Notes
+                </span>
+              </span>
+            </div>
           </div>
-          <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-8">
-            Transform conversations into interactive boards. Learn visually with AI-powered chat,
-            frames, and threads on one infinite canvas.
+
+          <h1 className="mx-auto mb-6 max-w-3xl font-serif text-4xl min-[900px]:text-5xl lg:text-6xl font-bold tracking-tight text-foreground">
+            The visual workspace for Notion
+          </h1>
+
+          <p className="mx-auto mb-10 max-w-xl font-sans text-base min-[900px]:text-lg text-gray-600">
+            Turn your pages and databases into connected visual boards.
           </p>
+
           <Link
             href="/login"
-            className="inline-flex items-center justify-center bg-primary text-primary-foreground px-6 h-10 rounded-lg hover:opacity-90 transition-opacity text-sm font-medium"
+            className="inline-flex items-center justify-center rounded-full bg-gray-950 px-8 py-3 font-serif text-sm min-[900px]:text-base text-white hover:opacity-90 transition-opacity"
           >
             Get started free
           </Link>

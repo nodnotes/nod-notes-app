@@ -6,7 +6,7 @@ type NodNotesWordmarkProps = {
   sizeClass?: string
 }
 
-/** Product wordmark — "Nod" in blue, "notes" in grey */
+/** Product wordmark — "Nod" in blue */
 export function NodNotesWordmark({ className, sizeClass = 'text-2xl' }: NodNotesWordmarkProps) {
   return (
     <span
@@ -14,7 +14,6 @@ export function NodNotesWordmark({ className, sizeClass = 'text-2xl' }: NodNotes
       aria-label="Nod Notes"
     >
       <span className="text-blue-500">Nod</span>
-      <span className="text-gray-400"> notes</span>
     </span>
   )
 }

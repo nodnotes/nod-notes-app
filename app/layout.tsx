@@ -3,7 +3,7 @@ import "./globals.css";
 import { ReactQueryProvider } from "@/lib/react-query-provider";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ViewportHeightFix } from "@/components/viewport-height-fix";
-import { Inter } from "next/font/google";
+import { Inter, Plus_Jakarta_Sans, Young_Serif } from "next/font/google";
 
 const inter = Inter({ 
   subsets: ["latin"],
@@ -11,11 +11,25 @@ const inter = Inter({
   display: "swap",
 });
 
+const youngSerif = Young_Serif({
+  subsets: ["latin"],
+  weight: "400",
+  variable: "--font-young-serif",
+  display: "swap",
+});
+
+const notesSans = Plus_Jakarta_Sans({
+  subsets: ["latin"],
+  weight: ["600", "700"],
+  variable: "--font-notes-sans",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   title: "Nod Notes - AI Chat for Visual Mind Mapping",
   description: "Transform conversations into smart visual mind maps. Learn visually with AI-powered chat and interactive diagrams.",
   icons: {
-    icon: "/favicon.svg?v=2",
+    icon: "/favicon.svg?v=3",
   },
 };
 
@@ -35,7 +49,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={inter.variable} suppressHydrationWarning>
+      <body className={`${inter.variable} ${youngSerif.variable} ${notesSans.variable}`} suppressHydrationWarning>
         <ViewportHeightFix />
         <ThemeProvider>
           <ReactQueryProvider>{children}</ReactQueryProvider>

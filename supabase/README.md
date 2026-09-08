@@ -25,6 +25,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260908172802_homepage_brand_typography` — Homepage hero brand lockup, new icon, Young Serif + Plus Jakarta Sans
 - `20260908080113_homepage_showcase_landing` — Marketing homepage with public showcase board previews
 - `20260908063803_restore_drawn_t_logo` — Restore default hand-drawn T + table-dot brand mark
 - `20260908063357_rebrand_nod_notes` — Rebrand ThinkTable → Nod Notes (product, GitHub org/repos, identifiers)
