@@ -165,6 +165,18 @@ import { NavRotateControl } from './nav-rotate-control' // Board rotate icon —
 import { BoardRotationProvider, useBoardRotation } from './board-rotation-context' // Two-finger twist + nav camera heading
 import { applyBoardRotationToPositionChanges, viewportKeepingPanePoint } from '@/lib/board-rotation' // Camera-aware pane ↔ flow
 import { computeMinimapViewScale, panViewportFromMinimapDrag } from '@/lib/minimap-viewport-pan' // Phone minimap drag (RF only pans on mousemove)
+import { PreviewMinimap } from './preview-minimap' // Host minimap for selected nested preview
+import {
+  PREVIEW_MINIMAP_COMMAND_MESSAGE,
+  PREVIEW_MINIMAP_STATE_MESSAGE,
+  computePreviewMinimapGeometry,
+  computePreviewMinimapViewScale,
+  getFocusedPreviewIframe,
+  postPreviewMinimapCommand,
+  type PreviewMinimapState,
+  type PreviewMinimapCommand,
+} from '@/lib/preview-host-minimap' // Host minimap ↔ nested preview viewport
+import { getNodePositionWithOrigin } from '@reactflow/core'
 import { useInsertSpaceDrag, type InsertSpaceAxis } from './use-insert-space-drag' // Draw bar insert-space drag
 import { InsertSpaceOverlay } from './insert-space-overlay' // Guide line + inserted band preview
 import { notionDbConsumeWheelScroll } from '@/lib/notion/db-table-scroll'
@@ -1276,7 +1288,174 @@ function BoardFlowInner({
     }
   }, [embedded, previewHostTools, previewFocus?.focusedBoardId])
 
+  const [previewMinimapState, setPreviewMinimapState] = useState<PreviewMinimapState | null>(null)
+  const focusedPreviewId = previewFocus?.focusedBoardId ?? null
+  const showPreviewMinimap =
+    !embedded && !!focusedPreviewId && previewMinimapState?.pageId === focusedPreviewId
+
+  const postToFocusedPreview = useCallback(
+    (command: PreviewMinimapCommand) => {
+      if (!focusedPreviewId) return false
+      const win = getFocusedPreviewIframe(focusedPreviewId)?.contentWindow
+      if (!win) return false
+      postPreviewMinimapCommand(win, focusedPreviewId, command)
+      return true
+    },
+    [focusedPreviewId]
+  )
+
+  const handlePreviewMinimapPan = useCallback(
+    (movementX: number, movementY: number, viewScale: number) => {
+      postToFocusedPreview({ type: 'pan', movementX, movementY, viewScale })
+    },
+    [postToFocusedPreview]
+  )
+
+  const handlePreviewMinimapZoom = useCallback(
+    (zoom: number) => {
+      if (!reactFlowInstance) return
+      const limits = {
+        minZoom: rfStore.getState().minZoom,
+        maxZoom: rfStore.getState().maxZoom,
+      }
+      reactFlowInstance.zoomTo(clampBoardZoom(zoom, limits))
+    },
+    [reactFlowInstance, rfStore]
+  )
+
+  const hostViewportZoom = useStore((s) => s.transform[2])
+
+  useEffect(() => {
+    if (embedded || !focusedPreviewId) {
+      setPreviewMinimapState(null)
+    }
+  }, [embedded, focusedPreviewId])
+
+  useEffect(() => {
+    if (embedded) return
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return
+      const data = event.data as { type?: string; state?: PreviewMinimapState } | null
+      if (!data || data.type !== PREVIEW_MINIMAP_STATE_MESSAGE || !data.state) return
+      if (data.state.pageId !== focusedPreviewId) return
+      setPreviewMinimapState(data.state)
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [embedded, focusedPreviewId])
+
   const embedInteractive = embedded && embedHostTools?.interactive === true
+
+  useEffect(() => {
+    if (!embedded || !conversationId || !embedInteractive) return
+    let raf = 0
+    const postState = () => {
+      const s = rfStore.getState()
+      const minimapNodes = s
+        .getNodes()
+        .filter(
+          (n) =>
+            !n.hidden &&
+            n.width &&
+            n.height &&
+            n.type !== 'frameShimmer' &&
+            n.type !== 'placeholder'
+        )
+      const state: PreviewMinimapState = {
+        pageId: conversationId,
+        nodes: minimapNodes.map((n) => {
+          const { x, y } = getNodePositionWithOrigin(n, s.nodeOrigin).positionAbsolute
+          return {
+            id: n.id,
+            x,
+            y,
+            width: n.width!,
+            height: n.height!,
+            selected: n.selected,
+          }
+        }),
+        transform: [s.transform[0], s.transform[1], s.transform[2]],
+        width: s.width,
+        height: s.height,
+      }
+      window.parent.postMessage(
+        { type: PREVIEW_MINIMAP_STATE_MESSAGE, state },
+        window.location.origin
+      )
+    }
+    const schedule = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(postState)
+    }
+    schedule()
+    const unsub = rfStore.subscribe(schedule)
+    return () => {
+      unsub()
+      cancelAnimationFrame(raf)
+    }
+  }, [embedded, conversationId, embedInteractive, rfStore])
+
+  useEffect(() => {
+    if (!embedded || !conversationId) return
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return
+      const data = event.data as {
+        type?: string
+        pageId?: string
+        command?: {
+          type?: string
+          padding?: number
+          duration?: number
+          movementX?: number
+          movementY?: number
+          viewScale?: number
+          x?: number
+          y?: number
+          zoom?: number
+        }
+      } | null
+      if (!data || data.type !== PREVIEW_MINIMAP_COMMAND_MESSAGE) return
+      if (data.pageId !== conversationId || !data.command) return
+      if (!embedInteractive) return
+      const cmd = data.command
+      if (cmd.type === 'fitView') {
+        reactFlowInstance.fitView({
+          padding: cmd.padding ?? 0.15,
+          minZoom: 0.2,
+          maxZoom: 1.5,
+          duration: cmd.duration ?? 300,
+        })
+        return
+      }
+      if (cmd.type === 'pan' && typeof cmd.movementX === 'number' && typeof cmd.movementY === 'number') {
+        const viewScale =
+          typeof cmd.viewScale === 'number'
+            ? cmd.viewScale
+            : computeMinimapViewScale(rfStore.getState(), MINIMAP_WIDTH, MINIMAP_HEIGHT)
+        panViewportFromMinimapDrag(
+          rfStore.getState(),
+          cmd.movementX,
+          cmd.movementY,
+          viewScale
+        )
+        return
+      }
+      if (
+        cmd.type === 'setViewport' &&
+        typeof cmd.x === 'number' &&
+        typeof cmd.y === 'number' &&
+        typeof cmd.zoom === 'number'
+      ) {
+        reactFlowInstance.setViewport(
+          { x: cmd.x, y: cmd.y, zoom: cmd.zoom },
+          { duration: cmd.duration ?? 200 }
+        )
+      }
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [embedded, conversationId, embedInteractive, reactFlowInstance, rfStore])
+
   const navScrollMode = embedded
     ? embedInteractive
       ? (embedHostTools?.isScrollMode ?? true)
@@ -2887,7 +3066,7 @@ function BoardFlowInner({
         }
 
         // RF MiniMap panHandler ignores touchmove — capture so pointermove reliably pans on phone
-        if (e.pointerType === 'touch' || e.pointerType === 'pen') {
+        if (focusedPreviewId || e.pointerType === 'touch' || e.pointerType === 'pen') {
           try {
             minimapElement.setPointerCapture(e.pointerId)
           } catch {
@@ -2896,10 +3075,15 @@ function BoardFlowInner({
         }
 
         // Desktop-only fallback: synthesized mouseup sometimes never arrives after RF drag
-        if (e.pointerType !== 'mouse') return
+        if (e.pointerType !== 'mouse' || focusedPreviewId) return
 
         clickTimeoutId = setTimeout(() => {
           if (minimapDragStartRef.current && !minimapDragStartRef.current.isDragging) {
+            if (focusedPreviewId) {
+              postToFocusedPreview({ type: 'fitView', padding: 0.15, duration: 300 })
+              minimapDragStartRef.current = null
+              return
+            }
             if (reactFlowInstance) {
               fitViewInProgressRef.current = true
 
@@ -2962,12 +3146,33 @@ function BoardFlowInner({
 
         if (
           drag.isDragging &&
-          (e.pointerType === 'touch' || e.pointerType === 'pen') &&
           (e.movementX !== 0 || e.movementY !== 0)
         ) {
+          if (focusedPreviewId) {
+            if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return
+            const viewScale = previewMinimapState
+              ? computePreviewMinimapViewScale(
+                  previewMinimapState,
+                  MINIMAP_WIDTH,
+                  MINIMAP_HEIGHT
+                )
+              : computeMinimapViewScale(rfStore.getState(), MINIMAP_WIDTH, MINIMAP_HEIGHT)
+            postToFocusedPreview({
+              type: 'pan',
+              movementX: e.movementX,
+              movementY: e.movementY,
+              viewScale,
+            })
+            e.preventDefault()
+            return
+          }
+          if (
+            (e.pointerType === 'touch' || e.pointerType === 'pen')
+          ) {
           const viewScale = computeMinimapViewScale(rfStore.getState(), MINIMAP_WIDTH, MINIMAP_HEIGHT)
           panViewportFromMinimapDrag(rfStore.getState(), e.movementX, e.movementY, viewScale)
           e.preventDefault()
+          }
         }
       }
 
@@ -2993,6 +3198,55 @@ function BoardFlowInner({
         }
 
         requestAnimationFrame(() => {
+          if (focusedPreviewId && previewMinimapState) {
+            const minimapSvg = minimapElement?.querySelector('svg')
+            if (minimapSvg) {
+              const minimapRect = minimapSvg.getBoundingClientRect()
+              const minimapX = (e.clientX - minimapRect.left) / minimapRect.width
+              const minimapY = (e.clientY - minimapRect.top) / minimapRect.height
+              const geo = computePreviewMinimapGeometry(
+                previewMinimapState,
+                MINIMAP_WIDTH,
+                MINIMAP_HEIGHT
+              )
+              const [vbX, vbY, vbW, vbH] = geo.viewBox.split(' ').map(Number)
+              const flowX = vbX + minimapX * vbW
+              const flowY = vbY + minimapY * vbH
+
+              let closestNode: PreviewMinimapState['nodes'][number] | null = null
+              let closestDistance = Infinity
+              for (const node of previewMinimapState.nodes) {
+                const cx = node.x + node.width / 2
+                const cy = node.y + node.height / 2
+                const distance = Math.hypot(cx - flowX, cy - flowY)
+                if (distance < closestDistance) {
+                  closestDistance = distance
+                  closestNode = node
+                }
+              }
+
+              const zoom = previewMinimapState.transform[2]
+              const paneW = previewMinimapState.width
+              const paneH = previewMinimapState.height
+              if (
+                closestNode &&
+                closestDistance <
+                  Math.max(closestNode.width, closestNode.height) * 0.75
+              ) {
+                postToFocusedPreview({
+                  type: 'setViewport',
+                  x: paneW / 2 - (closestNode.x + closestNode.width / 2) * zoom,
+                  y: paneH / 2 - (closestNode.y + closestNode.height / 2) * zoom,
+                  zoom,
+                  duration: 200,
+                })
+              } else {
+                postToFocusedPreview({ type: 'fitView', padding: 0.15, duration: 300 })
+              }
+            }
+            return
+          }
+
           if (!reactFlowInstance || !nodes || !Array.isArray(nodes)) return
 
           // Find which node was clicked by checking click coordinates against minimap node positions
@@ -3177,7 +3431,7 @@ function BoardFlowInner({
     return () => {
       if (cleanup) cleanup()
     }
-  }, [messages.length, reactFlowInstance, minimapExpanded, viewMode, rfStore]) // Re-attach when minimap visibility or view mode changes
+  }, [messages.length, reactFlowInstance, minimapExpanded, viewMode, rfStore, focusedPreviewId, previewMinimapState, postToFocusedPreview]) // Re-attach when minimap visibility or view mode changes
 
   // Set up Supabase Realtime subscription for live message updates
   useEffect(() => {
@@ -10304,9 +10558,8 @@ function BoardFlowInner({
       {!embedded && !hideMapChrome && (
        <>
        <div
-         className="z-10 flex flex-col items-stretch"
+         className="fixed z-20 flex flex-col items-stretch"
          style={{
-           position: 'absolute',
            bottom: `${
              // Tighter to the AI dock when phone chat is open; keep default inset otherwise
              (isMobileMode && isChatSidebarOpen ? 2 : MINIMAP_BOTTOM) + mapChromeBottomPad
@@ -10502,7 +10755,29 @@ function BoardFlowInner({
               height: MINIMAP_HEIGHT, // Keep RF MiniMap at real size while the clip is 0
             }}
           >
-            {minimapMounted && (
+            {minimapMounted &&
+              (showPreviewMinimap && previewMinimapState ? (
+                <PreviewMinimap
+                  state={previewMinimapState}
+                  width={MINIMAP_WIDTH}
+                  height={MINIMAP_HEIGHT}
+                  resolvedTheme={resolvedTheme}
+                  onPan={handlePreviewMinimapPan}
+                  onWheelZoom={handlePreviewMinimapZoom}
+                  wheelZoomBase={hostViewportZoom}
+                  style={{
+                    borderRadius: '8px',
+                    overflow: 'hidden',
+                    cursor: 'pointer',
+                    width: MINIMAP_WIDTH,
+                    height: MINIMAP_HEIGHT,
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    margin: 0,
+                  }}
+                />
+              ) : !focusedPreviewId ? (
             <MiniMap
               position="bottom-left"
               nodeColor={(node) => {
@@ -10528,7 +10803,7 @@ function BoardFlowInner({
                 margin: 0,
               }}
             />
-            )}
+              ) : null)}
           </div>
         </div>
        </div>
@@ -10543,9 +10818,8 @@ function BoardFlowInner({
           type="button"
           data-chat-sidebar-toggle
           onClick={() => toggleChatSidebar()}
-          className="z-40 flex items-center justify-center bg-transparent opacity-80 hover:opacity-100 transition-opacity p-0 border-0 overflow-visible"
+          className="fixed z-40 flex items-center justify-center bg-transparent opacity-80 hover:opacity-100 transition-opacity p-0 border-0 overflow-visible"
           style={{
-            position: 'absolute',
             bottom: `${MINIMAP_BOTTOM + mapChromeBottomPad}px`,
             right: `${BRAND_RIGHT}px`,
             transition: 'none',

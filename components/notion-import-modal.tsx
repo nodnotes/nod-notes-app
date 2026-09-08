@@ -9,12 +9,13 @@ import {
   Check,
   ExternalLink,
   FileText,
+  MessageSquare,
   MoreVertical,
   PinOff,
   RefreshCw,
   Search,
-  Sparkles,
   Table2,
+  Waypoints,
   X,
 } from 'lucide-react'
 import {
@@ -71,31 +72,31 @@ type NotionImportModalProps = {
   disconnecting?: boolean
 }
 
-type NotionConnectionTypeId = 'import-pages' | 'page-sync' | 'database-sync'
+type NotionConnectionTypeId = 'link-preview-sync' | 'ai-connector' | 'mcp-server'
 
 const NOTION_CONNECTION_TYPES: Array<{
   id: NotionConnectionTypeId
   title: string
   description: string
-  icon: typeof Sparkles
+  icon: typeof RefreshCw
 }> = [
   {
-    id: 'import-pages',
-    title: 'Import pages',
-    description: 'Add Notion pages to your board',
-    icon: Sparkles,
-  },
-  {
-    id: 'page-sync',
-    title: 'Page body sync',
-    description: 'Live-sync page content with Notion',
+    id: 'link-preview-sync',
+    title: 'Link preview & database sync',
+    description: 'Sync and view updates in Notion',
     icon: RefreshCw,
   },
   {
-    id: 'database-sync',
-    title: 'Database sync',
-    description: 'Sync database tables and cells',
-    icon: Table2,
+    id: 'ai-connector',
+    title: 'AI connector',
+    description: 'Get answers in Ink AI',
+    icon: MessageSquare,
+  },
+  {
+    id: 'mcp-server',
+    title: 'MCP server',
+    description: 'Enable tool access in Ink AI',
+    icon: Waypoints,
   },
 ]
 
@@ -244,7 +245,7 @@ export function NotionImportModal({
   onDisconnect,
   disconnecting = false,
 }: NotionImportModalProps) {
-  const [activeType, setActiveType] = useState<NotionConnectionTypeId>('import-pages')
+  const [activeType, setActiveType] = useState<NotionConnectionTypeId>('link-preview-sync')
   const [tree, setTree] = useState<NotionPickerNode[]>([])
   const [sections, setSections] = useState<NotionPickerSection[]>([]) // Recently edited / Library
   const [loading, setLoading] = useState(false)
@@ -292,7 +293,7 @@ export function NotionImportModal({
 
   useEffect(() => {
     if (!open) return
-    setActiveType('import-pages')
+    setActiveType('link-preview-sync')
   }, [open])
 
   useEffect(() => {
@@ -591,7 +592,7 @@ export function NotionImportModal({
     >
       <DialogContent
         className="flex max-h-[min(80vh,680px)] w-full max-w-[900px] flex-col gap-0 overflow-hidden rounded-xl border-gray-200 p-0 shadow-2xl"
-        onKeyDown={activeType === 'import-pages' ? onKeyDown : undefined}
+        onKeyDown={activeType === 'link-preview-sync' ? onKeyDown : undefined}
       >
         <DialogTitle className="sr-only">Notion connection</DialogTitle>
         <DialogDescription className="sr-only">
@@ -600,17 +601,17 @@ export function NotionImportModal({
 
         <div className="flex min-h-0 flex-1">
           {/* Left sidebar — Notion connection types */}
-          <aside className="flex w-[240px] flex-shrink-0 flex-col border-r border-gray-100 bg-gray-50/80">
-            <div className="border-b border-gray-100 px-4 py-4">
+          <aside className="flex w-[260px] flex-shrink-0 flex-col border-r border-gray-100 bg-[#f7f7f5]">
+            <div className="px-4 pb-3 pt-4">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/notion-color.svg" alt="" className="h-8 w-8" />
-              <div className="mt-3 flex items-center gap-1">
-                <div className="min-w-0 flex-1 text-sm font-semibold text-gray-900">Notion</div>
+              <img src="/notion-color.svg" alt="" className="h-10 w-10" />
+              <div className="mt-3 flex items-center gap-0.5">
+                <span className="text-[15px] font-semibold text-gray-900">Notion</span>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button
                       type="button"
-                      className="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+                      className="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-gray-500 hover:bg-gray-200/60 hover:text-gray-800"
                       aria-label="Notion connection options"
                     >
                       <MoreVertical className="h-4 w-4" />
@@ -631,11 +632,12 @@ export function NotionImportModal({
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
-              <div className="mt-2 text-xs text-gray-400">
-                {workspaces.length} workspace{workspaces.length === 1 ? '' : 's'} connected
-              </div>
+              <p className="mt-1 text-xs text-gray-500">
+                {NOTION_CONNECTION_TYPES.length} of {NOTION_CONNECTION_TYPES.length} connection types
+                installed
+              </p>
             </div>
-            <nav className="flex-1 overflow-y-auto p-2">
+            <nav className="flex-1 overflow-y-auto px-2 pb-2">
               {NOTION_CONNECTION_TYPES.map((type) => {
                 const Icon = type.icon
                 const selected = activeType === type.id
@@ -645,17 +647,24 @@ export function NotionImportModal({
                     type="button"
                     onClick={() => setActiveType(type.id)}
                     className={cn(
-                      'mb-1 w-full rounded-lg border px-3 py-2.5 text-left transition-colors',
+                      'mb-1 w-full rounded-lg border px-2.5 py-2.5 text-left transition-colors',
                       selected
                         ? 'border-gray-200 bg-white shadow-sm'
-                        : 'border-transparent hover:bg-white/70'
+                        : 'border-transparent hover:bg-white/60'
                     )}
                   >
                     <div className="flex gap-2.5">
-                      <Icon className="mt-0.5 h-4 w-4 flex-shrink-0 text-gray-500" />
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium text-gray-900">{type.title}</div>
-                        <div className="text-xs leading-snug text-gray-500">{type.description}</div>
+                      <span
+                        className={cn(
+                          'flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border bg-white',
+                          selected ? 'border-gray-200' : 'border-gray-200/80'
+                        )}
+                      >
+                        <Icon className="h-4 w-4 text-gray-600" />
+                      </span>
+                      <div className="min-w-0 py-0.5">
+                        <div className="text-sm font-medium leading-snug text-gray-900">{type.title}</div>
+                        <div className="mt-0.5 text-xs leading-snug text-gray-500">{type.description}</div>
                       </div>
                     </div>
                   </button>
@@ -667,9 +676,7 @@ export function NotionImportModal({
           {/* Main panel */}
           <div className="flex min-w-0 flex-1 flex-col">
             <div className="border-b border-gray-100 px-5 pb-4 pt-5">
-              <h2 className="text-lg font-semibold text-gray-900">
-                {activeType === 'import-pages' ? 'Add Notion pages' : activeConnection.title}
-              </h2>
+              <h2 className="text-lg font-semibold text-gray-900">{activeConnection.title}</h2>
               {workspaces.length > 0 ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -707,7 +714,7 @@ export function NotionImportModal({
               ) : null}
             </div>
 
-            {activeType === 'import-pages' ? (
+            {activeType === 'link-preview-sync' ? (
               <>
                 <div className="flex flex-shrink-0 items-center gap-2 border-b border-gray-100 px-5 py-3">
                   <div className="relative min-w-0 flex-1">
@@ -747,7 +754,7 @@ export function NotionImportModal({
                 <div className="flex min-h-0 flex-1 flex-col">{pageList}</div>
 
                 {authHref ? (
-                  <div className="flex-shrink-0 border-t border-gray-100 px-5 py-3">
+                  <div className="flex-shrink-0 px-5 py-3">
                     <a
                       href={authHref}
                       className="inline-flex items-center gap-2 text-sm text-gray-700 hover:text-gray-900"
@@ -762,9 +769,9 @@ export function NotionImportModal({
               <div className="flex-1 px-5 py-6 text-sm text-gray-600">
                 <p className="font-medium text-gray-900">Connected</p>
                 <p className="mt-1 text-gray-500">
-                  {activeType === 'page-sync'
-                    ? 'Imported Notion pages on your board live-sync content with Notion.'
-                    : 'Notion database frames sync table data and cell edits with Notion.'}
+                  {activeType === 'ai-connector'
+                    ? 'Ink AI can use your connected workspace as a source for answers.'
+                    : 'Expose Thinktable tools to Ink AI through the MCP server connection.'}
                 </p>
               </div>
             )}

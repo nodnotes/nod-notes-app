@@ -51,7 +51,12 @@ function isPreviewFocusChrome(target: EventTarget | null): boolean {
       target.closest('[data-preview-style-chrome]') ||
       target.closest('[data-radix-popper-content-wrapper]') ||
       target.closest('[role="menu"]') ||
-      target.closest('[role="listbox"]')
+      target.closest('[role="listbox"]') ||
+      target.closest('[data-minimap-context]') ||
+      target.closest('[data-minimap-toggle-context]') ||
+      target.closest('[data-minimap-pill-context]') ||
+      target.closest('[data-preview-minimap]') ||
+      target.closest('.react-flow__minimap')
   )
 }
 
@@ -359,7 +364,7 @@ export function NestedBoardPreview({
           transform: frameBox.scale !== 1 ? `scale(${frameBox.scale})` : undefined,
           transformOrigin: 'top left',
           // Above map content; below page chrome (top bar / minimap / nav / brand = z-10+)
-          zIndex: visible ? 5 : -1,
+          zIndex: visible ? 4 : -1,
           opacity: visible ? 1 : 0,
           pointerEvents: visible ? 'auto' : 'none',
         }}
