@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (thinkable)
-- Snapped at: `2026-09-08T03:05:00Z`
+- Snapped at: `2026-09-08T04:51:05Z`
 - Source: local `supabase/migrations/` + remote applied tops (thinkable) + `.temp` service versions
 - Service versions (from `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.184.0`, rest `v13.0.5`, storage `v1.33.0`
 - CLI: `supabase` `2.90.0` (marker via `migration new`; newer CLI available)
@@ -9,7 +9,18 @@
 
 ## This save
 
-- DDL: none. Marker `20260908030505_capture_link_paste_persist.sql`.
+- DDL: none. Marker `20260908045105_shaped_frame_fill_border_colors.sql`.
+- **Shaped frame fill/border**: SVG silhouette fill (not rectangular CSS clip); softer preset borders via `lib/frame-colors.ts`; shape-aware fit-to-text inflation; centered text in silhouettes; blue SVG selection chrome while dragging shaped frames.
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: frame empty chrome drag fixes
+
+- No DDL. Marker `20260908041754_frame_empty_chrome_drag_fixes.sql`.
+- Empty frame backspace/clear; keep styled empty frames on deselect; single empty border; fill-origin chrome pad; fix select/drag jump.
+
+## Prior: capture deep links
+
+- No DDL. Marker `20260908030505_capture_link_paste_persist.sql`.
 - **Capture deep links**: copy/go-to from captures/presentations menus; URL encodes board camera (`?capture=&x=&y=&z=&rot=&nav=`).
 - Paste capture URL → inline `captureLink` chip (timestamp label, not raw URL); click navigates in-tab.
 - I-bar paste spawns frame with chip; deselect persists (atom-aware empty-frame guard).

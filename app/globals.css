@@ -568,6 +568,11 @@ span[data-added="true"] {
     line-height: 1.75;
   }
 
+  /* Shaped frames: TipTap sits in the silhouette center (not top-left of the hug box) */
+  [data-tt-shape-center] .prose p {
+    text-align: center;
+  }
+
   /* Extra spacing for paragraphs that look like section breaks or major ideas */
   .prose p[style*="margin-bottom: 1em"] {
     margin-bottom: 1.75em !important;

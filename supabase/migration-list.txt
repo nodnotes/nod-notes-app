@@ -1,9 +1,9 @@
 # Remote Supabase migration/version snapshot
 # project_ref=yhsyhtnnklpkfcpydbst
 # project_name=thinkable
-# snapped_at=2026-09-08T04:17:54Z
+# snapped_at=2026-09-08T04:51:05Z
 # postgres=17.6.1.052 gotrue=v2.184.0 rest=v13.0.5 storage=v1.33.0
-# local_marker=20260908041754_frame_empty_chrome_drag_fixes (no DDL)
+# local_marker=20260908045105_shaped_frame_fill_border_colors (no DDL)
 # Remote applied (via Supabase MCP / Management API on thinkable):
 # 20251124231547 create_saas_schema
 # 20251124231600 fix_function_security
@@ -179,3 +179,4 @@
 20260908021047_preview_minimap_host_chrome.sql
 20260908030505_capture_link_paste_persist.sql
 20260908041754_frame_empty_chrome_drag_fixes.sql
+20260908045105_shaped_frame_fill_border_colors.sql

@@ -17,6 +17,7 @@ import { ChatLinkConnectionCue } from '@/components/threads/ChatLinkConnectionCu
 
 import { cn, generateUUID } from '@/lib/utils'
 import { boardTitleOrDefault } from '@/lib/board-title' // Empty conversation names show New board
+import { resolveFrameBorderColor } from '@/lib/frame-colors' // Soften legacy preset frame borders
 import { useEditor, EditorContent } from '@tiptap/react'
 import { DOMParser as PMDOMParser } from '@tiptap/pm/model' // Parse stored HTML → PM doc for exact (non-string) sync compare
 import { TextSelection } from '@tiptap/pm/state' // Only text ranges keep a frame "active" — not boardLink NodeSelection
@@ -31,6 +32,7 @@ import {
   FRAME_SHAPE_DEFAULT_SIZE,
   rotatedFrameAabbSize,
   rotatedRectAabbSize,
+  shapeFitContentBox,
   type FrameShapeType,
 } from '@/lib/frame-shape' // Frame-as-shape parse + clip + rotation AABB
 import type { FrameStackSide } from '@/components/use-frame-nest-stack-drag'
@@ -528,6 +530,16 @@ function scaledFrameSize(
     width: Math.max(minWidth, Math.ceil(intrinsic.width * safeScale)),
     height: Math.max(BLOCK_MIN_FRAME_H, Math.ceil(intrinsic.height * safeScale)),
   }
+}
+
+/** Locked hug: scale intrinsic text, inflating first when a silhouette would clip. */
+function hugLockedFrameSize(
+  intrinsic: { width: number; height: number },
+  scale: number,
+  minWidth: number,
+  shape: FrameShapeType | null,
+) {
+  return scaledFrameSize(shapeFitContentBox(intrinsic, shape, true), scale, minWidth)
 }
 
 import { Button } from '@/components/ui/button'
@@ -1105,6 +1117,7 @@ function TipTapContentLive({
   contentPadLeft = 0, // contentFit paddingLeft — ⋮⋮ centers in the blue gutter past this pad
   frameScale = 1, // Locked-resize CSS scale — grips remeasure when it changes
   handleGutterFlow = 0, // Blue L/R gutter width (flow px) — ⋮⋮ local left compensates contentFit scale
+  centerInShape = false, // Silhouette frames: center TipTap in the visible cross / diamond
 }: {
   content: string
   className?: string
@@ -1154,6 +1167,7 @@ function TipTapContentLive({
   contentPadLeft?: number // contentFit padL — grip centering past the fill edge
   frameScale?: number // Locked-resize scale — ⋮⋮ remeasure (CSS transform skips RO)
   handleGutterFlow?: number // Adjust-box L gutter (flow px); grips inverse-scale into it
+  centerInShape?: boolean // Shaped frame: center text in silhouette
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const { setActiveEditor } = useEditorContext()
@@ -1205,7 +1219,8 @@ function TipTapContentLive({
       attributes: {
         class: cn(
           'prose max-w-none focus:outline-none min-h-[20px] cursor-text nokey', // nokey: RF must not treat Backspace as frame delete while typing
-          isFlashcard && 'text-xl' // Increase font size for flashcards
+          isFlashcard && 'text-xl', // Increase font size for flashcards
+          centerInShape && 'text-center' // Shaped frames: lines centered in silhouette
         ),
         ...(singleLineUntilEnter ? { 'data-single-line': 'true' } : {}), // CSS nowrap until Enter
       },
@@ -1305,7 +1320,7 @@ function TipTapContentLive({
         },
       },
     }),
-    [isFlashcard, singleLineUntilEnter]
+    [isFlashcard, singleLineUntilEnter, centerInShape]
   )
 
   const editor = useEditor(
@@ -1966,8 +1981,8 @@ function TipTapContentLive({
     <div
       ref={containerRef}
       className={cn(
-        'relative overflow-visible w-full', // Full frame content width so short/empty blocks stretch
-        // Unselected → grab (drag frame); selected → text caret; flashcards keep pointer
+        'relative overflow-visible', // Grips sit in the panel’s left chrome (negative left)
+        centerInShape ? 'w-fit max-w-full mx-auto' : 'w-full',
         isFlashcard ? 'cursor-pointer' : isPanelSelected ? 'cursor-text' : 'cursor-grab',
         !isPanelSelected && 'tt-frame-unselected', // CSS: no text select / callout until selected
         // Selected: nodrag on the whole editor chrome so padding taps don't start RF drag either
@@ -1987,7 +2002,8 @@ function TipTapContentLive({
       {/* Apply shimmer animation to prompt text when response is loading (not for flashcards) */}
       <div
         className={cn(
-          'relative w-full overflow-visible', // Grips sit in the panel’s left chrome (negative left)
+          'relative overflow-visible',
+          centerInShape ? 'w-fit max-w-full mx-auto' : 'w-full',
           isLoading && !isFlashcard && 'shimmer'
         )}
       >
@@ -2023,7 +2039,11 @@ function TipTapContentLive({
             </div>
             <EditorContent
               editor={editor}
-              className={cn('block w-full', isPanelSelected && 'nodrag nopan')}
+              className={cn(
+                'block',
+                centerInShape ? 'w-fit max-w-full' : 'w-full',
+                isPanelSelected && 'nodrag nopan'
+              )}
             />
           </div>
           </PropertyHeaderSlotProvider>
@@ -2915,6 +2935,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     }
     return 'transparent'
   }, [data.fillColor])
+
+  const resolvedBorderColor = useMemo(
+    () => resolveFrameBorderColor(data.borderColor),
+    [data.borderColor]
+  )
 
   // Connection points: blue fill + white border (matches selection chrome blue-500)
   const handleColor = '#3b82f6'
@@ -4739,7 +4764,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       if (colW != null) width = Math.round(colW * Math.max(0.15, finalScale))
       height = Math.max(BLOCK_MIN_FRAME_H, Math.ceil(intrinsic.height * Math.max(0.15, finalScale)))
     } else if (!unlocked) {
-      const hugged = scaledFrameSize(intrinsic, finalScale, minW) // Nowrap: snap to scaled text
+      const hugged = hugLockedFrameSize(intrinsic, finalScale, minW, frameShapeRef.current) // Nowrap: snap to scaled text inside silhouette
       width = hugged.width
       height = hugged.height
     } else if (wrapping) {
@@ -4802,7 +4827,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         // Locked nowrap: hug the blue box to scaled content during the gesture (same as resize-end).
         // Using RF's raw drag size left a larger empty frame with the block stuck top-left so
         // connection/resize chrome no longer lined up with the ⋮⋮.
-        const hugged = scaledFrameSize(intrinsicSizeRef.current, nextScale, minW)
+        const hugged = hugLockedFrameSize(intrinsicSizeRef.current, nextScale, minW, frameShapeRef.current)
         width = hugged.width
         height = hugged.height
       }
@@ -5023,10 +5048,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               : measureNaturalContentWidth(fitEl)
             : intrinsicSize.width)
         const minW = blockMinFrameWidth(promptContent)
-        const hugged = scaledFrameSize(
+        const hugged = hugLockedFrameSize(
           { width: naturalW, height: naturalH },
           freeSnapshot.scale,
-          minW
+          minW,
+          frameShapeRef.current
         )
         const nextDims = { width: hugged.width, height: hugged.height }
         setIntrinsicSize((prev) =>
@@ -5175,7 +5201,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     if (!intrinsicMeasured || isResizingRef.current) return
     if (!isUserResized && !rowCard && !dbFrame) return // Row/DB cards hug as soon as content is measured
     const minW = blockMinFrameWidth(promptContent, false) // Fill hug — no ⋮⋮ column inside the frame
-    const hugSource = dbFrame && databaseExtents ? databaseExtents : intrinsicSize
+    const hugSource = shapeFitContentBox(
+      dbFrame && databaseExtents ? databaseExtents : intrinsicSize,
+      frameShape,
+      true
+    )
     const natural = scaledFrameSize(hugSource, frameScale, minW)
     // Never hug a databaseBlock frame down to the remount stub — that persists as a permanent clip.
     if (
@@ -5253,6 +5283,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     promptContent,
     isDbFrame,
     databaseExtents,
+    frameShape,
   ])
 
   // Unlocked WRAP no longer auto-hugs height: like non-wrap clip, the frame keeps the user's box
@@ -5930,9 +5961,25 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     isUserResized &&
     !!resizeDimensions &&
     !pagePreviewOpen // Free frame may hide overflow when not wrapping
-  const huggedSize = scaledFrameSize(intrinsicSize, frameScale, frameMinW) // Scaled content (no phantom border)
+  // Silhouettes clip to a center cross / diamond — hugged text must sit in the middle, not top-left
+  const shapeCenterContent = Boolean(
+    frameShape &&
+      isBlock &&
+      !pagePreviewOpen &&
+      !isDbFrame &&
+      !isRowCardAtomHtml(promptContent)
+  )
+  const huggedSize = scaledFrameSize(
+    shapeFitContentBox(intrinsicSize, frameShape, !frameUnlocked),
+    frameScale,
+    frameMinW
+  ) // Scaled content (no phantom border)
   const scaledDbSize = databaseExtents
-    ? scaledFrameSize(databaseExtents, frameScale, frameMinW)
+    ? scaledFrameSize(
+        shapeFitContentBox(databaseExtents, frameShape, !frameUnlocked),
+        frameScale,
+        frameMinW
+      )
     : null
   const contentVisualW = scaledDbSize?.width ?? huggedSize.width
   const contentVisualH = scaledDbSize?.height ?? huggedSize.height
@@ -5940,6 +5987,10 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const scaledLayoutW = Math.ceil(contentVisualW) // Visual content width (full table when DB)
   const scaledLayoutH = Math.ceil(contentVisualH) // Visual content height (full table when DB)
   const unlockedResized = wrapUnlocked || clipUnlocked // Free-resized frame (wrap or nowrap-clip)
+  // Rounded custom borders paint on the fill shell — not the square outer panel
+  const paintBorderOnFillShell = Boolean(
+    isBlock && !frameShape && Math.abs(rotation) <= 0.5 && !isBorderNone && resolvedBorderColor
+  )
   // Selected/adjust chrome forces borderWidth 0 — do not subtract a phantom 2px or content clips
   // and the blue box looks larger than the block (⋮⋮ / text sit above the left connection mid).
   const panelBorderBox =
@@ -5948,7 +5999,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     frameShape ||
     Math.abs(rotation) > 0.5 ||
     isBorderNone ||
-    showEmptyFrameBorder // Grey empty outline is inset on the fill shell — not a panel border
+    showEmptyFrameBorder ||
+    paintBorderOnFillShell // Inset on fill shell — not part of the panel box
       ? 0
       : 2 * (parseFloat(String(data.borderWeight)) || 1) // borderWeight is typed as a string ('2px')
   const unlockedInnerW = resizeDimensions
@@ -7114,16 +7166,32 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const shapeBoxH = contentBoxH
   const shapeClip = frameShape ? frameShapeClipCss(frameShape) : undefined
   const shapeStroke =
-    data.borderColor && data.borderColor !== ''
-      ? data.borderColor
+    resolvedBorderColor && resolvedBorderColor !== ''
+      ? resolvedBorderColor
       : resolvedTheme === 'dark'
         ? '#9ca3af'
         : '#6b7280'
-  const shapeFill =
-    data.fillColor && data.fillColor !== ''
-      ? data.fillColor
-      : 'transparent'
+  const shapeFill = isFillTransparent ? 'transparent' : data.fillColor!
   const shapeStrokeW = Math.max(1, parseFloat(String(data.borderWeight || '2')) || 2)
+  // Silhouette paints on the content box — not the blue L/R gutters when selected
+  const shapeAreaStyle: React.CSSProperties = {
+    left: adjustChromeX || 0,
+    top: adjustChromeYTop || 0,
+    right: adjustChromeX || 0,
+    bottom: adjustChromeYBottom || 0,
+  }
+  const shapeSelectChrome = Boolean(
+    frameShape && (showAdjustFrame || showDragBorderOnly) && !pagePreviewOpen && !isContentRotated
+  )
+  const fillShellBorderShadow = (() => {
+    if (frameShape || isContentRotated) return undefined
+    if (showEmptyFrameBorder) return `inset 0 0 0 1px ${emptyFrameBorderColor}`
+    if (paintBorderOnFillShell) {
+      const w = Math.max(1, parseFloat(String(data.borderWeight)) || 1)
+      return `inset 0 0 0 ${w}px ${resolvedBorderColor}`
+    }
+    return undefined
+  })()
 
   return (
     <div
@@ -7238,15 +7306,16 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         backgroundColor:
           frameShape || isContentRotated || isBlock ? 'transparent' : panelBackgroundColor,
         borderColor:
-          // Blue adjust / drag rect owns the outline — keep panel border off so chrome isn't inset
+          // Blue adjust / drag rect owns the outline — custom borders paint on the rounded fill shell
           showAdjustFrame ||
           showDragBorderOnly ||
           frameShape ||
           isContentRotated ||
-          showEmptyFrameBorder
+          showEmptyFrameBorder ||
+          paintBorderOnFillShell
             ? 'transparent'
-            : data.borderColor
-              ? data.borderColor // Custom border when idle
+            : resolvedBorderColor
+              ? resolvedBorderColor // Custom border when idle (non-block panels)
               : 'transparent',
         borderStyle:
           showAdjustFrame ||
@@ -7254,7 +7323,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           frameShape ||
           isContentRotated ||
           isBorderNone ||
-          showEmptyFrameBorder
+          showEmptyFrameBorder ||
+          paintBorderOnFillShell
             ? 'none'
             : ((data.borderStyle as React.CSSProperties['borderStyle']) || 'solid'), // Custom color → solid
         borderWidth:
@@ -7263,7 +7333,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           frameShape ||
           isContentRotated ||
           isBorderNone ||
-          showEmptyFrameBorder
+          showEmptyFrameBorder ||
+          paintBorderOnFillShell
             ? 0
             : (data.borderWeight || 1),
         ['--tt-frame-ui-scale' as string]: frameUiScale,
@@ -7348,40 +7419,28 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         }
       }}
     >
-      {/* Frame silhouette + body: one rotated shell (no double fill). Outer AABB stays upright. */}
-      {isBlock && frameShape && !pagePreviewOpen && !isContentRotated && (
-        <FrameShapeBackdrop
-          type={frameShape}
-          width={shapeBoxW}
-          height={shapeBoxH}
-          fill={shapeFill}
-          fillOpacity={0.2}
-          stroke={shapeStroke}
-          strokeWidth={shapeStrokeW}
-        />
-      )}
-
-      {/* Drag move: blue box only (no resize corners / indicators / chrome) — not a real selection */}
-      {showDragBorderOnly && (
+      {/* Drag move: blue box on default frames; silhouettes use SVG stroke on the fill shell */}
+      {showDragBorderOnly && !frameShape && (
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 z-[20]"
+          className="pointer-events-none absolute z-[20]"
           style={{
-            borderRadius: 0, // Square adjust chrome — fill keeps rounded corners
+            ...shapeAreaStyle,
+            borderRadius: frameCornerRadius || undefined,
             boxShadow: `inset 0 0 0 ${frameLineW}px #3b82f6`, // Same blue as selection chrome, no hit target
-            // Upright AABB outline — don't clip to rotated silhouette
             clipPath: !isContentRotated ? shapeClip : undefined,
           }}
         />
       )}
 
-      {/* Selected frames: square blue ring (RF line controls stay for hit/resize but paint is off) */}
+      {/* Selected default frames: square blue ring (silhouettes use SVG stroke above) */}
       {showAdjustFrame && !frameShape && (
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 z-[19]"
+          className="pointer-events-none absolute z-[19]"
           style={{
-            borderRadius: 0, // Square resize outline — fill / property cell keep rounded corners
+            ...shapeAreaStyle,
+            borderRadius: frameCornerRadius || undefined,
             boxShadow: `inset 0 0 0 ${frameLineW}px #3b82f6`,
             clipPath: !isContentRotated ? shapeClip : undefined,
           }}
@@ -7758,6 +7817,10 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         className={cn(
           'relative z-[1] w-full', // Above shape backdrop; fills the padded content box
           isOnThreadFrame ? 'h-auto flex items-center' : 'h-full',
+          shapeCenterContent &&
+            (pinConnectionsToFrame
+              ? 'flex flex-col items-center justify-center'
+              : 'flex items-center justify-center'),
           !isFillTransparent && !frameShape && 'backdrop-blur-sm',
           !isBlock && 'p-1',
           pagePreviewOpen && 'flex flex-col h-full min-h-0',
@@ -7771,16 +7834,17 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           isContentRotated && 'absolute'
         )}
         style={{
-          // Always paint fill here — never swap to a text-only pill when selected
+          // Shaped frames: SVG silhouette paints fill + stroke; shell stays transparent
           backgroundColor: frameShape ? 'transparent' : responseAreaBackgroundColor || panelBackgroundColor,
           // Live radius: property cells sit inside CSS scale (6px grows); fill must match
           borderRadius: frameCornerRadius || undefined,
-          // Empty-frame outline on the fill shell (single rounded stroke — no panel border duplicate)
-          boxShadow:
-            showEmptyFrameBorder && !frameShape
-              ? `inset 0 0 0 1px ${emptyFrameBorderColor}`
+          // Empty / selected custom borders paint here — panel border is off while adjust chrome is on
+          boxShadow: fillShellBorderShadow,
+          // Polygon clips work in CSS; cylinder/ellipse use SVG fill instead (path clip is unreliable)
+          clipPath:
+            frameShape && !showClipPreview && frameShape !== 'cylinder' && frameShape !== 'circle'
+              ? shapeClip
               : undefined,
-          clipPath: frameShape && !showClipPreview ? shapeClip : undefined,
           ...(isContentRotated
             ? {
                 width: contentBoxW,
@@ -7793,15 +7857,15 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             : {}),
         }}
       >
-        {isBlock && frameShape && !pagePreviewOpen && isContentRotated && (
+        {isBlock && frameShape && !pagePreviewOpen && (
           <FrameShapeBackdrop
             type={frameShape}
             width={shapeBoxW}
             height={shapeBoxH}
             fill={shapeFill}
-            fillOpacity={0.2}
-            stroke={shapeStroke}
-            strokeWidth={shapeStrokeW}
+            fillOpacity={1}
+            stroke={shapeSelectChrome ? '#3b82f6' : shapeStroke}
+            strokeWidth={shapeSelectChrome ? frameLineW : shapeStrokeW}
           />
         )}
         {/* Hover full-content preview: fill behind spilled blocks (frame box stays the saved size) */}
@@ -7837,9 +7901,15 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         {!pagePreviewOpen && (
           <>
           <div
-            className={pinConnectionsToFrame ? 'min-h-0 flex-1' : undefined} // Shrink so the connections group keeps the bottom strip
+            className={cn(
+              pinConnectionsToFrame ? 'min-h-0 flex-1' : undefined,
+              shapeCenterContent && 'flex items-center justify-center',
+              frameShape && 'relative z-[1]' // TipTap above stroke-only shape SVG in the fill shell
+            )}
             style={
-              applyFrameScale
+              shapeCenterContent
+                ? { width: '100%', height: '100%', minHeight: 0 }
+                : applyFrameScale
                 ? {
                     // Unlocked resized (wrap or clip): spacer = frame inner box; content is scaled to fill it.
                     // Locked/other: spacer = scaled content (hug). Hover preview grows spacer to full content.
@@ -7875,35 +7945,45 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           >
           <div
             ref={contentFitRef} // Unscaled content box (offsetWidth ignores CSS scale)
+            data-tt-shape-center={shapeCenterContent ? 'true' : undefined}
             className={cn(
-              'relative', // Anchor for in-content absolute chrome
+              'relative shrink-0', // Shaped frames: don’t stretch to the inflated hug box
               // Locked+resized: natural width so hug measures real text (not the stretched box).
               // Unlocked resized / wrap: fill the free frame. Unresized: w-max from longest line.
               wrapContentWidth != null
                 ? undefined
-                : !frameUnlocked && isUserResized
-                  ? 'w-max'
-                  : isRowCardAtomHtml(promptContent) || (isDbFrame && !frameUnlocked)
-                    ? 'w-max' // Never stretch the measure box to a stale wide panel / clipped DB table
-                    : isUserResized || !growsWithLine || emptyLineHug
-                      ? 'w-full' // Fill explicit empty hug / resized box for full-row clicks
-                      : 'w-max',
+                : shapeCenterContent
+                  ? 'w-max max-w-full'
+                  : !frameUnlocked && isUserResized
+                    ? 'w-max'
+                    : isRowCardAtomHtml(promptContent) || (isDbFrame && !frameUnlocked)
+                      ? 'w-max' // Never stretch the measure box to a stale wide panel / clipped DB table
+                      : isUserResized || !growsWithLine || emptyLineHug
+                        ? 'w-full' // Fill explicit empty hug / resized box for full-row clicks
+                        : 'w-max',
               // Blocks: padX > padY slightly so L/R of the property cell breathe vs the fill edge
               isBlock ? undefined : 'px-3 py-3'
             )}
             style={{
               ...(isBlock
-                ? {
-                    paddingTop: BLOCK_FRAME_PAD_Y,
-                    paddingBottom: BLOCK_FRAME_PAD_Y,
-                    paddingLeft: BLOCK_FRAME_PAD_X,
-                    paddingRight: BLOCK_FRAME_PAD_X,
-                  }
+                ? shapeCenterContent
+                  ? {
+                      padding: BLOCK_FRAME_PAD_Y,
+                    }
+                  : {
+                      paddingTop: BLOCK_FRAME_PAD_Y,
+                      paddingBottom: BLOCK_FRAME_PAD_Y,
+                      paddingLeft: BLOCK_FRAME_PAD_X,
+                      paddingRight: BLOCK_FRAME_PAD_X,
+                    }
                 : {}),
               lineHeight: '1.7', // Stable typography — height-based line-height broke lock-to-text
               ...(wrapContentWidth != null ? { width: wrapContentWidth, maxWidth: wrapContentWidth } : {}), // Soft-wrap inside frame
               ...(applyFrameScale
-                ? { transform: `scale(${frameScale})`, transformOrigin: 'top left' }
+                ? {
+                    transform: `scale(${frameScale})`,
+                    transformOrigin: shapeCenterContent ? 'center center' : 'top left',
+                  }
                 : {}),
             }}
             onClick={(e) => {
@@ -7991,6 +8071,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               contentPadLeft={isBlock ? BLOCK_FRAME_PAD_X : 0}
               frameScale={frameScale}
               handleGutterFlow={handleGutterFlow}
+              centerInShape={shapeCenterContent}
               boardInTargets={(() => {
                 const convs =
                   (queryClient.getQueryData(['conversations']) as

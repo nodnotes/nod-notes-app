@@ -77,26 +77,13 @@ import { applyMenuPlacement, watchMenuSafeRect } from '@/lib/menu-placement' // 
 import { COMPACT_PREVIEW_ROWS, NOTION_DB_CLIENT_ROW_CAP } from '@/lib/notion/database' // Table rows floor + show-all ceiling
 import { LegoBrickIcon } from './lego-brick-icon' // Frame-group lock: two bricks, top one stud back
 import Shape from '@/components/shapes/Shape' // Mini silhouette previews in the Shape flyout
+import { FRAME_COLOR_SWATCHES } from '@/lib/frame-colors' // Pastel fills + subtle borders
 import {
   FRAME_SHAPE_NONE,
   FRAME_SHAPE_TYPES,
   frameShapeLabel,
   type FrameShapeChoice,
 } from '@/lib/frame-shape' // Frame-as-shape picker values
-
-/** Notion-like frame palette — fill uses pale bg; border uses stronger stroke hues. */
-const FRAME_COLOR_SWATCHES = [
-  { id: 'default', name: 'Default', fill: '', border: '' }, // Empty = transparent chrome
-  { id: 'gray', name: 'Gray', fill: '#F1F1EF', border: '#787774' },
-  { id: 'brown', name: 'Brown', fill: '#F4EEEE', border: '#9F6B53' },
-  { id: 'orange', name: 'Orange', fill: '#FBECDD', border: '#D9730D' },
-  { id: 'yellow', name: 'Yellow', fill: '#FBF3DB', border: '#CB912F' },
-  { id: 'green', name: 'Green', fill: '#EDF3EC', border: '#448361' },
-  { id: 'blue', name: 'Blue', fill: '#E7F3F8', border: '#337EA9' },
-  { id: 'purple', name: 'Purple', fill: '#F6F3F9', border: '#9065B0' },
-  { id: 'pink', name: 'Pink', fill: '#F9F2F5', border: '#C14C8A' },
-  { id: 'red', name: 'Red', fill: '#FDEBEC', border: '#E03E3E' },
-] as const
 
 type FrameColorKind = 'fill' | 'border' // Which chrome channel a last-used / pick targets
 
