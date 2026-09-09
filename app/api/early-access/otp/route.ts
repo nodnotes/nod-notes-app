@@ -2,12 +2,14 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { isComingSoon, isEarlyAccessEmail, normalizeEmail } from '@/lib/coming-soon'
 
-const GENERIC_OK = { ok: true as const }
-const INVALID_EMAIL = { error: 'Enter a valid email address.' }
+const OK = { ok: true as const } // Invited: mail attempted
+const INVALID_EMAIL = { error: 'Enter a valid email address.' } // Format only
+const NOT_INVITED = { error: 'That email isn’t on the early access list.' } // Own status only — never the list
+const SEND_FAIL = { error: 'Couldn’t send a sign-in link. Try again or use password sign-in.' }
 
 /**
- * Magic-link request. Always returns the same success shape so callers cannot
- * learn whether an email is on the allowlist. OTP is only sent when invited.
+ * Magic-link request. Tell the requester if *their* email isn’t invited;
+ * never return other allowlisted addresses.
  */
 export async function POST(request: Request) {
   try {
@@ -21,9 +23,9 @@ export async function POST(request: Request) {
       return NextResponse.json(INVALID_EMAIL, { status: 400 })
     }
 
-    // Not invited → same OK response, no mail (anti-enumeration)
+    // Own email only: clear denial, no list leakage
     if (!isEarlyAccessEmail(email)) {
-      return NextResponse.json(GENERIC_OK)
+      return NextResponse.json(NOT_INVITED, { status: 403 })
     }
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -31,8 +33,7 @@ export async function POST(request: Request) {
       process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
     if (!supabaseUrl || !supabaseKey) {
       console.error('[early-access/otp] auth env missing')
-      // Still generic to the client
-      return NextResponse.json(GENERIC_OK)
+      return NextResponse.json(SEND_FAIL, { status: 502 })
     }
 
     const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || new URL(request.url).origin).replace(
@@ -51,13 +52,13 @@ export async function POST(request: Request) {
 
     if (error) {
       console.error('[early-access/otp]', error.message)
-      // Do not leak provider errors (could reveal account state)
-      return NextResponse.json(GENERIC_OK)
+      // Provider details stay server-side (SMTP/account state)
+      return NextResponse.json(SEND_FAIL, { status: 502 })
     }
 
-    return NextResponse.json(GENERIC_OK)
+    return NextResponse.json(OK)
   } catch (err: unknown) {
     console.error('[early-access/otp]', err instanceof Error ? err.message : err)
-    return NextResponse.json(GENERIC_OK)
+    return NextResponse.json(SEND_FAIL, { status: 502 })
   }
 }

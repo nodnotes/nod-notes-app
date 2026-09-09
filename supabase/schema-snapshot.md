@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-09T18:10:44Z`
+- Snapped at: `2026-09-09T18:18:48Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (link refreshed; `db dump` blocked on remote login-role alter — marker + version snapshot only)
@@ -9,6 +9,12 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260909181848_early_access_own_status_not_list.sql`.
+- **Early access UX**: OTP/session return clear “not on the early access list” for the *submitted* email only; success copy assumes send happened; never expose allowlist contents. Wrong password stays opaque.
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: coming soon access debrand
 
 - DDL: none. Marker `20260909181044_coming_soon_access_debrand.sql`.
 - **Coming soon /access**: remove Nod Notes wordmark from placeholder; strip brand + invite-only blurb from password page; slate text so dark-mode theme does not wash out the light gate.

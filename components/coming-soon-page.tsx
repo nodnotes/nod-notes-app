@@ -16,7 +16,7 @@ export function ComingSoonPage() {
     if (params.get('error') === 'not_invited') {
       setMessage({
         type: 'error',
-        text: "Couldn't sign in with that account.",
+        text: 'That email isn’t on the early access list.', // Own status only
       })
     }
   }, [])
@@ -31,14 +31,14 @@ export function ComingSoonPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
       })
+      const data = (await res.json().catch(() => ({}))) as { error?: string }
       if (!res.ok) {
-        const data = (await res.json().catch(() => ({}))) as { error?: string }
-        // Only surface validation errors (e.g. bad email format)
+        // API may return not-invited / validation / send failure — never the allowlist
         throw new Error(data.error || 'Something went wrong.')
       }
       setMessage({
         type: 'success',
-        text: 'If that email has early access, you’ll get a sign-in link shortly.',
+        text: 'Check your email for a sign-in link.', // Only reached when allowlisted + send OK
       })
     } catch (err: unknown) {
       setMessage({

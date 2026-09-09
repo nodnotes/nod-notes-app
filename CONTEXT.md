@@ -59,7 +59,7 @@ NodNotes is a spatial mind-map on **boards** (see `DEFINITIONS.md`):
 - Host: **Vercel** project `evan-sayanis-projects/nod-notes` — custom domain **https://nodnotes.com** (also `www`; fallback `https://nod-notes.vercel.app`). DNS stays on **Cloudflare** (A → `76.76.21.21`, DNS-only / grey cloud).
 - Gate: `COMING_SOON=true` + `EARLY_ACCESS_EMAILS` (prod on; local `.env.local` keeps `COMING_SOON=false`).
 - Preview must mirror Production secrets (at least Supabase `NEXT_PUBLIC_*` + `SUPABASE_SECRET_KEY`) — `/access` prerender fails without them and Vercel emails “Preview deployment failed”.
-- When on: `/` = placeholder; OTP via `POST /api/early-access/otp` (always returns the same success shape — mail only if allowlisted); password via `/access` + `POST /api/early-access/session`; `/login`+`/signup` → `/access`. Middleware + `/auth/callback` enforce allowlist. Do not expose invite membership in API errors.
+- When on: `/` = placeholder; OTP via `POST /api/early-access/otp` (403 + clear copy if *that* email isn’t allowlisted; success only after send); password via `/access` + `POST /api/early-access/session` (same not-invited copy); `/login`+`/signup` → `/access`. Middleware + `/auth/callback` enforce allowlist. Never return the allowlist contents — only the requester’s own status.
 - Flip public launch: unset/`false` `COMING_SOON` on Vercel.
 - **Avoid `vercel link` / `vercel env pull`** — they overwrite `.env.local`. Next.js must be `15.5.25+` or Vercel blocks deploy.
 
