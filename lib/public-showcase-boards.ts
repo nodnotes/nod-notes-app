@@ -11,9 +11,9 @@ export const SHOWCASE_BOARD_SLOTS: ShowcaseBoardSlot[] = [
   {
     slug: 'brainstorm',
     envKey: 'NEXT_PUBLIC_SHOWCASE_BRAINSTORM_BOARD_ID',
-    title: 'Research visually',
+    title: 'Notes and presentations',
     description:
-      'Break complex topics into interconnected concepts. Navigate relationships and understand how ideas connect.',
+      'Capture ideas as frames on a board, then rearrange them into a clear presentation without leaving the same space.',
   },
   {
     slug: 'workflow',
@@ -25,9 +25,9 @@ export const SHOWCASE_BOARD_SLOTS: ShowcaseBoardSlot[] = [
   {
     slug: 'research',
     envKey: 'NEXT_PUBLIC_SHOWCASE_RESEARCH_BOARD_ID',
-    title: 'Meeting notes to workflows',
+    title: 'Connections and frame automations',
     description:
-      'Turn raw notes into action items and connected workflows. See decisions, dependencies, and next steps on one board.',
+      'Link frames with threads, then let automations keep related work in sync as your board grows.',
   },
 ]
 

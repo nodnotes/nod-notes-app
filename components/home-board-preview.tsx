@@ -14,7 +14,7 @@ type HomeBoardPreviewProps = {
   previewSlot?: 1 | 2 | 3
   /** Taller single-column showcase. */
   fullWidth?: boolean
-  /** Show the AI chat column (marketing empty state; non-interactive). */
+  /** Show the AI chat column (marketing preview; board wheel-locked, chat still scrolls). */
   showAiSidebar?: boolean
 }
 
@@ -46,7 +46,7 @@ export function HomeBoardPreview({
     <div
       {...(previewSlot != null ? { 'data-home-preview': String(previewSlot) } : {})}
       className={cn(
-        'relative w-full overflow-hidden border-2 border-gray-700 bg-muted/30 shadow-sm',
+        'relative w-full overflow-hidden border-2 border-gray-700 bg-muted/30 shadow-lg',
         fullWidth
           ? 'h-[min(560px,70vh)] rounded-xl'
           : 'h-[min(420px,55vh)] rounded-xl'

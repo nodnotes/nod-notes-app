@@ -5947,6 +5947,50 @@ function BoardFlowInner({
         return
       }
 
+      // Homepage mounts several BoardFlows — only own gestures over THIS board's pane
+      const thisRoot = boardRootRef.current
+      if (!thisRoot || !thisRoot.contains(reactFlowElement)) return
+
+      // Marketing previews: pinch (and Cmd/Ctrl) zoom; plain wheel scrolls the page / AI chat
+      if (hideMapChrome) {
+        const pinch = isMacTrackpadPinch(e)
+        const alternate = isWheelAlternateMod(e)
+        if (!pinch && !alternate) return // Page scroll through the preview
+        // Safari Mac pinch is GestureEvent (board-rotation); don’t double-zoom
+        if (
+          pinch &&
+          typeof window !== 'undefined' &&
+          'GestureEvent' in window &&
+          !/iPhone|iPad|iPod/.test(navigator.userAgent)
+        ) {
+          return
+        }
+        e.preventDefault()
+        e.stopPropagation()
+        if (!reactFlowInstance) return
+        const viewport = reactFlowInstance.getViewport()
+        const rect = reactFlowElement.getBoundingClientRect()
+        const isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.platform)
+        const factor = e.ctrlKey && isMac ? 10 : 1
+        const pinchDelta =
+          -e.deltaY * (e.deltaMode === 1 ? 0.05 : e.deltaMode ? 1 : 0.002) * factor
+        const nextZoom = clampBoardZoom(viewport.zoom * Math.pow(2, pinchDelta))
+        if (nextZoom === viewport.zoom) return
+        markWheelNavigating(viewport.zoom)
+        reactFlowInstance.setViewport(
+          viewportKeepingPanePoint(
+            e.clientX - rect.left,
+            e.clientY - rect.top,
+            viewport,
+            boardRotation,
+            boardRotation,
+            nextZoom
+          )
+        )
+        prevZoomRef.current = nextZoom
+        return
+      }
+
       // Top property strip — horizontal scroll before board pan
       if (propertyStripConsumeWheelScroll(target, e)) {
         return
@@ -6103,7 +6147,7 @@ function BoardFlowInner({
       document.removeEventListener('wheel', handleWheel, { capture: true })
       if (settleTimer) clearTimeout(settleTimer) // Don't settle into an unmounted board
     }
-  }, [navScrollMode, viewMode, reactFlowInstance, getBottomScrollLimit, checkIfAtBottom, chronologicalPanels, focusedPanelIndex, centerPanelAbovePrompt, boardRotation, isDrawing, embedded])
+  }, [navScrollMode, viewMode, reactFlowInstance, getBottomScrollLimit, checkIfAtBottom, chronologicalPanels, focusedPanelIndex, centerPanelAbovePrompt, boardRotation, isDrawing, embedded, hideMapChrome])
 
   // Check if at bottom when viewport changes in linear mode
   // Don't run when nodes change due to selection - only run when nodes are added/removed or viewMode changes
@@ -9796,6 +9840,8 @@ function BoardFlowInner({
       if (!overHandle && !overDb) return // Pane/body: let RF / Scroll-nav handler own it
       const pinch = isMacTrackpadPinch(e) // Trackpad pinch — always zoom
       const alternate = isWheelAlternateMod(e) // Cmd/Ctrl flip Scroll↔Zoom
+      // Homepage: pinch/alternate still zoom over chrome; plain wheel scrolls the page
+      if (hideMapChrome && !pinch && !alternate) return
       if (overHandle && !pinch && !alternate) return // Handles: pinch zoom or Zoom-nav Cmd/Ctrl pan
       if (overDb && !pinch && !alternate && !zoomNav) return // Scroll nav plain: document handler pans
 
@@ -9805,8 +9851,8 @@ function BoardFlowInner({
       const flowEl = target.closest('.react-flow') as HTMLElement
       const viewport = reactFlowInstance.getViewport()
 
-      // Zoom sticky + Cmd/Ctrl → pan (same flip as pane); Scroll sticky + Cmd/Ctrl still zooms below
-      if (alternate && zoomNav) {
+      // Zoom sticky + Cmd/Ctrl → pan (same flip as pane); homepage stays zoom-only
+      if (alternate && zoomNav && !hideMapChrome) {
         reactFlowInstance.setViewport({
           x: viewport.x - e.deltaX,
           y: viewport.y - e.deltaY,
@@ -9846,7 +9892,7 @@ function BoardFlowInner({
 
     root.addEventListener('wheel', onWheel, { passive: false, capture: true })
     return () => root.removeEventListener('wheel', onWheel, { capture: true })
-  }, [reactFlowInstance, embedded, boardRotation, navScrollMode, isDrawing, zoomRange])
+  }, [reactFlowInstance, embedded, boardRotation, navScrollMode, isDrawing, zoomRange, hideMapChrome])
 
   return (
     <PhoneFrameDragProvider manualDragNodeId={phoneManualDragNodeId}>
@@ -10429,7 +10475,7 @@ function BoardFlowInner({
           previewLive && !embedded && marqueeArmed && !shiftHeld // Shift held → pan, not marquee
         }
         zoomOnScroll={previewLive && !navScrollMode && !isDrawing && !hideMapChrome}
-        zoomOnPinch={previewLive && !isDrawing && !hideMapChrome} // Pinch always zooms; Scroll nav only changes wheel pan vs wheel zoom
+        zoomOnPinch={previewLive && !isDrawing} // Homepage still pinches; plain wheel scrolls the page
         zoomOnDoubleClick={false}
         minZoom={embedded ? Math.max(0.05, zoomRange.minZoom) : zoomRange.minZoom}
         maxZoom={embedded ? Math.min(2.5, zoomRange.maxZoom) : zoomRange.maxZoom}
