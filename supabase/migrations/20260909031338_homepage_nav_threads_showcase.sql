@@ -1,0 +1,2 @@
+-- Homepage: top nav, multi-section showcase threads, hero/copy refinements.
+-- No DDL — schema unchanged; remote applied still tops out at 20260811225342.

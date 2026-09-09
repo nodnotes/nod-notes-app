@@ -25,6 +25,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260909031338_homepage_nav_threads_showcase` — Homepage top nav, showcase threads, hero/copy refinements
 - `20260908223635_homepage_hero_icon_size` — Hero brand icon size tune (`0.79cap` left of Nod)
 - `20260908220531_homepage_hero_lockup_thread` — Hero brand lockup refinements, Asap NOTES, decorative thread, Young Serif headline/CTA
 - `20260908172802_homepage_brand_typography` — Homepage hero brand lockup, new icon, Young Serif + Plus Jakarta Sans

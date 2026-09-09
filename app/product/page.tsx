@@ -1,7 +1,7 @@
 'use client';
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NodNotesWordmark } from '@/components/nod-notes-wordmark';
 import ReactFlow, {
   Node,
@@ -316,6 +316,18 @@ function ResearchShowcase() {
 export default function ProductPage() {
   const [activeTab, setActiveTab] = useState<'brainstorm' | 'workflow' | 'research'>('brainstorm');
 
+  useEffect(() => {
+    const applyHash = () => {
+      const hash = window.location.hash.replace(/^#/, '')
+      if (hash === 'brainstorm' || hash === 'workflow' || hash === 'research') {
+        setActiveTab(hash)
+      }
+    }
+    applyHash()
+    window.addEventListener('hashchange', applyHash)
+    return () => window.removeEventListener('hashchange', applyHash)
+  }, [])
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
       {/* Navigation */}
@@ -349,11 +361,12 @@ export default function ProductPage() {
       </section>
 
       {/* Feature Showcases */}
-      <section className="container mx-auto px-6 py-12">
+      <section id="product-showcases" className="container mx-auto px-6 py-12">
         <div className="max-w-6xl mx-auto">
           {/* Tab Navigation */}
           <div className="flex gap-4 mb-8 border-b border-gray-200">
             <button
+              id="brainstorm"
               onClick={() => setActiveTab('brainstorm')}
               className={`px-6 py-3 font-semibold transition-colors ${
                 activeTab === 'brainstorm'
@@ -364,6 +377,7 @@ export default function ProductPage() {
               Brainstorming
             </button>
             <button
+              id="workflow"
               onClick={() => setActiveTab('workflow')}
               className={`px-6 py-3 font-semibold transition-colors ${
                 activeTab === 'workflow'
@@ -374,6 +388,7 @@ export default function ProductPage() {
               Meeting Notes
             </button>
             <button
+              id="research"
               onClick={() => setActiveTab('research')}
               className={`px-6 py-3 font-semibold transition-colors ${
                 activeTab === 'research'

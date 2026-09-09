@@ -10403,12 +10403,12 @@ function BoardFlowInner({
         selectionOnDrag={
           previewLive && !embedded && marqueeArmed && !shiftHeld // Shift held → pan, not marquee
         }
-        zoomOnScroll={previewLive && !navScrollMode && !isDrawing}
-        zoomOnPinch={previewLive && !isDrawing} // Pinch always zooms; Scroll nav only changes wheel pan vs wheel zoom
+        zoomOnScroll={previewLive && !navScrollMode && !isDrawing && !hideMapChrome}
+        zoomOnPinch={previewLive && !isDrawing && !hideMapChrome} // Pinch always zooms; Scroll nav only changes wheel pan vs wheel zoom
         zoomOnDoubleClick={false}
         minZoom={embedded ? Math.max(0.05, zoomRange.minZoom) : zoomRange.minZoom}
         maxZoom={embedded ? Math.min(2.5, zoomRange.maxZoom) : zoomRange.maxZoom}
-        preventScrolling // RF consumes wheel so the host page/map doesn’t scroll
+        preventScrolling={!hideMapChrome} // Homepage previews let the marketing page scroll under the wheel
         autoPanOnNodeDrag={false}
         onlyRenderVisibleElements // Bound DOM + composited layers to frames currently in/near the pane
         selectNodesOnDrag={previewLive && !isDrawing}

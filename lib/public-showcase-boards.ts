@@ -56,13 +56,13 @@ export function isPublicBoardId(boardId: string): boolean {
 
 export type ResolvedShowcaseBoard = ShowcaseBoardSlot & { id: string }
 
-/** Showcase boards with configured ids — homepage id fills the first empty slot. */
+/** Showcase boards with configured ids — homepage id fills empty slots so all layouts can show. */
 export function getResolvedShowcaseBoards(): ResolvedShowcaseBoard[] {
   const homepageId = readEnvId('NEXT_PUBLIC_HOMEPAGE_BOARD_ID')
   const resolved: ResolvedShowcaseBoard[] = []
 
   for (const slot of SHOWCASE_BOARD_SLOTS) {
-    const id = readEnvId(slot.envKey)
+    const id = readEnvId(slot.envKey) || homepageId
     if (id) resolved.push({ ...slot, id })
   }
 

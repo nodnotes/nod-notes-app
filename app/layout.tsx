@@ -29,7 +29,7 @@ export const metadata: Metadata = {
   title: "Nod Notes - AI Chat for Visual Mind Mapping",
   description: "Transform conversations into smart visual mind maps. Learn visually with AI-powered chat and interactive diagrams.",
   icons: {
-    icon: "/favicon.svg?v=3",
+    icon: "/favicon.svg?v=5",
   },
 };
 

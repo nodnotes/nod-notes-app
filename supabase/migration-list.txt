@@ -1,9 +1,9 @@
 # Remote Supabase migration/version snapshot
 # project_ref=yhsyhtnnklpkfcpydbst
 # project_name=Nod Notes
-# snapped_at=2026-09-08T22:36:00Z
+# snapped_at=2026-09-09T03:13:00Z
 # postgres=17.6.1.052 gotrue=v2.184.0 rest=v13.0.5 storage=v1.33.0
-# local_marker=20260908223635_homepage_hero_icon_size (no DDL)
+# local_marker=20260909031338_homepage_nav_threads_showcase (no DDL)
 # Remote applied (via Supabase MCP / Management API on nod-notes):
 # 20251124231547 create_saas_schema
 # 20251124231600 fix_function_security
@@ -184,3 +184,4 @@
 20260908172802_homepage_brand_typography.sql
 20260908220531_homepage_hero_lockup_thread.sql
 20260908223635_homepage_hero_icon_size.sql
+20260909031338_homepage_nav_threads_showcase.sql

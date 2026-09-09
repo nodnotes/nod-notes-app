@@ -1,66 +1,92 @@
 import Link from 'next/link'
-import { Menu } from 'lucide-react'
 import { HomeBoardPreview } from '@/components/home-board-preview'
 import { HomeHeroIntro } from '@/components/home-hero-intro'
-import { NodNotesIcon } from '@/components/nod-notes-icon'
-import { getResolvedShowcaseBoards } from '@/lib/public-showcase-boards'
+import { HomeHeroThread } from '@/components/home-hero-thread'
+import { HomeTopNav } from '@/components/home-top-nav'
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+  getResolvedShowcaseBoards,
+  type ResolvedShowcaseBoard,
+} from '@/lib/public-showcase-boards'
+
+function SplitShowcase({
+  board,
+  reversed,
+  previewSlot,
+  copySlot,
+}: {
+  board: ResolvedShowcaseBoard
+  reversed?: boolean
+  previewSlot?: 1 | 2 | 3
+  copySlot?: 2 | 3
+}) {
+  return (
+    <article className="container mx-auto grid items-center gap-8 px-4 min-[900px]:grid-cols-2 min-[900px]:gap-12 min-[900px]:px-6">
+      <div
+        className={reversed ? 'min-[900px]:order-2' : undefined}
+        {...(copySlot != null ? { 'data-home-showcase-copy': String(copySlot) } : {})}
+      >
+        <h2 className="mb-3 text-2xl font-semibold tracking-tight min-[900px]:text-3xl">
+          {board.title}
+        </h2>
+        <p className="mb-4 text-muted-foreground">{board.description}</p>
+        <Link
+          href={`/view/${board.id}`}
+          className="text-sm font-medium text-primary transition-opacity hover:opacity-80"
+        >
+          Open full board →
+        </Link>
+      </div>
+      <div className={reversed ? 'min-[900px]:order-1' : undefined}>
+        <HomeBoardPreview
+          boardId={board.id}
+          title={board.title}
+          previewSlot={previewSlot}
+        />
+      </div>
+    </article>
+  )
+}
+
+function FullWidthShowcase({ board }: { board: ResolvedShowcaseBoard }) {
+  return (
+    <article className="mx-auto w-full max-w-6xl space-y-6 px-4 min-[900px]:px-6">
+      <div className="text-center" data-home-showcase-copy="2">
+        <h2 className="mb-3 text-2xl font-semibold tracking-tight min-[900px]:text-3xl">
+          {board.title}
+        </h2>
+        <p className="mx-auto mb-2 max-w-2xl text-muted-foreground">{board.description}</p>
+        <Link
+          href={`/view/${board.id}`}
+          className="text-sm font-medium text-primary transition-opacity hover:opacity-80"
+        >
+          Open full board →
+        </Link>
+      </div>
+      <HomeBoardPreview boardId={board.id} title={board.title} fullWidth previewSlot={2} />
+    </article>
+  )
+}
 
 export default function Home() {
   const showcaseBoards = getResolvedShowcaseBoards()
+  const first = showcaseBoards[0]
+  const second = showcaseBoards[1]
+  const third = showcaseBoards[2]
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <nav className="sticky top-0 z-50 h-[52px] bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 border-b border-border">
-        <div className="container mx-auto h-full px-4 min-[900px]:px-6 flex justify-between items-center gap-2">
-          <Link href="/" className="opacity-90 hover:opacity-100 transition-opacity" aria-label="Nod Notes">
-            <NodNotesIcon className="h-6 w-6" />
-          </Link>
-          <div className="flex items-center gap-2">
-          <Link
-              href="/login"
-              className="bg-primary text-primary-foreground px-3 min-[900px]:px-4 h-8 rounded-lg hover:opacity-90 transition-opacity text-sm font-medium flex items-center justify-center"
-            >
-              Get started
-            </Link>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-                  aria-label="Menu"
-                >
-                  <Menu className="h-5 w-5" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-[160px]">
-                <DropdownMenuItem asChild>
-                  <Link href="/help">Help</Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/developer">Developer</Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/pricing">Pricing</Link>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-      </nav>
+    <div className="relative min-h-screen bg-background text-foreground" data-home-page>
+      <HomeTopNav />
+      <HomeHeroThread />
 
       <main>
         <section className="container mx-auto px-4 min-[900px]:px-6 py-20 min-[900px]:py-28 text-center">
-          <HomeHeroIntro />
+          <div className="mx-auto flex w-fit flex-col items-center">
+            <HomeHeroIntro />
 
-          <p className="mx-auto mb-10 max-w-xl font-notes-sans text-base min-[900px]:text-lg text-gray-600">
-            Turn your pages and databases into connected visual boards.
-          </p>
+            <p className="mb-10 w-fit text-center font-notes-sans text-lg min-[900px]:text-xl lg:text-2xl text-gray-600">
+              Turn your pages into visual boards and automations.
+            </p>
+          </div>
 
           <Link
             href="/login"
@@ -71,32 +97,12 @@ export default function Home() {
         </section>
 
         {showcaseBoards.length > 0 ? (
-          <section className="container mx-auto px-4 min-[900px]:px-6 pb-20 space-y-20">
-            {showcaseBoards.map((board, index) => {
-              const reversed = index % 2 === 1
-              return (
-                <article
-                  key={board.id}
-                  className="grid gap-8 min-[900px]:gap-12 items-center min-[900px]:grid-cols-2"
-                >
-                  <div className={reversed ? 'min-[900px]:order-2' : ''}>
-                    <h2 className="text-2xl min-[900px]:text-3xl font-semibold tracking-tight mb-3">
-                      {board.title}
-                    </h2>
-                    <p className="text-muted-foreground mb-4">{board.description}</p>
-                    <Link
-                      href={`/view/${board.id}`}
-                      className="text-sm font-medium text-primary hover:opacity-80 transition-opacity"
-                    >
-                      Open full board →
-                    </Link>
-                  </div>
-                  <div className={reversed ? 'min-[900px]:order-1' : ''}>
-                    <HomeBoardPreview boardId={board.id} title={board.title} />
-                  </div>
-                </article>
-              )
-            })}
+          <section className="space-y-20 pb-20">
+            {first ? <SplitShowcase board={first} previewSlot={1} /> : null}
+            {second ? <FullWidthShowcase board={second} /> : null}
+            {third ? (
+              <SplitShowcase board={third} reversed previewSlot={3} copySlot={3} />
+            ) : null}
           </section>
         ) : (
           <section className="container mx-auto px-4 min-[900px]:px-6 pb-20 text-center">

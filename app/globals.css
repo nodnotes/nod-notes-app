@@ -61,6 +61,15 @@
     height: 100%;
     overflow: hidden; /* Prevent body scroll on mobile */
   }
+
+  /* Marketing homepage scrolls; board shells keep overflow:hidden above */
+  html:has([data-home-page]),
+  html:has([data-home-page]) body {
+    height: auto;
+    min-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
   
   body {
     @apply bg-background text-foreground;
