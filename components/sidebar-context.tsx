@@ -127,14 +127,16 @@ const SidebarContext = createContext<SidebarContextType | undefined>(undefined)
 export function SidebarContextProvider({
   children,
   initialChatOpen = false,
+  previewMode = false, // Homepage showcase: force desktop AI column; never touch board cookies
 }: {
   children: ReactNode
   initialChatOpen?: boolean // Cookie from the server so the column exists in the first HTML
+  previewMode?: boolean // Marketing preview — open column only, no persist / phone dock
 }) {
   const [isMobileMode, setIsMobileMode] = useState(false) // Compact layout flag from board flows
   const [isSidebarOpen, setIsSidebarOpen] = useState(false) // Left nav popup visibility
   const [isSidebarPinned, setIsSidebarPinned] = useState(false) // Click-pinned: stay open across leave/nav
-  const [isChatSidebarOpen, setIsChatSidebarOpen] = useState(initialChatOpen) // Cookie/SSR: already open when it was last time
+  const [isChatSidebarOpen, setIsChatSidebarOpen] = useState(initialChatOpen || previewMode) // Cookie/SSR: already open when it was last time
   const [chatSidebarWidth, setChatSidebarWidthState] = useState(CHAT_SIDEBAR_WIDTH) // SSR default; restore from storage before paint
   const [chatChromeReady, setChatChromeReady] = useState(false) // False until this layout effect restores open/closed
   const [logoDrawing, setLogoDrawingState] = useState<string | null>(null) // Shared custom logo drawing
@@ -145,10 +147,12 @@ export function SidebarContextProvider({
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null) // Delayed-close handle for left nav
   const isSidebarPinnedRef = useRef(false) // Latest pin for scheduleClose without stale closure
   const isMobileModeRef = useRef(false) // Latest mobile flag for sync focus in toggle
-  const isChatOpenRef = useRef(false) // Latest chat open for sync focus in toggle
+  const isChatOpenRef = useRef(initialChatOpen || previewMode) // Latest chat open for sync focus in toggle
+  const previewModeRef = useRef(previewMode) // Persist / phone path must skip on homepage showcase
   const aiComposerFocusRef = useRef<(() => void) | null>(null) // Phone composer.focus (same-tap keyboard)
   const closedAtRef = useRef(0) // Timestamp of last close — ignore ghost click reopen on the hamburger
   const preferredChatWidthRef = useRef(CHAT_SIDEBAR_WIDTH) // User’s width across shrink/expand (not half-clamped)
+  previewModeRef.current = previewMode // Keep latest for callbacks without rebinding
 
   // Keep pin ref in sync for delayed-close guard
   useEffect(() => {
@@ -169,6 +173,18 @@ export function SidebarContextProvider({
 
   // Restore chat open + logo before first paint; cookie already opened the column in SSR HTML
   useLayoutEffect(() => {
+    if (previewMode) {
+      // Homepage board preview: always show a desktop AI column; leave board cookies alone
+      isMobileModeRef.current = false
+      setIsMobileMode(false)
+      preferredChatWidthRef.current = CHAT_SIDEBAR_WIDTH
+      setChatSidebarWidthState(CHAT_SIDEBAR_WIDTH)
+      isChatOpenRef.current = true
+      setIsChatSidebarOpen(true)
+      setLogoDrawingState(getStoredLogoDrawing())
+      setChatChromeReady(true)
+      return
+    }
     const narrow = window.innerWidth < PHONE_LAYOUT_MAX_WIDTH // Same threshold as board-flow phone layout
     setIsMobileMode(narrow) // Ready before first brand tap (phone map-dock path)
     const preferred = getStoredChatSidebarWidth() // Last drag preference (may exceed this window’s half)
@@ -187,7 +203,7 @@ export function SidebarContextProvider({
     }
     setLogoDrawingState(getStoredLogoDrawing()) // Custom logo PNG
     setChatChromeReady(true) // Next commit: column is final; top bar may measure
-  }, [])
+  }, [previewMode])
 
   // Re-clamp the live column on viewport change — never overwrite the stored preference
   useEffect(() => {
@@ -201,8 +217,18 @@ export function SidebarContextProvider({
   const setChatSidebarWidth = useCallback((width: number) => {
     const display = clampChatSidebarWidth(width) // Live column for this window
     preferredChatWidthRef.current = display // Last intentional width — restore after shrink/expand
-    persistChatSidebarWidth(display) // Floor only in storage; do not half-clamp on write
+    if (!previewModeRef.current) persistChatSidebarWidth(display) // Floor only in storage; do not half-clamp on write
     setChatSidebarWidthState(display)
+  }, [])
+
+  // BoardFlow sets mobile from window width — keep showcase on the desktop AI column
+  const setIsMobileModeGuarded = useCallback((mobile: boolean) => {
+    if (previewModeRef.current) {
+      isMobileModeRef.current = false
+      setIsMobileMode(false)
+      return
+    }
+    setIsMobileMode(mobile)
   }, [])
 
   const setLogoDrawing = useCallback((url: string | null) => {
@@ -283,6 +309,18 @@ export function SidebarContextProvider({
   }, [isSidebarOpen, closeSidebar])
 
   const toggleChatSidebar = useCallback(() => {
+    if (previewModeRef.current) {
+      // Showcase: toggle open/closed in-memory only — never write board cookies
+      const opening = !isChatOpenRef.current
+      if (opening && isMobileModeRef.current) {
+        aiComposerFocusRef.current?.()
+      } else if (!opening && isMobileModeRef.current) {
+        const ae = document.activeElement as HTMLElement | null
+        if (ae?.closest?.('[data-chat-map-dock]')) ae.blur()
+      }
+      setIsChatSidebarOpen((prev) => !prev)
+      return
+    }
     const opening = !isChatOpenRef.current // About to open?
     // iOS: focus must run in this tap — phone dock keeps composer mounted while closed
     if (opening && isMobileModeRef.current) {
@@ -299,6 +337,18 @@ export function SidebarContextProvider({
   }, [])
 
   const setChatSidebarOpen = useCallback((open: boolean) => {
+    if (previewModeRef.current) {
+      // Showcase: allow open/close without writing board open cookie
+      if (open && isMobileModeRef.current && !isChatOpenRef.current) {
+        aiComposerFocusRef.current?.()
+      } else if (!open && isMobileModeRef.current) {
+        const ae = document.activeElement as HTMLElement | null
+        if (ae?.closest?.('[data-chat-map-dock]')) ae.blur()
+      }
+      isChatOpenRef.current = open
+      setIsChatSidebarOpen(open)
+      return
+    }
     if (open && isMobileModeRef.current && !isChatOpenRef.current) {
       aiComposerFocusRef.current?.() // Same-tap keyboard when opened explicitly
     } else if (!open && isMobileModeRef.current) {
@@ -311,6 +361,7 @@ export function SidebarContextProvider({
 
   // Notion-style ⌘/; — toggle chat (Close on the seam tip when open)
   useEffect(() => {
+    if (previewMode) return // Homepage showcase owns the column; don’t steal ⌘/;
     const onKeyDown = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.key !== ';') return
       e.preventDefault()
@@ -318,13 +369,13 @@ export function SidebarContextProvider({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [toggleChatSidebar])
+  }, [previewMode, toggleChatSidebar])
 
   return (
     <SidebarContext.Provider
       value={{
         isMobileMode,
-        setIsMobileMode,
+        setIsMobileMode: setIsMobileModeGuarded,
         isSidebarOpen,
         isSidebarPinned,
         openSidebar,

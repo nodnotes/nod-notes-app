@@ -11,23 +11,23 @@ export const SHOWCASE_BOARD_SLOTS: ShowcaseBoardSlot[] = [
   {
     slug: 'brainstorm',
     envKey: 'NEXT_PUBLIC_SHOWCASE_BRAINSTORM_BOARD_ID',
+    title: 'Research visually',
+    description:
+      'Break complex topics into interconnected concepts. Navigate relationships and understand how ideas connect.',
+  },
+  {
+    slug: 'workflow',
+    envKey: 'NEXT_PUBLIC_SHOWCASE_WORKFLOW_BOARD_ID',
     title: 'Brainstorm with AI',
     description:
       'Start a conversation and watch ideas branch into a visual map. Each thought becomes a frame, and relationships appear as you go.',
   },
   {
-    slug: 'workflow',
-    envKey: 'NEXT_PUBLIC_SHOWCASE_WORKFLOW_BOARD_ID',
+    slug: 'research',
+    envKey: 'NEXT_PUBLIC_SHOWCASE_RESEARCH_BOARD_ID',
     title: 'Meeting notes to workflows',
     description:
       'Turn raw notes into action items and connected workflows. See decisions, dependencies, and next steps on one board.',
-  },
-  {
-    slug: 'research',
-    envKey: 'NEXT_PUBLIC_SHOWCASE_RESEARCH_BOARD_ID',
-    title: 'Research visually',
-    description:
-      'Break complex topics into interconnected concepts. Navigate relationships and understand how ideas connect.',
   },
 ]
 

@@ -189,7 +189,7 @@ export function HomeHeroThread() {
 
   return (
     <svg
-      className="pointer-events-none absolute inset-0 z-40 h-full w-full overflow-visible"
+      className="pointer-events-none absolute inset-0 z-0 h-full w-full overflow-visible min-[900px]:z-40"
       aria-hidden
     >
       {pathRefs.map((ref, i) => (

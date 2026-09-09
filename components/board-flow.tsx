@@ -10885,7 +10885,10 @@ function BoardFlowInner({
           type="button"
           data-chat-sidebar-toggle
           onClick={() => toggleChatSidebar()}
-          className="fixed z-40 flex items-center justify-center bg-transparent opacity-80 hover:opacity-100 transition-opacity p-0 border-0 overflow-visible"
+          className={cn(
+            'z-40 flex items-center justify-center bg-transparent opacity-80 hover:opacity-100 transition-opacity p-0 border-0 overflow-visible',
+            hideMapChrome ? 'absolute' : 'fixed' // Homepage previews: stay inside the map frame
+          )}
           style={{
             bottom: `${MINIMAP_BOTTOM + mapChromeBottomPad}px`,
             right: `${BRAND_RIGHT}px`,

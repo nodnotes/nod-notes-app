@@ -17,12 +17,16 @@ function SplitShowcase({
   board: ResolvedShowcaseBoard
   reversed?: boolean
   previewSlot?: 1 | 2 | 3
-  copySlot?: 2 | 3
+  copySlot?: 1 | 2 | 3
 }) {
   return (
     <article className="container mx-auto grid items-center gap-8 px-4 min-[900px]:grid-cols-2 min-[900px]:gap-12 min-[900px]:px-6">
       <div
-        className={reversed ? 'min-[900px]:order-2' : undefined}
+        className={
+          reversed
+            ? 'relative z-10 bg-background max-[899px]:-mx-1 max-[899px]:px-1 min-[900px]:order-2'
+            : 'relative z-10 bg-background max-[899px]:-mx-1 max-[899px]:px-1'
+        }
         {...(copySlot != null ? { 'data-home-showcase-copy': String(copySlot) } : {})}
       >
         <h2 className="mb-3 text-2xl font-semibold tracking-tight min-[900px]:text-3xl">
@@ -36,7 +40,7 @@ function SplitShowcase({
           Open full board →
         </Link>
       </div>
-      <div className={reversed ? 'min-[900px]:order-1' : undefined}>
+      <div className={reversed ? 'relative z-10 min-[900px]:order-1' : 'relative z-10'}>
         <HomeBoardPreview
           boardId={board.id}
           title={board.title}
@@ -50,7 +54,10 @@ function SplitShowcase({
 function FullWidthShowcase({ board }: { board: ResolvedShowcaseBoard }) {
   return (
     <article className="mx-auto w-full max-w-6xl space-y-6 px-4 min-[900px]:px-6">
-      <div className="text-center" data-home-showcase-copy="2">
+      <div
+        className="relative z-10 bg-background text-center max-[899px]:-mx-1 max-[899px]:px-1"
+        data-home-showcase-copy="2"
+      >
         <h2 className="mb-3 text-2xl font-semibold tracking-tight min-[900px]:text-3xl">
           {board.title}
         </h2>
@@ -62,7 +69,9 @@ function FullWidthShowcase({ board }: { board: ResolvedShowcaseBoard }) {
           Open full board →
         </Link>
       </div>
-      <HomeBoardPreview boardId={board.id} title={board.title} fullWidth previewSlot={2} />
+      <div className="relative z-10">
+        <HomeBoardPreview boardId={board.id} title={board.title} fullWidth previewSlot={2} showAiSidebar />
+      </div>
     </article>
   )
 }
@@ -79,8 +88,8 @@ export default function Home() {
       <HomeHeroThread />
 
       <main>
-        <section className="container mx-auto px-4 min-[900px]:px-6 py-20 min-[900px]:py-28 text-center">
-          <div className="mx-auto flex w-fit flex-col items-center">
+        <section className="relative z-10 container mx-auto px-4 min-[900px]:px-6 py-20 min-[900px]:py-28 text-center">
+          <div className="mx-auto flex w-fit flex-col items-center bg-background max-[899px]:px-2">
             <HomeHeroIntro />
 
             <p className="mb-10 w-fit text-center font-notes-sans text-lg min-[900px]:text-xl lg:text-2xl text-gray-600">
@@ -90,7 +99,7 @@ export default function Home() {
 
           <Link
             href="/login"
-            className="inline-flex items-center justify-center rounded-full bg-gray-950 px-8 py-3 font-young-serif text-sm min-[900px]:text-base text-white hover:opacity-90 transition-opacity"
+            className="relative z-10 inline-flex items-center justify-center rounded-full bg-gray-950 px-8 py-3 font-young-serif text-sm min-[900px]:text-base text-white hover:opacity-90 transition-opacity"
           >
             Get started free
           </Link>
@@ -98,7 +107,7 @@ export default function Home() {
 
         {showcaseBoards.length > 0 ? (
           <section className="space-y-20 pb-20">
-            {first ? <SplitShowcase board={first} previewSlot={1} /> : null}
+            {first ? <SplitShowcase board={first} previewSlot={1} copySlot={1} /> : null}
             {second ? <FullWidthShowcase board={second} /> : null}
             {third ? (
               <SplitShowcase board={third} reversed previewSlot={3} copySlot={3} />
