@@ -16,7 +16,7 @@ import { createPortal } from 'react-dom'
 import { useEditor, EditorContent, type Editor } from '@tiptap/react'
 import { ReactFlowProvider } from 'reactflow'
 import { GripVertical } from 'lucide-react'
-import { NodNotesIcon } from '@/components/nod-notes-icon'
+import { NodNotesIcon, NN_BLOB_CY_FRAC, NN_CONNECTION_T_PATH, NN_CONNECTION_T_VIEWBOX } from '@/components/nod-notes-icon'
 import type { AiMessage, AiChatBlockDragPayload, AiChatBlockDragItem } from '@/lib/ai/types'
 import { AI_CHAT_BLOCK_MIME } from '@/lib/ai/types'
 import { markdownToTipTapHtml } from '@/lib/ai/markdown-to-tiptap'
@@ -81,10 +81,8 @@ import {
 const STUB_FILL = '#9ca3af' // gray-400 — distinct from live blue indicators
 const STUB_R = 6 // Same visual weight as the 12px chat-turn indicators
 
-/** Brand T stroke from `connection logo 1.svg` — same mark as board ChatLinkConnectionCue. */
-const LINK_LOGO_VIEWBOX = '0 0 306 453'
-const LINK_LOGO_PATH =
-  'M305.69,370.69v81.89c-23.91.07-47.52,1.1-70.92-4.46-53.59-12.87-89.49-54.84-93.95-109.89l.07-261.31H0V0h220.8v325.21c0,17.47,18.28,45.48,37.43,45.48h47.45Z'
+/** Cropped T aspect (width / height) — matches ChatLinkConnectionCue. */
+const LINK_T_ASPECT = 35 / 63
 
 const SIDES: ChatTurnSide[] = ['left', 'right', 'top', 'bottom']
 
@@ -1182,7 +1180,8 @@ export function AiChatTurn({
         }}
       >
         {/* Frame drag grip — unselected only (hover on pointer; always on touch). Selected → ⋮⋮.
-            Threaded turns: same brand line + blue simulator as board ChatLinkConnectionCue. */}
+            Threaded turns: same brand line + blue simulator as board ChatLinkConnectionCue.
+            Linked mark stays on the first text line (not vertically centered on the turn). */}
         {!selected && (
           <button
             type="button"
@@ -1198,8 +1197,10 @@ export function AiChatTurn({
               onSelect(message.id, { additive: isAdditiveSelectEvent(e) })
             }}
             className={cn(
-              'absolute left-0.5 top-1 z-20 flex h-5 items-center justify-center rounded',
-              showLinkedGrip ? 'w-auto min-w-5 px-0.5' : 'w-5', // Logo needs line+dot width
+              'absolute left-0.5 z-20 flex justify-center rounded',
+              showLinkedGrip
+                ? 'top-[9px] w-auto min-w-5 items-start px-0.5' // First-line glyphs (pad 4 + text-sm/1.75 half-leading)
+                : 'top-1 h-5 w-5 items-center', // Compact ⋮⋮-sized grip
               showLinkedGrip
                 ? null // Blue mark — no gray icon tint
                 : 'text-gray-400 hover:text-gray-700 dark:hover:text-gray-200',
@@ -1217,20 +1218,24 @@ export function AiChatTurn({
             aria-label="Drag chat turn as frame"
           >
             {showLinkedGrip ? (
-              // Prior visual size (w=8); height matches aspect so meet doesn't letterbox above the stroke
+              // Same brand T + blue disc as board ChatLinkConnectionCue (blob-height on the T)
               <span className="pointer-events-none flex flex-row items-start" aria-hidden>
                 <svg
-                  viewBox={LINK_LOGO_VIEWBOX}
+                  viewBox={NN_CONNECTION_T_VIEWBOX}
                   preserveAspectRatio="xMinYMin meet"
                   className="shrink-0 block"
-                  style={{ width: 8, height: 8 * (453 / 306), marginRight: 0.5 }}
+                  style={{ width: 8, height: 8 / LINK_T_ASPECT, marginRight: 0.5 }}
                 >
-                  <path fill="#3b83f6" d={LINK_LOGO_PATH} />
+                  <path fill="#3b82f6" d={NN_CONNECTION_T_PATH} />
                 </svg>
-                {/* Top of disc flush with top of T stroke */}
+                {/* Disc center matches table-blob on Nod notes icon 3 */}
                 <span
-                  className="shrink-0 self-start rounded-full bg-[#3b83f6]"
-                  style={{ width: 5, height: 5 }}
+                  className="shrink-0 self-start rounded-full bg-[#3b82f6]"
+                  style={{
+                    width: 5,
+                    height: 5,
+                    marginTop: Math.max(0, (8 / LINK_T_ASPECT) * NN_BLOB_CY_FRAC - 2.5),
+                  }}
                 />
               </span>
             ) : (

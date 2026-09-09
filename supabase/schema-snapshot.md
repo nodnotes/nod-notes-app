@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-09T18:18:48Z`
+- Snapped at: `2026-09-09T18:44:00Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (link refreshed; `db dump` blocked on remote login-role alter — marker + version snapshot only)
@@ -9,6 +9,15 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260909184400_auth_email_nod_notes_branding.sql`.
+- **Auth email branding**: remote mailer `smtp_sender_name` + magic-link/confirm/invite/recovery templates → Nod Notes; footer contact `easayani@nodnotes.com`. SMTP From still Resend test `onboarding@resend.dev` (no Resend domain verified yet).
+- **Early access allowlist**: includes `easayani@nodnotes.com`, `easayani@goalfish.io`, `easayani@gmail.com` on Vercel + local.
+- **Auth callback**: recover implicit/hash magic-link sessions via `/auth/auth-code-error`; support `token_hash` OTP verify; safer `next` redirects.
+- **Board chrome**: empty-board minimap stays collapsed until first frame; selection adjust ring is full-panel (no inset blue card border); chat↔board connection cues use current brand T + blob.
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: early access own status not list
 
 - DDL: none. Marker `20260909181848_early_access_own_status_not_list.sql`.
 - **Early access UX**: OTP/session return clear “not on the early access list” for the *submitted* email only; success copy assumes send happened; never expose allowlist contents. Wrong password stays opaque.
@@ -174,7 +183,7 @@
 - No DDL. Marker `20260904043128_chat_link_cue_click_opens_turn.sql`.
 - Board chat-link cue **click** opens chat and selects the linked transcript turn (`requestOpenChatForBoardLink` / `AI_OPEN_CHAT_TURN_EVENT`).
 - **Drag** past click-slop on that cue still starts a board thread (`ConnectionIndicator` `onPlainClick`).
-- Cue brand line uses `connection logo 1.svg` (disc = simulator).
+- Cue brand line uses hand-drawn T from `Nod notes icon 3` / `NN_CONNECTION_T_PATH` (disc = simulator).
 - Schema unchanged; remote applied still tops out at `20260811225342`.
 
 ## Prior: Chat-link cues survive sidebar close

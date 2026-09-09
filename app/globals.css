@@ -1677,11 +1677,17 @@ span[data-added="true"] {
     background-image: linear-gradient(#3b82f6, #3b82f6) !important;
     background-size: var(--tt-frame-line-w, 1.5px) 100% !important;
   }
-  /* Square adjust ring paints the stroke — keep line controls as invisible hit targets only */
-  .react-flow__node-chatPanel .tt-frame-resize-line-hit.top,
-  .react-flow__node-chatPanel .tt-frame-resize-line-hit.bottom,
-  .react-flow__node-chatPanel .tt-frame-resize-line-hit.left,
-  .react-flow__node-chatPanel .tt-frame-resize-line-hit.right {
+  /* Square adjust ring paints the stroke — keep line controls as invisible hit targets only.
+     Must beat `.react-flow__resize-control.line.{side}` (4 classes) or the blue line stroke
+     still paints → double border (outer RF lines + inner fill boxShadow). */
+  .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.top,
+  .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.bottom,
+  .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.left,
+  .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.right,
+  .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.top,
+  .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.bottom,
+  .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.left,
+  .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.right {
     background-image: none !important;
   }
   .dark .react-flow__node-chatPanel .react-flow__resize-control.line.top,
@@ -1694,10 +1700,14 @@ span[data-added="true"] {
   .dark .react-flow__node-chatPanel .tt-frame-resize-line.right {
     background-image: linear-gradient(#60a5fa, #60a5fa) !important;
   }
-  .dark .react-flow__node-chatPanel .tt-frame-resize-line-hit.top,
-  .dark .react-flow__node-chatPanel .tt-frame-resize-line-hit.bottom,
-  .dark .react-flow__node-chatPanel .tt-frame-resize-line-hit.left,
-  .dark .react-flow__node-chatPanel .tt-frame-resize-line-hit.right {
+  .dark .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.top,
+  .dark .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.bottom,
+  .dark .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.left,
+  .dark .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.right,
+  .dark .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.top,
+  .dark .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.bottom,
+  .dark .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.left,
+  .dark .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.right {
     background-image: none !important;
   }
 

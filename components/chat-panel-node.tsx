@@ -7185,6 +7185,12 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   )
   const fillShellBorderShadow = (() => {
     if (frameShape || isContentRotated) return undefined
+    // Blue adjust / drag ring already outlines the frame — skip empty grey so it doesn’t read as an inner border
+    if (showAdjustFrame || showDragBorderOnly) {
+      if (!paintBorderOnFillShell) return undefined
+      const w = Math.max(1, parseFloat(String(data.borderWeight)) || 1)
+      return `inset 0 0 0 ${w}px ${resolvedBorderColor}` // Keep user-set stroke on the rounded fill
+    }
     if (showEmptyFrameBorder) return `inset 0 0 0 1px ${emptyFrameBorderColor}`
     if (paintBorderOnFillShell) {
       const w = Math.max(1, parseFloat(String(data.borderWeight)) || 1)
@@ -7425,22 +7431,24 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           aria-hidden
           className="pointer-events-none absolute z-[20]"
           style={{
-            ...shapeAreaStyle,
-            borderRadius: frameCornerRadius || undefined,
+            // Full panel (incl. ⋮⋮ gutters) — same box the corner handles sit on
+            inset: 0,
+            borderRadius: 0, // Adjust ring is square — fill shell keeps the corner radius
             boxShadow: `inset 0 0 0 ${frameLineW}px #3b82f6`, // Same blue as selection chrome, no hit target
             clipPath: !isContentRotated ? shapeClip : undefined,
           }}
         />
       )}
 
-      {/* Selected default frames: square blue ring (silhouettes use SVG stroke above) */}
+      {/* Selected default frames: square blue ring on the outer panel (RF lines stay hit-only) */}
       {showAdjustFrame && !frameShape && (
         <div
           aria-hidden
           className="pointer-events-none absolute z-[19]"
           style={{
-            ...shapeAreaStyle,
-            borderRadius: frameCornerRadius || undefined,
+            // Full panel — not fill-inset (that floated corner handles outside the ring)
+            inset: 0,
+            borderRadius: 0, // Square ring — fill shell owns --tt-frame-radius
             boxShadow: `inset 0 0 0 ${frameLineW}px #3b82f6`,
             clipPath: !isContentRotated ? shapeClip : undefined,
           }}

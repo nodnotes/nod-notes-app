@@ -2153,8 +2153,11 @@ function BoardFlowInner({
   const [aiDockMinimapOpen, setAiDockMinimapOpen] = useState(false) // Visible while jumped
   const [aiDockMinimapPinned, setAiDockMinimapPinned] = useState(false) // Click-to-keep-open (no auto-close)
   const aiDockMinimapPinnedRef = useRef(false) // Latest pin for leave-timeout (avoid stale close)
-  // Collapse = preference hidden, OR jumped without an active peek/pin
-  const minimapCollapsed = phoneAiOpen ? !aiDockMinimapOpen : isMinimapHidden
+  // Frames/drawings MiniMap can paint — empty / load-shimmer boards stay collapsed with no +/- 
+  const hasRealMapNodes = (nodes || []).some((n) => n.type !== 'frameShimmer' && n.type !== 'placeholder')
+  // Collapse = empty board, OR preference hidden, OR jumped without an active peek/pin
+  const minimapCollapsed =
+    !hasRealMapNodes || (phoneAiOpen ? !aiDockMinimapOpen : isMinimapHidden)
   const [isScrollingToBottom, setIsScrollingToBottom] = useState(false) // Track if we're currently scrolling to bottom (for minimap flash prevention)
   const [minimapLoadReady, setMinimapLoadReady] = useState(false) // Stay clipped until frames + prefs have landed
   const [boardLoadPhase, setBoardLoadPhase] = useState<'cold' | 'reveal' | 'done'>('cold') // Crossfade shells → contents once
@@ -2679,7 +2682,6 @@ function BoardFlowInner({
   }, [boardLoadPhase, setNodes])
 
   const hasFrameShimmer = (nodes || []).some((n) => n.type === 'frameShimmer') // Load shells still on the board
-  const hasRealMapNodes = (nodes || []).some((n) => n.type !== 'frameShimmer' && n.type !== 'placeholder') // Frames/drawings MiniMap can paint
   // Clip the minimap until prefs + frames are in, then expand-up (same tween as +/-)
   useEffect(() => {
     if (embedded || minimapLoadReady) return // Embeds have no minimap; only arm once
@@ -2699,6 +2701,25 @@ function BoardFlowInner({
       cancelAnimationFrame(id)
     }
   }, [embedded, minimapLoadReady, isLoadingMinimapMode, reactFlowInstance, conversationId, isMessagesPending, hasFrameShimmer, hasRealMapNodes, messages.length])
+
+  // Empty board settled → first frame: expand minimap + restore +/- (doesn’t fire on contentful loads)
+  const settledEmptyBoardRef = useRef(false)
+  useEffect(() => {
+    settledEmptyBoardRef.current = false // New board — wait until this one settles empty
+  }, [conversationId])
+  useEffect(() => {
+    if (!minimapLoadReady || isMessagesPending || hasFrameShimmer) return // Still loading
+    if (!hasRealMapNodes) {
+      settledEmptyBoardRef.current = true // Truly empty after load — next frame should expand
+      return
+    }
+    if (!settledEmptyBoardRef.current || phoneAiOpen) return // Not an empty→content transition
+    settledEmptyBoardRef.current = false
+    setMinimapMode('shown') // First frame on an empty board always reveals the minimap
+    setIsMinimapHidden(false)
+    setIsMinimapManuallyHidden(false)
+    wasAutoHiddenRef.current = false
+  }, [minimapLoadReady, isMessagesPending, hasFrameShimmer, hasRealMapNodes, phoneAiOpen, setMinimapMode])
 
   // Refetch frames when AI edit session saves/discards/applies pending
   useEffect(() => {
@@ -10665,7 +10686,8 @@ function BoardFlowInner({
             checkAndHideMinimap(e.relatedTarget as HTMLElement)
           }}
         >
-          {/* Minimap +/- — circle, top-left of Free nav; fill matches nav menu */}
+          {/* Minimap +/- — only once the board has frames; empty boards stay collapsed with no toggle */}
+          {hasRealMapNodes && (
           <Button
             type="button"
             variant="ghost"
@@ -10721,6 +10743,7 @@ function BoardFlowInner({
               <Minus className="h-2.5 w-2.5" strokeWidth={2.5} />
             )}
           </Button>
+          )}
           <div
             className={cn(
               // w-full = column width (minimap); gap-0 — slashes carry the visual gap so 179px fits

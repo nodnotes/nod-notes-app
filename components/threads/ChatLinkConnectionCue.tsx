@@ -1,10 +1,15 @@
 // Chat-linked connection cue: keep the normal blue simulator on the connection
-// point, and place the brand “line” (T stroke from `connection logo 1.svg`)
-// to the left of the dot, top-aligned — same layout on every side.
+// point, and place the brand T (hand-drawn arm from Nod notes icon 3) to the left
+// of the dot. Disc sits at the table-blob height on the T (not top-aligned).
 // Click opens chat with the linked turn selected; drag still starts a board thread.
 
 import type { CSSProperties } from 'react'
 import { ConnectionIndicator } from '@/components/threads/ConnectionIndicator'
+import {
+  NN_BLOB_CY_FRAC,
+  NN_CONNECTION_T_PATH,
+  NN_CONNECTION_T_VIEWBOX,
+} from '@/components/nod-notes-icon' // Same T + blob height as empty-board / chat brand mark
 import { cn } from '@/lib/utils'
 import { requestOpenChatForBoardLink } from '@/lib/ai/open-chat-turn'
 import type { ChatTurnSide } from '@/lib/ai/chat-board-links'
@@ -19,11 +24,8 @@ type ChatLinkConnectionCueProps = {
   isThreadConnecting: boolean // While connecting, indicators are paint-only
 }
 
-/** Path-only viewBox cropped around the T stroke in `connection logo 1.svg`. */
-const LINE_VIEWBOX = '0 0 306 453'
-/** T / table-leg stroke from the connection logo (no disc — the simulator is the dot). */
-const LINE_PATH =
-  'M305.69,370.69v81.89c-23.91.07-47.52,1.1-70.92-4.46-53.59-12.87-89.49-54.84-93.95-109.89l.07-261.31H0V0h220.8v325.21c0,17.47,18.28,45.48,37.43,45.48h47.45Z'
+/** Aspect of the cropped T viewBox (width / height). */
+const T_ASPECT = 35 / 63
 
 /** Read outset distance from the shared indicator placement style. */
 function outsetFromIndicatorStyle(style: CSSProperties, side: Side): number {
@@ -36,19 +38,20 @@ function outsetFromIndicatorStyle(style: CSSProperties, side: Side): number {
 
 /**
  * Anchor the row so the *dot center* sits on the connection point
- * (same place as a normal simulator). The line sits left of the dot.
+ * (same place as a normal simulator). The T sits left; disc is blob-height on the T.
  */
 function stackAnchorStyle(
   side: Side,
   out: number,
   size: number,
   lineW: number,
-  gap: number
+  gap: number,
+  lineH: number
 ): CSSProperties {
-  // Row is [line][gap][dot]. Shift so the dot center lands on the connection point.
+  // Row is [T][gap][dot]. Dot is lowered to NN_BLOB_CY_FRAC on the T — shift so its center hits the point.
   const xLeft = `-${lineW + gap + size / 2}px` // left / top / bottom (left-anchored or mid)
   const xRight = `${size / 2}px` // right-anchored: row’s right edge is the dot’s right edge
-  const y = `-${size / 2}px` // Top of the size×size dot cell → center on the point
+  const y = `-${lineH * NN_BLOB_CY_FRAC}px` // Blob center on the T → connection point
   if (side === 'left') {
     return { left: -out, top: '50%', transform: `translate(${xLeft}, ${y})` }
   }
@@ -67,8 +70,8 @@ function stackAnchorStyle(
 }
 
 /**
- * Blue simulator at the normal connection-point spot + brand line to its left,
- * top-aligned (same relative place on left / right / top / bottom).
+ * Blue simulator at the normal connection-point spot + brand T to its left,
+ * disc centered on the brand blob height (same relative place on every side).
  * Click → open chat / select linked turn; drag past slop → start a thread.
  */
 export function ChatLinkConnectionCue({
@@ -80,28 +83,34 @@ export function ChatLinkConnectionCue({
 }: ChatLinkConnectionCueProps) {
   const out = outsetFromIndicatorStyle(indicatorStyle, side)
   const lineH = indicatorSize * 1.35 // Stay under the dot so the cue reads as a mark, not a hook
-  const lineW = lineH * (306 / 453) * 0.88 // Slightly thinner than natural, not skinny
+  const lineW = lineH * T_ASPECT * 0.95 // Near-natural width of the hand-drawn T
   const gap = indicatorSize * 0.08 // Tight air between line and dot
+  // Top of the disc so its center matches the table-blob on the brand mark
+  const dotTop = lineH * NN_BLOB_CY_FRAC - indicatorSize / 2
 
   return (
     <div
       className="nodrag nopan absolute z-[30] flex flex-row items-start"
-      style={stackAnchorStyle(side, out, indicatorSize, lineW, gap)}
+      style={stackAnchorStyle(side, out, indicatorSize, lineW, gap, lineH)}
       data-tt-chat-link-cue={side}
     >
-      {/* Brand line — left of the dot, top edges aligned */}
+      {/* Brand T — left of the disc (simulator replaces the table-dot at blob height) */}
       <svg
         aria-hidden
         className="pointer-events-none shrink-0"
-        viewBox={LINE_VIEWBOX}
+        viewBox={NN_CONNECTION_T_VIEWBOX}
         style={{ width: lineW, height: lineH, marginRight: gap }}
       >
-        <path fill="#3b83f6" d={LINE_PATH} />
+        <path fill="#3b82f6" d={NN_CONNECTION_T_PATH} />
       </svg>
       {/* Dot slot — center of this box is the connection point */}
       <div
         className="relative shrink-0"
-        style={{ width: indicatorSize, height: indicatorSize }}
+        style={{
+          width: indicatorSize,
+          height: indicatorSize,
+          marginTop: Math.max(0, dotTop), // Match brand blob Y on the T
+        }}
       >
         <ConnectionIndicator
           side={side}

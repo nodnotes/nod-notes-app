@@ -3,7 +3,7 @@
 # project_name=Nod Notes
 # snapped_at=2026-09-09T18:10:44Z
 # postgres=17.6.1.052 gotrue=v2.196.0 rest=v14.5 storage=v1.73.1
-# local_marker=20260909181848_early_access_own_status_not_list (no DDL)
+# local_marker=20260909184400_auth_email_nod_notes_branding (no DDL)
 # production=https://nodnotes.com
 # Remote applied (via Supabase Management API on nod-notes):
 # 20251124231547 create_saas_schema
@@ -192,3 +192,4 @@
 20260909174638_early_access_anti_enumeration.sql
 20260909181044_coming_soon_access_debrand.sql
 20260909181848_early_access_own_status_not_list.sql
+20260909184400_auth_email_nod_notes_branding.sql

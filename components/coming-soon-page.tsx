@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { createClient } from '@/lib/supabase/client'
 
 /**
  * Public launch placeholder: coming soon + early-access email magic link.
@@ -26,19 +27,36 @@ export function ComingSoonPage() {
     setLoading(true)
     setMessage(null)
     try {
+      const trimmed = email.trim().toLowerCase()
+      // Server allowlist check first (no mail yet)
       const res = await fetch('/api/early-access/otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email: trimmed }),
       })
       const data = (await res.json().catch(() => ({}))) as { error?: string }
       if (!res.ok) {
-        // API may return not-invited / validation / send failure — never the allowlist
         throw new Error(data.error || 'Something went wrong.')
       }
+
+      // Browser OTP so PKCE verifier is stored for /auth/callback?code=
+      const supabase = createClient()
+      const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || window.location.origin).replace(/\/$/, '')
+      const { error } = await supabase.auth.signInWithOtp({
+        email: trimmed,
+        options: {
+          emailRedirectTo: `${siteUrl}/auth/callback?next=/board`,
+          shouldCreateUser: true,
+        },
+      })
+      if (error) {
+        console.error('[coming-soon] signInWithOtp', error.message)
+        throw new Error('Couldn’t send a sign-in link. Try again or use password sign-in.')
+      }
+
       setMessage({
         type: 'success',
-        text: 'Check your email for a sign-in link.', // Only reached when allowlisted + send OK
+        text: 'Check your email for a sign-in link.',
       })
     } catch (err: unknown) {
       setMessage({
