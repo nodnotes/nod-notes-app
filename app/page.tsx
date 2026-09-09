@@ -5,7 +5,6 @@ import { ComingSoonPage } from '@/components/coming-soon-page'
 import { HomeBoardPreview } from '@/components/home-board-preview'
 import { HomeHeroIntro } from '@/components/home-hero-intro'
 import { HomeHeroThread } from '@/components/home-hero-thread'
-import { HomeImagesCarousel } from '@/components/home-images-carousel'
 import { HomeFooter } from '@/components/home-footer'
 import { HomeTopNav } from '@/components/home-top-nav'
 import { isComingSoon } from '@/lib/coming-soon'
@@ -20,7 +19,7 @@ function SplitShowcase({
   previewSlot,
   copySlot,
   imageAbove,
-  imagesCarousel,
+  imagesRow,
   imagesBelow,
   id,
 }: {
@@ -29,33 +28,35 @@ function SplitShowcase({
   previewSlot?: 1 | 2 | 3
   copySlot?: 1 | 2 | 3
   imageAbove?: { src: string; alt: string }
-  imagesCarousel?: { src: string; alt: string }[]
+  imagesRow?: { src: string; alt: string }[]
   imagesBelow?: { src: string; alt: string }[]
   id?: string
 }) {
   const hasImage = Boolean(
-    imageAbove || (imagesCarousel && imagesCarousel.length > 0) || (imagesBelow && imagesBelow.length > 0)
+    imageAbove || (imagesRow && imagesRow.length > 0) || (imagesBelow && imagesBelow.length > 0)
   )
-  // Carousel + 2×2 needs room; don’t lock to preview height
-  const copyHeightClass = imagesCarousel?.length
-    ? 'min-[900px]:min-h-[min(420px,55vh)]'
-    : 'min-[900px]:h-[min(420px,55vh)]'
+  // Extra image stacks need room; don’t lock to preview height
+  const copyHeightClass =
+    imagesRow?.length || imagesBelow?.length
+      ? 'min-[900px]:min-h-[min(420px,55vh)]'
+      : 'min-[900px]:h-[min(420px,55vh)]'
 
+  // Gutter = side padding so window-edge margins match the gap between panel and copy
   return (
     <article
       id={id}
-      className="container mx-auto grid scroll-mt-20 items-center gap-8 px-4 min-[900px]:grid-cols-2 min-[900px]:items-stretch min-[900px]:gap-12 min-[900px]:px-6"
+      className="grid w-full scroll-mt-20 items-center gap-8 px-8 min-[900px]:grid-cols-2 min-[900px]:items-stretch"
     >
       <div
         className={
           reversed
-            ? `relative z-10 flex flex-col justify-center bg-background max-[899px]:-mx-1 max-[899px]:px-1 ${copyHeightClass} min-[900px]:order-2`
-            : `relative z-10 flex flex-col justify-center bg-background max-[899px]:-mx-1 max-[899px]:px-1 ${copyHeightClass}`
+            ? `relative z-10 flex min-w-0 flex-col justify-center gap-8 bg-background ${copyHeightClass} min-[900px]:order-2`
+            : `relative z-10 flex min-w-0 flex-col justify-center gap-8 bg-background ${copyHeightClass}`
         }
         {...(copySlot != null ? { 'data-home-showcase-copy': String(copySlot) } : {})}
       >
         {imageAbove ? (
-          <div className="relative mb-5 min-h-[160px] flex-1 overflow-hidden rounded-xl border-2 border-gray-700 bg-muted/30 shadow-lg max-[899px]:aspect-[4/3] max-[899px]:flex-none min-[900px]:mb-4">
+          <div className="relative min-h-[160px] flex-1 overflow-hidden rounded-xl border-2 border-gray-700 bg-muted/30 shadow-lg max-[899px]:aspect-[4/3] max-[899px]:flex-none">
             <Image
               src={imageAbove.src}
               alt={imageAbove.alt}
@@ -77,11 +78,26 @@ function SplitShowcase({
             Open full board →
           </Link>
         </div>
-        {imagesCarousel && imagesCarousel.length > 0 ? (
-          <HomeImagesCarousel images={imagesCarousel} className="mt-4" />
+        {imagesRow && imagesRow.length > 0 ? (
+          <div className="flex shrink-0 gap-2 overflow-hidden">
+            {imagesRow.map((image) => (
+              <div
+                key={image.src}
+                className="relative h-14 w-20 shrink-0 overflow-hidden rounded-lg border-2 border-gray-700 bg-muted/30 shadow-lg min-[900px]:h-16 min-[900px]:w-24"
+              >
+                <Image
+                  src={image.src}
+                  alt={image.alt}
+                  fill
+                  sizes="96px"
+                  className="object-cover"
+                />
+              </div>
+            ))}
+          </div>
         ) : null}
         {imagesBelow && imagesBelow.length > 0 ? (
-          <div className="mt-4 grid h-[min(160px,28vh)] shrink-0 grid-cols-2 grid-rows-2 gap-2">
+          <div className="grid h-[min(160px,28vh)] shrink-0 grid-cols-2 grid-rows-2 gap-2">
             {imagesBelow.map((image) => (
               <div
                 key={image.src}
@@ -102,8 +118,8 @@ function SplitShowcase({
       <div
         className={
           reversed
-            ? 'relative z-10 min-[900px]:h-[min(420px,55vh)] min-[900px]:self-center min-[900px]:order-1'
-            : 'relative z-10 min-[900px]:h-[min(420px,55vh)] min-[900px]:self-center'
+            ? 'relative z-10 min-w-0 min-[900px]:h-[min(420px,55vh)] min-[900px]:self-center min-[900px]:order-1'
+            : 'relative z-10 min-w-0 min-[900px]:h-[min(420px,55vh)] min-[900px]:self-center'
         }
       >
         <HomeBoardPreview
@@ -125,7 +141,7 @@ function ShowcaseInterlude({
 }) {
   return (
     <div
-      className="relative z-50 bg-background px-4 py-6 text-center max-[899px]:-mx-1 max-[899px]:px-5 min-[900px]:px-6"
+      className="relative z-50 bg-background px-8 py-6 text-center"
       data-home-interlude={String(slot)}
     >
       <p className="mx-auto max-w-3xl font-notes-sans text-lg text-gray-600 min-[900px]:text-xl lg:text-2xl">
@@ -146,13 +162,14 @@ function FullWidthShowcase({
   copySlot?: 1 | 2 | 3
   id?: string
 }) {
+  // Side inset ≈ 3× section-1 panel gap (gap-8 → 96px) so the preview reads wider than the split rows
   return (
     <article
       id={id}
-      className="mx-auto w-full max-w-6xl scroll-mt-20 space-y-6 px-4 min-[900px]:px-6"
+      className="w-full scroll-mt-20 space-y-6 px-8 min-[900px]:px-24"
     >
       <div
-        className="relative z-10 bg-background text-center max-[899px]:-mx-1 max-[899px]:px-1"
+        className="relative z-10 bg-background text-center"
         data-home-showcase-copy={String(copySlot)}
       >
         <h2 className="mb-3 text-2xl font-semibold tracking-tight min-[900px]:text-3xl">
@@ -196,8 +213,8 @@ export default function Home() {
       <HomeHeroThread />
 
       <main>
-        <section className="relative z-10 container mx-auto px-4 min-[900px]:px-6 py-20 min-[900px]:py-28 text-center">
-          <div className="mx-auto flex w-fit flex-col items-center bg-background max-[899px]:px-2">
+        <section className="relative z-10 px-8 py-20 text-center min-[900px]:py-28">
+          <div className="mx-auto flex w-fit flex-col items-center bg-background">
             <HomeHeroIntro />
 
             <p className="mb-10 w-fit text-center font-notes-sans text-lg min-[900px]:text-xl lg:text-2xl text-gray-600">
@@ -237,7 +254,7 @@ export default function Home() {
                 reversed
                 previewSlot={2}
                 copySlot={2}
-                imagesCarousel={[
+                imagesRow={[
                   {
                     src: '/home/home-carousel-1.png',
                     alt: 'Frames linked by threads across a board',
@@ -265,10 +282,6 @@ export default function Home() {
                   {
                     src: '/home/home-connections-automations-4.png',
                     alt: 'Automated sync between connected frames',
-                  },
-                  {
-                    src: '/home/home-notes-presentations.png',
-                    alt: 'Notes arranged as frames on a board',
                   },
                 ]}
                 imagesBelow={[
@@ -304,7 +317,7 @@ export default function Home() {
             ) : null}
           </section>
         ) : (
-          <section className="container mx-auto px-4 min-[900px]:px-6 pb-20 text-center">
+          <section className="px-8 pb-20 text-center">
             <p className="text-muted-foreground">
               Showcase boards are not configured yet. Set{' '}
               <code className="text-sm">NEXT_PUBLIC_SHOWCASE_*_BOARD_ID</code> in your environment.
@@ -313,7 +326,7 @@ export default function Home() {
         )}
 
         <section id="get-started" className="w-full scroll-mt-20 bg-neutral-100">
-          <div className="container mx-auto px-4 min-[900px]:px-6 py-16 min-[900px]:py-20 text-center">
+          <div className="px-8 py-16 text-center min-[900px]:py-20">
             <h2 className="mb-3 font-young-serif text-2xl tracking-tight min-[900px]:text-3xl">
               Ready to map your ideas?
             </h2>

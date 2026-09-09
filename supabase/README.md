@@ -25,6 +25,8 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260909232719_homepage_showcase_gutters_static_row` — Homepage equal gutters on split sections; AI preview 3× side inset; static small-image row (no carousel)
+- `20260909220031_homepage_footer_get_started` — Homepage Notion-style footer + get-started grey band; showcase media/shadows
 - `20260909184400_auth_email_nod_notes_branding` — Auth mailer Nod Notes branding; allowlist + gmail; magic-link hash recovery; empty-board minimap; brand connection cues
 - `20260909181848_early_access_own_status_not_list` — Early access: deny with own-email status; never return allowlist
 - `20260909181044_coming_soon_access_debrand` — Coming soon + /access: drop Nod Notes wordmark / invite-only blurb; light-gate slate text

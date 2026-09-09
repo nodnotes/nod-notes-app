@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-09T22:00:31Z`
+- Snapped at: `2026-09-09T23:27:19Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (link refreshed; `db dump` blocked on remote login-role alter — marker + version snapshot only)
@@ -9,6 +9,12 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260909232719_homepage_showcase_gutters_static_row.sql`.
+- **Homepage showcase layout**: sections 1–2 use equal 32px window-edge / panel gutter (`px-8` + `gap-8`); section 3 AI preview side inset ≈ 3× that gap (`min-[900px]:px-24`); section 2 small thumbs are a static clipped row (carousel removed).
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: homepage footer get started
 
 - DDL: none. Marker `20260909220031_homepage_footer_get_started.sql`.
 - **Homepage**: Notion-style footer (logo + Product links to section titles); full-width light grey get-started band; section 3 (AI showcase) back on white; showcase images/previews use stronger shadows; carousel + home media assets under `public/home/`.

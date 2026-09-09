@@ -24,7 +24,7 @@ export function HomeFooter() {
 
   return (
     <footer className="bg-background">
-      <div className="container mx-auto px-4 min-[900px]:px-6 pt-16 pb-10 min-[900px]:pt-20 min-[900px]:pb-12">
+      <div className="px-8 pt-16 pb-10 min-[900px]:pt-20 min-[900px]:pb-12">
         <div className="flex flex-col gap-12 min-[900px]:flex-row min-[900px]:gap-16 lg:gap-24">
           <div className="min-w-0 shrink-0 min-[900px]:w-[min(280px,28%)]">
             <Link
