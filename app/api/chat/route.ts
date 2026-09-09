@@ -1,15 +1,12 @@
 // Chat API route with streaming
 import { createClient } from '@/lib/supabase/server'
 import { NextRequest } from 'next/server'
-import OpenAI from 'openai'
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
+import { getOpenAI } from '@/lib/openai'
 
 export async function POST(request: NextRequest) {
   const requestId = Math.random().toString(36).substring(7)
   console.log(`[${requestId}] Chat API request received`)
+  const openai = getOpenAI()
   
   try {
     const supabase = await createClient()

@@ -1,13 +1,21 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-09T15:40:00Z`
+- Snapped at: `2026-09-09T17:25:00Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
-- Service versions (from `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.184.0`, rest `v13.0.5`, storage `v1.33.0`
-- CLI: `supabase` `2.90.0`
+- Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
+- CLI: `supabase` `2.90.0` (link refreshed; `db dump` blocked on remote login-role alter — marker + version snapshot only)
 - Remote applied tops out at `20260811225342_conversations_owner_select_for_insert_returning`
+- Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260909172436_coming_soon_nodnotes_launch.sql`.
+- **Coming soon launch**: `COMING_SOON` gate, allowlisted email OTP/`/access`, middleware; Vercel + Cloudflare custom domain; Next.js `15.5.25`.
+- **Pricing / upgrade**: subscription plans panel + `/pricing`.
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: empty board hints grey selected
 
 - DDL: none. Marker `20260909154044_empty_board_hints_grey_selected.sql`.
 - **Empty board hints**: Virgil “Click the board to add a frame”; idle brand nod/wink; first-board chrome arrows.

@@ -1,8 +1,10 @@
 import Link from 'next/link'
+import { ComingSoonPage } from '@/components/coming-soon-page'
 import { HomeBoardPreview } from '@/components/home-board-preview'
 import { HomeHeroIntro } from '@/components/home-hero-intro'
 import { HomeHeroThread } from '@/components/home-hero-thread'
 import { HomeTopNav } from '@/components/home-top-nav'
+import { isComingSoon } from '@/lib/coming-soon'
 import {
   getResolvedShowcaseBoards,
   type ResolvedShowcaseBoard,
@@ -77,6 +79,11 @@ function FullWidthShowcase({ board }: { board: ResolvedShowcaseBoard }) {
 }
 
 export default function Home() {
+  // Launch gate: public visitors only see the placeholder until COMING_SOON is cleared
+  if (isComingSoon()) {
+    return <ComingSoonPage />
+  }
+
   const showcaseBoards = getResolvedShowcaseBoards()
   const first = showcaseBoards[0]
   const second = showcaseBoards[1]

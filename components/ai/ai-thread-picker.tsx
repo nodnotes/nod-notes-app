@@ -327,7 +327,7 @@ export function AiThreadPicker({
                           isActive
                             ? 'tt-selected'
                             : isHovered &&
-                                '[@media(hover:hover)]:bg-gray-50 dark:[@media(hover:hover)]:bg-[#1f1f1f]'
+                                '[@media(hover:hover)]:bg-[var(--nod-tab-hover)]'
                         )}
                       >
                         <button

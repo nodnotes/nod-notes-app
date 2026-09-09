@@ -116,7 +116,7 @@ function PlaceholderTurn({ user, widths }: { user: boolean; widths: string[] }) 
     <div
       className={cn(
         'rounded-lg px-2 py-2', // Match AiTranscript turn chrome (no hover border)
-        user ? 'bg-[#eaf4fc] dark:bg-[#152536]' : '' // Light blue prompts; responses clear
+        user ? 'tt-tab-hover' : '' // Transcript user prompts — same grey as hovered board tabs; responses clear
       )}
       style={{ paddingLeft: 24, paddingRight: 24, paddingTop: 4, paddingBottom: 4 }} // Match live ⋮⋮ gutter
     >

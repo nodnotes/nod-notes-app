@@ -218,7 +218,7 @@ export function SettingsPanel({
                       <div>
                         <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Plan</label>
                         <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                          {profile?.subscription_tier === 'pro' ? 'Plus' : profile?.subscription_tier === 'enterprise' ? 'Enterprise' : 'Free Plan'}
+                          {profile?.subscription_tier === 'pro' ? 'Plus' : profile?.subscription_tier === 'enterprise' ? 'Nod Pro' : 'Free Plan'}
                         </p>
                       </div>
                     </div>

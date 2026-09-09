@@ -1,14 +1,11 @@
 // API route to generate board name from user prompt using AI structured output
 import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
-import OpenAI from 'openai'
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
+import { getOpenAI } from '@/lib/openai'
 
 export async function POST(request: NextRequest) {
   let prompt = ''
+  const openai = getOpenAI()
   
   try {
     const supabase = await createClient()

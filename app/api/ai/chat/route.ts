@@ -15,11 +15,8 @@ import { frameContentFromAi, markdownToTipTapHtml } from '@/lib/ai/markdown-to-t
 import { expandHideMarkersInHtml } from '@/lib/ai/hide-text'
 import type { AiProposedEdit } from '@/lib/ai/types'
 import { NextRequest } from 'next/server'
-import OpenAI from 'openai'
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
+import type OpenAI from 'openai'
+import { getOpenAI } from '@/lib/openai'
 
 const CREATE_FRAME_GAP = 320 // Horizontal spacing between newly created frames
 
@@ -47,6 +44,7 @@ export async function POST(request: NextRequest) {
       headers: { 'Content-Type': 'application/json' },
     })
   }
+  const openai = getOpenAI()
 
   const body = await request.json().catch(() => ({}))
   const message = typeof body.message === 'string' ? body.message.trim() : ''

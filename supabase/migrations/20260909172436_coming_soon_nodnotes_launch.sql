@@ -1,0 +1,2 @@
+-- Coming soon / early-access launch gate on nodnotes.com (Vercel).
+-- No DDL — schema unchanged; remote applied still tops out at 20260811225342.

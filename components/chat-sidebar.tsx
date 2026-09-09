@@ -1186,7 +1186,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
             )}
             <div
               data-chat-prompt
-              className="rounded-xl overflow-hidden bg-white dark:bg-[#202020] border border-black/10 dark:border-white/10 shadow-lg"
+              className="rounded-xl overflow-hidden tt-tab-hover border border-black/10 dark:border-white/10 shadow-lg"
             >
               <div className="px-1 pt-1">{composer}</div>
             </div>
@@ -1403,7 +1403,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
         <div className="relative z-10 flex-shrink-0 px-3 pb-3 pt-1 pointer-events-auto">
           <div
             data-chat-prompt
-            className="rounded-xl overflow-hidden bg-white dark:bg-[#202020] border border-black/10 dark:border-white/10 shadow-sm"
+            className="rounded-xl overflow-hidden tt-tab-hover border border-black/10 dark:border-white/10 shadow-sm"
           >
             <div className="px-1 pt-1">{composer}</div>
           </div>

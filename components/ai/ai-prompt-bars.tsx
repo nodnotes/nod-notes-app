@@ -282,8 +282,8 @@ export function AiPromptBars({
                     'w-full text-left text-[13px] leading-snug truncate rounded-lg px-2.5 py-1.5', // Sample row
                     'text-gray-900 dark:text-gray-100', // Body
                     i === activeIndex
-                      ? 'bg-black/[0.06] dark:bg-white/[0.08]' // Hover / current wash
-                      : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'
+                      ? 'tt-tab-hover' // Same wash as a hovered (not open) board tab
+                      : '[@media(hover:hover)]:hover:bg-[var(--nod-tab-hover)]'
                   )}
                   title={item.text}
                 >

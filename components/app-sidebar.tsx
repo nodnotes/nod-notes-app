@@ -3033,7 +3033,7 @@ export default function AppSidebar({ user }: AppSidebarProps) {
                           {profile?.full_name || user.email?.split('@')[0] || 'User'}
                         </p>
                         <p className="text-xs text-gray-500 dark:text-gray-400">
-                          {profile?.subscription_tier === 'pro' ? 'Plus' : profile?.subscription_tier === 'enterprise' ? 'Enterprise' : 'Free'}
+                          {profile?.subscription_tier === 'pro' ? 'Plus' : profile?.subscription_tier === 'enterprise' ? 'Nod Pro' : 'Free'}
                         </p>
                       </div>
                       {/* Spacer for Upgrade / Help button beside profile */}

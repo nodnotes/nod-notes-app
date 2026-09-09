@@ -1,5 +1,10 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import {
+  isComingSoon,
+  isComingSoonPublicPath,
+  isEarlyAccessEmail,
+} from '@/lib/coming-soon'
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
@@ -32,11 +37,61 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
+  const pathname = request.nextUrl.pathname
+  const comingSoon = isComingSoon()
+
+  // --- Coming soon launch gate ---
+  if (comingSoon) {
+    // Public marketing login/signup → early-access entry
+    if (pathname.startsWith('/login') || pathname.startsWith('/signup')) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/access'
+      url.search = ''
+      return NextResponse.redirect(url)
+    }
+
+    const onPublicPath = isComingSoonPublicPath(pathname)
+
+    if (user && !isEarlyAccessEmail(user.email)) {
+      // Signed in but not invited — drop session and send to placeholder
+      await supabase.auth.signOut()
+      const url = request.nextUrl.clone()
+      url.pathname = '/'
+      url.searchParams.set('error', 'not_invited')
+      return NextResponse.redirect(url)
+    }
+
+    if (!onPublicPath) {
+      if (!user) {
+        const url = request.nextUrl.clone()
+        url.pathname = '/'
+        url.search = ''
+        return NextResponse.redirect(url)
+      }
+      if (!user.email_confirmed_at) {
+        const url = request.nextUrl.clone()
+        url.pathname = '/access'
+        url.searchParams.set('error', 'email_not_verified')
+        await supabase.auth.signOut()
+        return NextResponse.redirect(url)
+      }
+      // Allowlisted + verified → fall through to normal board/profile checks below
+    } else if (user && isEarlyAccessEmail(user.email) && (pathname === '/' || pathname === '/access')) {
+      // Invited users on placeholder → go to the app
+      if (user.email_confirmed_at) {
+        const url = request.nextUrl.clone()
+        url.pathname = '/board'
+        url.search = ''
+        return NextResponse.redirect(url)
+      }
+    }
+  }
+
   // Protect /board routes
   if (request.nextUrl.pathname.startsWith('/board')) {
     if (!user) {
       const url = request.nextUrl.clone()
-      url.pathname = '/login'
+      url.pathname = comingSoon ? '/access' : '/login'
       // Preserve ?s= share tokens through login (path + query only; no open redirect)
       const resume = `${request.nextUrl.pathname}${request.nextUrl.search}`
       url.searchParams.set('redirectTo', resume)
@@ -46,9 +101,18 @@ export async function middleware(request: NextRequest) {
     // Check if email is verified
     if (!user.email_confirmed_at) {
       const url = request.nextUrl.clone()
-      url.pathname = '/login'
+      url.pathname = comingSoon ? '/access' : '/login'
       url.searchParams.set('error', 'email_not_verified')
       // Sign out unverified user
+      await supabase.auth.signOut()
+      return NextResponse.redirect(url)
+    }
+
+    // Coming soon: allowlist already enforced above
+    if (comingSoon && !isEarlyAccessEmail(user.email)) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/'
+      url.searchParams.set('error', 'not_invited')
       await supabase.auth.signOut()
       return NextResponse.redirect(url)
     }
@@ -63,7 +127,7 @@ export async function middleware(request: NextRequest) {
     if (!profile) {
       // Profile missing - redirect to signup or show error
       const url = request.nextUrl.clone()
-      url.pathname = '/login'
+      url.pathname = comingSoon ? '/access' : '/login'
       url.searchParams.set('error', 'profile_missing')
       await supabase.auth.signOut()
       return NextResponse.redirect(url)
@@ -106,4 +170,3 @@ export const config = {
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
-

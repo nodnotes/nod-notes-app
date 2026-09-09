@@ -1169,8 +1169,8 @@ export function AiChatTurn({
         className={cn(
           'group relative rounded-lg', // Same radius as drag ghost
           selected ? 'z-10' : 'z-0',
-          // Unselected prompts: light blue; responses clear
-          !selected && isUser && 'bg-[#eaf4fc] dark:bg-[#152536]',
+          // Unselected user prompts in the transcript — boards-nav tab hover grey (not the composer)
+          !selected && isUser && 'tt-tab-hover',
           selected && 'bg-white dark:bg-[#1a1a1a]'
         )}
         style={{
