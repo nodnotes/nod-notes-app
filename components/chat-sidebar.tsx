@@ -1149,7 +1149,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                   title="Customize Nod Notes AI"
                   aria-label="Customize Nod Notes AI"
                 >
-                  {/* Open chat: sparkles on (same light blue as map toggle) */}
+                  {/* Open chat: sparkles on (Nod blue, same as map toggle) */}
                   <NodNotesBrandMark drawingUrl={logoDrawing} size={28} showAiStar />
                 </button>
                 <div className="flex-1 min-w-0 overflow-hidden bg-transparent">
@@ -1245,7 +1245,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                 title="Customize Nod Notes AI"
                 aria-label="Customize Nod Notes AI"
               >
-                {/* Open chat: sparkles on (same light blue as map toggle) */}
+                {/* Open chat: sparkles on (Nod blue, same as map toggle) */}
                 <NodNotesBrandMark drawingUrl={logoDrawing} size={28} showAiStar />
               </button>
             )}
@@ -1309,7 +1309,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                     title="Customize Nod Notes AI"
                     aria-label="Customize Nod Notes AI"
                   >
-                    {/* Open chat empty state: sparkles on (same light blue as map toggle) */}
+                    {/* Open chat empty state: sparkles on (Nod blue, same as map toggle) */}
                     <NodNotesBrandMark drawingUrl={logoDrawing} size={52} showAiStar />
                   </button>
                   <button

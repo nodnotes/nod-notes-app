@@ -15,7 +15,8 @@ import {
 import { createPortal } from 'react-dom'
 import { useEditor, EditorContent, type Editor } from '@tiptap/react'
 import { ReactFlowProvider } from 'reactflow'
-import { GripVertical, Loader2 } from 'lucide-react'
+import { GripVertical } from 'lucide-react'
+import { NodNotesIcon } from '@/components/nod-notes-icon'
 import type { AiMessage, AiChatBlockDragPayload, AiChatBlockDragItem } from '@/lib/ai/types'
 import { AI_CHAT_BLOCK_MIME } from '@/lib/ai/types'
 import { markdownToTipTapHtml } from '@/lib/ai/markdown-to-tiptap'
@@ -1281,7 +1282,10 @@ export function AiChatTurn({
               />
             ) : null}
             {streaming && (
-              <Loader2 className="absolute -top-0.5 right-0 h-3 w-3 animate-spin text-gray-400" />
+              <NodNotesIcon
+                nodLoop
+                className="absolute -top-0.5 right-0 h-3 w-auto text-gray-400"
+              />
             )}
           </div>
         </ReactFlowProvider>

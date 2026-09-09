@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { createPortal } from 'react-dom'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
+import { NodNotesIcon } from '@/components/nod-notes-icon'
 import {
   ArrowUp,
   Loader2,
@@ -1041,7 +1042,7 @@ export function AiComposer({
               )}
             >
               {isLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <NodNotesIcon nodLoop className="h-4 w-auto text-current" />
               ) : (
                 <ArrowUp className="h-4 w-4" />
               )}

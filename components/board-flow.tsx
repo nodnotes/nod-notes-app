@@ -7282,6 +7282,10 @@ function BoardFlowInner({
           void createBlockAtFlowPosition(flow.x, flow.y)
           break
         }
+        case 'addTemplate': {
+          // Stub until saved templates exist (pairs with thread Save as template)
+          break
+        }
         case 'paste': {
           // Frame clipboard paste not wired yet — row stays disabled until then
           break
@@ -10899,7 +10903,12 @@ function BoardFlowInner({
           title="Show chat"
           aria-label="Show chat sidebar"
         >
-          <NodNotesBrandMark drawingUrl={logoDrawing} size={42} />
+          <NodNotesBrandMark
+            key={conversationId ?? 'new'}
+            drawingUrl={logoDrawing}
+            size={42}
+            nod={!logoDrawing}
+          />
         </button>
       )}
 

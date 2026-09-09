@@ -6,6 +6,7 @@ import { headers } from 'next/headers'
 import { BoardFlow } from '@/components/board-flow'
 import { InputAreaWithStickyPrompt } from '@/components/input-area-with-sticky-prompt'
 import { ChatSidebar } from '@/components/chat-sidebar'
+import { WelcomeText } from '@/components/welcome-text-overlay' // Empty-board Virgil hints
 import { EditorProvider } from '@/components/editor-context'
 import { ReactFlowContextProvider } from '@/components/react-flow-context'
 import { PreviewFocusProvider } from '@/lib/preview-focus-context'
@@ -82,6 +83,7 @@ export default async function ConversationPage({
               <div className="h-full flex">
                 <div className="flex-1 relative min-w-0 h-full">
                   <BoardFlow conversationId={conversationId} />
+                  {editable ? <WelcomeText /> : null} {/* Empty-board hints — hide for view/comment */}
                   {/* Top bar stays for all roles; write tools gate via BoardAccess */}
                   <InputAreaWithStickyPrompt conversationId={conversationId} />
                 </div>

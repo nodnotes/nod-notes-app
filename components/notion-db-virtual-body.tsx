@@ -841,8 +841,8 @@ export const RowHandle = memo(function RowHandle({
           'tt-db-row-handle flex h-5 w-5 items-center justify-center rounded text-gray-400 cursor-grab active:cursor-grabbing',
           'opacity-0 group-hover/row:opacity-100 focus:opacity-100 hover:bg-black/5 hover:text-gray-800',
           'group-hover/gutter:opacity-100',
-          selected && 'opacity-100 bg-blue-50 text-blue-600',
-          menu && 'opacity-100 bg-blue-50 text-blue-600'
+          selected && 'opacity-100 tt-selected text-blue-500',
+          menu && 'opacity-100 tt-selected text-blue-500'
         )}
         title="Drag to board or open actions"
         aria-label="Row handle"

@@ -354,7 +354,7 @@ export function ThreadActionsMenu({
                     ? 'smooth'
                     : opt.id === 'styleSharp'
                       ? 'sharp'
-                      : 'linear') && 'bg-blue-50 dark:bg-blue-950/40'
+                      : 'linear') && 'tt-selected'
               )}
             >
               <span className="flex-1 text-left">{opt.label}</span>
@@ -389,7 +389,7 @@ export function ThreadActionsMenu({
               }}
               className={cn(
                 'justify-start text-sm h-8 px-2 font-normal w-full',
-                currentStrokeWidth === opt.width && 'bg-blue-50 dark:bg-blue-950/40'
+                currentStrokeWidth === opt.width && 'tt-selected'
               )}
             >
               <span className="flex-1 text-left">{opt.label}</span>

@@ -1299,7 +1299,7 @@ export function FrameStackRevealLine({
               role="menuitem"
               className={cn(
                 'flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800',
-                allOpen && 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
+                allOpen && 'tt-selected text-blue-500 dark:text-blue-400'
               )}
               title="Open stack"
               aria-label="Open stack"
@@ -1335,7 +1335,7 @@ export function FrameStackRevealLine({
               role="menuitem"
               className={cn(
                 'flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800',
-                isLocked && 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
+                isLocked && 'tt-selected text-blue-500 dark:text-blue-400'
               )}
               title={isLocked ? 'Unlock' : 'Lock'}
               aria-label={isLocked ? 'Unlock' : 'Lock'}

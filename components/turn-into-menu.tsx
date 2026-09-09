@@ -349,7 +349,7 @@ export function TurnIntoMenuItems({
               }}
               className={cn(
                 'justify-start gap-2 text-sm h-8 px-2 font-normal w-auto min-w-full whitespace-nowrap',
-                currentBlockType === t.id && 'bg-blue-50 dark:bg-blue-950/40',
+                currentBlockType === t.id && 'tt-selected',
                 t.id === 'boardIn' && showBoardIn && 'bg-gray-100 dark:bg-[#2a2a2a]'
               )}
             >

@@ -361,6 +361,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
               className={iconBtn}
               title="More"
               type="button"
+              data-board-more
             >
               <MoreHorizontal className="h-4 w-4" />
             </Button>
@@ -399,7 +400,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
                         type="button"
                         className={cn(
                           'flex-1 flex flex-col items-center gap-0.5 rounded-md px-1 py-1.5 text-gray-700 hover:bg-gray-50',
-                          selected && 'bg-blue-50 text-blue-600'
+                          selected && 'tt-selected'
                         )}
                         onPointerDown={(e) => e.preventDefault()}
                         onClick={() => setBoardFont(font.id)}

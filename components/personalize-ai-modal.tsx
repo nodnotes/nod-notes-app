@@ -6,6 +6,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { Eraser, Pencil, RotateCcw, X } from 'lucide-react'
@@ -26,8 +27,8 @@ const NN_TOPPER_STORAGE_KEY_LEGACY = 'nodnotes-ai-topper'
 /** Logo disc fill for the personalize draw canvas */
 export const LOGO_CIRCLE_COLOR = '#a2a7af'
 
-/** AI sparkles fill — light blue (prompt-wash family) on every logo that shows stars */
-export const AI_STAR_COLOR = '#b5daf3'
+/** AI sparkles fill — same blue-500 as the Nod wordmark on every logo that shows stars */
+export const AI_STAR_COLOR = '#3b82f6'
 
 /** Stroke color for custom marks (white cutout look) */
 const DRAW_WHITE = '#ffffff'
@@ -77,15 +78,20 @@ function strokeDefaultDrawnMark(ctx: CanvasRenderingContext2D) {
   ctx.restore() // Drop clip
 }
 
-/** Default AI mark — same marker strokes the canvas seeds with */
+/** Table-dot centroid in the 256 canvas — T hinges here for the load nod */
+const DRAWN_DOT_CX = 176
+const DRAWN_DOT_CY = 104
+
 function DefaultDrawnLogoSvg({
   size,
   className,
   onBoard = false,
+  nod = false,
 }: {
   size: number
   className?: string
   onBoard?: boolean // Map chat toggle: black/white strokes on board fill
+  nod?: boolean // Board open/load: T bows around the dot, then settles
 }) {
   const stroke = onBoard ? 'currentColor' : DRAW_WHITE
   return (
@@ -94,10 +100,19 @@ function DefaultDrawnLogoSvg({
       width={size}
       height={size}
       className={cn(onBoard && 'text-gray-900 dark:text-white', className)}
+      style={
+        nod
+          ? ({
+              ['--nn-nod-cx']: `${(DRAWN_DOT_CX / CANVAS_SIZE) * 100}%`, // Table-dot center x
+              ['--nn-nod-cy']: `${(DRAWN_DOT_CY / CANVAS_SIZE) * 100}%`, // Table-dot center y
+            } as CSSProperties)
+          : undefined
+      }
       role="img"
       aria-label="Nod Notes"
     >
       <g
+        className={nod ? 'nn-icon-nod-arm' : undefined}
         fill="none"
         stroke={stroke}
         strokeLinecap="round"
@@ -132,6 +147,8 @@ type NodNotesBrandMarkProps = {
   discVariant?: 'brand' | 'board'
   /** AI sparkles badge — on for map toggle + chat logos; off on customize-agent icon */
   showAiStar?: boolean
+  /** Default mark only: T hinges on the table-dot once (board open / load) */
+  nod?: boolean
 }
 
 /**
@@ -145,6 +162,7 @@ export function NodNotesBrandMark({
   className,
   discVariant = 'board',
   showAiStar = true,
+  nod = false,
 }: NodNotesBrandMarkProps) {
   const badgeSize = Math.max(14, Math.round(size * 0.34)) // Scales with logo
   const onBoard = discVariant === 'board'
@@ -179,11 +197,12 @@ export function NodNotesBrandMark({
             size={size}
             className="h-full w-full"
             onBoard={onBoard}
+            nod={nod}
           />
         )}
       </div>
 
-      {/* AI stars — top-right; same light blue on map toggle + open chat */}
+      {/* AI stars — top-right; Nod blue on map toggle + open chat */}
       {showAiStar ? (
       <svg
         viewBox="0 0 24 24"

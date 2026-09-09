@@ -64,7 +64,7 @@ export function HomeTopNav() {
           className="relative z-10 inline-flex items-center text-2xl min-[900px]:text-3xl leading-none opacity-90 hover:opacity-100 transition-opacity"
           aria-label="Nod Notes"
         >
-          <NodNotesIcon className="mr-1 h-[1cap] w-auto shrink-0 text-gray-700" />
+          <NodNotesIcon nodIdle className="mr-1 h-[1cap] w-auto shrink-0 text-gray-700" />
           <span data-home-brand-nod className="font-young-serif font-normal text-blue-500">
             Nod
           </span>

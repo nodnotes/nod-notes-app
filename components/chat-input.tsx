@@ -864,7 +864,7 @@ export function ChatInput({ conversationId, projectId, onHeightChange, variant =
                 }}
                 className={cn(
                   "text-gray-700 dark:text-gray-300", // Default: grey tab text color
-                  isResearchMode && "bg-blue-50 dark:bg-[#2a2a3a] text-gray-900 dark:text-white hover:text-gray-900 dark:hover:text-white", // Selected: black text, same blue background
+                  isResearchMode && "tt-selected text-gray-900 dark:text-white hover:text-gray-900 dark:hover:text-white", // Selected: black text, grey wash
                   "hover:text-gray-900 dark:hover:text-white" // Hover: black text
                 )}
               >
@@ -884,7 +884,7 @@ export function ChatInput({ conversationId, projectId, onHeightChange, variant =
                 }}
                 className={cn(
                   "text-gray-700 dark:text-gray-300", // Default: grey tab text color
-                  isFlashcardsMode && "bg-blue-50 dark:bg-[#2a2a3a] text-gray-900 dark:text-white hover:text-gray-900 dark:hover:text-white", // Selected: black text, same blue background
+                  isFlashcardsMode && "tt-selected text-gray-900 dark:text-white hover:text-gray-900 dark:hover:text-white", // Selected: black text, grey wash
                   "hover:text-gray-900 dark:hover:text-white" // Hover: black text
                 )}
               >

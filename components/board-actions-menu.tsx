@@ -6,6 +6,7 @@ import { useEffect, useLayoutEffect, useRef } from 'react' // Escape close + aut
 import {
   Scan, // Capture — 4 disconnected rounded corners
   ClipboardPaste,
+  LayoutTemplate, // Add template — layout glyph, distinct from Add frame Plus
   Link2,
   Maximize2,
   Plus,
@@ -21,6 +22,7 @@ import { applyMenuPlacement, watchMenuSafeRect } from '@/lib/menu-placement' // 
 /** Actions the board menu can emit (wired + stubs). */
 export type BoardActionId =
   | 'addFrame'
+  | 'addTemplate' // Stub — insert a saved template at the click (thread Save as template is the pair)
   | 'paste'
   | 'selectAll'
   | 'undo'
@@ -83,6 +85,12 @@ export function BoardActionsMenu({
       id: 'addFrame',
       label: 'Add frame',
       icon: <Plus className="h-4 w-4" />,
+    },
+    {
+      kind: 'action',
+      id: 'addTemplate', // Directly under Add frame — add a saved template at the click
+      label: 'Add template',
+      icon: <LayoutTemplate className="h-4 w-4" />,
     },
     {
       kind: 'action',

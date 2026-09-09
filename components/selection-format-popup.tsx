@@ -261,7 +261,7 @@ export function SelectionFormatPopup({
               type="button"
               className={cn(
                 'flex h-8 w-full items-center gap-2 rounded-md px-2 text-sm hover:bg-gray-100 dark:hover:bg-[#2a2a2a]',
-                editor?.isActive({ textAlign: opt.value }) && 'bg-blue-50 dark:bg-blue-950/40'
+                editor?.isActive({ textAlign: opt.value }) && 'tt-selected'
               )}
               onClick={() => {
                 run(() => editor!.chain().focus().setTextAlign(opt.value).run())

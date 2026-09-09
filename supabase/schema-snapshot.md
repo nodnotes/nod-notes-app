@@ -1,13 +1,20 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-09T04:23:00Z`
+- Snapped at: `2026-09-09T15:40:00Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.184.0`, rest `v13.0.5`, storage `v1.33.0`
 - CLI: `supabase` `2.90.0`
 - Remote applied tops out at `20260811225342_conversations_owner_select_for_insert_returning`
 
 ## This save
+
+- DDL: none. Marker `20260909154044_empty_board_hints_grey_selected.sql`.
+- **Empty board hints**: Virgil “Click the board to add a frame”; idle brand nod/wink; first-board chrome arrows.
+- **Selected tabs**: grey `--nod-selected` wash (not nod-blue) for menus + current board.
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: homepage AI sidebar copy thread stack
 
 - DDL: none. Marker `20260909042323_homepage_ai_sidebar_copy_thread_stack.sql`.
 - **Homepage**: showcase copy reorder; interactive AI sidebar on section 2 preview; phone threads stack behind text frames.

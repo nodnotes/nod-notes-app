@@ -345,7 +345,7 @@ function SortableBoardItem({
           // Always 1px border so select wash doesn’t jump the row; color matches property-cell hover
           'flex items-center gap-1 pr-4 h-8 rounded-lg border border-transparent transition-colors text-sm group cursor-grab active:cursor-grabbing relative select-none',
           isActive
-            ? 'bg-blue-50 dark:bg-[#2a2a3a]' // Open board only — multi-select uses grey border, not blue fill
+            ? 'tt-selected' // Open board — grey selected wash
             // Hover bg only on real hover devices — iOS sticky :hover ate the first board tap
             : '[@media(hover:hover)]:hover:bg-gray-50 dark:[@media(hover:hover)]:hover:bg-[#1f1f1f]',
           isSelected && 'border-[#e5e7eb] dark:border-[#374151]', // Same grey as .tt-property-block-cell hover
@@ -668,9 +668,9 @@ function DroppableProjectItem({
         className={cn(
           'flex items-center gap-2 px-4 h-8 rounded-lg transition-colors text-sm border-2 group',
           isActive
-            ? 'bg-blue-50 dark:bg-[#2a2a3a] text-gray-700 dark:text-gray-300 border-transparent'
+            ? 'tt-selected text-gray-700 dark:text-gray-300 border-transparent'
             : isDragOver
-              ? 'bg-blue-50 dark:bg-[#2a2a3a] text-gray-700 dark:text-gray-300 border-blue-500 dark:border-blue-400 border-dashed'
+              ? 'tt-selected text-gray-700 dark:text-gray-300 border-blue-500 dark:border-blue-400 border-dashed'
               : 'hover:bg-gray-50 dark:hover:bg-[#1f1f1f] text-gray-700 dark:text-gray-300 border-transparent'
         )}
       >
@@ -2928,7 +2928,7 @@ export default function AppSidebar({ user }: AppSidebarProps) {
 
               <DragOverlay>
                 {activeId ? (
-                  <div className="flex items-center gap-2 px-4 h-8 rounded-lg bg-blue-50 dark:bg-[#2a2a3a] text-sm shadow-lg opacity-90 cursor-grabbing">
+                  <div className="flex items-center gap-2 px-4 h-8 rounded-lg tt-selected text-sm shadow-lg opacity-90 cursor-grabbing">
                     <span className="truncate flex-1 text-gray-700 dark:text-gray-300">
                       {filteredConversations.find((c) => c.id === activeId)?.title || ''}
                     </span>

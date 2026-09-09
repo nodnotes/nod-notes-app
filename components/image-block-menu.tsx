@@ -179,7 +179,7 @@ export function ImageBlockMenu({
               }}
               className={cn(
                 'justify-start text-sm h-8 px-2 font-normal w-full',
-                widthPct === opt.pct && 'bg-blue-50 dark:bg-blue-950/40'
+                widthPct === opt.pct && 'tt-selected'
               )}
             >
               <span className="flex-1 text-left">{opt.label}</span>

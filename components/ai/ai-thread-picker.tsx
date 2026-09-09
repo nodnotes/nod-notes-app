@@ -325,7 +325,7 @@ export function AiThreadPicker({
                         className={cn(
                           'group relative flex w-full items-center gap-0.5 pr-1 h-8 rounded-lg border border-transparent text-sm transition-colors',
                           isActive
-                            ? 'bg-blue-50 dark:bg-[#2a2a3a]'
+                            ? 'tt-selected'
                             : isHovered &&
                                 '[@media(hover:hover)]:bg-gray-50 dark:[@media(hover:hover)]:bg-[#1f1f1f]'
                         )}

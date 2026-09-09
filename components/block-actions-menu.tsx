@@ -906,7 +906,7 @@ export function BlockActionsMenu({
       >
         <div
           className={cn(
-            'flex items-center text-sm h-8 px-2 w-full bg-blue-50 dark:bg-blue-950/40 rounded-md'
+            'flex items-center text-sm h-8 px-2 w-full tt-selected rounded-md'
           )}
         >
           <ArrowLeftRight className="h-4 w-4 mr-2 text-gray-500" />
@@ -1246,7 +1246,7 @@ export function BlockActionsMenu({
                   }}
                   className={cn(
                     'justify-start gap-2 text-sm h-8 px-2 font-normal w-auto min-w-full whitespace-nowrap',
-                    currentBlockType === t.id && 'bg-blue-50 dark:bg-blue-950/40',
+                    currentBlockType === t.id && 'tt-selected',
                     t.id === 'boardIn' && openSubmenu === 'boardIn' && 'bg-gray-100 dark:bg-[#2a2a2a]'
                   )}
                 >
@@ -1396,7 +1396,7 @@ export function BlockActionsMenu({
             className={cn(
               'mb-1.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-[#2a2a2a]',
               (currentFrameShape === FRAME_SHAPE_NONE || !currentFrameShape) &&
-                'bg-blue-50 dark:bg-blue-950/40'
+                'tt-selected'
             )}
           >
             <span className="flex h-7 w-7 items-center justify-center rounded border border-dashed border-gray-300 dark:border-gray-600 text-[10px] text-gray-400">
@@ -1423,7 +1423,7 @@ export function BlockActionsMenu({
                   }}
                   className={cn(
                     'flex h-9 w-full items-center justify-center rounded-md p-1.5 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]',
-                    selected && 'bg-blue-50 dark:bg-blue-950/40'
+                    selected && 'tt-selected'
                   )}
                 >
                   <Shape
@@ -1465,7 +1465,7 @@ export function BlockActionsMenu({
             }}
             className={cn(
               'justify-start text-sm h-8 px-2 font-normal w-full',
-              convertLayoutMode === 'card' && 'bg-blue-50 dark:bg-blue-950/40'
+              convertLayoutMode === 'card' && 'tt-selected'
             )}
           >
             <LayoutGrid className="h-4 w-4 mr-2 text-gray-500" />
@@ -1487,7 +1487,7 @@ export function BlockActionsMenu({
             }}
             className={cn(
               'justify-start text-sm h-8 px-2 font-normal w-full',
-              convertLayoutMode === 'table' && 'bg-blue-50 dark:bg-blue-950/40'
+              convertLayoutMode === 'table' && 'tt-selected'
             )}
           >
             <Table2 className="h-4 w-4 mr-2 text-gray-500" />
