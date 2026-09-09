@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 
 /**
- * Public launch placeholder: brand wordmark + early-access email magic link.
+ * Public launch placeholder: coming soon + early-access email magic link.
  */
 export function ComingSoonPage() {
   const [email, setEmail] = useState('')
@@ -52,7 +52,7 @@ export function ComingSoonPage() {
 
   return (
     <div
-      className="relative min-h-[100dvh] overflow-hidden text-foreground"
+      className="relative min-h-[100dvh] overflow-hidden text-slate-900"
       data-coming-soon
     >
       {/* Soft atmospheric wash — not a flat fill; matches marketing blue without purple glow */}
@@ -66,13 +66,8 @@ export function ComingSoonPage() {
       />
 
       <main className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-lg flex-col items-center justify-center px-6 py-16 text-center">
-        {/* Wordmark only — no icon on the launch placeholder */}
-        <div className="mb-8 inline-flex items-center text-4xl leading-none min-[900px]:text-5xl">
-          <span className="font-young-serif font-normal text-blue-500">Nod</span>
-          <span className="font-young-serif font-normal text-foreground">Notes</span>
-        </div>
-
-        <h1 className="mb-10 font-young-serif text-[clamp(2.25rem,8vw,3.5rem)] font-bold tracking-[0.02em] leading-[1.05]">
+        {/* Explicit slate — page is always light; theme foreground goes white in dark mode */}
+        <h1 className="mb-10 font-young-serif text-[clamp(2.25rem,8vw,3.5rem)] font-bold tracking-[0.02em] leading-[1.05] text-slate-900">
           Coming soon
         </h1>
 
@@ -88,7 +83,7 @@ export function ComingSoonPage() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@company.com"
-            className="h-12 w-full rounded-xl border border-border bg-white/80 px-4 text-base outline-none ring-blue-500/40 transition focus:ring-2"
+            className="h-12 w-full rounded-xl border border-slate-200 bg-white/80 px-4 text-base text-slate-900 outline-none ring-blue-500/40 transition placeholder:text-slate-400 focus:ring-2"
           />
           <button
             type="submit"
@@ -110,7 +105,7 @@ export function ComingSoonPage() {
           </p>
         ) : null}
 
-        <p className="mt-8 text-sm text-muted-foreground">
+        <p className="mt-8 text-sm text-slate-500">
           Already have a password?{' '}
           <Link href="/access" className="text-blue-600 underline-offset-2 hover:underline">
             Sign in

@@ -25,6 +25,9 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260909181044_coming_soon_access_debrand` — Coming soon + /access: drop Nod Notes wordmark / invite-only blurb; light-gate slate text
+- `20260909174638_early_access_anti_enumeration` — Early-access anti-enumeration (OTP always-OK + session gate)
+- `20260909172436_coming_soon_nodnotes_launch` — Coming-soon gate on nodnotes.com + early-access OTP/password
 - `20260909154044_empty_board_hints_grey_selected` — Empty-board Virgil hints + idle nod; grey selected tab / menu wash
 - `20260909042323_homepage_ai_sidebar_copy_thread_stack` — Showcase AI sidebar, copy reorder, phone threads behind text
 - `20260909031338_homepage_nav_threads_showcase` — Homepage top nav, showcase threads, hero/copy refinements

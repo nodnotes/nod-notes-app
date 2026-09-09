@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { NodNotesIcon } from '@/components/nod-notes-icon'
 import { createClient } from '@/lib/supabase/client'
 
 const GENERIC_FAIL = "Couldn't sign in. If you have early access, check your email and password."
@@ -82,20 +81,7 @@ export default function AccessPage() {
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_80%_at_50%_-10%,rgba(59,130,246,0.12),transparent_55%),linear-gradient(180deg,#f8fafc_0%,#ffffff_50%,#f1f5f9_100%)]"
       />
       <main className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-md flex-col justify-center px-6 py-16">
-        <Link
-          href="/"
-          className="mb-8 inline-flex items-center self-center text-3xl leading-none"
-          aria-label="Nod Notes home"
-        >
-          <NodNotesIcon className="mr-1.5 h-[1cap] w-auto shrink-0 text-gray-700" />
-          <span className="font-young-serif text-blue-500">Nod</span>
-          <span className="font-young-serif text-foreground">Notes</span>
-        </Link>
-
-        <h1 className="mb-2 text-center font-young-serif text-2xl tracking-tight">Early access</h1>
-        <p className="mb-8 text-center text-sm text-muted-foreground">
-          Invite-only sign-in while Nod Notes is in coming soon.
-        </p>
+        <h1 className="mb-8 text-center font-young-serif text-2xl tracking-tight">Early access</h1>
 
         <form onSubmit={handleLogin} className="space-y-3">
           <input
