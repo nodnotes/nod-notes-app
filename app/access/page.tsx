@@ -6,8 +6,10 @@ import { useRouter } from 'next/navigation'
 import { NodNotesIcon } from '@/components/nod-notes-icon'
 import { createClient } from '@/lib/supabase/client'
 
+const GENERIC_FAIL = "Couldn't sign in. If you have early access, check your email and password."
+
 /**
- * Password sign-in for allowlisted early-access accounts (magic link lives on /).
+ * Password sign-in for early access. Errors are generic so invite status isn't leaked.
  */
 export default function AccessPage() {
   const router = useRouter()
@@ -30,25 +32,24 @@ export default function AccessPage() {
     setLoading(true)
     setMessage(null)
     try {
-      const check = await fetch('/api/early-access/check', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
+        password,
       })
-      const checkData = (await check.json().catch(() => ({}))) as {
-        allowed?: boolean
-        error?: string
+      if (error || !data.session || !data.user) {
+        await supabase.auth.signOut().catch(() => {})
+        throw new Error(GENERIC_FAIL)
       }
-      if (!check.ok || !checkData.allowed) {
-        throw new Error(checkData.error || 'That email is not on the early-access list yet.')
-      }
-
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-      if (error) throw error
-      if (!data.session) throw new Error('No session returned.')
       if (!data.user.email_confirmed_at) {
         await supabase.auth.signOut()
-        throw new Error('Verify your email before signing in.')
+        throw new Error(GENERIC_FAIL)
+      }
+
+      // Server confirms allowlist without telling the client why it failed
+      const gate = await fetch('/api/early-access/session', { method: 'POST' })
+      if (!gate.ok) {
+        await supabase.auth.signOut().catch(() => {})
+        throw new Error(GENERIC_FAIL)
       }
 
       const { data: profile } = await supabase
@@ -63,16 +64,13 @@ export default function AccessPage() {
         })
         if (createError) {
           await supabase.auth.signOut()
-          throw new Error('Account setup incomplete. Please contact support.')
+          throw new Error(GENERIC_FAIL)
         }
       }
 
       router.push('/board')
-    } catch (err: unknown) {
-      setMessage({
-        type: 'error',
-        text: err instanceof Error ? err.message : 'Failed to sign in.',
-      })
+    } catch {
+      setMessage({ type: 'error', text: GENERIC_FAIL })
       setLoading(false)
     }
   }

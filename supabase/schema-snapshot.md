@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-09T17:25:00Z`
+- Snapped at: `2026-09-09T17:46:38Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (link refreshed; `db dump` blocked on remote login-role alter — marker + version snapshot only)
@@ -9,6 +9,12 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260909174638_early_access_anti_enumeration.sql`.
+- **Early-access hardening**: remove `/api/early-access/check`; OTP always returns the same success (mail only if allowlisted); password path uses `/api/early-access/session` + generic errors so invite membership is not leaked.
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: coming soon nodnotes launch
 
 - DDL: none. Marker `20260909172436_coming_soon_nodnotes_launch.sql`.
 - **Coming soon launch**: `COMING_SOON` gate, allowlisted email OTP/`/access`, middleware; Vercel + Cloudflare custom domain; Next.js `15.5.25`.

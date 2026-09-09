@@ -38,6 +38,6 @@ export function isComingSoonPublicPath(pathname: string): boolean {
   if (pathname === '/') return true // Placeholder landing
   if (pathname === '/access') return true // Early-access sign-in
   if (pathname.startsWith('/auth/')) return true // Supabase callback + verify flows
-  if (pathname.startsWith('/api/early-access')) return true // OTP + allowlist check APIs
+  if (pathname.startsWith('/api/early-access')) return true // OTP + session gate APIs
   return false
 }

@@ -2,10 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { NodNotesIcon } from '@/components/nod-notes-icon'
 
 /**
- * Public launch placeholder: brand-first hero + early-access email magic link.
+ * Public launch placeholder: brand wordmark + early-access email magic link.
  */
 export function ComingSoonPage() {
   const [email, setEmail] = useState('')
@@ -17,7 +16,7 @@ export function ComingSoonPage() {
     if (params.get('error') === 'not_invited') {
       setMessage({
         type: 'error',
-        text: 'That email is not on the early-access list yet.',
+        text: "Couldn't sign in with that account.",
       })
     }
   }, [])
@@ -32,13 +31,14 @@ export function ComingSoonPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
       })
-      const data = (await res.json().catch(() => ({}))) as { error?: string }
       if (!res.ok) {
-        throw new Error(data.error || 'Could not send sign-in email.')
+        const data = (await res.json().catch(() => ({}))) as { error?: string }
+        // Only surface validation errors (e.g. bad email format)
+        throw new Error(data.error || 'Something went wrong.')
       }
       setMessage({
         type: 'success',
-        text: 'Check your email for a sign-in link.',
+        text: 'If that email has early access, you’ll get a sign-in link shortly.',
       })
     } catch (err: unknown) {
       setMessage({
@@ -66,18 +66,15 @@ export function ComingSoonPage() {
       />
 
       <main className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-lg flex-col items-center justify-center px-6 py-16 text-center">
+        {/* Wordmark only — no icon on the launch placeholder */}
         <div className="mb-8 inline-flex items-center text-4xl leading-none min-[900px]:text-5xl">
-          <NodNotesIcon nodIdle className="mr-2 h-[1cap] w-auto shrink-0 text-gray-700" />
           <span className="font-young-serif font-normal text-blue-500">Nod</span>
           <span className="font-young-serif font-normal text-foreground">Notes</span>
         </div>
 
-        <h1 className="mb-4 font-young-serif text-[clamp(2.25rem,8vw,3.5rem)] font-bold tracking-[0.02em] leading-[1.05]">
+        <h1 className="mb-10 font-young-serif text-[clamp(2.25rem,8vw,3.5rem)] font-bold tracking-[0.02em] leading-[1.05]">
           Coming soon
         </h1>
-        <p className="mb-10 max-w-md font-notes-sans text-lg text-gray-600 min-[900px]:text-xl">
-          Spatial boards for thinking out loud. Early access is invite-only.
-        </p>
 
         <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-3 text-left">
           <label htmlFor="early-access-email" className="sr-only">
