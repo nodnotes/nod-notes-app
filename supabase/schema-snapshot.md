@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-09T23:27:19Z`
+- Snapped at: `2026-09-10T00:52:42Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (link refreshed; `db dump` blocked on remote login-role alter — marker + version snapshot only)
@@ -9,6 +9,14 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260910005242_homepage_ephemeral_showcase_sandboxes.sql`.
+- **Visitor sandboxes**: homepage + `/view/{masterId}` mint in-memory remapped clones (`lib/ephemeral-sandbox.ts`) so visitors can interact without writing masters; reload remints. Edit masters at `/board/{masterId}`.
+- **Showcase masters** (remote data): Launch Day Deck / Launch Ops Graph / Weekend App Ideas — pastel `fillColor` frames + `boardFont: serif`; env `NEXT_PUBLIC_SHOWCASE_*_BOARD_ID`.
+- **Marketing images**: real PNGs (were JPEG-mislabeled); Next `Image` uses `unoptimized` for `/home/*`; section-one custom example `home-notes-presentations-example.png`.
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: homepage showcase gutters static row
 
 - DDL: none. Marker `20260909232719_homepage_showcase_gutters_static_row.sql`.
 - **Homepage showcase layout**: sections 1–2 use equal 32px window-edge / panel gutter (`px-8` + `gap-8`); section 3 AI preview side inset ≈ 3× that gap (`min-[900px]:px-24`); section 2 small thumbs are a static clipped row (carousel removed).

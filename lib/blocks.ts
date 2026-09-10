@@ -3,6 +3,11 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js' // Typed client for sync helpers
 import { parseFrameShape } from '@/lib/frame-shape' // Silhouette on frame metadata
+import {
+  getEphemeralMessage,
+  isEphemeralMessageId,
+  patchEphemeralMessage,
+} from '@/lib/ephemeral-sandbox' // Visitor playground clones — local-only patches
 
 /** RF node id for a block-group message (`block-group-{messageId}`). */
 export function blockGroupNodeId(groupMessageId: string): string {
@@ -338,9 +343,12 @@ export async function migrateMessagesToBlockFlag(
     toPersist.push({ id: msg.id, meta }) // Queue DB write — do not block on serial UPDATEs
   }
   if (toPersist.length === 0) return
+  // Skip DB writes for visitor sandbox messages (remapped ids are not in Supabase)
+  const durable = toPersist.filter(({ id }) => !isEphemeralMessageId(id))
+  if (durable.length === 0) return
   // Fire-and-forget parallel persists so cold load returns after one messages select
   void Promise.all(
-    toPersist.map(({ id, meta }) =>
+    durable.map(({ id, meta }) =>
       supabase.from('messages').update({ metadata: meta }).eq('id', id)
     )
   ).catch((err) => {
@@ -775,6 +783,24 @@ export async function persistBlockPlacement(
     blockGroupId?: string | null // Group message id, or null to stand alone on the page
   }
 ): Promise<void> {
+  // Visitor sandbox: patch the in-memory clone only — never touch the master
+  if (isEphemeralMessageId(opts.messageId)) {
+    const row = getEphemeralMessage(opts.messageId)
+    if (!row) return
+    const { meta: migrated } = migrateLegacyBlockFlags(
+      (row.metadata as Record<string, unknown>) || {}
+    )
+    const next: Record<string, unknown> = {
+      ...migrated,
+      isBlock: true,
+      position: opts.position,
+    }
+    if (opts.blockGroupId) next.blockGroupId = opts.blockGroupId
+    else delete next.blockGroupId
+    patchEphemeralMessage(opts.messageId, { metadata: next })
+    return
+  }
+
   const { data: row } = await supabase
     .from('messages')
     .select('metadata')
@@ -801,6 +827,21 @@ export async function persistBlockGroupFrame(
     size: { width: number; height: number } // Frame size
   }
 ): Promise<void> {
+  if (isEphemeralMessageId(opts.groupMessageId)) {
+    const row = getEphemeralMessage(opts.groupMessageId)
+    if (!row) return
+    const existing = { ...((row.metadata as Record<string, unknown>) || {}) }
+    patchEphemeralMessage(opts.groupMessageId, {
+      metadata: {
+        ...existing,
+        isBlockGroup: true,
+        position: opts.position,
+        resizeDimensions: opts.size,
+      },
+    })
+    return
+  }
+
   const { data: row } = await supabase
     .from('messages')
     .select('metadata')

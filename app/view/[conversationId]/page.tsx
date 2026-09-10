@@ -1,7 +1,5 @@
 import { notFound } from 'next/navigation'
-import { BoardFlow } from '@/components/board-flow'
-import { EditorProvider } from '@/components/editor-context'
-import { ReactFlowContextProvider } from '@/components/react-flow-context'
+import { PublicBoardView } from '@/components/public-board-view'
 import { isPublicBoardId } from '@/lib/public-showcase-boards'
 
 export default async function PublicBoardViewPage({
@@ -10,15 +8,8 @@ export default async function PublicBoardViewPage({
   params: Promise<{ conversationId: string }>
 }) {
   const { conversationId } = await params
+  // URL still uses the master id; the client mints an ephemeral clone
   if (!isPublicBoardId(conversationId)) notFound()
 
-  return (
-    <div className="h-screen w-screen overflow-hidden bg-background">
-      <EditorProvider>
-        <ReactFlowContextProvider conversationId={conversationId}>
-          <BoardFlow conversationId={conversationId} hideMapChrome />
-        </ReactFlowContextProvider>
-      </EditorProvider>
-    </div>
-  )
+  return <PublicBoardView masterBoardId={conversationId} />
 }

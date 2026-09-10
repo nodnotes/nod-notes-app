@@ -555,6 +555,10 @@ import { useQueryClient, useQuery } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { useEditorContext } from './editor-context'
 import { useBoardAccess } from '@/lib/share/board-access-context' // Gate TipTap editable for shared viewers
+import {
+  isEphemeralMessageId,
+  patchEphemeralMessage,
+} from '@/lib/ephemeral-sandbox' // Homepage /view clones — local content only
 import { useReactFlowContext } from './react-flow-context'
 import { useSidebarContext } from './sidebar-context' // Phone layout — hold before unselected frame drag
 import { usePhoneFrameDrag } from './phone-frame-drag-context' // Blue move border during phone hold-drag
@@ -6566,6 +6570,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       if (promptMessage) {
         // While an AI proposal is pending, keep DB at the original so eye/remove stay correct
         if (isFramePending(promptMessage.id)) {
+          return
+        }
+        // Visitor sandbox: keep the clone in sync; never write the showcase master
+        if (isEphemeralMessageId(promptMessage.id)) {
+          patchEphemeralMessage(promptMessage.id, { content: newContent })
           return
         }
         const { error } = await supabase

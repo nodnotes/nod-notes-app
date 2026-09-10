@@ -61,6 +61,7 @@ function SplitShowcase({
               src={imageAbove.src}
               alt={imageAbove.alt}
               fill
+              unoptimized // Static public assets — optimizer returns invalid upstream in local/prod edge cases
               sizes="(min-width: 900px) 40vw, 100vw"
               className="object-contain p-1"
             />
@@ -89,6 +90,7 @@ function SplitShowcase({
                   src={image.src}
                   alt={image.alt}
                   fill
+                  unoptimized
                   sizes="96px"
                   className="object-cover"
                 />
@@ -107,6 +109,7 @@ function SplitShowcase({
                   src={image.src}
                   alt={image.alt}
                   fill
+                  unoptimized
                   sizes="(min-width: 900px) 20vw, 50vw"
                   className="object-contain p-0.5"
                 />
@@ -239,7 +242,7 @@ export default function Home() {
                 previewSlot={1}
                 copySlot={1}
                 imageAbove={{
-                  src: '/home/home-notes-presentations.png',
+                  src: '/home/home-notes-presentations-example.png',
                   alt: 'Notes arranged as frames on a board for presentations',
                 }}
               />

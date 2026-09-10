@@ -1,0 +1,3 @@
+-- Homepage showcase: ephemeral visitor sandboxes of master boards;
+-- colored + serif example masters; marketing PNG fix (real PNG + unoptimized).
+-- App/docs marker only; no DDL. Showcase board *data* lives in remote conversations.

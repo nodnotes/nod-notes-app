@@ -8,6 +8,7 @@ import { usePathname } from 'next/navigation'
 import { parseBoardFontId, type BoardFontId } from '@/lib/board-font'
 
 import { isPublicBoardId } from '@/lib/public-showcase-boards'
+import { getEphemeralSandbox, isEphemeralSandboxId } from '@/lib/ephemeral-sandbox'
 
 interface ReactFlowContextType {
   reactFlowInstance: ReactFlowInstance | null
@@ -241,7 +242,10 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
 
     try {
       let publicBoardPrefs: any = null
-      if (currentConversationId && isPublicBoardId(currentConversationId)) {
+      // Visitor sandbox — prefs come from the cloned master metadata
+      if (currentConversationId && isEphemeralSandboxId(currentConversationId)) {
+        publicBoardPrefs = getEphemeralSandbox(currentConversationId)?.conversation.metadata || null
+      } else if (currentConversationId && isPublicBoardId(currentConversationId)) {
         try {
           const publicResponse = await fetch(`/api/public-board/${currentConversationId}`)
           if (publicResponse.ok) {

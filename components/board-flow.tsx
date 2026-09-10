@@ -249,6 +249,10 @@ interface Message {
 }
 
 import { isPublicBoardId } from '@/lib/public-showcase-boards'
+import {
+  getEphemeralSandbox,
+  isEphemeralSandboxId,
+} from '@/lib/ephemeral-sandbox' // Visitor clones of showcase masters
 
 interface ChatPanelNodeData {
   promptMessage: Message
@@ -330,7 +334,15 @@ async function fetchMessagesForPanels(
   const supabase = createClient()
   const isEmbed = options?.embed === true
 
-  // Public showcase boards — service-role API, no auth
+  // Visitor sandbox — in-memory clone of a showcase master (never hits DB)
+  const ephemeral = getEphemeralSandbox(conversationId)
+  if (ephemeral) {
+    const msgs = ephemeral.messages as Message[]
+    await migrateMessagesToBlockFlag(supabase, msgs) // In-memory flags only (ids are not in DB)
+    return msgs
+  }
+
+  // Public showcase boards — service-role API, no auth (owner /board path may still use this)
   if (!isEmbed && isPublicBoardId(conversationId)) {
     try {
       const response = await fetch(`/api/public-board/${conversationId}`)
@@ -409,6 +421,15 @@ async function fetchEdgesForConversation(conversationId: string): Promise<
   Array<{ source_message_id: string; target_message_id: string; metadata?: ThreadEdgeData | null }>
 > {
   const supabase = createClient()
+
+  const ephemeral = getEphemeralSandbox(conversationId) // Visitor clone threads
+  if (ephemeral) {
+    return ephemeral.edges as Array<{
+      source_message_id: string
+      target_message_id: string
+      metadata?: ThreadEdgeData | null
+    }>
+  }
   
   if (isPublicBoardId(conversationId)) {
     try {
@@ -469,6 +490,19 @@ async function fetchCanvasNodesForConversation(conversationId: string): Promise<
   data: any
 }>> {
   const supabase = createClient()
+
+  const ephemeral = getEphemeralSandbox(conversationId) // Visitor clone drawings
+  if (ephemeral) {
+    return ephemeral.canvasNodes as Array<{
+      id: string
+      node_type: string
+      position_x: number
+      position_y: number
+      width: number
+      height: number
+      data: any
+    }>
+  }
   
   if (isPublicBoardId(conversationId)) {
     try {
@@ -2603,9 +2637,10 @@ function BoardFlowInner({
     enabled: !!conversationId,
     // No interval poll — Realtime + explicit invalidate/refetch keep frames fresh without re-downloading HTML 2×/s
     refetchInterval: false,
-    refetchOnWindowFocus: !embedded,
-    refetchOnMount: !embedded, // Embed: avoid remount refetch if keep-alive already loaded
-    refetchOnReconnect: !embedded,
+    // Sandboxes are visit-local: don't refetch (would rebuild from the static clone snapshot)
+    refetchOnWindowFocus: !embedded && !isEphemeralSandboxId(conversationId),
+    refetchOnMount: !embedded && !isEphemeralSandboxId(conversationId),
+    refetchOnReconnect: !embedded && !isEphemeralSandboxId(conversationId),
     placeholderData: (previousData) => {
       if (!conversationId) return previousData
       // Prefer same-mode cache, then full-board cache (user may have opened the page already)
@@ -3454,6 +3489,7 @@ function BoardFlowInner({
   // Set up Supabase Realtime subscription for live message updates
   useEffect(() => {
     if (!conversationId) return
+    if (isEphemeralSandboxId(conversationId)) return // Sandboxes are local-only — no realtime
 
     const supabaseClient = createClient()
     const channel = supabaseClient
