@@ -26,9 +26,14 @@
   stroke-width: calc(2.5 * var(--tt-thread-inv-zoom, 1)) !important;
 }
 
+/*
+ * Thread adjust knobs + on-path dots — same recipe as frame resize dots:
+ * fixed local paint size, then scale(--tt-frame-ui-scale) so screen size stays
+ * constant (boost/zoom). Do not also shrink `r` by zoom (that double-compensated).
+ */
 .react-flow__edges circle.tt-thread-knob,
 .react-flow__edges circle.tt-thread-on-path-dot {
   transform-box: fill-box;
   transform-origin: center;
-  transform: scale(var(--tt-thread-inv-zoom, 1));
+  transform: scale(var(--tt-frame-ui-scale, 1.4)) !important;
 }

@@ -38,6 +38,33 @@ export function resolveThreadStrokeColor(color?: string | null): string {
 /** Default thread thickness in flow px (menu 1–4px options). */
 export const THREAD_DEFAULT_STROKE_WIDTH = 2
 
+/** Reference frame area (≈ empty one-line) for relative thread thickness. */
+const THREAD_FRAME_AREA_REF = 48 * 22
+
+/**
+ * How thick a thread end should read for a frame’s flow box.
+ * Bigger frames → thicker end; smaller → thinner. Gentle curve so extremes stay readable.
+ * Result multiplies menu stroke width; CSS `--tt-thread-inv-zoom` keeps it screen-constant.
+ */
+export function threadWidthFactorForFrameSize(size: {
+  width: number
+  height: number
+}): number {
+  const w = Math.max(1, size.width)
+  const h = Math.max(1, size.height)
+  const area = w * h
+  // sqrt(sqrt(area/ref)) ≈ soft; clamp so tiny frames don’t vanish and huge ones don’t dominate
+  return Math.min(2.4, Math.max(0.55, Math.pow(area / THREAD_FRAME_AREA_REF, 0.25)))
+}
+
+/** Menu stroke × frame-size factor → `--tt-edge-w` at that end (CSS still ÷ zoom). */
+export function threadEndStrokeWidth(
+  menuWidth: number,
+  size: { width: number; height: number }
+): number {
+  return Math.max(0.5, menuWidth * threadWidthFactorForFrameSize(size))
+}
+
 /** Algorithm used for new threads. */
 export const DEFAULT_THREAD_ALGORITHM: ThreadAlgorithm = ThreadAlgorithm.BezierCatmullRom
 

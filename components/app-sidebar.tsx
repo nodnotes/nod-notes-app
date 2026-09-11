@@ -39,6 +39,10 @@ import { useSidebarContext } from './sidebar-context'
 import { useLiveAuthUser, waitForAuthUserId } from '@/lib/use-live-auth-user'
 import { demoteBlockForDeletedBoard, expandBoardsForDelete, syncBoardRenameToBlock } from '@/lib/blocks' // Keep block cards ↔ pages in sync; cascade nested deletes
 import {
+  isPaidSubscriptionTier,
+  subscriptionTierLabel,
+} from '@/lib/subscription-plans'
+import {
   DndContext,
   closestCenter,
   rectIntersection,
@@ -3069,7 +3073,7 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
                           {profile?.full_name || user.email?.split('@')[0] || 'User'}
                         </p>
                         <p className="text-xs text-gray-500 dark:text-gray-400">
-                          {profile?.subscription_tier === 'pro' ? 'Plus' : profile?.subscription_tier === 'enterprise' ? 'Nod Pro' : 'Free'}
+                          {subscriptionTierLabel(profile?.subscription_tier)}
                         </p>
                       </div>
                       {/* Spacer for Upgrade / Help button beside profile */}
@@ -3101,7 +3105,7 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
                     </div>
                   </DropdownMenuItem>
                   <DropdownMenuSeparator className="mx-2" />
-                  {profile?.subscription_tier !== 'pro' && profile?.subscription_tier !== 'enterprise' && (
+                  {!isPaidSubscriptionTier(profile?.subscription_tier) && (
                     <DropdownMenuItem
                       onClick={() => {
                         setUpgradeOpen(true)
@@ -3121,7 +3125,7 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
                   </DropdownMenuItem>
                   <DropdownMenuSeparator className="mx-2" />
                   {/* Help lives on the profile button when upgraded; keep it in the menu for free users */}
-                  {profile?.subscription_tier !== 'pro' && profile?.subscription_tier !== 'enterprise' && (
+                  {!isPaidSubscriptionTier(profile?.subscription_tier) && (
                     <DropdownMenuItem>
                       <HelpCircle className="h-4 w-4 mr-2" />
                       Help
@@ -3135,7 +3139,7 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
                 </DropdownMenuContent>
                 </DropdownMenu>
                 {/* Free: Upgrade button; upgraded: Help in the same spot */}
-                {profile?.subscription_tier !== 'pro' && profile?.subscription_tier !== 'enterprise' ? (
+                {!isPaidSubscriptionTier(profile?.subscription_tier) ? (
                   <button
                     type="button"
                     className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1.5 h-auto text-xs font-medium bg-white dark:bg-white text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-[#1f1f1f] rounded-md transition-colors flex-shrink-0 z-10"

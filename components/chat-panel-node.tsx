@@ -50,7 +50,7 @@ import {
   FRAME_STACK_SIDES,
   readSideStacks,
 } from '@/lib/frame-side-stacks' // Per adjust-box side stack trees
-import { findEditorBlockAtClientY } from '@/lib/tiptap/block-selection' // Click in frame padding → block at Y
+import { findEditorBlockAtClientPoint } from '@/lib/tiptap/block-selection' // Click in frame padding → block (rotation-safe)
 import { useLiveBoardZoom } from '@/lib/use-live-board-zoom' // Viewport-CSS zoom (not lagging RF store)
 import {
   getLiveBoardZoom,
@@ -3674,8 +3674,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // Full L/R gutters + RF position shift only when selected — not on unselected drag (showDragBorderOnly).
   // Turning chrome on at drag-start used to shift RF position while d3 already had the grab point → jump.
   const showFrameChrome = Boolean(isBlock && selected && !isThreadConnecting)
-  // L/R pad visual = live `--tt-adjust-pad-x` (rAF). RF position shift uses pad frozen at
-  // select time — never re-glues on zoom settle (that moved the frame after the gesture).
+  // Live L/R pad while selected (⋮⋮ stays centered in the blue↔fill strip as zoom changes).
+  // Fill stays put: glueFrameChromePad shifts RF XY by the pad delta (fill-origin fixed).
   const chromeScale =
     isBlock && Math.abs(frameScale - 1) > FRAME_SCALE_EPSILON
       ? Math.max(FRAME_SCALE_EPSILON, frameScale)
@@ -3683,31 +3683,51 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // Cell radius is 6px inside contentFit’s CSS scale; fill + blue ring are outside — keep them matched
   const frameCornerRadius = frameShape ? 0 : FRAME_CORNER_RADIUS * chromeScale
   const screenChromeScale = frameScreenChromeScale(rfZoom || 1) // Handles / dots / rotate only
-  const handleGutterFlow = showFrameChrome
-    ? handleGutterFlowPx(rfZoom || 1, chromeScale) // Full precision — ⋮⋮ center tracks live zoom
+  const adjustChromeX = showFrameChrome
+    ? Math.round(adjustChromeXFlow(rfZoom || 1, chromeScale))
     : 0
-  // Freeze RF chrome pad for this selection — zoom must not call setNodes on XY
-  const frozenChromePadRef = useRef<number | null>(null)
-  if (showFrameChrome && frozenChromePadRef.current == null) {
-    frozenChromePadRef.current = Math.round(adjustChromeXFlow(getLiveBoardZoom(), chromeScale))
-  }
-  if (!showFrameChrome) frozenChromePadRef.current = null
-  const adjustChromeX = frozenChromePadRef.current ?? 0
-  const adjustPadCss = showFrameChrome
-    ? `var(--tt-adjust-pad-x, ${Math.round(adjustChromeXFlow(rfZoom || 1, chromeScale))}px)`
-    : undefined
+  const handleGutterFlow = showFrameChrome
+    ? handleGutterFlowPx(rfZoom || 1, chromeScale) // Live — matches pad so grip stays centered in the strip
+    : 0
+  const adjustPadCss = showFrameChrome ? `${adjustChromeX}px` : undefined
+  // pushAabb / painted sync read this — callbacks must not close over a stale pad
+  const adjustChromeXRef = useRef(0)
+  adjustChromeXRef.current = adjustChromeX
   const connStripH = Math.round(CONNECTIONS_GROUP_H * screenChromeScale) // In-fill bottom connections strip
   const chromePadX = Math.round(BLOCK_FRAME_PAD_X * chromeScale) // Band inset matches scaled fill pad
   // No T/B chrome bands: property icons and the connections strip both live inside the fill,
   // so the blue adjust box hugs the blocks vertically (no empty strip under the last block).
   const adjustChromeYTop = 0
   const adjustChromeYBottom = 0
-  // Keep the filled frame glued when selection chrome appears/disappears only (not on zoom).
+  // Keep the filled frame glued when selection chrome appears/disappears OR pad changes with zoom.
+  // Upright: L/R pad shifts RF −X. Rotated: chrome is baked into the upright AABB — shift by half the
+  // AABB delta so the fill (and ⋮⋮) stay centered instead of growing only down/right.
   const frameChromeOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   const glueFrameChromePad = useCallback(() => {
     if (!isBlock || dragging) return
-    const wantX = showFrameChrome ? (frozenChromePadRef.current ?? 0) : 0
-    const wantY = showFrameChrome ? adjustChromeYTop : 0
+    let wantX = 0
+    let wantY = 0
+    if (showFrameChrome) {
+      if (Math.abs(rotation) > 0.5) {
+        const dims = liveLockedContentRef.current ?? resizeDimensionsRef.current
+        if (dims) {
+          const inner = rotatedFrameAabbSize(dims.width, dims.height, rotation, frameShape)
+          const outer = rotatedFrameAabbSize(
+            dims.width + adjustChromeX * 2,
+            dims.height,
+            rotation,
+            frameShape
+          )
+          wantX = (outer.width - inner.width) / 2
+          wantY = (outer.height - inner.height) / 2
+        } else {
+          wantX = adjustChromeX
+        }
+      } else {
+        wantX = adjustChromeX
+        wantY = adjustChromeYTop
+      }
+    }
     const prev = frameChromeOffsetRef.current
     if (prev.x === wantX && prev.y === wantY) return
 
@@ -3731,14 +3751,17 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     isBlock,
     id,
     showFrameChrome,
+    adjustChromeX,
     adjustChromeYTop,
+    rotation,
+    frameShape,
     dragging,
     getSetNodes,
     updateNodeInternals,
   ])
   useLayoutEffect(() => {
     glueFrameChromePad()
-  }, [glueFrameChromePad, showFrameChrome])
+  }, [glueFrameChromePad, showFrameChrome, adjustChromeX, rotation])
   // Stack/hide unmounts the node while chrome is still on — without this, RF keeps the
   // chrome-shifted XY and remount reapplies chrome → frame jumps up/left one gutter.
   useLayoutEffect(() => {
@@ -4510,7 +4533,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       const dims = liveLockedContentRef.current ?? resizeDimensionsRef.current
       if (!isBlock || !dims) return
       // Selected L/R chrome is outside the fill — RF box must include it or handles sit inset of the blue ring
-      const chromeX = (frozenChromePadRef.current ?? 0) * 2
+      const chromeX = adjustChromeXRef.current * 2
       // Prefer painted panel box when upright + locked hug — estimates drifted from peach (blue>peach gap)
       const panel = panelRef.current
       const usePainted =
@@ -4518,7 +4541,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       const aabb = usePainted
         ? { width: panel.offsetWidth, height: panel.offsetHeight }
         : Math.abs(rot) > 0.5
-          ? rotatedFrameAabbSize(dims.width, dims.height, rot, frameShapeRef.current)
+          ? // Inflate unrotated width by chrome so ⋮⋮ overhang stays inside the upright AABB
+            rotatedFrameAabbSize(dims.width + chromeX, dims.height, rot, frameShapeRef.current)
           : { width: dims.width + chromeX, height: dims.height }
       const boxW = Math.round(aabb.width)
       const boxH = Math.round(aabb.height)
@@ -4597,6 +4621,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     frameUnlocked,
     rotation,
     frameShape,
+    adjustChromeX, // Live L/R pad — RF outer box must include chrome as zoom changes
     pushAabbAndSnapMates,
   ])
 
@@ -6118,7 +6143,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     lastPushedBoxRef.current = { w: boxW, h: boxH, rot: rotation }
 
     // Persist content size (strip L/R select chrome) so AABB math stays on the fill
-    const chromeX = showFrameChrome ? (frozenChromePadRef.current ?? 0) * 2 : 0
+    const chromeX = showFrameChrome ? adjustChromeXRef.current * 2 : 0
     const contentW = Math.max(1, boxW - chromeX)
     const contentH = boxH
     liveLockedContentRef.current = { width: contentW, height: contentH }
@@ -7346,9 +7371,16 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       : itemBoxSize.height) ||
     FRAME_SHAPE_DEFAULT_SIZE.height
   const isContentRotated = isBlock && Math.abs(rotation) > 0.5
-  // Upright blue adjust frame = tight AABB of the *visible* silhouette (ellipse/polygon), not just the content rect
+  // Upright blue adjust frame = tight AABB of the *visible* silhouette (ellipse/polygon), not just the content rect.
+  // When selected, inflate the *unrotated* width by L/R chrome first — ⋮⋮ hangs past the fill on the left,
+  // and after rotate that overhang must stay inside the blue box (otherwise grips clip at ~90°).
   const displayBox = isContentRotated
-    ? rotatedFrameAabbSize(contentBoxW, contentBoxH, rotation, frameShape)
+    ? rotatedFrameAabbSize(
+        contentBoxW + (showFrameChrome ? adjustChromeX * 2 : 0),
+        contentBoxH,
+        rotation,
+        frameShape
+      )
     : { width: contentBoxW, height: contentBoxH }
   // Row cards only: never rely on fit-content — NodeView remount on first select+drag collapses
   // the box. Locked cards always live-hug from intrinsic measure (not stale resizeDimensions).
@@ -7418,13 +7450,13 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     right: adjustPadCss || 0,
     bottom: adjustChromeYBottom || 0,
   }
-  // Fill width (no chrome) — outer width = fill + 2× live `--tt-adjust-pad-x`
+  // Fill width (no chrome). Rotated: content box only — displayBox already baked L/R chrome into the AABB.
   const fillWidthPx = layoutBox
     ? layoutBox.width - (showFrameChrome ? adjustChromeX * 2 : 0)
     : pagePreviewOpen
       ? 520
       : isContentRotated
-        ? displayBox.width
+        ? contentBoxW
         : isUserResized && resizeDimensions
           ? resizeDimensions.width
           : applyFrameScale
@@ -7439,8 +7471,10 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const outerWidthCss =
     fillWidthPx == null
       ? 'max-content'
+      : isContentRotated
+        ? `${displayBox.width}px` // AABB already includes select chrome when rotated
       : showFrameChrome
-        ? `calc(${fillWidthPx}px + 2 * var(--tt-adjust-pad-x, ${adjustChromeX}px))`
+        ? `${fillWidthPx + adjustChromeX * 2}px` // Live pad; glueFrameChromePad holds fill XY
         : `${fillWidthPx}px`
   const shapeSelectChrome = Boolean(
     frameShape && (showAdjustFrame || showDragBorderOnly) && !pagePreviewOpen && !isContentRotated
@@ -7466,7 +7500,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         ref={panelRef}
         data-panel-container="true" // Data attribute to help find panel container for comment popup
         data-block-node={isBlock ? 'true' : undefined} // Marks blocks for selected connection-dot styling
-        data-tt-frame-scale={showFrameChrome ? String(chromeScale) : undefined} // rAF pad stamp × frameScale
+        data-tt-frame-scale={showFrameChrome ? String(chromeScale) : undefined} // Grip/chrome scale context
+        data-tt-chrome-pad-x={showFrameChrome ? String(adjustChromeX) : undefined} // Live L/R pad for rAF CSS var / connection points
         data-on-thread={isOnThreadFrame ? 'true' : undefined}
         data-block-resized={wrapActive ? 'wrap' : undefined} // Wrap (locked/unlocked): soft-wrap in fixed width; else nowrap / clip
         data-clip-preview={showClipPreview ? 'true' : undefined} // Unlocked hover: full-content peek
@@ -7502,7 +7537,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             'tt-ai-pending-frame'
         )}
       style={{
-        // L/R gutters: live `--tt-adjust-pad-x` (rAF) so gaps stay smooth mid-zoom
+        // L/R gutters: select-frozen pad (live zoom must not shove the fill / threads)
         width: layoutBox && !showFrameChrome
           ? `${layoutBox.width}px`
           : pagePreviewOpen && !showFrameChrome
@@ -7558,11 +7593,12 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           : isContentRotated
           ? `${displayBox.height + adjustChromeYTop + adjustChromeYBottom}px`
           : undefined,
-        // Bands outside the fill: property (top) / connections (bottom); L/R gutters when selected
+        // Bands outside the fill: property (top) / connections (bottom); L/R gutters when selected.
+        // Rotated: chrome is in the upright AABB (pre-rotate inflate) — padding would squeeze the shell.
         paddingTop: adjustChromeYTop || undefined,
-        paddingRight: adjustPadCss,
+        paddingRight: isContentRotated ? undefined : adjustPadCss,
         paddingBottom: adjustChromeYBottom || undefined,
-        paddingLeft: adjustPadCss,
+        paddingLeft: isContentRotated ? undefined : adjustPadCss,
         boxSizing: 'border-box',
         // `isInitialShrinkComplete` starts false and is only flipped by an effect, so *every* mount
         // paints one frame at 0 and then transitions to 1 over 300ms (the class above transitions
@@ -8259,7 +8295,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               const ed = promptEditorRef.current
               if (!ed || ed.isDestroyed) return
               e.stopPropagation()
-              const block = findEditorBlockAtClientY(ed, e.clientY)
+              const block = findEditorBlockAtClientPoint(ed, e.clientX, e.clientY)
               if (!block) return
               const caret = Math.max(block.from + 1, block.to - 1) // End of that block’s content
               ed.chain().focus().setTextSelection(caret).run()

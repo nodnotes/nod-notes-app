@@ -1300,13 +1300,8 @@ span[data-added="true"] {
   .react-flow__edge-interaction {
     stroke-width: calc(20px / var(--tt-board-zoom, 1)) !important; /* ~20px screen hit band */
   }
-  .react-flow__edges circle.tt-thread-knob {
-    r: calc(var(--tt-knob-r, 4) * 1px / var(--tt-board-zoom, 1));
-    stroke-width: calc(1.5px / var(--tt-board-zoom, 1));
-  }
-  .react-flow__edges circle.tt-thread-on-path-dot {
-    r: calc(var(--tt-dot-r, 3) * 1px / var(--tt-board-zoom, 1));
-  }
+  /* Thread knobs / on-path dots: size via transform scale in thread-view-stroke.css
+     (same pattern as frame resize dots) — do not also divide `r` by zoom here. */
   /* Phone select: stop the browser from panning the page so the marquee/frame drag can run */
   .react-flow__pane {
     touch-action: none;
@@ -1714,9 +1709,12 @@ span[data-added="true"] {
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1) !important;
   }
 
-  /* Frame connection points stay on the edge; selected state must NOT un-hide them (indicators are separate) */
-  .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point {
-    left: 0 !important;
+  /* Frame connection points stay on the **fill** edge; selected gutters are outside that.
+     Park L/R handles at `--tt-adjust-pad-x` so RF geometry + settled threads meet the peach
+     frame, not the blue adjust box. Top/bottom have no chrome band (pad Y = 0). */
+  .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point[data-handlepos="left"],
+  .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-left {
+    left: var(--tt-adjust-pad-x, 0px) !important;
     right: auto !important;
     top: 50% !important;
     bottom: auto !important;
@@ -1725,19 +1723,24 @@ span[data-added="true"] {
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point[data-handlepos="right"],
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-right {
     left: auto !important;
-    right: 0 !important;
+    right: var(--tt-adjust-pad-x, 0px) !important;
+    top: 50% !important;
+    bottom: auto !important;
     transform: translate(50%, -50%) !important;
   }
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point[data-handlepos="top"],
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-top {
     left: 50% !important;
     top: 0 !important;
+    right: auto !important;
+    bottom: auto !important;
     transform: translate(-50%, -50%) !important;
   }
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point[data-handlepos="bottom"],
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-bottom {
     left: 50% !important;
     top: auto !important;
+    right: auto !important;
     bottom: 0 !important;
     transform: translate(-50%, 50%) !important;
   }

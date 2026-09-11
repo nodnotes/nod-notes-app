@@ -294,6 +294,62 @@ export function threadStrokePaths(
   return segments.length > 0 ? segments : [geom.pathD]
 }
 
+/**
+ * Stroke pieces that taper from `w0` (source) → `w1` (target), with on-thread gaps removed.
+ * Each piece carries its own `--tt-edge-w` so CSS inv-zoom keeps screen size constant while
+ * thickness still tracks the frames it approaches.
+ * Pieces are long enough + overlapped so round caps read as one solid stroke (not dashes).
+ */
+export function taperedThreadStrokeSegments(
+  geom: ThreadPathGeometry,
+  w0: number,
+  w1: number,
+  gaps: Array<{ startT: number; endT: number }> = [],
+  targetPieceLen = 22 // Flow px per piece — short pieces looked like a dashed line
+): Array<{ d: string; w: number }> {
+  const lerp = (a: number, b: number, t: number) => a + (b - a) * t
+  // Covered intervals on [0,1] minus gaps (same merge as threadStrokePaths)
+  const merged: Array<{ startT: number; endT: number }> = []
+  for (const gap of [...gaps].sort((a, b) => a.startT - b.startT)) {
+    const last = merged[merged.length - 1]
+    if (last && gap.startT <= last.endT) {
+      last.endT = Math.max(last.endT, gap.endT)
+    } else {
+      merged.push({ ...gap })
+    }
+  }
+  const spans: Array<{ startT: number; endT: number }> = []
+  let cursor = 0
+  for (const gap of merged) {
+    if (gap.startT > cursor + 0.001) spans.push({ startT: cursor, endT: gap.startT })
+    cursor = gap.endT
+  }
+  if (cursor < 0.999) spans.push({ startT: cursor, endT: 1 })
+  if (spans.length === 0) spans.push({ startT: 0, endT: 1 })
+
+  const pathLen = Math.max(1, geom.length)
+  const out: Array<{ d: string; w: number }> = []
+  for (const span of spans) {
+    const spanLen = Math.max(0, span.endT - span.startT)
+    const spanPx = spanLen * pathLen
+    // Few long pieces — many tiny ones painted as disconnected dashes
+    const n = Math.max(1, Math.round(spanPx / targetPieceLen))
+    const stepT = spanLen / n
+    const overlapT = stepT * 0.45 // Neighbor overlap so round caps fuse into a solid ribbon
+    for (let i = 0; i < n; i++) {
+      const ta0 = span.startT + stepT * i
+      const tb0 = span.startT + stepT * (i + 1)
+      const ta = Math.max(span.startT, ta0 - (i > 0 ? overlapT : 0))
+      const tb = Math.min(span.endT, tb0 + (i < n - 1 ? overlapT : 0))
+      const d = geom.slicePath(ta, tb)
+      if (!d) continue
+      const tm = (ta0 + tb0) / 2 // Width from the logical (non-overlap) midpoint
+      out.push({ d, w: lerp(w0, w1, tm) })
+    }
+  }
+  return out.length > 0 ? out : [{ d: geom.pathD, w: lerp(w0, w1, 0.5) }]
+}
+
 /** Resolve placement for an on-thread frame from its anchor (inline or offset beside the path). */
 export function positionForOnThreadFrame(
   geom: ThreadPathGeometry,

@@ -7,6 +7,7 @@ import {
   useStore,
   Position,
   type XYPosition,
+  type Node as RFNode,
 } from 'reactflow' // Custom edge primitives + selection store
 
 import { ControlPoint, type ControlPointData } from './ControlPoint' // Miro-style path knobs
@@ -20,7 +21,8 @@ import {
   THREAD_DEFAULT_STROKE_WIDTH,
   THREAD_SELECTED_COLOR,
   ThreadAlgorithm,
-} from './constants' // Stroke + algorithm defaults
+  threadEndStrokeWidth,
+} from './constants' // Stroke + algorithm defaults + frame-size thickness
 import { normalizeHandleId } from './handle-ids' // Strip -indicator from stored handle ids
 import {
   connectionPointOnNode,
@@ -30,7 +32,7 @@ import { onThreadFrameVisualSize, readOnThread, isOnThreadInline, ON_THREAD_DOT_
 import {
   buildThreadPathGeometry,
   threadGapsForFrames,
-  threadStrokePaths,
+  taperedThreadStrokeSegments,
 } from '@/lib/threads/thread-path-geometry'
 
 /** Persistable thread payload stored in panel_edges.metadata + edge.data. */
@@ -70,6 +72,19 @@ const useIdsForInactiveControlPoints = (points: ControlPointData[]) => {
 }
 
 type EditableThreadProps = EdgeProps<ThreadEdgeData>
+
+/** Flow box of a frame node (RF measured width/height, else style). */
+function nodeFlowSize(n?: RFNode | null): { width: number; height: number } {
+  if (!n) return { width: 80, height: 40 } // Neutral mid size when a side is missing
+  const rawW = n.width ?? n.style?.width
+  const rawH = n.height ?? n.style?.height
+  const w = typeof rawW === 'number' ? rawW : parseFloat(String(rawW ?? ''))
+  const h = typeof rawH === 'number' ? rawH : parseFloat(String(rawH ?? ''))
+  return {
+    width: Number.isFinite(w) && w > 0 ? w : 80,
+    height: Number.isFinite(h) && h > 0 ? h : 40,
+  }
+}
 
 /**
  * Miro-style editable thread.
@@ -249,43 +264,59 @@ export function EditableThread({
         g.height === b.inlineGaps[i].height
     ) &&
     a.threadDots.every((p, i) => p.x === b.threadDots[i].x && p.y === b.threadDots[i].y))
-  const strokePaths =
-    pathGeom && inlineGaps.length > 0
-      ? threadStrokePaths(pathGeom, threadGapsForFrames(pathGeom, inlineGaps))
-      : [path]
+  const gaps = pathGeom ? threadGapsForFrames(pathGeom, inlineGaps) : []
+  // Flow box of each endpoint — thicker end at bigger frames, thinner at smaller
+  const sourceSize = nodeFlowSize(sourceNode)
+  const targetSize = nodeFlowSize(targetNode)
 
   const stroke =
     selected
       ? THREAD_SELECTED_COLOR // Selection always reads Miro blue
       : data?.strokeColor || (style?.stroke as string) || THREAD_DEFAULT_COLOR // Custom → style → gray
   const baseWidth = selected ? Math.max(strokeWidth, strokeWidth + 0.5) : strokeWidth // Selected reads slightly heavier
+  const wSource = threadEndStrokeWidth(baseWidth, sourceSize) // Thickens toward a large source frame
+  const wTarget = threadEndStrokeWidth(baseWidth, targetSize) // Thins toward a small target (or vice versa)
+
+  // Taper along the path; CSS `--tt-thread-inv-zoom` keeps each piece screen-constant while zooming
+  const taperSegs =
+    pathGeom != null
+      ? taperedThreadStrokeSegments(pathGeom, wSource, wTarget, gaps)
+      : [{ d: path, w: (wSource + wTarget) / 2 }]
 
   // Screen size comes from CSS `--tt-board-zoom` (live); do not put strokeWidth inline.
   const { strokeWidth: _ignoredStrokeWidth, ...restStyle } = (style ?? {}) as Record<
     string,
     unknown
   >
-  const edgeStyle = {
-    ...restStyle,
-    stroke,
-    ['--tt-edge-w' as string]: baseWidth, // Menu thickness; CSS divides by live board zoom
-    // Unitless flow units ÷ live zoom → constant screen dash (BaseEdge has no className prop)
-    strokeDasharray: dotted
-      ? `calc(5 / var(--tt-board-zoom, 1)), calc(5 / var(--tt-board-zoom, 1))`
-      : undefined,
-  }
+  const dash = dotted
+    ? `calc(5 * var(--tt-thread-inv-zoom, 1)), calc(5 * var(--tt-thread-inv-zoom, 1))`
+    : 'none' // Explicit none — taper pieces must not inherit a dash look
 
   return (
     <>
-      {strokePaths.map((strokePath, i) => (
+      {/* Invisible full path — one hit target so taper pieces don’t leave dead zones */}
+      <BaseEdge
+        id={`${id}-hit`}
+        path={path}
+        interactionWidth={20}
+        style={{ ...restStyle, stroke: 'transparent', strokeWidth: 1, opacity: 0 }}
+      />
+      {taperSegs.map((seg, i) => (
         <BaseEdge
-          key={i === 0 ? id : `${id}-seg-${i}`}
-          id={i === 0 ? id : `${id}-seg-${i}`}
-          path={strokePath}
+          key={i === 0 ? id : `${id}-tap-${i}`}
+          id={i === 0 ? id : `${id}-tap-${i}`}
+          path={seg.d}
           markerStart={i === 0 ? markerStart : undefined}
-          markerEnd={i === strokePaths.length - 1 ? markerEnd : undefined}
-          interactionWidth={20} // Overridden by CSS `.react-flow__edge-interaction` (view-relative)
-          style={edgeStyle}
+          markerEnd={i === taperSegs.length - 1 ? markerEnd : undefined}
+          interactionWidth={0} // Hit band lives on the full-path edge above
+          style={{
+            ...restStyle,
+            stroke,
+            ['--tt-edge-w' as string]: seg.w, // Piece thickness; CSS × inv-zoom → screen px
+            strokeDasharray: dash,
+            strokeLinecap: 'round', // Overlapped pieces fuse — butt caps looked dashed
+            strokeLinejoin: 'round',
+          }}
         />
       ))}
 
@@ -295,7 +326,7 @@ export function EditableThread({
           className="tt-thread-on-path-dot"
           cx={pt.x}
           cy={pt.y}
-          r={ON_THREAD_DOT_R} // Local radius; CSS scale(1/zoom) keeps screen size constant
+          r={ON_THREAD_DOT_R} // Fixed local radius — CSS scale(--tt-frame-ui-scale) keeps screen size
           fill={stroke}
           pointerEvents="none"
         />

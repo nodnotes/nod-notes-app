@@ -137,12 +137,12 @@ export function ControlPoint({
       className={'tt-thread-knob nopan nodrag' + (active ? ' active' : '')} // Don't pan/drag the map while editing
       cx={x}
       cy={y}
-      r={active ? 5 : 4} // Local radius; CSS scale(1/zoom) keeps screen size constant
-      strokeWidth={1.5} // Local ring; same CSS scale as r
+      r={active ? 5 : 4} // Fixed local radius — CSS scale(--tt-frame-ui-scale) keeps screen size
+      strokeWidth={1.5} // Fixed local ring; scales with the same transform as r
       strokeOpacity={active ? 1 : 0.85}
       stroke={color}
       fill={active ? color : '#ffffff'} // Miro: solid = active, hollow = addable
-      style={{ pointerEvents: 'all', cursor: 'grab' }}
+      style={{ pointerEvents: 'all', cursor: dragging ? 'grabbing' : 'grab' }}
       onContextMenu={(e) => {
         e.preventDefault()
         if (active) deletePoint() // Right-click removes an active point

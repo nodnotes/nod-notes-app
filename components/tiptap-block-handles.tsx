@@ -17,7 +17,7 @@ import { isBlockContentEmpty, newBlockMetadata } from '@/lib/blocks' // Canonica
 import { bodyHtmlWithoutBoardTitle } from '@/lib/blocks/turn-into' // Title line ≠ board body block
 import { markHtmlWithAiOrigin } from '@/lib/ai/wrap-ai-html' // Assistant chat → board keeps AI provenance
 import { cn } from '@/lib/utils'
-import { screenToLocal } from '@/lib/dom-transform' // Rotation-safe screen→local (frame rotate)
+import { clientPointInElement, screenToLocal } from '@/lib/dom-transform' // Rotation-safe hit + grip Y
 import {
   BlockActionsMenu,
   type BlockActionId,
@@ -29,7 +29,7 @@ import {
 import {
   deleteEditorBlockRange,
   findContentBlockDropTarget,
-  findEditorBlockAtClientY,
+  findEditorBlockAtClientPoint,
   findEditorBlockAtPos,
   findHostEditorAtPoint,
   htmlForEditorRange,
@@ -618,34 +618,29 @@ export function TipTapBlockHandles({
         }
       }
 
+      // Local box hit — screen AABB Y bands overlap after frame rotate
       const headerEl = frame.querySelector('[data-tt-property-header]') as HTMLElement | null
-      if (headerEl) {
-        const hr = headerEl.getBoundingClientRect()
-        if (clientY >= hr.top && clientY <= hr.bottom) {
-          const group = propertyHeaderBlock(editor) // Top icon list = one block
-          if (group) {
-            setHover(layoutForPropertyHeader(container, group.block, group.insertFrom, group.insertTo))
+      if (headerEl && clientPointInElement(headerEl, clientX, clientY)) {
+        const group = propertyHeaderBlock(editor) // Top icon list = one block
+        if (group) {
+          setHover(layoutForPropertyHeader(container, group.block, group.insertFrom, group.insertTo))
+          return
+        }
+      }
+
+      // Bottom connections strip — same local-box rule as the property header
+      if (notionConnected) {
+        const connEl = frame.querySelector('[data-tt-connections-header]') as HTMLElement | null
+        if (connEl && clientPointInElement(connEl, clientX, clientY)) {
+          const sentinel = connectionsHeaderBlock(editor)
+          if (sentinel) {
+            setHover(layoutForConnectionsHeader(container, sentinel))
             return
           }
         }
       }
 
-      // Bottom connections strip — same Y-band rule as the property header
-      if (notionConnected) {
-        const connEl = frame.querySelector('[data-tt-connections-header]') as HTMLElement | null
-        if (connEl) {
-          const cr = connEl.getBoundingClientRect()
-          if (clientY >= cr.top && clientY <= cr.bottom) {
-            const sentinel = connectionsHeaderBlock(editor)
-            if (sentinel) {
-              setHover(layoutForConnectionsHeader(container, sentinel))
-              return
-            }
-          }
-        }
-      }
-
-      const block = findEditorBlockAtClientY(editor, clientY)
+      const block = findEditorBlockAtClientPoint(editor, clientX, clientY)
       if (!block) {
         setHover(null)
         return

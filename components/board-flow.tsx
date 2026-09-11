@@ -19,6 +19,7 @@ import ReactFlow, {
 } from 'reactflow'
 import type { Node, Edge, EdgeProps } from 'reactflow' // Types only — value `Node` is undefined and shadows DOM Node
 import 'reactflow/dist/style.css'
+import '@/components/threads/thread-view-stroke.css' // After RF — screen-constant stroke (RF sets width:1)
 import { ChatPanelNode } from './chat-panel-node' // Eager: next/dynamic breaks RF nodeTypes + left frames blank forever
 import { BlockGroupNode } from './block-group-node' // Legacy dashed wrapper around frames
 import {

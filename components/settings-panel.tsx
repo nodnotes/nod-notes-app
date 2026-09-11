@@ -15,6 +15,11 @@ import type { User } from '@supabase/supabase-js'
 import { Input } from '@/components/ui/input'
 import { createClient } from '@/lib/supabase/client'
 import { useQuery } from '@tanstack/react-query'
+import { openStripePortal } from '@/lib/stripe-client'
+import {
+  isPaidSubscriptionTier,
+  subscriptionTierLabel,
+} from '@/lib/subscription-plans'
 
 interface SettingsPanelProps {
   open: boolean
@@ -218,7 +223,7 @@ export function SettingsPanel({
                       <div>
                         <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Plan</label>
                         <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                          {profile?.subscription_tier === 'pro' ? 'Plus' : profile?.subscription_tier === 'enterprise' ? 'Nod Pro' : 'Free Plan'}
+                          {subscriptionTierLabel(profile?.subscription_tier)}
                         </p>
                       </div>
                     </div>
@@ -231,8 +236,18 @@ export function SettingsPanel({
                         <h4 className="text-sm font-medium text-gray-900">Payment</h4>
                         <p className="text-sm text-gray-500 mt-1">Manage your subscription</p>
                       </div>
-                      <Button variant="outline" size="sm">
-                        Manage
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (isPaidSubscriptionTier(profile?.subscription_tier)) {
+                            void openStripePortal()
+                          } else {
+                            window.location.href = '/pricing'
+                          }
+                        }}
+                      >
+                        {isPaidSubscriptionTier(profile?.subscription_tier) ? 'Manage' : 'Upgrade'}
                       </Button>
                     </div>
                   </div>

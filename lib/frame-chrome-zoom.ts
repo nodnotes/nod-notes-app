@@ -6,8 +6,9 @@
 //
 // rAF while a frame is selected: read viewport matrix → publish live zoom (React
 // syncExternalStore) + stamp CSS vars / chrome element sizes.
-
-import { adjustChromeXFlow } from '@/lib/frame-adjust-box' // Live L/R pad (grip + gaps)
+// L/R adjust pad is live from React (`data-tt-chrome-pad-x`); rAF only mirrors it to
+// `--tt-adjust-pad-x`. ChatPanelNode re-glues RF XY to the fill origin when pad changes
+// so the peach fill (and threads) stay put while the blue gutter reflows.
 
 /** Keep in sync with FRAME_SCREEN_CHROME_BOOST in threads/constants. */
 const CHROME_BOOST = 1.4
@@ -85,17 +86,16 @@ function writeChromeVars(el: HTMLElement, z: number, ui: number): void {
 }
 
 /**
- * Live L/R adjust pad — stamped every rAF so gaps stay smooth.
- * RF XY is NOT patched here (that caused post-zoom / mid-zoom frame moves); fill-origin
- * glue runs only on select / deselect / drag-end in ChatPanelNode.
+ * Mirror React’s live L/R adjust pad onto `--tt-adjust-pad-x` (connection-point CSS).
+ * Pad width itself comes from ChatPanelNode (`adjustChromeXFlow` + fill-origin glue).
  */
-function stampAdjustGutters(node: HTMLElement, zoom: number): void {
+function stampAdjustGutters(node: HTMLElement, _zoom: number): void {
   const panel = node.querySelector('[data-panel-container="true"]') as HTMLElement | null
   if (!panel || panel.getAttribute('data-block-node') !== 'true') return
   if (!node.classList.contains('selected')) return
-  const fs = parseFloat(panel.getAttribute('data-tt-frame-scale') || '1') || 1
-  const pad = adjustChromeXFlow(zoom, fs)
-  panel.style.setProperty('--tt-adjust-pad-x', `${pad}px`)
+  const live = panel.getAttribute('data-tt-chrome-pad-x')
+  if (live == null || live === '') return
+  panel.style.setProperty('--tt-adjust-pad-x', `${live}px`)
 }
 
 /** Direct paint for resize dots / ring / indicators / rotate·fit·wrap. */

@@ -1,0 +1,2 @@
+-- Frame adjust chrome / rotated ⋮⋮ hover + Stripe checkout wiring.
+-- App/docs marker only; no DDL.

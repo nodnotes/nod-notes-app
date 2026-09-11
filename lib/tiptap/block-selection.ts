@@ -7,6 +7,7 @@ import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { BlockTypeId } from '@/components/block-actions-menu'
 import { looksLikeImageSrc } from '@/lib/tiptap/image-block'
 import type { PropertyTypeId } from '@/lib/blocks/property' // Turn into → Property cell
+import { localToScreen, screenToLocal } from '@/lib/dom-transform' // Rotation-safe block hit bands
 
 const editorsByHostId = new Map<string, Editor>() // host **frame** RF id → TipTap editor (⋮⋮ drop targets)
 
@@ -85,46 +86,79 @@ export function isHandleBlockType(name: string): boolean {
   )
 }
 
-/** Screen Y band for a handle-block — prefer the block’s own DOM rect. */
-function blockScreenYBand(
-  editor: Editor,
-  node: PMNode,
-  pos: number
-): { top: number; bottom: number } | null {
+/** Painted DOM for a handle-block (null when missing / header-only strip). */
+function blockDomEl(editor: Editor, node: PMNode, pos: number): HTMLElement | null {
   try {
     const dom = editor.view.nodeDOM(pos)
-    // Prefer the content element for a reliable painted band
-    let el: HTMLElement | null =
+    const el: HTMLElement | null =
       dom instanceof HTMLElement
         ? dom
         : dom?.parentElement instanceof HTMLElement
           ? dom.parentElement
           : null
-    if (el) {
-      if (
-        el.classList.contains('tt-property-block-header-only') ||
-        el.getAttribute('data-header-only') === 'true'
-      ) {
-        return null // Top-strip only — no inline band to hover
-      }
-      const rect = el.getBoundingClientRect()
-      if (rect.height > 0) return { top: rect.top, bottom: rect.bottom }
+    if (!el) return null
+    if (
+      el.classList.contains('tt-property-block-header-only') ||
+      el.getAttribute('data-header-only') === 'true'
+    ) {
+      return null // Top-strip only — no inline band to hover
     }
-    if (node.isAtom || node.isLeaf) return null
-    const start = editor.view.coordsAtPos(pos + 1)
-    const endPos = Math.max(pos + 1, pos + node.nodeSize - 1)
-    const end = editor.view.coordsAtPos(endPos)
-    return { top: start.top, bottom: Math.max(start.bottom, end.bottom) }
+    return el
   } catch {
     return null
   }
 }
 
 /**
- * Resolve the content block whose vertical band contains clientY (any X — full frame width).
- * Prefers listItem/taskItem; otherwise the **tightest** matching block DOM rect.
+ * Block Y band in `root` local CSS px — not screen AABB.
+ * Screen top/bottom overlap after frame rotate; local stack order stays correct.
  */
-export function findEditorBlockAtClientY(editor: Editor, clientY: number): EditorBlockRef | null {
+function blockLocalYBand(
+  editor: Editor,
+  node: PMNode,
+  pos: number,
+  root: HTMLElement
+): { top: number; bottom: number } | null {
+  try {
+    const el = blockDomEl(editor, node, pos)
+    if (el) {
+      const h = el.offsetHeight
+      if (h <= 0) return null
+      // Local top/bottom edges → root space (survives ancestor CSS rotate)
+      const a = localToScreen(el, 0, 0)
+      const b = localToScreen(el, 0, h)
+      const ya = screenToLocal(root, a.x, a.y).y
+      const yb = screenToLocal(root, b.x, b.y).y
+      return { top: Math.min(ya, yb), bottom: Math.max(ya, yb) }
+    }
+    if (node.isAtom || node.isLeaf) return null
+    const start = editor.view.coordsAtPos(pos + 1)
+    const endPos = Math.max(pos + 1, pos + node.nodeSize - 1)
+    const end = editor.view.coordsAtPos(endPos)
+    const ya = screenToLocal(root, (start.left + start.right) / 2, start.top).y
+    const yb = screenToLocal(
+      root,
+      (end.left + end.right) / 2,
+      Math.max(start.bottom, end.bottom)
+    ).y
+    return { top: Math.min(ya, yb), bottom: Math.max(ya, yb) }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Resolve the content block whose **local** vertical band contains the pointer
+ * (any local X — full frame width). Screen Y alone is wrong under frame rotate.
+ * Prefers listItem/taskItem; otherwise the **tightest** matching band.
+ */
+export function findEditorBlockAtClientPoint(
+  editor: Editor,
+  clientX: number,
+  clientY: number
+): EditorBlockRef | null {
+  const root = editor.view.dom as HTMLElement
+  const localY = screenToLocal(root, clientX, clientY).y
   const { doc } = editor.state
   // Holder object, not a `let`: TS narrows a captured `let` to its initializer and can't see the
   // assignment inside `descendants`, which typed the winner as `never` at the return below.
@@ -135,10 +169,10 @@ export function findEditorBlockAtClientY(editor: Editor, clientY: number): Edito
     if (name === 'bulletList' || name === 'orderedList' || name === 'taskList') return true
     if (!isHandleBlockType(name)) return true
 
-    const band = blockScreenYBand(editor, node, pos)
+    const band = blockLocalYBand(editor, node, pos, root)
     if (!band) return true
     const { top, bottom } = band
-    if (clientY < top || clientY > bottom) {
+    if (localY < top || localY > bottom) {
       return name !== 'listItem' && name !== 'taskItem'
     }
     const height = Math.max(1, bottom - top)
@@ -157,6 +191,12 @@ export function findEditorBlockAtClientY(editor: Editor, clientY: number): Edito
   })
 
   return best.top?.ref ?? null
+}
+
+/** Same as `findEditorBlockAtClientPoint` using the editor’s screen mid-X (upright frames). */
+export function findEditorBlockAtClientY(editor: Editor, clientY: number): EditorBlockRef | null {
+  const r = editor.view.dom.getBoundingClientRect()
+  return findEditorBlockAtClientPoint(editor, (r.left + r.right) / 2, clientY)
 }
 
 /** Resolve the content block for a document position (prefer list/task item over the list). */

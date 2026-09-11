@@ -1,17 +1,18 @@
 'use client'
 
-// In-app upgrade drawer — same plans/theme as the public /pricing page
+// In-app upgrade drawer — Stripe Checkout for Plus / Nod Pro
+
 import { useState } from 'react'
 import { X, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { User } from '@supabase/supabase-js'
 import { cn } from '@/lib/utils'
 import {
-  SUBSCRIPTION_FEATURES,
   SUBSCRIPTION_PLANS,
   type SubscriptionPlanId,
 } from '@/lib/subscription-plans'
 import { NodNotesIcon } from '@/components/nod-notes-icon'
+import { startStripeCheckout } from '@/lib/stripe-client'
 
 interface UpgradePanelProps {
   open: boolean
@@ -19,18 +20,20 @@ interface UpgradePanelProps {
   user: User
 }
 
-export function UpgradePanel({
-  open,
-  onClose,
-}: UpgradePanelProps) {
+export function UpgradePanel({ open, onClose }: UpgradePanelProps) {
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionPlanId>('nod-pro') // default to highlighted Nod Pro
+  const [busy, setBusy] = useState(false)
 
   if (!open) return null
 
-  // Stripe checkout is not wired yet — keep the selection so the CTA matches the card
-  const handleSelectPlan = async (planType: SubscriptionPlanId) => {
+  const handleCheckout = async (planType: SubscriptionPlanId) => {
     setSelectedPlan(planType)
-    console.log(`Selected ${planType} plan`)
+    setBusy(true)
+    try {
+      await startStripeCheckout(planType)
+    } finally {
+      setBusy(false)
+    }
   }
 
   const selected = SUBSCRIPTION_PLANS.find((plan) => plan.id === selectedPlan)
@@ -74,7 +77,8 @@ export function UpgradePanel({
                   <button
                     key={plan.id}
                     type="button"
-                    onClick={() => handleSelectPlan(plan.id)}
+                    disabled={busy}
+                    onClick={() => setSelectedPlan(plan.id)}
                     className={cn(
                       'w-full p-4 rounded-xl border-2 transition-all text-left bg-background',
                       isSelected
@@ -121,7 +125,7 @@ export function UpgradePanel({
             <div className="pt-6 border-t border-border">
               <h4 className="text-sm font-semibold mb-4 text-foreground">What&apos;s included:</h4>
               <ul className="space-y-3">
-                {SUBSCRIPTION_FEATURES.map((feature) => (
+                {(selected?.features ?? []).map((feature) => (
                   <li key={feature} className="flex items-center gap-3">
                     <Check className="h-5 w-5 text-blue-500 flex-shrink-0" />
                     <span className="text-sm text-foreground/80">{feature}</span>
@@ -132,11 +136,12 @@ export function UpgradePanel({
 
             <div className="pt-6 space-y-3">
               <Button
-                onClick={() => selected && handleSelectPlan(selected.id)}
+                onClick={() => selected && handleCheckout(selected.id)}
+                disabled={busy || !selected}
                 className="w-full rounded-xl bg-blue-500 hover:bg-blue-600 text-white"
                 size="lg"
               >
-                {selected?.cta}
+                {busy ? 'Redirecting…' : selected?.cta}
               </Button>
             </div>
 

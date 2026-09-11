@@ -934,7 +934,7 @@ export const DOCS_CATEGORIES: DocsCategory[] = [
         body: [
           {
             type: 'p',
-            text: 'Start free on a blank board. Upgrade when you need more AI capacity, priority support, or export options.',
+            text: 'Start free on a blank board. Upgrade when you need more AI capacity, Notion sync at scale, or MCP.',
           },
           {
             type: 'h2',
@@ -942,7 +942,7 @@ export const DOCS_CATEGORIES: DocsCategory[] = [
           },
           {
             type: 'p',
-            text: 'Billed monthly. Good for regular mapping with upgraded limits.',
+            text: 'Unlimited boards, full Notion two-way sync, standard AI credits (fast model), export/backup, and guest editing.',
           },
           {
             type: 'h2',
@@ -950,20 +950,18 @@ export const DOCS_CATEGORIES: DocsCategory[] = [
           },
           {
             type: 'p',
-            text: 'Recommended for power users. Same feature set emphasis as Plus with the Pro tier pricing — see /pricing for the live comparison.',
+            text: 'Everything in Plus, plus advanced AI models and a higher credit pool, MCP for Cursor/Claude, chat import, AI on frames/threads, and priority support with early access.',
           },
           {
             type: 'h2',
-            text: 'Included when you upgrade',
+            text: 'Billing',
           },
           {
             type: 'ul',
             items: [
-              'Unlimited conversations',
-              'Advanced AI models',
-              'Priority support',
-              'Early access to new features',
-              'Export and backup options',
+              'Checkout and plan changes run through Stripe',
+              'Manage or cancel anytime from Settings → Payment',
+              '7-day free trial on both paid plans',
             ],
           },
           {

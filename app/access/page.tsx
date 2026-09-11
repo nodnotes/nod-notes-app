@@ -18,10 +18,18 @@ export default function AccessPage() {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
+  // Only allow same-origin relative redirects (e.g. /pricing?plan=plus)
+  const safeNext = () => {
+    if (typeof window === 'undefined') return '/board'
+    const raw = new URLSearchParams(window.location.search).get('next')
+    if (raw && raw.startsWith('/') && !raw.startsWith('//') && !raw.includes('://')) return raw
+    return '/board'
+  }
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user?.email_confirmed_at) {
-        window.location.assign('/board') // Full load when already signed in
+        window.location.assign(safeNext()) // Resume pricing checkout when linked with ?next=
       }
     })
   }, [supabase])
@@ -69,7 +77,7 @@ export default function AccessPage() {
       }
 
       await waitForAuthUserId(data.user.id, { timeoutMs: 8000 })
-      window.location.assign('/board')
+      window.location.assign(safeNext())
     } catch (err: unknown) {
       setMessage({
         type: 'error',

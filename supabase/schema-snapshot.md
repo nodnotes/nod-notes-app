@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-11T17:15:38Z`
+- Snapped at: `2026-09-11T18:46:49Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (link refreshed; `db dump` / `migration list` blocked on remote login-role alter — marker + version snapshot only)
@@ -9,6 +9,16 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260911184649_frame_adjust_chrome_rotated_hover_stripe.sql`.
+- **Frame adjust chrome**: live L/R pad with fill-origin glue (⋮⋮ stays centered; fill doesn’t drift on zoom); gutter air uses √×`frameScale` (not screen-constant ÷zoom).
+- **Rotated frames**: inflate unrotated width by chrome before AABB; glue by half AABB delta; no upright L/R padding while rotated.
+- **Block hover**: `findEditorBlockAtClientPoint` / local Y via `screenToLocal` (screen AABB Y was wrong after rotate).
+- **Threads**: zoom-constant stroke CSS after RF; frame-size taper; knobs use fixed local `r` + `scale(ui)`; attach to fill (not blue box).
+- **Stripe**: checkout / portal / webhook routes + pricing auto-checkout + plan wiring.
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: desktop + iOS download shells
 
 - DDL: none. Marker `20260911171538_desktop_mobile_download_shells.sql`.
 - **Desktop shell**: Electron app under `desktop/` (pack/dist scripts; auto-updater hook; signed-in `/download` page + hero).
