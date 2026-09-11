@@ -388,10 +388,16 @@ export function ThreadActionsMenu({
                 onAction(opt.id)
               }}
               className={cn(
-                'justify-start text-sm h-8 px-2 font-normal w-full',
+                'justify-start text-sm h-8 px-2 font-normal w-full gap-2',
                 currentStrokeWidth === opt.width && 'tt-selected'
               )}
             >
+              {/* Preview stroke so 1–4px are visibly different in the flyout */}
+              <span
+                aria-hidden
+                className="w-8 shrink-0 rounded-full bg-gray-700 dark:bg-gray-300"
+                style={{ height: opt.width }}
+              />
               <span className="flex-1 text-left">{opt.label}</span>
             </Button>
           ))}

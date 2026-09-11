@@ -38,13 +38,13 @@ export function resolveThreadStrokeColor(color?: string | null): string {
 /** Default thread thickness in flow px (menu 1–4px options). */
 export const THREAD_DEFAULT_STROKE_WIDTH = 2
 
-/** Reference frame area (≈ empty one-line) for relative thread thickness. */
-const THREAD_FRAME_AREA_REF = 48 * 22
+/** Reference √(w×h) for a typical small one-line frame — below this thins, above thickens. */
+const THREAD_FRAME_SIDE_REF = 80
 
 /**
- * How thick a thread end should read for a frame’s flow box.
- * Bigger frames → thicker end; smaller → thinner. Gentle curve so extremes stay readable.
- * Result multiplies menu stroke width; CSS `--tt-thread-inv-zoom` keeps it screen-constant.
+ * How thick a thread should read for a frame’s flow box (factor on menu stroke).
+ * Uses √(area) so tall/wide place-scaled frames read big; steep power so small↔small vs
+ * big↔big is obvious on screen.
  */
 export function threadWidthFactorForFrameSize(size: {
   width: number
@@ -52,17 +52,25 @@ export function threadWidthFactorForFrameSize(size: {
 }): number {
   const w = Math.max(1, size.width)
   const h = Math.max(1, size.height)
-  const area = w * h
-  // sqrt(sqrt(area/ref)) ≈ soft; clamp so tiny frames don’t vanish and huge ones don’t dominate
-  return Math.min(2.4, Math.max(0.55, Math.pow(area / THREAD_FRAME_AREA_REF, 0.25)))
+  const side = Math.sqrt(w * h) // Characteristic size (not max-side — wide short lines stayed too thick)
+  // ^1.75 + wide clamp — small~0.25–0.5×, large~4–7× menu stroke
+  return Math.min(7, Math.max(0.2, Math.pow(side / THREAD_FRAME_SIDE_REF, 1.75)))
 }
 
-/** Menu stroke × frame-size factor → `--tt-edge-w` at that end (CSS still ÷ zoom). */
-export function threadEndStrokeWidth(
+/**
+ * One uniform stroke for a thread from both endpoint frame sizes.
+ * Big↔big thicker, small↔small thinner, mixed in between (geometric mean of factors).
+ * No along-path taper — that split each edge into many SVG pieces and hurt pan/zoom.
+ */
+export function threadStrokeWidthForFrames(
   menuWidth: number,
-  size: { width: number; height: number }
+  a: { width: number; height: number },
+  b: { width: number; height: number }
 ): number {
-  return Math.max(0.5, menuWidth * threadWidthFactorForFrameSize(size))
+  const factor = Math.sqrt(
+    threadWidthFactorForFrameSize(a) * threadWidthFactorForFrameSize(b)
+  )
+  return Math.max(0.35, menuWidth * factor)
 }
 
 /** Algorithm used for new threads. */

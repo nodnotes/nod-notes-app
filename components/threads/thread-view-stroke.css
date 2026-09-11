@@ -7,7 +7,8 @@
  * pattern as `--tt-frame-line-w`) so thickness stays screen-constant.
  */
 .react-flow__edge-path {
-  stroke-width: calc(var(--tt-edge-w, 2) * var(--tt-thread-inv-zoom, 1)) !important;
+  /* 1px unit so unitless --tt-edge-w × inv-zoom always resolves (bare calc can no-op → all look equal) */
+  stroke-width: calc(var(--tt-edge-w, 2) * 1px * var(--tt-thread-inv-zoom, 1)) !important;
 }
 
 .react-flow__edge-path.tt-thread-dotted {
@@ -19,7 +20,7 @@
 }
 
 .react-flow__connectionline-path {
-  stroke-width: calc(var(--tt-edge-w, 2) * var(--tt-thread-inv-zoom, 1)) !important;
+  stroke-width: calc(var(--tt-edge-w, 2) * 1px * var(--tt-thread-inv-zoom, 1)) !important;
 }
 
 .react-flow__edge.tt-ai-pending-thread path.react-flow__edge-path {

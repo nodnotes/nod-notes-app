@@ -21,7 +21,7 @@ import {
   THREAD_DEFAULT_STROKE_WIDTH,
   THREAD_SELECTED_COLOR,
   ThreadAlgorithm,
-  threadEndStrokeWidth,
+  threadStrokeWidthForFrames,
 } from './constants' // Stroke + algorithm defaults + frame-size thickness
 import { normalizeHandleId } from './handle-ids' // Strip -indicator from stored handle ids
 import {
@@ -32,7 +32,7 @@ import { onThreadFrameVisualSize, readOnThread, isOnThreadInline, ON_THREAD_DOT_
 import {
   buildThreadPathGeometry,
   threadGapsForFrames,
-  taperedThreadStrokeSegments,
+  threadStrokePaths,
 } from '@/lib/threads/thread-path-geometry'
 
 /** Persistable thread payload stored in panel_edges.metadata + edge.data. */
@@ -73,13 +73,28 @@ const useIdsForInactiveControlPoints = (points: ControlPointData[]) => {
 
 type EditableThreadProps = EdgeProps<ThreadEdgeData>
 
-/** Flow box of a frame node (RF measured width/height, else style). */
+/** Flow box of a frame node — prefer RF measure, then style, then saved resize box. */
 function nodeFlowSize(n?: RFNode | null): { width: number; height: number } {
   if (!n) return { width: 80, height: 40 } // Neutral mid size when a side is missing
-  const rawW = n.width ?? n.style?.width
-  const rawH = n.height ?? n.style?.height
-  const w = typeof rawW === 'number' ? rawW : parseFloat(String(rawW ?? ''))
-  const h = typeof rawH === 'number' ? rawH : parseFloat(String(rawH ?? ''))
+  const measured = (n as RFNode & { measured?: { width?: number; height?: number } }).measured
+  const rawW = n.width ?? measured?.width ?? n.style?.width
+  const rawH = n.height ?? measured?.height ?? n.style?.height
+  let w = typeof rawW === 'number' ? rawW : parseFloat(String(rawW ?? ''))
+  let h = typeof rawH === 'number' ? rawH : parseFloat(String(rawH ?? ''))
+  // Hug / max-content frames sometimes lack numeric RF size — use persisted box × frameScale
+  if (!(Number.isFinite(w) && w > 0 && Number.isFinite(h) && h > 0)) {
+    const meta = (n.data as { promptMessage?: { metadata?: Record<string, unknown> } } | undefined)
+      ?.promptMessage?.metadata
+    const dims = meta?.resizeDimensions as { width?: number; height?: number } | undefined
+    const fs =
+      typeof meta?.frameScale === 'number' && Number.isFinite(meta.frameScale)
+        ? Math.max(0.15, meta.frameScale as number)
+        : 1
+    if (dims && typeof dims.width === 'number' && typeof dims.height === 'number') {
+      w = dims.width * fs
+      h = dims.height * fs
+    }
+  }
   return {
     width: Number.isFinite(w) && w > 0 ? w : 80,
     height: Number.isFinite(h) && h > 0 ? h : 40,
@@ -265,7 +280,7 @@ export function EditableThread({
     ) &&
     a.threadDots.every((p, i) => p.x === b.threadDots[i].x && p.y === b.threadDots[i].y))
   const gaps = pathGeom ? threadGapsForFrames(pathGeom, inlineGaps) : []
-  // Flow box of each endpoint — thicker end at bigger frames, thinner at smaller
+  // Uniform thickness from both endpoint sizes (no along-path taper — that was too heavy for pan/zoom)
   const sourceSize = nodeFlowSize(sourceNode)
   const targetSize = nodeFlowSize(targetNode)
 
@@ -274,14 +289,11 @@ export function EditableThread({
       ? THREAD_SELECTED_COLOR // Selection always reads Miro blue
       : data?.strokeColor || (style?.stroke as string) || THREAD_DEFAULT_COLOR // Custom → style → gray
   const baseWidth = selected ? Math.max(strokeWidth, strokeWidth + 0.5) : strokeWidth // Selected reads slightly heavier
-  const wSource = threadEndStrokeWidth(baseWidth, sourceSize) // Thickens toward a large source frame
-  const wTarget = threadEndStrokeWidth(baseWidth, targetSize) // Thins toward a small target (or vice versa)
+  const edgeW = threadStrokeWidthForFrames(baseWidth, sourceSize, targetSize)
 
-  // Taper along the path; CSS `--tt-thread-inv-zoom` keeps each piece screen-constant while zooming
-  const taperSegs =
-    pathGeom != null
-      ? taperedThreadStrokeSegments(pathGeom, wSource, wTarget, gaps)
-      : [{ d: path, w: (wSource + wTarget) / 2 }]
+  // Gap slices only (on-thread frames) — one path each, same `--tt-edge-w`
+  const strokePaths =
+    pathGeom != null ? threadStrokePaths(pathGeom, gaps) : [path]
 
   // Screen size comes from CSS `--tt-board-zoom` (live); do not put strokeWidth inline.
   const { strokeWidth: _ignoredStrokeWidth, ...restStyle } = (style ?? {}) as Record<
@@ -290,32 +302,23 @@ export function EditableThread({
   >
   const dash = dotted
     ? `calc(5 * var(--tt-thread-inv-zoom, 1)), calc(5 * var(--tt-thread-inv-zoom, 1))`
-    : 'none' // Explicit none — taper pieces must not inherit a dash look
+    : undefined
 
   return (
     <>
-      {/* Invisible full path — one hit target so taper pieces don’t leave dead zones */}
-      <BaseEdge
-        id={`${id}-hit`}
-        path={path}
-        interactionWidth={20}
-        style={{ ...restStyle, stroke: 'transparent', strokeWidth: 1, opacity: 0 }}
-      />
-      {taperSegs.map((seg, i) => (
+      {strokePaths.map((d, i) => (
         <BaseEdge
-          key={i === 0 ? id : `${id}-tap-${i}`}
-          id={i === 0 ? id : `${id}-tap-${i}`}
-          path={seg.d}
+          key={i === 0 ? id : `${id}-gap-${i}`}
+          id={i === 0 ? id : `${id}-gap-${i}`}
+          path={d}
           markerStart={i === 0 ? markerStart : undefined}
-          markerEnd={i === taperSegs.length - 1 ? markerEnd : undefined}
-          interactionWidth={0} // Hit band lives on the full-path edge above
+          markerEnd={i === strokePaths.length - 1 ? markerEnd : undefined}
+          interactionWidth={20}
           style={{
             ...restStyle,
             stroke,
-            ['--tt-edge-w' as string]: seg.w, // Piece thickness; CSS × inv-zoom → screen px
+            ['--tt-edge-w' as string]: String(edgeW), // Unitless flow weight; CSS × 1px × inv-zoom
             strokeDasharray: dash,
-            strokeLinecap: 'round', // Overlapped pieces fuse — butt caps looked dashed
-            strokeLinejoin: 'round',
           }}
         />
       ))}
