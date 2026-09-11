@@ -33,9 +33,10 @@ export const SHOWCASE_BOARD_SLOTS: ShowcaseBoardSlot[] = [
 
 function readEnvId(key: string): string {
   const value = process.env[key]
-  if (value) return value
   const bare = key.replace(/^NEXT_PUBLIC_/, '')
-  return process.env[bare] || ''
+  const raw = value || process.env[bare] || ''
+  // Trim whitespace and literal "\n" / "\r" pastes from Vercel/env editors
+  return raw.trim().replace(/(?:\\r|\\n|\r|\n)+$/g, '').trim()
 }
 
 /** All board ids that may be fetched without auth (homepage + showcase slots). */
