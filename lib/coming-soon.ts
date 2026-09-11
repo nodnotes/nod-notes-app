@@ -39,5 +39,11 @@ export function isComingSoonPublicPath(pathname: string): boolean {
   if (pathname === '/access') return true // Early-access sign-in
   if (pathname.startsWith('/auth/')) return true // Supabase callback + verify flows
   if (pathname.startsWith('/api/early-access')) return true // OTP + session gate APIs
+  if (pathname.startsWith('/api/public-board')) return true // Homepage showcase master snapshots
+  if (pathname.startsWith('/api/homepage-board')) return true // Legacy homepage board fetch
+  if (pathname.startsWith('/view/')) return true // Full-screen public showcase playground
+  if (pathname === '/pricing' || pathname.startsWith('/docs') || pathname === '/support') {
+    return true // Marketing help surfaces
+  }
   return false
 }
