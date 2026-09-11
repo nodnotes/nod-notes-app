@@ -119,8 +119,8 @@ export function stackLinePairScreenStyles(
   zoom: number,
   frameUiScale: number
 ): { inner: CSSProperties; outer: CSSProperties } {
-  const outsetScreen = INDICATOR_OUTSET * frameUiScale * Math.max(0.01, zoom)
-  const hitPad = Math.max(12 * zoom, 10 * frameUiScale * zoom)
+  const outsetScreen = INDICATOR_OUTSET * frameUiScale * Math.max(0.01, zoom) // frameUiScale is boost/zoom → constant screen outset
+  const hitPad = Math.max(8, 10 * frameUiScale * Math.max(0.01, zoom)) // Constant on screen (no bare ×zoom floor — that grew when zoomed in)
   const facingSide = facingStackSide(innerRect, outerRect, stackSide)
   const outerSide = oppositeStackSide(facingSide)
   return {

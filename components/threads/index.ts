@@ -33,6 +33,7 @@ export {
   threadStyleFromAlgorithm,
   isSharpThreadAlgorithm,
   threadComfortScale,
+  blockGripComfortScale,
   frameScreenChromeScale,
   FRAME_SCREEN_CHROME_BOOST,
   type ThreadStylePref,

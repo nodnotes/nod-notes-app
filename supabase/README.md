@@ -25,6 +25,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260911093423_frame_chrome_live_zoom_rotate_reset` — Frame chrome live zoom scaling + click rotate resets to 0°
 - `20260911010005_homepage_showcase_claim_on_open` — Signed-in users claim private showcase copies on Open board (not on homepage preview)
 - `20260910005242_homepage_ephemeral_showcase_sandboxes` — Homepage /view ephemeral visitor sandboxes of showcase masters
 - `20260909232719_homepage_showcase_gutters_static_row` — Homepage equal gutters on split sections; AI preview 3× side inset; static small-image row (no carousel)

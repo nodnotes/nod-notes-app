@@ -22,7 +22,12 @@ import {
   twistSnapHeading,
   viewportKeepingPanePoint,
 } from '@/lib/board-rotation'
-import { beginBoardNavigating, endBoardNavigating, touchBoardNavigating } from '@/lib/board-navigating'
+import {
+  beginBoardNavigating,
+  endBoardNavigating,
+  syncBoardZoomCss,
+  touchBoardNavigating,
+} from '@/lib/board-navigating'
 import { clampBoardZoom } from '@/lib/board-extent'
 
 const CHROME_SEL =
@@ -243,6 +248,7 @@ export function BoardRotationProvider({ children }: { children: ReactNode }) {
       g.stuckAtZero = stuckAtZero
       const next = viewportKeepingPanePoint(paneX, paneY, vp, rotationRef.current, heading, zoom)
       instance.setViewport(next)
+      syncBoardZoomCss(next.zoom, storeApi.getState().domNode) // Screen-constant chrome mid-pinch
       if (heading === rotationRef.current) return // Pan/zoom only — skip a React render every frame
       rotationRef.current = heading
       boardRotationRef.current = heading
@@ -252,7 +258,7 @@ export function BoardRotationProvider({ children }: { children: ReactNode }) {
     // Pinch always zooms. Scroll nav: mid travel pans (+ coast). Zoom nav: mid travel zooms (+ coast) like trackpad.
     const applyTwoFinger = (ax: number, ay: number, bx: number, by: number) => {
       if (!pinch) return
-      touchBoardNavigating() // Heartbeat — beginPinch fires once, gestures outlive the watchdog
+      touchBoardNavigating(instance.getViewport().zoom) // Heartbeat + live CSS chrome
       const dx = bx - ax
       const dy = by - ay
       const dist = Math.hypot(dx, dy) || 1

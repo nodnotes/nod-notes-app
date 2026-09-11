@@ -98,8 +98,15 @@ import {
   beginBoardNavigating,
   endBoardNavigating,
   isBoardNavigating,
+  registerBoardZoomCssReader,
+  syncBoardZoomCss,
   touchBoardNavigating,
-} from '@/lib/board-navigating' // Freeze React zoom during pan/pinch
+} from '@/lib/board-navigating' // Freeze React zoom during pan/pinch; CSS chrome tracks live zoom
+import {
+  ensureFrameChromeZoomPump,
+  registerFrameChromeZoomReader,
+  stopFrameChromeZoomPump,
+} from '@/lib/frame-chrome-zoom' // Exact screen-constant chrome on selected frames (live zoom)
 import { beginFrameDragging, endFrameDragging, isFrameDragging } from '@/lib/frame-dragging' // Skip O(n) work mid-drag on large boards
 import {
   clearFrameTextEditActive,
@@ -1054,6 +1061,26 @@ function BoardFlowInner({
 
   const reactFlowInstance = useReactFlow()
   const rfStore = useStoreApi() // Embed: force pane width/height when CSS % height collapses
+  // Live chrome CSS — full-precision zoom stamped on selected nodes (rAF while selected)
+  useEffect(() => {
+    const read = () => {
+      const s = rfStore.getState()
+      return { zoom: s.transform[2] || 1, root: s.domNode as HTMLElement | null }
+    }
+    registerBoardZoomCssReader(() => ({ zoom: read().zoom, el: read().root }))
+    registerFrameChromeZoomReader(read)
+    const unsub = rfStore.subscribe(() => {
+      const { zoom, root } = read()
+      syncBoardZoomCss(zoom, root)
+      ensureFrameChromeZoomPump() // Start/keep chrome pump when transform changes
+    })
+    ensureFrameChromeZoomPump()
+    return () => {
+      unsub()
+      registerBoardZoomCssReader(null)
+      stopFrameChromeZoomPump()
+    }
+  }, [rfStore])
   const updateNodeInternals = useUpdateNodeInternals() // Remeasure Handles after connect so paths attach
   const { setReactFlowInstance, registerSetNodes, isLocked, layoutMode, setLayoutMode, setIsDeterministicMapping, panelWidth: contextPanelWidth, isPromptBoxCentered, lineStyle, setLineStyle, arrowDirection, setArrowDirection, boardRule: contextBoardRule, boardStyle: contextBoardStyle, boardFont, clickedEdge: contextClickedEdge, setClickedEdge: setContextClickedEdge, fillColor, borderColor, borderWeight, borderStyle, flashcardMode, setFlashcardMode, selectedTag, setSelectedTag, isDrawing, setIsDrawing, drawTool, setDrawTool, drawShape, setDrawShape, setFillColor, setBorderColor, setBorderWeight, setBorderStyle, registerMapUndoRedo, registerMapTakeSnapshot, snapEnabled, setSnapEnabled } = useReactFlowContext()
   const { rotation: boardRotation, setScrollMode, setRotationAroundViewCenter } = useBoardRotation() // Subscribe so I-bar / overlays re-place when the camera twists
@@ -5969,8 +5996,9 @@ function BoardFlowInner({
       }, 180)
     }
 
-    const markWheelNavigating = (zoom: number) => {
-      beginBoardNavigating(zoom)
+    const markWheelNavigating = (liveZoom: number) => {
+      beginBoardNavigating(liveZoom) // rAF pump keeps CSS chrome live for the burst
+      syncBoardZoomCss(liveZoom, rfStore.getState().domNode)
       endBoardNavigating(140)
       scheduleWheelSettle()
     }
@@ -6015,7 +6043,6 @@ function BoardFlowInner({
           -e.deltaY * (e.deltaMode === 1 ? 0.05 : e.deltaMode ? 1 : 0.002) * factor
         const nextZoom = clampBoardZoom(viewport.zoom * Math.pow(2, pinchDelta))
         if (nextZoom === viewport.zoom) return
-        markWheelNavigating(viewport.zoom)
         reactFlowInstance.setViewport(
           viewportKeepingPanePoint(
             e.clientX - rect.left,
@@ -6026,6 +6053,7 @@ function BoardFlowInner({
             nextZoom
           )
         )
+        markWheelNavigating(nextZoom) // After setViewport — CSS tracks the new zoom
         prevZoomRef.current = nextZoom
         return
       }
@@ -6125,12 +6153,12 @@ function BoardFlowInner({
         e.stopPropagation()
         if (!reactFlowInstance) return
         const viewport = reactFlowInstance.getViewport()
-        markWheelNavigating(viewport.zoom)
         reactFlowInstance.setViewport({
           x: viewport.x - e.deltaX,
           y: viewport.y - e.deltaY,
           zoom: viewport.zoom,
         })
+        markWheelNavigating(viewport.zoom) // Pan only — zoom unchanged; still arm freeze
         return
       }
 
@@ -6151,7 +6179,6 @@ function BoardFlowInner({
           -e.deltaY * (e.deltaMode === 1 ? 0.05 : e.deltaMode ? 1 : 0.002) * factor
         const nextZoom = clampBoardZoom(viewport.zoom * Math.pow(2, pinchDelta))
         if (nextZoom === viewport.zoom) return
-        markWheelNavigating(viewport.zoom)
         reactFlowInstance.setViewport(
           viewportKeepingPanePoint(
             e.clientX - rect.left,
@@ -6162,6 +6189,7 @@ function BoardFlowInner({
             nextZoom
           )
         )
+        markWheelNavigating(nextZoom) // After setViewport — CSS tracks the new zoom
         prevZoomRef.current = nextZoom
         return
       }
@@ -6170,13 +6198,12 @@ function BoardFlowInner({
       e.stopPropagation()
 
       const viewport = reactFlowInstance.getViewport()
-      markWheelNavigating(viewport.zoom)
-      // Pan the viewport based on scroll delta
       reactFlowInstance.setViewport({
         x: viewport.x - e.deltaX,
         y: viewport.y - e.deltaY,
         zoom: viewport.zoom,
       })
+      markWheelNavigating(viewport.zoom)
     }
 
     // Add event listener with capture to intercept before React Flow
@@ -6186,7 +6213,7 @@ function BoardFlowInner({
       document.removeEventListener('wheel', handleWheel, { capture: true })
       if (settleTimer) clearTimeout(settleTimer) // Don't settle into an unmounted board
     }
-  }, [navScrollMode, viewMode, reactFlowInstance, getBottomScrollLimit, checkIfAtBottom, chronologicalPanels, focusedPanelIndex, centerPanelAbovePrompt, boardRotation, isDrawing, embedded, hideMapChrome])
+  }, [navScrollMode, viewMode, reactFlowInstance, getBottomScrollLimit, checkIfAtBottom, chronologicalPanels, focusedPanelIndex, centerPanelAbovePrompt, boardRotation, isDrawing, embedded, hideMapChrome, rfStore])
 
   // Check if at bottom when viewport changes in linear mode
   // Don't run when nodes change due to selection - only run when nodes are added/removed or viewMode changes
@@ -10106,6 +10133,7 @@ function BoardFlowInner({
         onEdgeUpdate={handleThreadReconnect}
         onSelectionChange={() => {
           window.dispatchEvent(new Event('tt-selection-changed')) // Top-bar frame lock reads selection
+          ensureFrameChromeZoomPump() // Stamp chrome vars as soon as a frame is selected
         }}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
@@ -10502,8 +10530,12 @@ function BoardFlowInner({
           const currentViewport = instance.getViewport()
           if (!isFinite(currentViewport.x) || !isFinite(currentViewport.y) || !isFinite(currentViewport.zoom)) {
             instance.setViewport({ x: 0, y: 0, zoom: embedded ? 0.8 : 0.6 })
+            syncBoardZoomCss(embedded ? 0.8 : 0.6) // Seed screen-constant chrome CSS
           } else if (embedded) {
             instance.fitView({ padding: 0.15, minZoom: 0.2, maxZoom: 1.5 }) // One-shot frame in preview
+            syncBoardZoomCss(instance.getViewport().zoom)
+          } else {
+            syncBoardZoomCss(currentViewport.zoom) // Seed from restored viewport
           }
           setReactFlowInstance(instance)
           if (embedded) setEmbedFlowReady(true) // Host can drop loading veil once messages also resolve
@@ -10542,7 +10574,7 @@ function BoardFlowInner({
           setFrameMountRecomputeKey((k) => k + 1) // Mount/unmount deferred TipTap after pan settles
         }}
         onMove={(event, viewport) => {
-          touchBoardNavigating() // Keep the freeze alive — begin only fires on onMoveStart
+          touchBoardNavigating(viewport.zoom) // Freeze React; CSS chrome tracks live zoom
           // At a zoom extreme while gesturing → unlock further zoom so the board stays infinite in scale
           if (!embedded) {
             const nextZoom = expandZoomRange(zoomRangeRef.current, { liveZoom: viewport.zoom })

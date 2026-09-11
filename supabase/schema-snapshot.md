@@ -1,14 +1,20 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-11T01:00:05Z`
+- Snapped at: `2026-09-11T09:34:23Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
-- CLI: `supabase` `2.90.0` (link refreshed; `db dump` blocked on remote login-role alter — marker + version snapshot only)
+- CLI: `supabase` `2.90.0` (link refreshed; `db dump` / `migration list` blocked on remote login-role alter — marker + version snapshot only)
 - Remote applied tops out at `20260811225342_conversations_owner_select_for_insert_returning`
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260911093423_frame_chrome_live_zoom_rotate_reset.sql`.
+- **Frame chrome live zoom**: selected-frame chrome tracks painted viewport zoom (`lib/frame-chrome-zoom`, `useLiveBoardZoom`); TipTap ⋮⋮ / add lines use √ comfort scale; blue L/R gutters freeze pad at select (no post-zoom snap); connection indicators view-constant; rotate/fit/wrap sized like Free-nav pan; **click rotate resets to 0°** (drag still turns).
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: homepage showcase claim on open
 
 - DDL: none. Marker `20260911010005_homepage_showcase_claim_on_open.sql`.
 - **Showcase claim-on-open**: signed-in users clicking **Open board →** (or `/view/{masterId}`) get a private remapped copy (`POST /api/showcase-board/claim`, `metadata.showcase_source_id`); homepage previews stay ephemeral and do not seed the boards list. Owner opens the master. Guests stay on `/view` sandboxes.

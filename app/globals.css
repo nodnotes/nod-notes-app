@@ -1204,10 +1204,11 @@ span[data-added="true"] {
   .react-flow.tt-thread-connecting .react-flow__handle.handle-dot.tt-connection-point.connectionindicator,
   .react-flow.tt-thread-connecting .react-flow__handle.handle-dot.tt-connection-point.connecting,
   .react-flow.tt-thread-connecting .react-flow__handle.handle-dot.tt-connection-point.valid {
-    width: 8px !important;
-    height: 8px !important;
-    min-width: 8px !important;
-    min-height: 8px !important;
+    /* boost/zoom — same screen hit size at every board zoom (invisible paint) */
+    width: calc(8px * var(--tt-frame-ui-scale, 1.4)) !important;
+    height: calc(8px * var(--tt-frame-ui-scale, 1.4)) !important;
+    min-width: calc(8px * var(--tt-frame-ui-scale, 1.4)) !important;
+    min-height: calc(8px * var(--tt-frame-ui-scale, 1.4)) !important;
     opacity: 0 !important;
     background: transparent !important;
     background-color: transparent !important;
@@ -1258,6 +1259,20 @@ span[data-added="true"] {
     -webkit-user-select: none;
     user-select: none;
     -webkit-touch-callout: none;
+  }
+  /*
+   * Screen-constant frame chrome — live `--tt-board-zoom` from syncBoardZoomCss (not React).
+   * boost/zoom keeps connection indicators, resize dots/stroke, and rotate·fit·wrap the same
+   * screen size while navigationZoom freezes store selectors mid-pinch/wheel.
+   */
+  .react-flow {
+    --tt-board-zoom: 1;
+    --tt-frame-chrome-boost: 1.4;
+    --tt-frame-ui-scale: calc(var(--tt-frame-chrome-boost) / var(--tt-board-zoom));
+    --tt-frame-line-w: calc(1px * var(--tt-frame-ui-scale));
+    --tt-frame-line-hit: calc(5px * var(--tt-frame-ui-scale));
+    --tt-frame-handle: calc(7px * var(--tt-frame-ui-scale));
+    --tt-frame-handle-border: calc(1.5px * var(--tt-frame-ui-scale));
   }
   /* Phone select: stop the browser from panning the page so the marquee/frame drag can run */
   .react-flow__pane {
@@ -1765,7 +1780,7 @@ span[data-added="true"] {
     background-image: none !important;
   }
 
-  /* Item corner resize handles — circular dots; size from --tt-frame-handle on the panel */
+  /* Item corner resize handles — circular dots; size from live --tt-frame-handle (boost/zoom) */
   .react-flow__node-chatPanel .react-flow__resize-control.handle {
     border-radius: 50% !important; /* Circles, not RF squares */
     width: var(--tt-frame-handle, 10px) !important;
@@ -1777,6 +1792,79 @@ span[data-added="true"] {
     box-sizing: border-box !important;
     pointer-events: all !important; /* Must receive drag (nodrag) before node drag */
     z-index: 60 !important;
+  }
+
+  /*
+   * Connection indicators — screen-constant SIZE + OUTSET from `--tt-frame-ui-scale`
+   * so distance from the adjust box stays fixed while the board zooms.
+   */
+  [data-panel-container='true'] > [data-tt-connection-indicator] {
+    width: calc(8px * var(--tt-frame-ui-scale, 1.4)) !important;
+    height: calc(8px * var(--tt-frame-ui-scale, 1.4)) !important;
+    box-sizing: border-box !important;
+  }
+  [data-panel-container='true'] > [data-tt-connection-indicator='left'] {
+    left: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    top: 50% !important;
+    right: auto !important;
+    bottom: auto !important;
+    transform: translate(-50%, -50%) !important;
+  }
+  [data-panel-container='true'] > [data-tt-connection-indicator='right'] {
+    right: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    top: 50% !important;
+    left: auto !important;
+    bottom: auto !important;
+    transform: translate(50%, -50%) !important;
+  }
+  [data-panel-container='true'] > [data-tt-connection-indicator='top'] {
+    top: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    left: 50% !important;
+    right: auto !important;
+    bottom: auto !important;
+    transform: translate(-50%, -50%) !important;
+  }
+  [data-panel-container='true'] > [data-tt-connection-indicator='bottom'] {
+    bottom: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    left: 50% !important;
+    right: auto !important;
+    top: auto !important;
+    transform: translate(-50%, 50%) !important;
+  }
+
+  /* Chat-link cue — same screen-constant outset as connection indicators */
+  [data-panel-container='true'] > [data-tt-chat-link-cue='left'] {
+    left: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    top: 50% !important;
+    right: auto !important;
+    bottom: auto !important;
+  }
+  [data-panel-container='true'] > [data-tt-chat-link-cue='right'] {
+    right: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    top: 50% !important;
+    left: auto !important;
+    bottom: auto !important;
+  }
+  [data-panel-container='true'] > [data-tt-chat-link-cue='top'] {
+    top: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    left: 50% !important;
+    right: auto !important;
+    bottom: auto !important;
+  }
+  [data-panel-container='true'] > [data-tt-chat-link-cue='bottom'] {
+    top: calc(100% + 14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    left: 50% !important;
+    right: auto !important;
+    bottom: auto !important;
+  }
+
+  /* Rotate · fit · wrap — scale from live CSS zoom; margin-top = 2× indicator outset
+     so air below the bottom connection point matches air above it (box → point). */
+  [data-frame-chrome] {
+    margin-top: calc(28px * var(--tt-frame-ui-scale, 1.4)) !important;
+    margin-left: calc(-8px * var(--tt-frame-ui-scale, 1.4)) !important;
+    transform: scale(var(--tt-frame-ui-scale, 1.4)) !important;
+    transform-origin: top left !important;
   }
 
   .dark .react-flow__node-chatPanel .react-flow__resize-control.handle {
@@ -2341,16 +2429,8 @@ span[data-added="true"] {
   .react-flow.tt-board-navigating .ProseMirror .tt-notion-db {
     pointer-events: none;
   }
-  /* RF already moves the viewport with one parent transform. On content-heavy boards, promoting
-     that whole parent creates an enormous texture; instead cache each currently rendered frame
-     separately so zoom composites its existing pixels rather than repainting text/table cells.
-     `onlyRenderVisibleElements` bounds the layer count. Keep this off touch devices where many
-     GPU layers can exhaust mobile Safari memory. */
-  @media (hover: hover) and (pointer: fine) {
-    .react-flow.tt-board-navigating .react-flow__node-chatPanel {
-      will-change: transform;
-    }
-  }
+  /* Do NOT promote frame nodes with will-change during navigate — that caches a texture so
+     screen-constant chrome (handles / stroke / indicators) only updates after the gesture. */
   /* TipTap `.prose table th/td` draws a full box on every cell — wipe that so DB
      tables have no outer perimeter (Notion-like: internal dividers only).
      Cold replay keeps a real `.ProseMirror` inside `[data-tt-cold-frame]`, so the same

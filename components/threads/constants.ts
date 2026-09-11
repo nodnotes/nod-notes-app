@@ -83,12 +83,11 @@ export function threadComfortScale(zoom: number): number {
 export const FRAME_SCREEN_CHROME_BOOST = 1.4
 
 /**
- * Screen-relative scale for frame selection chrome (resize dots, indicators, gutters,
- * property/conn bands, rotate/free/wrap, ⋮⋮). Softer than thread √ comfort + boost —
- * pure 1× thread comfort felt too small on the board.
+ * Flow-space multiplier for frame selection chrome widgets so they stay constant on screen:
+ * connection indicators, resize dots + blue stroke, rotate/fit/wrap, and blue↔fill L/R gutters.
+ * Pure 1/zoom (× boost). TipTap ⋮⋮ / add-lines use a separate √ comfort curve (text-relative).
  */
 export function frameScreenChromeScale(zoom: number): number {
   const z = Math.max(0.01, zoom) // Guard against 0 / negative store values
-  const comfort = 1 / Math.max(1, Math.pow(z, 0.35)) // Milder than √ so zoom-in does not crush chrome
-  return comfort * FRAME_SCREEN_CHROME_BOOST
+  return FRAME_SCREEN_CHROME_BOOST / z // Screen px ≈ base × boost at every zoom
 }

@@ -7,9 +7,10 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import { createPortal } from 'react-dom'
 import type { Editor } from '@tiptap/react'
 import { GripVertical } from 'lucide-react' // ⋮⋮ grip; between-block add is a short centered hairline
-import { useReactFlow, useStore } from 'reactflow' // Nested RF for chat stubs; board extract prefers context instance
+import { useReactFlow } from 'reactflow' // Nested RF for chat stubs; board extract prefers context instance
 import { useReactFlowContext } from '@/components/react-flow-context' // Real board screenToFlowPosition from chat
-import { navigationZoom } from '@/lib/board-navigating' // Freeze grip scale mid-pinch
+import { useLiveBoardZoom } from '@/lib/use-live-board-zoom' // Viewport-CSS zoom (store can lag)
+import { blockGripChromeScale } from '@/lib/frame-adjust-box' // Same √ curve as blue ⋮⋮ gutter
 import { useQueryClient } from '@tanstack/react-query' // Refresh panels after extract-to-card
 import { createClient } from '@/lib/supabase/client' // Persist a new map card from a dragged line
 import { isBlockContentEmpty, newBlockMetadata } from '@/lib/blocks' // Canonical isBlock metadata + empty check
@@ -208,11 +209,11 @@ function connectionsHeaderBlock(editor: Editor): EditorBlockRef | null {
 }
 
 type DropLine = { top: number; left: number; width: number } // Viewport dashed insert marker
-const GRIP_W = 20 // Matches ⋮⋮ `w-5` — insert line uses the same width
-const HANDLE_GUTTER = 24 // Text starts here (row `pl-6`), in local px — where the ⋮⋮ column lives
-const GRIP_H = 24 // ⋮⋮ button height (`h-6`) — used to vertically center it on the first line
-const INSERT_HIT = 8 // Add-block hit strip (px) — hairline centered in this band
-const INSERT_GAP = 4 // First/last offset from ⋮⋮ (fill pad); neighbors use the shared mid-gap instead
+const GRIP_W = 14 // Matches ⋮⋮ hit column — insert line uses the same width
+const HANDLE_GUTTER = 20 // Fallback ⋮⋮ column when host omits handleGutterFlow
+const GRIP_H = 16 // ⋮⋮ button height — under a body line at 100% zoom
+const INSERT_HIT = 6 // Add-block hit strip (px) — hairline centered in this band
+const INSERT_GAP = 3 // First/last offset from ⋮⋮ (fill pad); neighbors use the shared mid-gap instead
 const FILL_PAD_Y = 4 // Host contentFit BLOCK_FRAME_PAD_Y — first/last hairline may sit in that pad
 
 /** Nearest positioned ancestor — absolute ⋮⋮ `top`/`left` are in this box (the pl-6 gutter wrapper). */
@@ -434,13 +435,10 @@ export function TipTapBlockHandles({
 }: TipTapBlockHandlesProps) {
   const { screenToFlowPosition } = useReactFlow() // Nested / host RF
   const { reactFlowInstance } = useReactFlowContext() // Board instance (chat nested RF is wrong for drops)
-  // ⋮⋮ only while selected — skip zoom store ticks when idle; freeze mid-pinch via navigationZoom
-  const rfZoom = useStore((s) => {
-    if (!isPanelSelected) return 1
-    return navigationZoom(Math.round((s.transform[2] || 1) * 8) / 8)
-  })
-  void frameScale // Re-render + remeasure when host locked-resize scale changes (transform ≠ layout)
-  void handleGutterFlow // Re-render when blue gutter / screen chrome scale changes
+  // ⋮⋮ / add lines: temper by zoom×frameScale so big text (either path) doesn’t dwarf them.
+  const rfZoom = useLiveBoardZoom(Boolean(isPanelSelected))
+  void frameScale // Remeasure when locked-resize scale changes
+  void handleGutterFlow // Remeasure when blue gutter width changes
   const queryClient = useQueryClient() // Refetch messages after extract
   const [hover, setHover] = useState<HandleLayout | null>(null) // Handle beside hovered block
   const [focusLayout, setFocusLayout] = useState<HandleLayout | null>(null) // Handle beside focused/caret block
@@ -1534,13 +1532,15 @@ export function TipTapBlockHandles({
   // Absolute grips are positioned in the content box (inside contentFit pad), so subtract
   // contentPadLeft to measure from the fill’s left edge — otherwise the pad pulls grips
   // toward the fill and they look off-center in the blue gutter (worse after resize scale).
-  // When the host passes handleGutterFlow (screen-sized blue gutter), use localGutter =
-  // flow/frameScale so after contentFit CSS scale the ⋮⋮ still sits inside that strip.
+  // handleGutterFlow = painted grip width in flow (√ × frameScale); ÷ frameScale so after
+  // contentFit CSS scale the center still sits in that strip.
   const contentCssScale = Math.max(0.15, frameScale || 1)
   const localGutter =
     handleGutterFlow > 0 ? handleGutterFlow / contentCssScale : HANDLE_GUTTER
   const gutterCenterLeft =
     -contentPadLeft - localGutter + (localGutter / 2 - GRIP_W / 2)
+  // Same √ curve as host gutter — grips stay centered in the blue strip
+  const gripChromeScale = blockGripChromeScale(rfZoom || 1, contentCssScale)
   const gripLayouts = new Map<string | number, HandleLayout>() // keyed by block.from (headers = named keys)
   if (container) {
     for (const b of selection) {
@@ -1625,18 +1625,14 @@ export function TipTapBlockHandles({
               ? propertyHeaderArmed
               : isBlockArmed(gl.block))
         const aiPending = gl.connectionsHeader ? false : blockHasAiPending(editor, gl.block)
-        // Screen-relative icon: flow size ≈ GRIP_W × (handleGutterFlow/HANDLE_GUTTER).
-        // Divide out contentFit frameScale so locked resize does not inflate the ⋮⋮ past the blue gutter.
-        const screenFactor =
-          handleGutterFlow > 0 ? handleGutterFlow / HANDLE_GUTTER : 1 / Math.max(1, Math.sqrt(rfZoom || 1))
-        const gripChromeScale = screenFactor / contentCssScale
+        // gripChromeScale set above from zoom×frameScale (big text → screen-constant ⋮⋮)
         // Layout ⋮⋮ hit box stays GRIP_H; insert Y uses the *visual* extent after counter-scale
-        // so hairlines keep screen-constant distance when frameScale / zoom change.
+        // so hairlines keep distance proportional to the grip.
         const gripLayoutTop = gl.lineCenter - GRIP_H / 2
         const gripLayoutBottom = gl.lineCenter + GRIP_H / 2
         const visualGripTop = gl.lineCenter - (GRIP_H * gripChromeScale) / 2
         const visualGripBottom = gl.lineCenter + (GRIP_H * gripChromeScale) / 2
-        // Insert gap + hit band in local px so after CSS scale they match screen chrome (same as ⋮⋮)
+        // Insert gap + hit band track the same scale as the ⋮⋮
         const localInsertGap = INSERT_GAP * gripChromeScale
         const localInsertHit = Math.max(4, INSERT_HIT * gripChromeScale)
         // Equal air above/below the visual ⋮⋮ — do NOT mix mid-gap on one side with grip±gap on
@@ -1695,7 +1691,7 @@ export function TipTapBlockHandles({
                 >
                   <span
                     className={cn(
-                      'pointer-events-none absolute left-1/2 top-1/2 h-px w-3 rounded-full',
+                      'pointer-events-none absolute left-1/2 top-1/2 h-px w-2 rounded-full',
                       'bg-gray-200 transition-colors group-hover/insert:bg-black/35',
                       'dark:bg-gray-600 dark:group-hover/insert:bg-white/40'
                     )}
@@ -1722,7 +1718,7 @@ export function TipTapBlockHandles({
                 >
                   <span
                     className={cn(
-                      'pointer-events-none absolute left-1/2 top-1/2 h-px w-3 rounded-full',
+                      'pointer-events-none absolute left-1/2 top-1/2 h-px w-2 rounded-full',
                       'bg-gray-200 transition-colors group-hover/insert:bg-black/35',
                       'dark:bg-gray-600 dark:group-hover/insert:bg-white/40'
                     )}
@@ -1742,7 +1738,7 @@ export function TipTapBlockHandles({
               data-tt-block-armed={armed ? 'true' : undefined} // Chat HTML5 turn-drag skips only armed grips
               data-ai-pending-handle={aiPending ? 'true' : undefined}
               className={cn(
-                'absolute left-0 z-[2] w-5 h-6 flex items-center justify-center rounded',
+                'absolute left-0 z-[2] flex h-4 w-3.5 items-center justify-center rounded',
                 armed ? 'nodrag nopan' : 'nopan',
                 aiPending
                   ? 'tt-ai-pending-handle text-violet-600 dark:text-violet-300'
@@ -1751,7 +1747,9 @@ export function TipTapBlockHandles({
               )}
               style={{
                 top: gripTopInGutter,
-                // Scale about center so board-zoom comfort does not shift the mid-line lock
+                width: GRIP_W,
+                height: GRIP_H,
+                // Comfort scale about center so mid-line lock doesn’t drift when zoom changes
                 transform: `scale(${gripChromeScale})`,
                 transformOrigin: 'center center',
               }}
@@ -1791,7 +1789,7 @@ export function TipTapBlockHandles({
                 )
               }}
             >
-              <GripVertical className="h-4 w-4 pointer-events-none" />
+              <GripVertical className="h-3.5 w-3.5 pointer-events-none" />
             </div>
           </div>
         )
