@@ -6,9 +6,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react' // Search, submenu, focus
 import {
   Check,
-  ChevronDown,
   ChevronRight,
-  ChevronUp,
   Columns2,
   Columns3,
   Columns4,
@@ -19,7 +17,6 @@ import {
   Heading2,
   Heading3,
   Heading4,
-  Image as ImageIcon,
   Link2,
   List,
   ListChecks,
@@ -39,7 +36,6 @@ import {
   Triangle,
   Ungroup,
   FolderInput,
-  PencilLine,
   Type,
   Anchor,
   AlignJustify,
@@ -54,6 +50,7 @@ import {
   AtSign,
   Search,
   ArrowUpRight,
+  ArrowLeftRight,
   Clock,
   CircleUser,
   MapPin,
@@ -67,34 +64,24 @@ import {
   LayoutGrid,
   Table2,
   AppWindow,
+  Rows3,
+  RotateCcw,
 } from 'lucide-react' // Action + Turn into + Property + Connections icons
 import { NotionMarkIcon } from '@/components/notion-mark-icon' // Notion row in Connections
-import type { NotionSyncMode } from '@/lib/blocks' // Live vs Manual sync
+import type { NotionSyncMode } from '@/lib/blocks' // Live sync when connected
 import { Button } from '@/components/ui/button' // Row buttons
 import { cn } from '@/lib/utils' // Class merge
 import { applyMenuPlacement, watchMenuSafeRect } from '@/lib/menu-placement' // Stay in-window, miss top bar / chat / selection
+import { COMPACT_PREVIEW_ROWS, NOTION_DB_CLIENT_ROW_CAP } from '@/lib/notion/database' // Table rows floor + show-all ceiling
 import { LegoBrickIcon } from './lego-brick-icon' // Frame-group lock: two bricks, top one stud back
 import Shape from '@/components/shapes/Shape' // Mini silhouette previews in the Shape flyout
+import { FRAME_COLOR_SWATCHES } from '@/lib/frame-colors' // Pastel fills + subtle borders
 import {
   FRAME_SHAPE_NONE,
   FRAME_SHAPE_TYPES,
   frameShapeLabel,
   type FrameShapeChoice,
 } from '@/lib/frame-shape' // Frame-as-shape picker values
-
-/** Notion-like frame palette — fill uses pale bg; border uses stronger stroke hues. */
-const FRAME_COLOR_SWATCHES = [
-  { id: 'default', name: 'Default', fill: '', border: '' }, // Empty = transparent chrome
-  { id: 'gray', name: 'Gray', fill: '#F1F1EF', border: '#787774' },
-  { id: 'brown', name: 'Brown', fill: '#F4EEEE', border: '#9F6B53' },
-  { id: 'orange', name: 'Orange', fill: '#FBECDD', border: '#D9730D' },
-  { id: 'yellow', name: 'Yellow', fill: '#FBF3DB', border: '#CB912F' },
-  { id: 'green', name: 'Green', fill: '#EDF3EC', border: '#448361' },
-  { id: 'blue', name: 'Blue', fill: '#E7F3F8', border: '#337EA9' },
-  { id: 'purple', name: 'Purple', fill: '#F6F3F9', border: '#9065B0' },
-  { id: 'pink', name: 'Pink', fill: '#F9F2F5', border: '#C14C8A' },
-  { id: 'red', name: 'Red', fill: '#FDEBEC', border: '#E03E3E' },
-] as const
 
 type FrameColorKind = 'fill' | 'border' // Which chrome channel a last-used / pick targets
 
@@ -106,7 +93,7 @@ type FrameLastColor = {
   label: string
 }
 
-const FRAME_LAST_COLOR_KEY = 'thinktable-frame-last-color' // localStorage key
+const FRAME_LAST_COLOR_KEY = 'nodnotes-frame-last-color' // localStorage key
 
 /** Case-insensitive hex/empty match for active swatch highlighting. */
 function colorsMatch(a: string, b: string): boolean {
@@ -169,16 +156,13 @@ export type BlockActionId =
   | 'duplicate'
   | 'delete'
   | 'addChild'
-  | 'condense'
   | 'copyLink'
   | 'group'
   | 'ungroup'
   | 'turnInto'
   | 'color'
   | 'listFormat'
-  | 'moveTo'
   | 'comment'
-  | 'suggestEdits'
   | 'presentFromHere'
   | 'askAI'
   | 'skills'
@@ -192,9 +176,15 @@ export type BlockActionId =
   | 'setNotionSync' // Live Sync vs Manual
   | 'removeNotionConnection' // Unlink Notion from this frame
   | 'convertLayout' // Frame menu → Card view / Table view (Notion DB)
+  | 'setDbRows' // Frame menu → Table rows setter (shown / all / reset)
   | 'open' // Open linked board / Notion page (DB row ⋮⋮, boardLink)
+  | 'revertText' // Restore original sent/received text after a user edit
+  | 'resendPrompt' // Chat prompt frame — truncate later turns and send again
+  | 'regenerateResponse' // Chat response frame — re-run from the preceding prompt
 
 export type DbConvertLayoutId = 'card' | 'table' // Convert layout flyout picks
+/** Row-setter commit: exact count, all loaded (or client cap), or compact default. */
+export type DbRowsSetterValue = number | 'all' | 'reset'
 
 export type BlockActionPayload = {
   blockType?: BlockTypeId // Present when action === 'turnInto'
@@ -208,6 +198,7 @@ export type BlockActionPayload = {
   borderWeightCommit?: boolean // true = undo snapshot + DB save (slider release)
   notionSync?: NotionSyncMode // Present when action === 'setNotionSync'
   convertLayout?: DbConvertLayoutId // Present when action === 'convertLayout'
+  dbRows?: DbRowsSetterValue // Present when action === 'setDbRows'
 }
 
 /** AI Autofill rows in the Property pane (stubs until wired). */
@@ -226,7 +217,6 @@ export type BlockActionsMenuProps = {
   x: number // Screen x relative to React Flow pane
   y: number // Screen y relative to React Flow pane
   zoom?: number // Optional scale with viewport
-  isCollapsed?: boolean // Condense toggle label state
   selectedCount?: number // Enables Group when ≥2
   canUngroup?: boolean // True when focus frame is inside the legacy dashed wrapper
   showAddChild?: boolean // Study-set may omit Add child
@@ -257,12 +247,27 @@ export type BlockActionsMenuProps = {
    * null/undefined = hide Convert layout. Flyout checks the current mode.
    */
   convertLayoutMode?: DbConvertLayoutId | null
+  /**
+   * Current Table rows setter values on this Notion DB frame.
+   * null/undefined = hide Table rows (not a DB frame).
+   */
+  dbRowSetter?: { shown: number; total: number; hasMore?: boolean } | null
   /** Show Open (DB row / page) at the top of the block menu. */
   showOpen?: boolean
   /** Override the gray context label under search (e.g. "Page" for DB rows). */
   menuHeader?: string
   /** Slim Live Sync / Manual / Remove menu (Notion footer ⋮⋮). */
   variant?: 'default' | 'notionConnection'
+  /** List Revert text (chat frames; board omits until wired). */
+  showRevertText?: boolean
+  /** Enable Revert text — true when the body diverges from the original sent/received. */
+  canRevertText?: boolean
+  /** List Resend prompt (chat user/prompt frames only). */
+  showResendPrompt?: boolean
+  /** List Regenerate response (chat assistant frames only). */
+  showRegenerateResponse?: boolean
+  /** Grey resend/regenerate while a turn is already streaming. */
+  chatRegenBusy?: boolean
   lastEditedLabel?: string // Footer metadata
   onAction: (action: BlockActionId, payload?: BlockActionPayload) => void
   onClose: () => void
@@ -336,7 +341,8 @@ type RowDef =
       shortcut?: string
       icon: React.ReactNode
       danger?: boolean
-      submenu?: 'turnInto' | 'color' | 'listFormat' | 'skills' | 'boardIn' | 'frameShape' | 'frameColor' | 'connections' | 'notionConnection' | 'convertLayout'
+      disabled?: boolean // Grey out + skip onAction (e.g. Revert with no edits)
+      submenu?: 'turnInto' | 'color' | 'listFormat' | 'skills' | 'boardIn' | 'frameShape' | 'frameColor' | 'connections' | 'convertLayout' | 'dbRows'
       hidden?: boolean
       beta?: boolean
     }
@@ -389,7 +395,6 @@ const TURN_INTO_OPTIONS: TurnIntoDef[] = [
   { id: 'code', label: 'Code', icon: <SquareCode className="h-4 w-4" /> },
   { id: 'quote', label: 'Quote', icon: <Quote className="h-4 w-4" /> },
   { id: 'callout', label: 'Callout', icon: <TextCursorInput className="h-4 w-4" /> },
-  { id: 'image', label: 'Image', icon: <ImageIcon className="h-4 w-4" /> },
   { id: 'blockEquation', label: 'Block equation', icon: <Sigma className="h-4 w-4" /> },
   { id: 'syncedBlock', label: 'Synced block', icon: <RefreshCw className="h-4 w-4" /> },
   { id: 'toggleHeading1', label: 'Toggle heading 1', icon: <Heading1 className="h-4 w-4" /> },
@@ -466,7 +471,6 @@ export function BlockActionsMenu({
   x,
   y,
   zoom = 1,
-  isCollapsed = false,
   selectedCount = 1,
   canUngroup = false,
   showAddChild = true,
@@ -483,9 +487,15 @@ export function BlockActionsMenu({
   notionConnected = false,
   notionSync = 'live',
   convertLayoutMode = null,
+  dbRowSetter = null,
   showOpen = false,
   menuHeader,
   variant = 'default',
+  showRevertText = false,
+  canRevertText = false,
+  showResendPrompt = false,
+  showRegenerateResponse = false,
+  chatRegenBusy = false,
   lastEditedLabel,
   onAction,
   onClose,
@@ -503,23 +513,38 @@ export function BlockActionsMenu({
     | 'frameShape'
     | 'frameColor'
     | 'connections'
-    | 'notionConnection'
     | 'convertLayout'
+    | 'dbRows'
     | null
   >(null) // Flyout
   const inputRef = useRef<HTMLInputElement>(null) // Autofocus search
   const propertySearchRef = useRef<HTMLInputElement>(null) // Focus when Property search opens
+  const rowsDraftRef = useRef<HTMLInputElement>(null) // Table rows shown-count field
+  const [rowsDraft, setRowsDraft] = useState('') // Editable shown rows while the setter flyout is open
   const rootRef = useRef<HTMLDivElement>(null) // Position flyout
   const connectionsRowRef = useRef<HTMLButtonElement>(null) // Align Connections picker to that row
-  const notionRowRef = useRef<HTMLButtonElement>(null) // Align Notion sync menu to that row
   const colorRowRef = useRef<HTMLButtonElement>(null) // Align frame Color flyout to Color row
   const [lastFrameColor, setLastFrameColor] = useState<FrameLastColor | null>(null) // Last used fill/border
   const [borderWeightDraft, setBorderWeightDraft] = useState<number | null>(null) // Live slider value while dragging
   const borderWeightDraggingRef = useRef(false) // Ignore prop sync mid-drag
 
   useEffect(() => {
-    inputRef.current?.focus()
+    // Phone / touch: skip search autofocus — soft keyboard must not open with the frame menu (I-bar isn’t placed)
+    if (typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches) return
+    inputRef.current?.focus() // Desktop: caret in Search actions for quick filter
   }, [])
+
+  // Seed shown-rows draft once when the Table rows flyout opens (don't reset mid-edit)
+  const rowsSeededRef = useRef(false)
+  useEffect(() => {
+    if (openSubmenu !== 'dbRows') {
+      rowsSeededRef.current = false
+      return
+    }
+    if (!dbRowSetter || rowsSeededRef.current) return
+    setRowsDraft(String(dbRowSetter.shown))
+    rowsSeededRef.current = true
+  }, [openSubmenu, dbRowSetter])
 
   // Reset to Format when the Turn into flyout closes so reopen starts compact
   useEffect(() => {
@@ -550,11 +575,9 @@ export function BlockActionsMenu({
     const row =
       openSubmenu === 'connections'
         ? connectionsRowRef.current
-        : openSubmenu === 'notionConnection'
-          ? notionRowRef.current
-          : openSubmenu === 'frameColor'
-            ? colorRowRef.current
-            : null // Turn into / Shape align to the cluster top
+        : openSubmenu === 'frameColor'
+          ? colorRowRef.current
+          : null // Turn into / Shape align to the cluster top
     const place = () =>
       applyMenuPlacement(root, {
         anchorX: x, // Grip / click X
@@ -566,7 +589,14 @@ export function BlockActionsMenu({
         fromExisting: openSubmenu != null,
       })
     place() // Before paint so the first frame is already in-bounds
-    return watchMenuSafeRect(place) // Window + phone keyboard move the chat dock
+    // The frame's selection chrome (blue ring / connection dots) mounts in the same commit, so the
+    // first measure can read a frame box that is still missing it — re-place once it has laid out.
+    const raf = requestAnimationFrame(place)
+    const stop = watchMenuSafeRect(place) // Window + phone keyboard move the chat dock
+    return () => {
+      cancelAnimationFrame(raf)
+      stop()
+    }
   }, [x, y, positionMode, openLeft, openSubmenu, notionConnected, query, propertyQuery, showPropertySearch, turnIntoPane])
 
   /** Apply fill or border, remember as Last used, keep the flyout open. */
@@ -631,18 +661,35 @@ export function BlockActionsMenu({
       },
       {
         kind: 'action',
-        id: 'moveTo',
-        label: 'Move to',
-        shortcut: '⌘⇧P',
-        icon: <FolderInput className="h-4 w-4" />,
-      },
-      {
-        kind: 'action',
         id: 'delete',
         label: 'Delete',
         shortcut: 'Del',
         icon: <Trash2 className="h-4 w-4" />,
         danger: true,
+      },
+      {
+        kind: 'action',
+        id: 'revertText',
+        label: 'Revert text',
+        icon: <RotateCcw className="h-4 w-4" />,
+        hidden: !showRevertText, // Chat frames list it; board omits until wired
+        disabled: !canRevertText, // Grey until the body diverges from the original
+      },
+      {
+        kind: 'action',
+        id: 'resendPrompt',
+        label: 'Resend prompt',
+        icon: <RefreshCw className="h-4 w-4" />,
+        hidden: !showResendPrompt, // Prompt (user) chat frames only
+        disabled: chatRegenBusy, // Grey while a stream is in flight
+      },
+      {
+        kind: 'action',
+        id: 'regenerateResponse',
+        label: 'Regenerate response',
+        icon: <RefreshCw className="h-4 w-4" />,
+        hidden: !showRegenerateResponse, // Response (assistant) chat frames only
+        disabled: chatRegenBusy, // Grey while a stream is in flight
       },
       { kind: 'separator' },
       {
@@ -651,13 +698,6 @@ export function BlockActionsMenu({
         label: 'Add child',
         icon: <Plus className="h-4 w-4" />,
         hidden: !showAddChild || (notionConnected && !showFrameShape), // Notion block ⋮⋮ skips Add child
-      },
-      {
-        kind: 'action',
-        id: 'condense',
-        label: isCollapsed ? 'Expand' : 'Condense',
-        icon: isCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />,
-        hidden: notionConnected && !showFrameShape, // Notion block ⋮⋮ skips Condense
       },
       {
         kind: 'action',
@@ -677,8 +717,16 @@ export function BlockActionsMenu({
       },
       {
         kind: 'action',
+        id: 'setDbRows',
+        label: 'Table rows',
+        icon: <Rows3 className="h-4 w-4" />,
+        submenu: 'dbRows', // Shown / total setter + Show all / Reset
+        hidden: !dbRowSetter, // Notion DB frames only
+      },
+      {
+        kind: 'action',
         id: 'lockToBoard',
-        label: boardLocked ? 'Unlock from board' : 'Lock to board',
+        label: boardLocked ? 'Unanchor from board' : 'Anchor to board',
         icon: <Anchor className="h-4 w-4" />, // Same anchor as Actions-bar board lock
         hidden: !showFrameShape, // Pin this frame (and selection) to the board
       },
@@ -696,18 +744,6 @@ export function BlockActionsMenu({
         icon: <Cable className="h-4 w-4" />,
         submenu: 'connections', // Click → Notion picker
         hidden: !showFrameShape, // Frame menu only
-      },
-      {
-        kind: 'action',
-        id: 'setNotionSync',
-        label: 'Notion',
-        icon: (
-          <NotionMarkIcon
-            className={cn('h-4 w-4', notionSync === 'live' ? 'text-[#2383e2]' : 'text-gray-500')}
-          />
-        ),
-        submenu: 'notionConnection', // Hover → Live Sync / Manual / Remove
-        hidden: !showFrameShape || !notionConnected, // Only after Notion is selected
       },
       {
         kind: 'action',
@@ -730,13 +766,6 @@ export function BlockActionsMenu({
         label: 'Comment',
         shortcut: '⌘⇧M',
         icon: <MessageSquare className="h-4 w-4" />,
-      },
-      {
-        kind: 'action',
-        id: 'suggestEdits',
-        label: 'Suggest edits',
-        shortcut: '⌘⇧X',
-        icon: <PencilLine className="h-4 w-4" />,
       },
       { kind: 'separator', hidden: !showFrameShape }, // Only when Present is shown (frame menu)
       {
@@ -782,7 +811,7 @@ export function BlockActionsMenu({
                 .includes(q)
             )))
     )
-  }, [query, isCollapsed, selectedCount, canUngroup, showAddChild, currentBlockType, showFrameShape, boardLocked, framesLockedTogether, canLockFramesTogether, notionConnected, notionSync, convertLayoutMode, showOpen])
+  }, [query, selectedCount, canUngroup, showAddChild, currentBlockType, showFrameShape, boardLocked, framesLockedTogether, canLockFramesTogether, notionConnected, convertLayoutMode, dbRowSetter, showOpen, showRevertText, canRevertText, showResendPrompt, showRegenerateResponse, chatRegenBusy])
 
   // When searching, also surface matching Turn into types as flat picks
   const turnIntoMatches = useMemo(() => {
@@ -829,18 +858,19 @@ export function BlockActionsMenu({
           ? 'translate(calc(-100% - 8px), 4px)'
           : 'translate(8px, 4px)'
         : 'translate(-50%, -100%)',
+    // No `as const` — it's invalid on a conditional, and CSSProperties.transformOrigin takes any string
     transformOrigin:
-      (positionMode === 'fixed' ? (openLeft ? 'top right' : 'top left') : 'center bottom') as const,
+      positionMode === 'fixed' ? (openLeft ? 'top right' : 'top left') : 'center bottom',
     marginTop: positionMode === 'fixed' ? 0 : '-8px',
   }
 
-  // Slim menu for the Notion connection mark (Live Sync / Manual / Remove)
+  // Slim menu for the Notion connection mark (Live Sync status + Remove)
   if (variant === 'notionConnection') {
     return (
       <div
         ref={rootRef}
         className={cn(
-          'block-actions-menu node-popup z-[1000] overflow-visible bg-white dark:bg-[#1f1f1f] rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1 min-w-[200px]',
+          'block-actions-menu node-popup z-[1000] overflow-visible tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1 min-w-[200px]',
           positionMode === 'fixed' ? 'fixed' : 'absolute',
           className
         )}
@@ -854,42 +884,15 @@ export function BlockActionsMenu({
           e.preventDefault()
         }}
       >
-        <Button
-          variant="ghost"
-          size="sm"
+        <div
           className={cn(
-            'justify-start text-sm h-8 px-2 font-normal w-full',
-            notionSync === 'live' && 'bg-blue-50 dark:bg-blue-950/40'
+            'flex items-center text-sm h-8 px-2 w-full tt-selected rounded-md'
           )}
-          onClick={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            onAction('setNotionSync', { notionSync: 'live' })
-            onClose()
-          }}
         >
-          <RefreshCw className="h-4 w-4 mr-2 text-gray-500" />
+          <ArrowLeftRight className="h-4 w-4 mr-2 text-gray-500" />
           <span className="flex-1 text-left">Live Sync</span>
-          {notionSync === 'live' && <Check className="h-3.5 w-3.5 text-gray-500" />}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className={cn(
-            'justify-start text-sm h-8 px-2 font-normal w-full',
-            notionSync === 'manual' && 'bg-blue-50 dark:bg-blue-950/40'
-          )}
-          onClick={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            onAction('setNotionSync', { notionSync: 'manual' })
-            onClose()
-          }}
-        >
-          <Hand className="h-4 w-4 mr-2 text-gray-500" />
-          <span className="flex-1 text-left">Manual</span>
-          {notionSync === 'manual' && <Check className="h-3.5 w-3.5 text-gray-500" />}
-        </Button>
+          <Check className="h-3.5 w-3.5 text-gray-500" />
+        </div>
         <div className="my-1 h-px bg-gray-100 dark:bg-[#2f2f2f] mx-1" />
         <Button
           variant="ghost"
@@ -913,7 +916,7 @@ export function BlockActionsMenu({
     <div
       ref={rootRef}
       className={cn(
-        'block-actions-menu node-popup z-[1000] overflow-visible bg-white dark:bg-[#1f1f1f] rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1 min-w-[240px]',
+        'block-actions-menu node-popup z-[1000] overflow-visible tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1 min-w-[240px]',
         positionMode === 'fixed' ? 'fixed' : 'absolute',
         className
       )}
@@ -943,6 +946,14 @@ export function BlockActionsMenu({
           e.stopPropagation()
           if (openSubmenu) setOpenSubmenu(null)
           else onClose()
+          return
+        }
+        // Empty search: Delete/Backspace removes the frame (same as the Delete row)
+        if ((e.key === 'Delete' || e.key === 'Backspace') && query.length === 0) {
+          e.preventDefault()
+          e.stopPropagation()
+          onAction('delete')
+          onClose()
         }
       }}
     >
@@ -951,6 +962,15 @@ export function BlockActionsMenu({
           ref={inputRef}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            // Del shortcut on the Delete row — empty search → same as clicking Delete
+            if ((e.key === 'Delete' || e.key === 'Backspace') && query.length === 0) {
+              e.preventDefault()
+              e.stopPropagation()
+              onAction('delete')
+              onClose()
+            }
+          }}
           placeholder="Search actions..."
           className="w-full h-8 px-2 text-sm rounded-md bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#3a3a3a] outline-none text-gray-900 dark:text-gray-100"
         />
@@ -961,7 +981,7 @@ export function BlockActionsMenu({
         {menuHeader || (showFrameShape ? 'Frame' : blockTypeLabel(currentBlockType))}
       </div>
 
-      <div data-tt-menu-body className="flex flex-col gap-0.5 overflow-y-auto px-0.5 pb-0.5">
+      <div data-tt-menu-body className="flex min-h-0 flex-col gap-0.5 overflow-y-auto px-0.5 pb-0.5">
         {rows.length === 0 && turnIntoMatches.length === 0 && propertyMatches.length === 0 && (
           <div className="px-2 py-2 text-xs text-gray-400">No matching actions</div>
         )}
@@ -980,8 +1000,6 @@ export function BlockActionsMenu({
           const isShapeOpen = row.submenu === 'frameShape' && openSubmenu === 'frameShape'
           const isFrameColorOpen = row.submenu === 'frameColor' && openSubmenu === 'frameColor'
           const isConnectionsOpen = row.submenu === 'connections' && openSubmenu === 'connections'
-          const isNotionConnOpen =
-            row.submenu === 'notionConnection' && openSubmenu === 'notionConnection'
           const isConvertLayoutOpen =
             row.submenu === 'convertLayout' && openSubmenu === 'convertLayout'
           return (
@@ -990,11 +1008,9 @@ export function BlockActionsMenu({
               ref={
                 row.submenu === 'connections'
                   ? connectionsRowRef
-                  : row.submenu === 'notionConnection'
-                    ? notionRowRef
-                    : row.submenu === 'frameColor'
-                      ? colorRowRef
-                      : undefined
+                  : row.submenu === 'frameColor'
+                    ? colorRowRef
+                    : undefined
               }
               variant="ghost"
               size="sm"
@@ -1003,13 +1019,23 @@ export function BlockActionsMenu({
                 else if (row.submenu === 'frameShape') setOpenSubmenu('frameShape')
                 else if (row.submenu === 'frameColor') setOpenSubmenu('frameColor')
                 else if (row.submenu === 'convertLayout') setOpenSubmenu('convertLayout')
-                else if (row.submenu === 'notionConnection') setOpenSubmenu('notionConnection') // Hover → sync menu
+                else if (row.submenu === 'dbRows') setOpenSubmenu('dbRows')
                 else if (row.submenu === 'connections') return // Click-only picker
                 else setOpenSubmenu(null)
+              }}
+              // pointerdown: menu root preventDefault on mousedown can suppress click
+              onPointerDown={(e) => {
+                if (e.button !== 0) return // Left button only
+                if (row.submenu) return // Submenus toggle on click / hover
+                if (row.disabled) return // Revert (etc.) greyed out when nothing to restore
+                e.preventDefault()
+                e.stopPropagation()
+                onAction(row.id) // Handler closes when needed (Delete clears rightClickedNode)
               }}
               onClick={(e) => {
                 e.preventDefault()
                 e.stopPropagation()
+                if (row.disabled) return // Skip greyed-out rows
                 if (row.submenu === 'turnInto') {
                   setOpenSubmenu((s) => (s === 'turnInto' ? null : 'turnInto'))
                   return
@@ -1026,12 +1052,12 @@ export function BlockActionsMenu({
                   setOpenSubmenu((s) => (s === 'convertLayout' ? null : 'convertLayout'))
                   return
                 }
-                if (row.submenu === 'connections') {
-                  setOpenSubmenu((s) => (s === 'connections' ? null : 'connections')) // Click → Notion
+                if (row.submenu === 'dbRows') {
+                  setOpenSubmenu((s) => (s === 'dbRows' ? null : 'dbRows'))
                   return
                 }
-                if (row.submenu === 'notionConnection') {
-                  setOpenSubmenu((s) => (s === 'notionConnection' ? null : 'notionConnection'))
+                if (row.submenu === 'connections') {
+                  setOpenSubmenu((s) => (s === 'connections' ? null : 'connections')) // Click → Notion
                   return
                 }
                 // Submenus without UI yet — fire stub action and close
@@ -1040,16 +1066,16 @@ export function BlockActionsMenu({
                   onClose()
                   return
                 }
-                onAction(row.id)
+                // Non-submenu actions already ran on pointerdown — avoid double-fire
               }}
               className={cn(
-                'justify-start text-sm h-8 px-2 font-normal',
+                'h-8 shrink-0 justify-start px-2 text-sm font-normal',
                 row.danger && 'text-red-600 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950',
+                row.disabled && 'pointer-events-none opacity-40',
                 (isTurnIntoOpen ||
                   isShapeOpen ||
                   isFrameColorOpen ||
                   isConnectionsOpen ||
-                  isNotionConnOpen ||
                   isConvertLayoutOpen) &&
                   'bg-gray-100 dark:bg-[#2a2a2a]'
               )}
@@ -1114,7 +1140,7 @@ export function BlockActionsMenu({
         <div
           data-tt-menu-flyout="main"
           className={cn(
-            'absolute z-[1001] bg-white dark:bg-[#1f1f1f] rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f]',
+            'absolute z-[1001] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f]',
             turnIntoPane === 'property' ? 'w-[320px]' : 'w-max min-w-[180px]'
           )}
           onMouseEnter={() => {
@@ -1200,7 +1226,7 @@ export function BlockActionsMenu({
                   }}
                   className={cn(
                     'justify-start gap-2 text-sm h-8 px-2 font-normal w-auto min-w-full whitespace-nowrap',
-                    currentBlockType === t.id && 'bg-blue-50 dark:bg-blue-950/40',
+                    currentBlockType === t.id && 'tt-selected',
                     t.id === 'boardIn' && openSubmenu === 'boardIn' && 'bg-gray-100 dark:bg-[#2a2a2a]'
                   )}
                 >
@@ -1300,7 +1326,7 @@ export function BlockActionsMenu({
           {openSubmenu === 'boardIn' && turnIntoPane === 'format' && (
             <div
               data-tt-menu-flyout="nested"
-              className="absolute z-[1002] min-w-[200px] overflow-y-auto bg-white dark:bg-[#1f1f1f] rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1"
+              className="absolute z-[1002] min-w-[200px] overflow-y-auto tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1"
               onMouseEnter={() => setOpenSubmenu('boardIn')}
             >
               <div className="px-2 py-1.5 text-[11px] text-gray-400">Nest board under…</div>
@@ -1335,7 +1361,7 @@ export function BlockActionsMenu({
       {openSubmenu === 'frameShape' && (
         <div
           data-tt-menu-flyout="main"
-          className="absolute z-[1001] w-[220px] bg-white dark:bg-[#1f1f1f] rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-2"
+          className="absolute z-[1001] w-[220px] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-2"
           onMouseEnter={() => setOpenSubmenu('frameShape')}
         >
           <div className="px-1 pb-1.5 text-[11px] text-gray-400">Frame shape</div>
@@ -1350,7 +1376,7 @@ export function BlockActionsMenu({
             className={cn(
               'mb-1.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-[#2a2a2a]',
               (currentFrameShape === FRAME_SHAPE_NONE || !currentFrameShape) &&
-                'bg-blue-50 dark:bg-blue-950/40'
+                'tt-selected'
             )}
           >
             <span className="flex h-7 w-7 items-center justify-center rounded border border-dashed border-gray-300 dark:border-gray-600 text-[10px] text-gray-400">
@@ -1377,7 +1403,7 @@ export function BlockActionsMenu({
                   }}
                   className={cn(
                     'flex h-9 w-full items-center justify-center rounded-md p-1.5 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]',
-                    selected && 'bg-blue-50 dark:bg-blue-950/40'
+                    selected && 'tt-selected'
                   )}
                 >
                   <Shape
@@ -1400,7 +1426,7 @@ export function BlockActionsMenu({
       {openSubmenu === 'convertLayout' && convertLayoutMode && (
         <div
           data-tt-menu-flyout="main"
-          className="absolute z-[1001] min-w-[180px] bg-white dark:bg-[#1f1f1f] rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1"
+          className="absolute z-[1001] min-w-[180px] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1"
           onMouseEnter={() => setOpenSubmenu('convertLayout')}
         >
           <div className="px-2 py-1.5 text-[11px] text-gray-400">Layout</div>
@@ -1419,7 +1445,7 @@ export function BlockActionsMenu({
             }}
             className={cn(
               'justify-start text-sm h-8 px-2 font-normal w-full',
-              convertLayoutMode === 'card' && 'bg-blue-50 dark:bg-blue-950/40'
+              convertLayoutMode === 'card' && 'tt-selected'
             )}
           >
             <LayoutGrid className="h-4 w-4 mr-2 text-gray-500" />
@@ -1441,7 +1467,7 @@ export function BlockActionsMenu({
             }}
             className={cn(
               'justify-start text-sm h-8 px-2 font-normal w-full',
-              convertLayoutMode === 'table' && 'bg-blue-50 dark:bg-blue-950/40'
+              convertLayoutMode === 'table' && 'tt-selected'
             )}
           >
             <Table2 className="h-4 w-4 mr-2 text-gray-500" />
@@ -1451,11 +1477,94 @@ export function BlockActionsMenu({
         </div>
       )}
 
+      {/* Table rows — shown / total setter (Notion database frames) */}
+      {openSubmenu === 'dbRows' && dbRowSetter && (
+        <div
+          data-tt-menu-flyout="main"
+          className="absolute z-[1001] min-w-[210px] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1"
+          onMouseEnter={() => setOpenSubmenu('dbRows')}
+        >
+          <div className="px-2 py-1.5 text-[11px] text-gray-400">Rows</div>
+          <div
+            className="flex items-center gap-1.5 px-2 py-1.5"
+            onPointerDown={(e) => e.stopPropagation()} // Keep RF / menu dismiss from eating the field
+          >
+            <input
+              ref={rowsDraftRef}
+              type="text"
+              inputMode="numeric"
+              aria-label="Shown rows"
+              value={rowsDraft}
+              onChange={(e) => {
+                // Digits only while typing — clamp on commit
+                setRowsDraft(e.target.value.replace(/[^\d]/g, ''))
+              }}
+              onBlur={() => {
+                const max =
+                  dbRowSetter.hasMore
+                    ? NOTION_DB_CLIENT_ROW_CAP
+                    : Math.max(1, dbRowSetter.total)
+                const parsed = parseInt(rowsDraft, 10)
+                const next = Number.isFinite(parsed)
+                  ? Math.min(max, Math.max(1, parsed))
+                  : dbRowSetter.shown
+                setRowsDraft(String(next))
+                if (next !== dbRowSetter.shown) onAction('setDbRows', { dbRows: next })
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  ;(e.target as HTMLInputElement).blur() // Commit via onBlur
+                }
+              }}
+              className="w-14 h-7 rounded-md border border-gray-200 dark:border-[#3a3a3a] bg-white dark:bg-[#1a1a1a] px-2 text-sm tabular-nums text-gray-900 dark:text-gray-100 outline-none focus:border-blue-400"
+            />
+            <span className="text-sm text-gray-400" aria-hidden="true">
+              /
+            </span>
+            <span className="text-sm tabular-nums text-gray-500 dark:text-gray-400">
+              {dbRowSetter.total}
+              {dbRowSetter.hasMore ? '+' : ''}
+            </span>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              const max =
+                dbRowSetter.hasMore
+                  ? NOTION_DB_CLIENT_ROW_CAP
+                  : Math.max(1, dbRowSetter.total)
+              setRowsDraft(String(max))
+              onAction('setDbRows', { dbRows: 'all' })
+            }}
+            className="justify-start text-sm h-8 px-2 font-normal w-full"
+          >
+            <span className="flex-1 text-left">Show all</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              setRowsDraft(String(COMPACT_PREVIEW_ROWS))
+              onAction('setDbRows', { dbRows: 'reset' })
+            }}
+            className="justify-start text-sm h-8 px-2 font-normal w-full"
+          >
+            <span className="flex-1 text-left">Reset</span>
+          </Button>
+        </div>
+      )}
+
       {/* Frame Color — Last used / Background color / Border color (Notion-style) */}
       {openSubmenu === 'frameColor' && (
         <div
           data-tt-menu-flyout="main"
-          className="absolute z-[1001] w-[240px] overflow-y-auto bg-white dark:bg-[#1f1f1f] rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] py-1.5"
+          className="absolute z-[1001] w-[240px] overflow-y-auto tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] py-1.5"
           onMouseEnter={() => setOpenSubmenu('frameColor')}
         >
           {/* Last used */}
@@ -1608,7 +1717,7 @@ export function BlockActionsMenu({
       {openSubmenu === 'connections' && (
         <div
           data-tt-menu-flyout="main"
-          className="absolute z-[1001] min-w-[180px] bg-white dark:bg-[#1f1f1f] rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1"
+          className="absolute z-[1001] min-w-[180px] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1"
           onMouseEnter={() => setOpenSubmenu('connections')}
         >
           <Button
@@ -1624,67 +1733,6 @@ export function BlockActionsMenu({
           >
             <NotionMarkIcon className="h-4 w-4 mr-2" />
             <span className="flex-1 text-left">Notion</span>
-          </Button>
-        </div>
-      )}
-
-      {/* Notion — hover menu: Live Sync / Manual / Remove */}
-      {openSubmenu === 'notionConnection' && (
-        <div
-          data-tt-menu-flyout="main"
-          className="absolute z-[1001] min-w-[200px] bg-white dark:bg-[#1f1f1f] rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1"
-          onMouseEnter={() => setOpenSubmenu('notionConnection')}
-        >
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn(
-              'justify-start text-sm h-8 px-2 font-normal w-full',
-              notionSync === 'live' && 'bg-blue-50 dark:bg-blue-950/40'
-            )}
-            onClick={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              onAction('setNotionSync', { notionSync: 'live' })
-              onClose()
-            }}
-          >
-            <RefreshCw className="h-4 w-4 mr-2 text-gray-500" />
-            <span className="flex-1 text-left">Live Sync</span>
-            {notionSync === 'live' && <Check className="h-3.5 w-3.5 text-gray-500" />}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn(
-              'justify-start text-sm h-8 px-2 font-normal w-full',
-              notionSync === 'manual' && 'bg-blue-50 dark:bg-blue-950/40'
-            )}
-            onClick={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              onAction('setNotionSync', { notionSync: 'manual' })
-              onClose()
-            }}
-          >
-            <Hand className="h-4 w-4 mr-2 text-gray-500" />
-            <span className="flex-1 text-left">Manual</span>
-            {notionSync === 'manual' && <Check className="h-3.5 w-3.5 text-gray-500" />}
-          </Button>
-          <div className="my-1 h-px bg-gray-100 dark:bg-[#2f2f2f] mx-1" />
-          <Button
-            variant="ghost"
-            size="sm"
-            className="justify-start text-sm h-8 px-2 font-normal w-full text-red-600 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
-            onClick={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              onAction('removeNotionConnection')
-              onClose()
-            }}
-          >
-            <Unplug className="h-4 w-4 mr-2" />
-            <span className="flex-1 text-left">Remove Connection</span>
           </Button>
         </div>
       )}

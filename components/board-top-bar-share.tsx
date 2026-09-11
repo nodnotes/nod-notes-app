@@ -1,6 +1,6 @@
 'use client'
 
-// Top-bar cluster right of Share: copy link, favorite, More (phone: copy + star live in More)
+// Top-bar cluster right of Share: copy link, favorite, More (shareCompact: copy + star + AI sparkles live in More)
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react' // Copy flash + favorite + More search
 import {
@@ -20,6 +20,8 @@ import {
   MessageSquarePlus,
   MoreHorizontal,
   Play,
+  Pin,
+  PinOff,
   RefreshCw,
   Search,
   SlidersHorizontal,
@@ -45,14 +47,17 @@ import { createClient } from '@/lib/supabase/client' // Persist favorite; word c
 import { useQueryClient } from '@tanstack/react-query' // Keep Boards list in sync; reuse frame cache
 import { cn } from '@/lib/utils' // Class merge
 import { useReactFlowContext } from './react-flow-context' // Present switches to View mode
-import { useSidebarContext } from './sidebar-context' // Phone hides copy/star into More
+import { useSidebarContext } from './sidebar-context' // Phone layout forces share compact
+import { usePhoneModeMenu } from './phone-mode-menu-context' // shareCompact from toolbar measure (before phoneTools)
 import { NotionConnectMenuItems } from './notion-connect-button' // Connections → Notion (provider wraps share cluster)
+import { useAiEditSession } from '@/lib/ai/edit-session' // AI highlight toggle in More when unpinned
+import { type BoardFontId } from '@/lib/board-font'
+import { DesktopUpdateMenuItem } from './desktop-update-menu-item' // Electron: Check for updates / Restart
+import Link from 'next/link' // Download desktop app when not in Electron
 
 type BoardTopBarShareProps = {
   conversationId?: string // Board id; copy/favorite wait until the board is saved
 }
-
-type BoardFontId = 'default' | 'serif' | 'mono' // Font row in More (UI until applied to the board)
 
 type CachedMessage = { content?: string } // Frame HTML from the messages-for-panels cache
 
@@ -88,13 +93,14 @@ function matchesQuery(label: string, q: string): boolean {
 }
 
 /** Notion-style switch parked on the right of a toggle row. */
-function MenuToggle({ on }: { on: boolean }) {
+function MenuToggle({ on, className }: { on: boolean; className?: string }) {
   return (
     <span
       aria-hidden
       className={cn(
         'ml-auto relative h-4 w-7 rounded-full transition-colors',
-        on ? 'bg-blue-500' : 'bg-gray-200'
+        on ? 'bg-blue-500' : 'bg-gray-200',
+        className
       )}
     >
       <span
@@ -109,14 +115,27 @@ function MenuToggle({ on }: { on: boolean }) {
 
 export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
   const queryClient = useQueryClient() // Patch conversations cache after favorite
-  const { setEditMenuPillMode } = useReactFlowContext() // Present → View bar
-  const { isMobileMode } = useSidebarContext() // Phone: copy + star collapse into More
+  const { setEditMenuPillMode, boardFont, setBoardFont } = useReactFlowContext() // Present → View bar; board font
+  const { isMobileMode } = useSidebarContext() // Phone chat layout always collapses copy/star
+  const { shareCompact } = usePhoneModeMenu() // Toolbar collapses copy/star before tools leave for the pill
+  const collapseShare = isMobileMode || shareCompact // Hide copy/star into More ahead of phoneTools
+  const [isDesktopApp, setIsDesktopApp] = useState(false) // Electron shell → hide "Download desktop app"
+
+  useEffect(() => {
+    setIsDesktopApp(!!window.nodnotesDesktop?.isDesktop)
+  }, [])
+  const {
+    hasAiContent,
+    showAiOrigin,
+    setShowAiOrigin,
+    aiTopBarPinned,
+    setAiTopBarPinned,
+  } = useAiEditSession()
   const [copied, setCopied] = useState(false) // Brief checkmark after copy
   const [favorited, setFavorited] = useState(false) // Star fill from metadata.favorite
   const [menuOpen, setMenuOpen] = useState(false) // Load footer stats when More opens
   const [query, setQuery] = useState('') // Search actions…
   const searchRef = useRef<HTMLInputElement>(null) // Focus search on open
-  const [boardFont, setBoardFont] = useState<BoardFontId>('default') // Font picker (UI only)
   const [smallText, setSmallText] = useState(false) // Layout toggle (UI only)
   const [fullWidth, setFullWidth] = useState(false) // Layout toggle (UI only)
   const [lockBoard, setLockBoard] = useState(false) // Lock board toggle (UI only)
@@ -270,10 +289,13 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
   const showFont = !q || matchesQuery('font default serif mono', q) // Keep font row unless search misses
   const showFooter = !q // Metadata stays at the bottom when not filtering
   const showConnections = !q || matchesQuery('connections notion', q) // Same hay as Connections row
+  const showAiHighlightMenu =
+    !q || matchesQuery('show ai content highlight sparkles pin unpin', q)
   const hasSearchHit =
     !q ||
     showFont ||
     showConnections ||
+    showAiHighlightMenu ||
     [
       'Copy link',
       'Add to favorites',
@@ -288,7 +310,6 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
       'Customize board',
       'Lock board',
       'Use with AI',
-      'Suggest edits',
       'Translate',
       'Import',
       'Export',
@@ -311,9 +332,9 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
 
   return (
       <div className="flex items-center gap-1 flex-shrink-0">
-        {!isMobileMode && (
-          <>
-            {/* Desktop: copy + star sit beside More; phone uses More rows only */}
+        {!collapseShare && (
+          <div data-top-bar-copy-star className="flex items-center gap-1 flex-shrink-0">
+            {/* Desktop: copy + star sit beside More; shareCompact / phone uses More rows only */}
             <Button
               variant="ghost"
               size="sm"
@@ -337,7 +358,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
             >
               <Star className={cn('h-4 w-4', favorited && 'fill-current')} />
             </Button>
-          </>
+          </div>
         )}
         <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
           <DropdownMenuTrigger asChild>
@@ -347,6 +368,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
               className={iconBtn}
               title="More"
               type="button"
+              data-board-more
             >
               <MoreHorizontal className="h-4 w-4" />
             </Button>
@@ -385,7 +407,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
                         type="button"
                         className={cn(
                           'flex-1 flex flex-col items-center gap-0.5 rounded-md px-1 py-1.5 text-gray-700 hover:bg-gray-50',
-                          selected && 'bg-blue-50 text-blue-600'
+                          selected && 'tt-selected'
                         )}
                         onPointerDown={(e) => e.preventDefault()}
                         onClick={() => setBoardFont(font.id)}
@@ -454,6 +476,58 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
                 </DropdownMenuItem>
               )}
 
+              {showAiHighlightMenu && (
+                <>
+                  {!q && <DropdownMenuSeparator />}
+                  <DropdownMenuItem
+                    className="group"
+                    disabled={!hasAiContent}
+                    title={
+                      hasAiContent
+                        ? showAiOrigin
+                          ? 'Hide reddish highlight on AI-written text'
+                          : 'Show reddish highlight on AI-written text'
+                        : 'No AI-written content on this board yet'
+                    }
+                    onSelect={(e) => {
+                      e.preventDefault()
+                      if (!hasAiContent) return
+                      setShowAiOrigin(!showAiOrigin)
+                    }}
+                  >
+                    <Sparkles className="h-4 w-4 mr-2 shrink-0" />
+                    Show AI content
+                    <span className="ml-auto flex items-center gap-1.5 shrink-0">
+                      {hasAiContent && (
+                        <button
+                          type="button"
+                          className={cn(
+                            'h-6 w-6 inline-flex items-center justify-center rounded-md text-gray-400',
+                            'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100',
+                            'hover:bg-gray-100 hover:text-gray-700',
+                            aiTopBarPinned && 'opacity-100 text-gray-600'
+                          )}
+                          title={aiTopBarPinned ? 'Unpin from top bar' : 'Pin to top bar'}
+                          onPointerDown={(e) => e.preventDefault()}
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            setAiTopBarPinned(!aiTopBarPinned)
+                          }}
+                        >
+                          {aiTopBarPinned ? (
+                            <PinOff className="h-3.5 w-3.5" />
+                          ) : (
+                            <Pin className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                      )}
+                      <MenuToggle on={hasAiContent && showAiOrigin} className="ml-0" />
+                    </span>
+                  </DropdownMenuItem>
+                </>
+              )}
+
               {!q && <DropdownMenuSeparator />}
 
               {matchesQuery('Small text', q) && (
@@ -517,12 +591,6 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
 
               {!q && <DropdownMenuSeparator />}
 
-              {matchesQuery('Suggest edits', q) && (
-                <DropdownMenuItem>
-                  <MessageSquarePlus className="h-4 w-4 mr-2" />
-                  Suggest edits
-                </DropdownMenuItem>
-              )}
               {matchesQuery('Translate', q) && (
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger>
@@ -600,12 +668,15 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
 
               {!q && <DropdownMenuSeparator />}
 
-              {matchesQuery('Open in Mac app', q) && (
-                <DropdownMenuItem>
-                  <AppWindow className="h-4 w-4 mr-2" />
-                  Open in Mac app
+              {matchesQuery('Download desktop app', q) && !isDesktopApp && (
+                <DropdownMenuItem asChild>
+                  <Link href="/download">
+                    <AppWindow className="h-4 w-4 mr-2" />
+                    Download desktop app
+                  </Link>
                 </DropdownMenuItem>
               )}
+              <DesktopUpdateMenuItem filterQuery={q} />
             </div>
 
             {showFooter && (

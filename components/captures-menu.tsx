@@ -2,8 +2,10 @@
 
 // View-bar Capture popover — search / filter / Capture view + selectable list + add to presentation/chat
 
-import { useMemo, useState, useSyncExternalStore } from 'react' // Search, selection, store
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react' // Search, selection, store
 import { useQueryClient } from '@tanstack/react-query' // Board path + frame text
+import { useRouter } from 'next/navigation' // Client-side board / capture nav
+import { getRectOfNodes, getViewportForBounds } from 'reactflow' // Selected-frame bounds + viewport
 import {
   ListFilter, // Filter control
   MessageSquare, // Add to chat
@@ -31,11 +33,15 @@ import {
   formatCaptureTimestamp,
   getCaptures,
   getPresentations,
+  readCaptureCameraInput,
   subscribeCaptures,
   takeBoardCapture,
+  takeBoardCaptureSelected,
 } from '@/lib/captures' // Local capture/presentation store
+import { navigateToCapture } from '@/lib/capture-link' // In-tab camera nav (no full reload)
 import { cn } from '@/lib/utils' // Class merge
 import { TOOLBAR_MENU_PLACEMENT } from '@/lib/menu-placement' // Under the trigger, never over the board path
+import { CaptureRowMoreMenu } from './capture-row-more-menu' // Row hover ⋯ — copy link
 import { ToolbarTitle } from './toolbar-title' // Animated icon-adjacent title
 
 type CapturesMenuProps = {
@@ -54,6 +60,7 @@ export function CapturesMenu({
   showLabel = true, // Icon+title until the top bar condenses
 }: CapturesMenuProps) {
   const queryClient = useQueryClient() // Path + messages cache
+  const router = useRouter() // Cross-board capture nav stays in-tab
   const { reactFlowInstance } = useReactFlowContext() // Viewport at Capture view
   const { setChatSidebarOpen } = useSidebarContext() // Reveal chat when attaching
   const captures = useSyncExternalStore(subscribeCaptures, getCaptures, getCaptures) // List
@@ -63,7 +70,31 @@ export function CapturesMenu({
   const [filterOpen, setFilterOpen] = useState(false) // Filter panel
   const [selected, setSelected] = useState<Set<string>>(() => new Set()) // Row selection
   const [previewId, setPreviewId] = useState<string | null>(null) // Expanded JPEG overlay
-  const [capturing, setCapturing] = useState(false) // Capture view in flight
+  const [capturing, setCapturing] = useState(false) // Capture view / selected in flight
+  const [hasSelectedFrames, setHasSelectedFrames] = useState(false) // Live frame selection (toolbar is outside RF provider)
+
+  useEffect(() => {
+    const refresh = () => {
+      if (!reactFlowInstance) {
+        setHasSelectedFrames(false)
+        return
+      }
+      setHasSelectedFrames(
+        reactFlowInstance.getNodes().some((n) => {
+          if (!n.selected) return false
+          const meta = (n.data?.promptMessage?.metadata || {}) as Record<string, unknown>
+          return meta.isBlock === true
+        })
+      )
+    }
+    refresh()
+    window.addEventListener('node-selected', refresh)
+    window.addEventListener('tt-selection-changed', refresh)
+    return () => {
+      window.removeEventListener('node-selected', refresh)
+      window.removeEventListener('tt-selection-changed', refresh)
+    }
+  }, [reactFlowInstance])
 
   const items = useMemo(
     () =>
@@ -97,9 +128,38 @@ export function CapturesMenu({
       const created = await takeBoardCapture(
         (key) => queryClient.getQueryData(key),
         conversationId,
-        vp
+        readCaptureCameraInput(vp)
       )
       setSelected((prev) => new Set(prev).add(created.id)) // Select the new row
+    } finally {
+      setCapturing(false)
+    }
+  }
+
+  const captureSelected = async () => {
+    if (!conversationId || capturing || !reactFlowInstance || !hasSelectedFrames) return
+    const selectedNodes = reactFlowInstance.getNodes().filter((n) => {
+      if (!n.selected) return false
+      const meta = (n.data?.promptMessage?.metadata || {}) as Record<string, unknown>
+      return meta.isBlock === true
+    })
+    if (selectedNodes.length === 0) return
+    const pane = document.querySelector('.react-flow') as HTMLElement | null
+    if (!pane) return
+    setCapturing(true)
+    try {
+      const bounds = getRectOfNodes(selectedNodes)
+      const vp = getViewportForBounds(bounds, pane.clientWidth, pane.clientHeight, 0.2, 2, 0.15)
+      const messageIds = selectedNodes
+        .map((n) => n.data?.promptMessage?.id as string | undefined)
+        .filter((id): id is string => Boolean(id))
+      const created = await takeBoardCaptureSelected(
+        (key) => queryClient.getQueryData(key),
+        conversationId,
+        readCaptureCameraInput(vp),
+        messageIds
+      )
+      setSelected((prev) => new Set(prev).add(created.id))
     } finally {
       setCapturing(false)
     }
@@ -215,18 +275,32 @@ export function CapturesMenu({
               onPointerDown={(e) => e.stopPropagation()}
             />
           </div>
-          <button
-            type="button"
-            className="flex h-8 flex-shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-40"
-            title="Capture view"
-            aria-label="Capture view"
-            disabled={!conversationId || capturing}
-            onPointerDown={(e) => e.preventDefault()}
-            onClick={() => void captureView()}
-          >
-            <Scan className="h-3.5 w-3.5" />
-            Capture view
-          </button>
+          <div className="flex flex-shrink-0 items-center">
+            <button
+              type="button"
+              className="flex h-8 items-center gap-1 rounded-md px-2 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-40"
+              title="Capture view"
+              aria-label="Capture view"
+              disabled={!conversationId || capturing}
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => void captureView()}
+            >
+              <Scan className="h-3.5 w-3.5" />
+              Capture view
+            </button>
+            <div className="mx-1 h-5 w-px flex-shrink-0 bg-gray-200" aria-hidden />
+            <button
+              type="button"
+              className="flex h-8 items-center rounded-md px-2 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-40"
+              title="Capture selected"
+              aria-label="Capture selected"
+              disabled={!conversationId || capturing || !hasSelectedFrames}
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => void captureSelected()}
+            >
+              Selected
+            </button>
+          </div>
         </div>
 
         <div className="flex max-h-72 flex-col gap-0.5 overflow-y-auto px-2 pb-1">
@@ -242,7 +316,7 @@ export function CapturesMenu({
                 <div
                   key={item.id}
                   className={cn(
-                    'flex w-full flex-col rounded-lg px-2 py-2 hover:bg-gray-50',
+                    'group/capture flex w-full flex-col rounded-lg px-2 py-2 hover:bg-gray-50',
                     on && 'bg-gray-100 hover:bg-gray-100'
                   )}
                 >
@@ -285,7 +359,10 @@ export function CapturesMenu({
                       type="button"
                       className="min-w-0 flex-1 text-left"
                       onPointerDown={(e) => e.preventDefault()}
-                      onClick={() => toggleRow(item.id)}
+                      onClick={() => {
+                        navigateToCapture(item, conversationId, router)
+                        onOpenChange(false)
+                      }}
                     >
                       <span className="block text-[13px] font-medium text-gray-900">
                         {formatCaptureTimestamp(item.createdAt)}
@@ -294,6 +371,14 @@ export function CapturesMenu({
                         {item.boardPath}
                       </span>
                     </button>
+                    <CaptureRowMoreMenu
+                      capture={item}
+                      conversationId={conversationId}
+                      onNavigate={() => onOpenChange(false)}
+                      className={cn(
+                        'mt-0.5 opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/capture:opacity-100'
+                      )}
+                    />
                   </div>
                   {tags.length > 0 && (
                     <div className="mt-1.5 flex flex-wrap gap-1">
@@ -370,7 +455,8 @@ export function CapturesMenu({
               <Presentation className="h-3.5 w-3.5" />
               Add to presentation
             </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="w-44 p-1" side="left" sideOffset={6}>
+            {/* No `side`: Radix omits it on SubContent — submenu side comes from collision detection */}
+            <DropdownMenuSubContent className="w-44 p-1" sideOffset={6}>
               <DropdownMenuItem
                 onSelect={() => {
                   createPresentation(selectedIds())
@@ -382,7 +468,7 @@ export function CapturesMenu({
                 <DropdownMenuSubTrigger disabled={presentations.length === 0}>
                   Select
                 </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="max-h-56 w-48 overflow-y-auto p-1" side="left" sideOffset={6}>
+                <DropdownMenuSubContent className="max-h-56 w-48 overflow-y-auto p-1" sideOffset={6}>
                   {presentations.length === 0 ? (
                     <div className="px-2 py-2 text-xs text-gray-400">No presentations yet</div>
                   ) : (

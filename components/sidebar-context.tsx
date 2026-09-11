@@ -11,46 +11,82 @@ import {
   useLayoutEffect,
   ReactNode,
 } from 'react'
-import { getStoredLogoDrawing, TT_LOGO_DRAWING_STORAGE_KEY } from './personalize-ai-modal'
+import { getStoredLogoDrawing, NN_LOGO_DRAWING_STORAGE_KEY } from './personalize-ai-modal'
+import { ACCOUNT_CHANGED_EVENT } from '@/lib/auth-session-isolation'
 
-/** Width of the right chat sidebar when open (keeps top bar / map shrunk left). Notion-like panel width. */
+/** Default / minimum width of the right chat sidebar when open (Notion-like). */
 export const CHAT_SIDEBAR_WIDTH = 360
 
+/** localStorage — preferred chat column width (half-window clamp is display-only). */
+export const NN_CHAT_SIDEBAR_WIDTH_KEY = 'nodnotes-chat-sidebar-width'
+
+/** Max chat width = half the window; never below the min (small windows can’t shrink the panel). */
+export function chatSidebarMaxWidth(windowWidth = typeof window !== 'undefined' ? window.innerWidth : 1200) {
+  return Math.max(CHAT_SIDEBAR_WIDTH, Math.floor(windowWidth / 2))
+}
+
+/** Clamp a preferred width into [min, half-window] for the live column. */
+export function clampChatSidebarWidth(width: number, windowWidth?: number) {
+  const max = chatSidebarMaxWidth(windowWidth)
+  return Math.min(max, Math.max(CHAT_SIDEBAR_WIDTH, Math.round(width)))
+}
+
+/** Preferred width floor only — keep user’s wider choice across shrink/expand. */
+function normalizePreferredChatWidth(width: number) {
+  return Math.max(CHAT_SIDEBAR_WIDTH, Math.round(width))
+}
+
+function getStoredChatSidebarWidth(): number {
+  if (typeof window === 'undefined') return CHAT_SIDEBAR_WIDTH
+  const raw = localStorage.getItem(NN_CHAT_SIDEBAR_WIDTH_KEY)
+  const n = raw ? Number(raw) : NaN
+  if (!Number.isFinite(n)) return CHAT_SIDEBAR_WIDTH
+  return normalizePreferredChatWidth(n) // Do not clamp to this window’s half — restore widens later
+}
+
+function persistChatSidebarWidth(width: number) {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(NN_CHAT_SIDEBAR_WIDTH_KEY, String(normalizePreferredChatWidth(width)))
+}
+
+/** Viewport width below which chat uses the phone map dock (not the desktop column). */
+export const PHONE_LAYOUT_MAX_WIDTH = 768
+
 /** localStorage + cookie key — reopen chat column after reload when it was open. */
-export const TT_CHAT_SIDEBAR_OPEN_KEY = 'thinktable-chat-sidebar-open'
+export const NN_CHAT_SIDEBAR_OPEN_KEY = 'nodnotes-chat-sidebar-open'
 
 /** Cookie twin of the localStorage flag so SSR can paint the column already open. */
-export const TT_CHAT_SIDEBAR_COOKIE = 'thinktable-chat-sidebar-open'
+export const NN_CHAT_SIDEBAR_COOKIE = 'nodnotes-chat-sidebar-open'
 
 /** Read whether chat was open last session (SSR-safe → false). */
 function getStoredChatSidebarOpen(): boolean {
   if (typeof window === 'undefined') return false // SSR: stay closed until client
-  return localStorage.getItem(TT_CHAT_SIDEBAR_OPEN_KEY) === 'true' // Persist open across reload
+  return localStorage.getItem(NN_CHAT_SIDEBAR_OPEN_KEY) === 'true' // Persist open across reload
 }
 
 /** Persist chat open/closed so reload restores the column (localStorage + cookie for SSR). */
 function persistChatSidebarOpen(open: boolean) {
   if (typeof window === 'undefined') return // No storage on server
-  localStorage.setItem(TT_CHAT_SIDEBAR_OPEN_KEY, open ? 'true' : 'false') // Client restore
-  document.cookie = `${TT_CHAT_SIDEBAR_COOKIE}=${open ? 'true' : 'false'}; Path=/; Max-Age=31536000; SameSite=Lax` // First HTML paint
+  localStorage.setItem(NN_CHAT_SIDEBAR_OPEN_KEY, open ? 'true' : 'false') // Client restore
+  document.cookie = `${NN_CHAT_SIDEBAR_COOKIE}=${open ? 'true' : 'false'}; Path=/; Max-Age=31536000; SameSite=Lax` // First HTML paint
 }
 
 /** localStorage key — restore the same AI thread after reload. */
-export const TT_CHAT_THREAD_ID_KEY = 'thinktable-chat-thread-id'
+export const NN_CHAT_THREAD_ID_KEY = 'nodnotes-chat-thread-id'
 
 /** localStorage — click-pinned boards nav so reload keeps the menu open. */
-export const TT_BOARDS_NAV_PINNED_KEY = 'thinktable-boards-nav-pinned'
+export const NN_BOARDS_NAV_PINNED_KEY = 'nodnotes-boards-nav-pinned'
 
 /** Read whether the boards nav was click-pinned (SSR-safe → closed). */
 function getStoredBoardsNavPinned(): boolean {
   if (typeof window === 'undefined') return false // Server: stay closed until client
-  return localStorage.getItem(TT_BOARDS_NAV_PINNED_KEY) === 'true' // Persist pin across reload
+  return localStorage.getItem(NN_BOARDS_NAV_PINNED_KEY) === 'true' // Persist pin across reload
 }
 
 /** Remember boards-nav pin so reload restores the popup. */
 function persistBoardsNavPinned(pinned: boolean) {
   if (typeof window === 'undefined') return // No storage on server
-  localStorage.setItem(TT_BOARDS_NAV_PINNED_KEY, pinned ? 'true' : 'false') // Client restore
+  localStorage.setItem(NN_BOARDS_NAV_PINNED_KEY, pinned ? 'true' : 'false') // Client restore
 }
 
 interface SidebarContextType {
@@ -64,6 +100,8 @@ interface SidebarContextType {
   scheduleCloseSidebar: () => void // Hide after short delay (bridge logo ↔ menu; no-op if pinned)
   cancelCloseSidebar: () => void // Cancel pending delayed close when re-entering
   isChatSidebarOpen: boolean // True when right chat sidebar is visible
+  chatSidebarWidth: number // Live column width (preferred clamped to this window)
+  setChatSidebarWidth: (width: number) => void // Drag-resize; preferred persisted, display clamped
   chatChromeReady: boolean // True after storage restore so the top bar can measure the final column
   toggleChatSidebar: () => void // Toggle right chat sidebar (logo by minimap)
   setChatSidebarOpen: (open: boolean) => void // Explicit open/close for chat sidebar
@@ -90,14 +128,17 @@ const SidebarContext = createContext<SidebarContextType | undefined>(undefined)
 export function SidebarContextProvider({
   children,
   initialChatOpen = false,
+  previewMode = false, // Homepage showcase: force desktop AI column; never touch board cookies
 }: {
   children: ReactNode
   initialChatOpen?: boolean // Cookie from the server so the column exists in the first HTML
+  previewMode?: boolean // Marketing preview — open column only, no persist / phone dock
 }) {
   const [isMobileMode, setIsMobileMode] = useState(false) // Compact layout flag from board flows
   const [isSidebarOpen, setIsSidebarOpen] = useState(false) // Left nav popup visibility
   const [isSidebarPinned, setIsSidebarPinned] = useState(false) // Click-pinned: stay open across leave/nav
-  const [isChatSidebarOpen, setIsChatSidebarOpen] = useState(initialChatOpen) // Cookie/SSR: already open when it was last time
+  const [isChatSidebarOpen, setIsChatSidebarOpen] = useState(initialChatOpen || previewMode) // Cookie/SSR: already open when it was last time
+  const [chatSidebarWidth, setChatSidebarWidthState] = useState(CHAT_SIDEBAR_WIDTH) // SSR default; restore from storage before paint
   const [chatChromeReady, setChatChromeReady] = useState(false) // False until this layout effect restores open/closed
   const [logoDrawing, setLogoDrawingState] = useState<string | null>(null) // Shared custom logo drawing
   const [aiMapDockLiftPx, setAiMapDockLiftPx] = useState(0) // Phone: lift Free nav above AI dock
@@ -107,8 +148,12 @@ export function SidebarContextProvider({
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null) // Delayed-close handle for left nav
   const isSidebarPinnedRef = useRef(false) // Latest pin for scheduleClose without stale closure
   const isMobileModeRef = useRef(false) // Latest mobile flag for sync focus in toggle
-  const isChatOpenRef = useRef(false) // Latest chat open for sync focus in toggle
+  const isChatOpenRef = useRef(initialChatOpen || previewMode) // Latest chat open for sync focus in toggle
+  const previewModeRef = useRef(previewMode) // Persist / phone path must skip on homepage showcase
   const aiComposerFocusRef = useRef<(() => void) | null>(null) // Phone composer.focus (same-tap keyboard)
+  const closedAtRef = useRef(0) // Timestamp of last close — ignore ghost click reopen on the hamburger
+  const preferredChatWidthRef = useRef(CHAT_SIDEBAR_WIDTH) // User’s width across shrink/expand (not half-clamped)
+  previewModeRef.current = previewMode // Keep latest for callbacks without rebinding
 
   // Keep pin ref in sync for delayed-close guard
   useEffect(() => {
@@ -129,8 +174,23 @@ export function SidebarContextProvider({
 
   // Restore chat open + logo before first paint; cookie already opened the column in SSR HTML
   useLayoutEffect(() => {
-    const narrow = window.innerWidth < 900 // Same threshold as board-flow minimap mobile mode
+    if (previewMode) {
+      // Homepage board preview: always show a desktop AI column; leave board cookies alone
+      isMobileModeRef.current = false
+      setIsMobileMode(false)
+      preferredChatWidthRef.current = CHAT_SIDEBAR_WIDTH
+      setChatSidebarWidthState(CHAT_SIDEBAR_WIDTH)
+      isChatOpenRef.current = true
+      setIsChatSidebarOpen(true)
+      setLogoDrawingState(getStoredLogoDrawing())
+      setChatChromeReady(true)
+      return
+    }
+    const narrow = window.innerWidth < PHONE_LAYOUT_MAX_WIDTH // Same threshold as board-flow phone layout
     setIsMobileMode(narrow) // Ready before first brand tap (phone map-dock path)
+    const preferred = getStoredChatSidebarWidth() // Last drag preference (may exceed this window’s half)
+    preferredChatWidthRef.current = preferred
+    setChatSidebarWidthState(clampChatSidebarWidth(preferred)) // Live column only — keep preference for expand
     const storedOpen = getStoredChatSidebarOpen() // Last session flag
     const nextOpen = narrow ? false : storedOpen // Phone: don’t restore a desktop column
     isChatOpenRef.current = nextOpen // Sync before children measure on the next commit
@@ -144,13 +204,57 @@ export function SidebarContextProvider({
     }
     setLogoDrawingState(getStoredLogoDrawing()) // Custom logo PNG
     setChatChromeReady(true) // Next commit: column is final; top bar may measure
+  }, [previewMode])
+
+  // Account switch wiped localStorage — reset in-memory chrome so the prior user never lingers
+  useEffect(() => {
+    if (previewMode) return
+    const onAccountChanged = () => {
+      setLogoDrawingState(getStoredLogoDrawing()) // Cleared key → null brand mark
+      isChatOpenRef.current = false
+      setIsChatSidebarOpen(false) // Closed until this user opens chat
+      isSidebarPinnedRef.current = false
+      setIsSidebarPinned(false)
+      setIsSidebarOpen(false)
+      preferredChatWidthRef.current = CHAT_SIDEBAR_WIDTH
+      setChatSidebarWidthState(CHAT_SIDEBAR_WIDTH)
+      setAiChatHasTranscript(false)
+    }
+    window.addEventListener(ACCOUNT_CHANGED_EVENT, onAccountChanged)
+    return () => window.removeEventListener(ACCOUNT_CHANGED_EVENT, onAccountChanged)
+  }, [previewMode])
+
+  // Re-clamp the live column on viewport change — never overwrite the stored preference
+  useEffect(() => {
+    const onResize = () => {
+      setChatSidebarWidthState(clampChatSidebarWidth(preferredChatWidthRef.current))
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  const setChatSidebarWidth = useCallback((width: number) => {
+    const display = clampChatSidebarWidth(width) // Live column for this window
+    preferredChatWidthRef.current = display // Last intentional width — restore after shrink/expand
+    if (!previewModeRef.current) persistChatSidebarWidth(display) // Floor only in storage; do not half-clamp on write
+    setChatSidebarWidthState(display)
+  }, [])
+
+  // BoardFlow sets mobile from window width — keep showcase on the desktop AI column
+  const setIsMobileModeGuarded = useCallback((mobile: boolean) => {
+    if (previewModeRef.current) {
+      isMobileModeRef.current = false
+      setIsMobileMode(false)
+      return
+    }
+    setIsMobileMode(mobile)
   }, [])
 
   const setLogoDrawing = useCallback((url: string | null) => {
     setLogoDrawingState(url) // Sync map open icon + chat brand mark
     if (typeof window === 'undefined') return
-    if (url) localStorage.setItem(TT_LOGO_DRAWING_STORAGE_KEY, url)
-    else localStorage.removeItem(TT_LOGO_DRAWING_STORAGE_KEY)
+    if (url) localStorage.setItem(NN_LOGO_DRAWING_STORAGE_KEY, url)
+    else localStorage.removeItem(NN_LOGO_DRAWING_STORAGE_KEY)
   }, [])
 
   const cancelCloseSidebar = useCallback(() => {
@@ -170,6 +274,7 @@ export function SidebarContextProvider({
     persistBoardsNavPinned(false) // Reload should not reopen after an explicit close
     setIsSidebarPinned(false) // Explicit close clears click-pin
     setIsSidebarOpen(false) // Hide immediately
+    closedAtRef.current = Date.now() // Block ghost click that would reopen via toggle
   }, [cancelCloseSidebar])
 
   const scheduleCloseSidebar = useCallback(() => {
@@ -188,7 +293,12 @@ export function SidebarContextProvider({
       if (pinned) {
         persistBoardsNavPinned(false) // Unpin: next reload stays closed
         setIsSidebarOpen(false) // Second click: unpin and hide
+        closedAtRef.current = Date.now() // Same ghost-click guard as closeSidebar
         return false
+      }
+      // Scrim used to cover the hamburger — close unmounted it and the same tap’s click reopened
+      if (Date.now() - closedAtRef.current < 400) {
+        return false // Stay closed; ignore click-through reopen
       }
       persistBoardsNavPinned(true) // Pin: next reload reopens the menu
       setIsSidebarOpen(true) // First click: open and pin across leave/page switch
@@ -218,6 +328,18 @@ export function SidebarContextProvider({
   }, [isSidebarOpen, closeSidebar])
 
   const toggleChatSidebar = useCallback(() => {
+    if (previewModeRef.current) {
+      // Showcase: toggle open/closed in-memory only — never write board cookies
+      const opening = !isChatOpenRef.current
+      if (opening && isMobileModeRef.current) {
+        aiComposerFocusRef.current?.()
+      } else if (!opening && isMobileModeRef.current) {
+        const ae = document.activeElement as HTMLElement | null
+        if (ae?.closest?.('[data-chat-map-dock]')) ae.blur()
+      }
+      setIsChatSidebarOpen((prev) => !prev)
+      return
+    }
     const opening = !isChatOpenRef.current // About to open?
     // iOS: focus must run in this tap — phone dock keeps composer mounted while closed
     if (opening && isMobileModeRef.current) {
@@ -234,6 +356,18 @@ export function SidebarContextProvider({
   }, [])
 
   const setChatSidebarOpen = useCallback((open: boolean) => {
+    if (previewModeRef.current) {
+      // Showcase: allow open/close without writing board open cookie
+      if (open && isMobileModeRef.current && !isChatOpenRef.current) {
+        aiComposerFocusRef.current?.()
+      } else if (!open && isMobileModeRef.current) {
+        const ae = document.activeElement as HTMLElement | null
+        if (ae?.closest?.('[data-chat-map-dock]')) ae.blur()
+      }
+      isChatOpenRef.current = open
+      setIsChatSidebarOpen(open)
+      return
+    }
     if (open && isMobileModeRef.current && !isChatOpenRef.current) {
       aiComposerFocusRef.current?.() // Same-tap keyboard when opened explicitly
     } else if (!open && isMobileModeRef.current) {
@@ -243,11 +377,24 @@ export function SidebarContextProvider({
     persistChatSidebarOpen(open) // Remember for reload
     setIsChatSidebarOpen(open)
   }, [])
+
+  // Notion-style ⌘/; — toggle chat (Close on the seam tip when open)
+  useEffect(() => {
+    if (previewMode) return // Homepage showcase owns the column; don’t steal ⌘/;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key !== ';') return
+      e.preventDefault()
+      toggleChatSidebar()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [previewMode, toggleChatSidebar])
+
   return (
     <SidebarContext.Provider
       value={{
         isMobileMode,
-        setIsMobileMode,
+        setIsMobileMode: setIsMobileModeGuarded,
         isSidebarOpen,
         isSidebarPinned,
         openSidebar,
@@ -256,6 +403,8 @@ export function SidebarContextProvider({
         scheduleCloseSidebar,
         cancelCloseSidebar,
         isChatSidebarOpen,
+        chatSidebarWidth,
+        setChatSidebarWidth,
         chatChromeReady,
         toggleChatSidebar,
         setChatSidebarOpen,
@@ -292,6 +441,8 @@ export function useSidebarContext() {
       scheduleCloseSidebar: () => {},
       cancelCloseSidebar: () => {},
       isChatSidebarOpen: false,
+      chatSidebarWidth: CHAT_SIDEBAR_WIDTH,
+      setChatSidebarWidth: () => {},
       chatChromeReady: true, // No provider — nothing to restore; measure immediately
       toggleChatSidebar: () => {},
       setChatSidebarOpen: () => {},

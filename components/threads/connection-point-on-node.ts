@@ -1,9 +1,12 @@
 import { Position, type Node, type XYPosition } from 'reactflow' // Node box → mid-side attach point
 import { normalizeHandleId, INDICATOR_OUTSET } from './handle-ids' // left-indicator → left; exit stub length
+import { readFrameChromePad } from '@/lib/frame-chrome-offset' // Selected L/R gutter — not part of the fill
 
 /**
- * Mid-side point on a node's frame edge (the connection **point**).
+ * Mid-side point on a node's **frame** edge (the connection **point**).
  * Ignores outer indicator Handle positions entirely.
+ * When selected, RF width includes the adjust gutters — inset by `frameChromePad` so threads
+ * meet the peach fill, not the blue adjust box.
  */
 export function connectionPointOnNode(
   node: Node | undefined,
@@ -15,15 +18,21 @@ export function connectionPointOnNode(
   const w = node.width ?? 0
   const h = node.height ?? 0
   if (w <= 0 || h <= 0) return null // Not measured yet — caller falls back to RF coords
+  // Fill box = RF node minus selection chrome (⋮⋮ gutters). Unselected pad is 0.
+  const pad = readFrameChromePad(node.data)
+  const fillX = x + pad.x
+  const fillY = y + pad.y
+  const fillW = Math.max(1, w - pad.x * 2)
+  const fillH = Math.max(1, h - pad.y * 2)
   switch (side) {
     case Position.Left:
-      return { x, y: y + h / 2 }
+      return { x: fillX, y: fillY + fillH / 2 }
     case Position.Right:
-      return { x: x + w, y: y + h / 2 }
+      return { x: fillX + fillW, y: fillY + fillH / 2 }
     case Position.Top:
-      return { x: x + w / 2, y }
+      return { x: fillX + fillW / 2, y: fillY }
     case Position.Bottom:
-      return { x: x + w / 2, y: y + h }
+      return { x: fillX + fillW / 2, y: fillY + fillH }
     default:
       return null
   }

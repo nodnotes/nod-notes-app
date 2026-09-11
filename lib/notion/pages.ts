@@ -18,11 +18,23 @@ export type NotionSearchPage = {
   icon?: { type?: string; emoji?: string; external?: { url?: string }; file?: { url?: string } } | null
   title: string // Extracted display title for the mind-map node
   parent?: NotionPageParent | null // Used for tree nesting + top-level filtering
+  lastEditedTime?: string // ISO last_edited_time — Recents sort (view recency is not in the public API)
 }
 
 export type NotionPageTreeNode = NotionSearchPage & {
   children: NotionPageTreeNode[] // Nested pages/databases (Notion sidebar order)
 }
+
+/** Import picker sections — labels match what the public API can actually provide. */
+export type NotionPickerSectionId = 'recently_edited' | 'library'
+
+export type NotionPickerSection = {
+  id: NotionPickerSectionId // Stable section key for collapse state
+  title: string // Recently edited / Library
+  nodes: NotionPageTreeNode[] // Pages under this heading
+}
+
+const PICKER_RECENTS_LIMIT = 10 // Notion Recents shows a short flat list, not the full tree
 
 export function normalizeNotionId(id: string | undefined | null): string {
   return (id || '').replace(/-/g, '').toLowerCase() // Compare dashed vs undashed Notion ids
@@ -152,6 +164,32 @@ export function buildNotionPageTree(pages: NotionSearchPage[]): NotionPageTreeNo
   }
   sortRecursively(roots)
   return roots
+}
+
+/** Copy a search hit as a Recently edited leaf (flat — no nested chevrons). */
+function clonePickerLeaf(page: NotionSearchPage): NotionPageTreeNode {
+  return { ...page, children: [] } // Drop children so Recently edited cannot expand into Library
+}
+
+/**
+ * Group accessible pages for the import picker: Recently edited + Library.
+ * Recently edited uses last_edited_time (public API has no last-viewed).
+ * Library = full nested tree of everything the connection can access.
+ */
+export function buildNotionPickerSections(pages: NotionSearchPage[]): NotionPickerSection[] {
+  const tree = buildNotionPageTree(pages) // Workspace roots + orphans (parent not in granted set)
+
+  const recentlyEdited = [...pages]
+    .sort((a, b) => (b.lastEditedTime || '').localeCompare(a.lastEditedTime || ''))
+    .slice(0, PICKER_RECENTS_LIMIT)
+    .map(clonePickerLeaf) // Flat rows — same page may also appear under Library
+
+  const sections: NotionPickerSection[] = []
+  if (recentlyEdited.length) {
+    sections.push({ id: 'recently_edited', title: 'Recently edited', nodes: recentlyEdited })
+  }
+  if (tree.length) sections.push({ id: 'library', title: 'Library', nodes: tree })
+  return sections
 }
 
 /**
@@ -371,7 +409,8 @@ export async function collectMindmapSubtreeViaBlocks(
   accessToken: string,
   rootId: string,
   allPages: NotionSearchPage[],
-  maxDepth = 8
+  maxDepth = 8,
+  signal?: AbortSignal // Picker Cancel — stop the child_page walk
 ): Promise<NotionSearchPage[]> {
   const byId = new Map(allPages.map((p) => [normalizeNotionId(p.id), p])) // Enrich from search when present
   const ordered: NotionSearchPage[] = [] // DFS order for layout
@@ -426,11 +465,17 @@ export async function collectMindmapSubtreeViaBlocks(
 
   /** Recurse block children; child_page / child_database become map frames. */
   const walk = async (blockParentId: string, owningPageId: string, depth: number) => {
+    if (signal?.aborted) {
+      const err = new Error('Import cancelled')
+      err.name = 'AbortError'
+      throw err
+    }
     if (depth > maxDepth) return // Cap API fan-out on huge trees
     let children
     try {
-      children = await fetchBlockChildren(accessToken, blockParentId)
+      children = await fetchBlockChildren(accessToken, blockParentId, signal)
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') throw err
       console.error('Mindmap block walk failed for', blockParentId, err)
       return
     }
@@ -439,10 +484,9 @@ export async function collectMindmapSubtreeViaBlocks(
         const childId = block.id // child_page block id === page id
         const parent: NotionPageParent = { type: 'page_id', page_id: owningPageId }
         const fromSearch = byId.get(normalizeNotionId(childId))
-        const titleFromBlock =
-          typeof (block as { child_page?: { title?: string } }).child_page?.title === 'string'
-            ? (block as { child_page: { title: string } }).child_page.title
-            : 'Untitled'
+        // Read once through the optional shape — a required-property cast doesn't overlap NotionBlock
+        const childPageTitle = (block as { child_page?: { title?: string } }).child_page?.title
+        const titleFromBlock = typeof childPageTitle === 'string' ? childPageTitle : 'Untitled'
 
         let page: NotionSearchPage | null = fromSearch
           ? { ...fromSearch, parent }
@@ -457,10 +501,8 @@ export async function collectMindmapSubtreeViaBlocks(
         if (push(page)) await walk(childId, childId, depth + 1) // Nested sub-pages
       } else if (block.type === 'child_database') {
         // Nested DBs often live under headings (parent.block_id) — still one map frame
-        const titleFromBlock =
-          typeof (block as { child_database?: { title?: string } }).child_database?.title === 'string'
-            ? (block as { child_database: { title: string } }).child_database.title
-            : 'Untitled database'
+        const childDbTitle = (block as { child_database?: { title?: string } }).child_database?.title
+        const titleFromBlock = typeof childDbTitle === 'string' ? childDbTitle : 'Untitled database'
         await addDatabaseFrame(block.id, titleFromBlock, {
           type: 'page_id',
           page_id: owningPageId, // Thread DB under the page that contains it
@@ -505,7 +547,10 @@ export async function collectMindmapSubtreeViaBlocks(
 }
 
 /** Flat list of every page/database currently shared with the connection (includes children). */
-export async function searchAllAccessibleNotionPages(accessToken: string): Promise<NotionSearchPage[]> {
+export async function searchAllAccessibleNotionPages(
+  accessToken: string,
+  signal?: AbortSignal // Optional Cancel from Import pages
+): Promise<NotionSearchPage[]> {
   const pages: NotionSearchPage[] = [] // Accumulator across paginated search
   let startCursor: string | undefined // Notion pagination cursor
 
@@ -522,6 +567,7 @@ export async function searchAllAccessibleNotionPages(accessToken: string): Promi
         start_cursor: startCursor, // Continue when present
         sort: { direction: 'ascending', timestamp: 'last_edited_time' }, // Stable-ish order
       }),
+      signal, // Abort when the picker Cancel fires
     })
 
     const payload = await res.json() // Parse Notion body
@@ -545,6 +591,7 @@ export async function searchAllAccessibleNotionPages(accessToken: string): Promi
         icon: result.icon ?? null, // Emoji / file icon for later UI
         title: extractTitle(result), // Human label for the note
         parent: (result.parent as NotionPageParent) ?? null, // Needed for tree nesting
+        lastEditedTime: typeof result.last_edited_time === 'string' ? result.last_edited_time : undefined, // Recents
       })
     }
 

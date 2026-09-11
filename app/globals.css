@@ -2,6 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Empty-board chrome hints — same FG Virgil as mindmap.so / Excalidraw */
+@font-face {
+  font-family: "Virgil";
+  src: url("/fonts/Virgil.woff2") format("woff2");
+  font-display: swap;
+}
+
 @layer base {
   :root {
     /* Dynamic viewport height for mobile Safari - updated via JavaScript */
@@ -26,6 +33,9 @@
     --input: 214.3 31.8% 91.4%;
     --ring: 222.2 84% 4.9%;
     --radius: 0.5rem;
+    --nod-blue: #3b82f6; /* Wordmark + selection chrome (Tailwind blue-500) */
+    --nod-selected: rgba(0, 0, 0, 0.06); /* Selected tab / menu hover wash — grey, not nod-blue */
+    --nod-tab-hover: #f3f4f6; /* Boards-nav row hover (gray-100) — light grey chip, visible on gray-50 chat */
   }
 
   .dark {
@@ -48,6 +58,8 @@
     --border: 0 0% 20%; /* Subtle borders */
     --input: 0 0% 15%; /* Input backgrounds */
     --ring: 0 0% 40%; /* Focus rings */
+    --nod-selected: rgba(255, 255, 255, 0.10); /* Grey selected wash on dark chrome */
+    --nod-tab-hover: #1f1f1f; /* Same as boards-nav row hover on dark */
   }
 }
 
@@ -60,6 +72,17 @@
   body {
     height: 100%;
     overflow: hidden; /* Prevent body scroll on mobile */
+  }
+
+  /* Marketing / docs scroll; board shells keep overflow:hidden above */
+  html:has([data-home-page]),
+  html:has([data-home-page]) body,
+  html:has([data-docs-page]),
+  html:has([data-docs-page]) body {
+    height: auto;
+    min-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
   
   body {
@@ -160,6 +183,58 @@
   color: inherit !important; /* Keep original text color */
 }
 
+/* Landing flashcard demo — board haze blur + hover peek + fleeting edge sparkles */
+.home-flashcard-answer {
+  transition:
+    filter 480ms ease-in-out,
+    opacity 480ms ease-in-out,
+    background 480ms ease-in-out; /* Short fade for mid-viewport peek in/out */
+  border-radius: 2px;
+}
+
+.home-flashcard-answer--hazed {
+  filter: blur(5px); /* Board hide-text blur strength */
+  opacity: 0.85;
+  background: rgba(120, 120, 120, 0.12); /* Soft frost so blur reads as intentional */
+  cursor: pointer;
+}
+
+@keyframes home-fleeting-bright {
+  0%,
+  100% {
+    opacity: 0;
+    transform: scale(0.35);
+  }
+  35%,
+  55% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.home-fleeting-bright {
+  animation: home-fleeting-bright 2.8s ease-in-out infinite; /* Staggered via inline delay */
+}
+
+/* AI interlude: fewer lit at once — longer cycle, brief peak */
+@keyframes home-fleeting-bright-slow {
+  0%,
+  18%,
+  100% {
+    opacity: 0;
+    transform: scale(0.35);
+  }
+  28%,
+  36% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.home-fleeting-bright-slow {
+  animation: home-fleeting-bright-slow 5.6s ease-in-out infinite;
+}
+
 /* Shimmer animation for loading text */
 @keyframes shimmer {
   0% {
@@ -209,14 +284,14 @@
   background-size: 200% 100%;
 }
 
-/* Text-content frames: one stub per TipTap block, same metrics as `.prose p` */
+/* Text-content frames: one stub per TipTap block, same metrics as board `.prose p` */
 .tt-frame-shimmer-lines {
   display: flex;
   flex-direction: column;
   gap: 0; /* Paragraphs have no extra margin — line box is the row */
   width: 100%;
   font-size: 0.875rem; /* Match `.prose` (14px) — not the RF node’s 16px */
-  line-height: 1.75; /* Match `.prose p` */
+  line-height: 1.25; /* Match board `.react-flow .prose p` */
   pointer-events: none;
 }
 
@@ -226,14 +301,14 @@
   }
 }
 
-/* RF shell only — same inset as frame contentFit (padX 6 / padY 4; ⋮⋮ outside fill) */
+/* RF shell only — same inset as frame contentFit (padX 2 / padY 2; ⋮⋮ outside fill) */
 .tt-frame-shimmer-frame-pad {
-  padding: 4px 6px; /* Match chat-panel-node BLOCK_FRAME_PAD_Y / _X */
+  padding: 2px; /* Match chat-panel-node BLOCK_FRAME_PAD_Y / _X */
   box-sizing: border-box;
 }
 
 .tt-frame-shimmer-line {
-  height: 1.75em; /* One `.prose p` line box */
+  height: 1.25em; /* One board `.prose p` line box */
   max-width: 100%;
   flex-shrink: 0;
   display: flex;
@@ -300,6 +375,134 @@
     #2a2a2a 100%
   );
   background-size: 200% 100%;
+}
+
+/* Board open/load greeting: T (left of the blob) hinges on the dot, then settles */
+@keyframes nn-icon-nod {
+  0% {
+    transform: rotate(0deg); /* Rest */
+  }
+  36% {
+    transform: rotate(-15deg); /* Counter-clockwise — T’s top drops (nod down) */
+  }
+  52% {
+    transform: rotate(-15deg); /* Hold the bow a beat */
+  }
+  78% {
+    transform: rotate(4deg); /* Tiny overshoot */
+  }
+  100% {
+    transform: rotate(0deg); /* Back to the default mark */
+  }
+}
+
+/* Chat loading: nod travel stays short; shorter bow-hold, longer rest before the next down */
+@keyframes nn-icon-nod-loop {
+  0% {
+    transform: rotate(0deg); /* Rest */
+  }
+  10% {
+    transform: rotate(-15deg); /* Down — ~250ms */
+  }
+  28% {
+    transform: rotate(-15deg); /* Hold down — shorter than the first loop cut */
+  }
+  40% {
+    transform: rotate(4deg); /* Up */
+  }
+  48% {
+    transform: rotate(0deg); /* Settled */
+  }
+  100% {
+    transform: rotate(0deg); /* Longer rest before nodding down again */
+  }
+}
+
+.nn-icon-nod-arm {
+  transform-origin: var(--nn-nod-cx) var(--nn-nod-cy); /* Blob center from the SVG */
+  transform-box: view-box; /* Origin is viewBox units, not the T’s bbox */
+  animation: nn-icon-nod 920ms cubic-bezier(0.4, 0, 0.2, 1) 700ms 1 both; /* After overlay fade; a bit slower than the first cut */
+}
+
+/* Empty board: nod, rest, nod, then blink in that second rest (~24s pair) */
+@keyframes nn-icon-nod-idle {
+  0% {
+    transform: rotate(0deg);
+  }
+  1.4% {
+    transform: rotate(-15deg); /* First nod down */
+  }
+  2% {
+    transform: rotate(-15deg);
+  }
+  3% {
+    transform: rotate(4deg);
+  }
+  3.85% {
+    transform: rotate(0deg); /* Rest (~11s) — no blink this gap */
+  }
+  50% {
+    transform: rotate(0deg);
+  }
+  51.4% {
+    transform: rotate(-15deg); /* Second nod */
+  }
+  52% {
+    transform: rotate(-15deg);
+  }
+  53% {
+    transform: rotate(4deg);
+  }
+  53.85% {
+    transform: rotate(0deg); /* Rest — blink plays on the blob in this gap */
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+.nn-icon-nod-arm-idle {
+  transform-origin: var(--nn-nod-cx) var(--nn-nod-cy);
+  transform-box: view-box;
+  animation: nn-icon-nod-idle 24s cubic-bezier(0.4, 0, 0.2, 1) 700ms infinite; /* Two nods; blink sits in the later rest */
+}
+
+/* Dot wink in the rest after every other nod (synced to the 24s idle pair) */
+@keyframes nn-icon-nod-blink {
+  0%,
+  70% {
+    transform: scaleY(1); /* Open */
+  }
+  70.5% {
+    transform: scaleY(0.12); /* Close — ~120ms */
+  }
+  71.3% {
+    transform: scaleY(1); /* Open — ~200ms wink total */
+  }
+  100% {
+    transform: scaleY(1);
+  }
+}
+
+.nn-icon-nod-dot-idle {
+  transform-origin: var(--nn-nod-cx) var(--nn-nod-cy); /* Squash through the blob center */
+  transform-box: view-box;
+  animation: nn-icon-nod-blink 24s ease-in-out 700ms infinite; /* Same clock as the idle T */
+}
+
+.nn-icon-nod-arm-loop {
+  transform-origin: var(--nn-nod-cx) var(--nn-nod-cy); /* Same hinge as the greeting */
+  transform-box: view-box;
+  animation: nn-icon-nod-loop 2.5s cubic-bezier(0.4, 0, 0.2, 1) infinite; /* ~450ms bow-hold, ~1.3s rest between downs */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nn-icon-nod-arm,
+  .nn-icon-nod-arm-idle,
+  .nn-icon-nod-arm-loop,
+  .nn-icon-nod-dot-idle {
+    animation: none; /* Static mark when motion is off */
+  }
 }
 
 /* Board load: placeholder shells fade out while real frames / threads fade in (300ms = BOARD_LOAD_FADE_MS) */
@@ -420,7 +623,7 @@ html:not(:has([data-toolbar-center][data-toolbar-ready])) [data-edit-menu-contex
 }
 
 /* Cookie-SSR may paint the desktop chat column; never steal map width on phone */
-@media (max-width: 899px) {
+@media (max-width: 767px) {
   [data-chat-sidebar]:not([data-chat-map-dock]) {
     display: none !important; /* Hide the desktop column only — phone map dock keeps data-chat-sidebar too */
   }
@@ -529,6 +732,25 @@ span[data-added="true"] {
     font-size: 0.875rem; /* 14px - ChatGPT chat text size */
   }
 
+  /* Board More menu → Default / Serif / Mono (frame TipTap + board links) */
+  [data-board-root][data-board-font='serif'] .react-flow .prose,
+  [data-board-root][data-board-font='serif'] .react-flow .ProseMirror,
+  [data-board-root][data-board-font='serif'] .react-flow .tt-board-link-label {
+    font-family: ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif;
+  }
+
+  [data-board-root][data-board-font='mono'] .react-flow .prose,
+  [data-board-root][data-board-font='mono'] .react-flow .ProseMirror,
+  [data-board-root][data-board-font='mono'] .react-flow .tt-board-link-label {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  }
+
+  [data-board-root][data-board-font='default'] .react-flow .prose,
+  [data-board-root][data-board-font='default'] .react-flow .ProseMirror,
+  [data-board-root][data-board-font='default'] .react-flow .tt-board-link-label {
+    font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  }
+
   /* Phone Safari auto-zooms focused editors under 16px — keep board TipTap at 16px on touch */
   @media (hover: none), (pointer: coarse) {
     .react-flow .prose,
@@ -546,7 +768,21 @@ span[data-added="true"] {
   .prose p {
     margin-top: 0;
     margin-bottom: 0;
-    line-height: 1.75;
+    line-height: 1.75; /* Chat / AI responses keep comfortable spacing */
+  }
+
+  /* Board frames: tighter line boxes so blocks hug glyphs (less air above/below text) */
+  .react-flow .prose {
+    line-height: 1.25;
+  }
+  .react-flow .prose p,
+  .react-flow .prose li {
+    line-height: 1.25;
+  }
+
+  /* Shaped frames: TipTap sits in the silhouette center (not top-left of the hug box) */
+  [data-tt-shape-center] .prose p {
+    text-align: center;
   }
 
   /* Extra spacing for paragraphs that look like section breaks or major ideas */
@@ -906,6 +1142,7 @@ span[data-added="true"] {
     border: none !important;
     border-radius: 8px !important; /* Same radius top + bottom */
     background-color: white !important;
+    touch-action: none; /* Phone: finger drag pans viewport, not page scroll */
   }
 
   /* Dark mode minimap */
@@ -976,10 +1213,11 @@ span[data-added="true"] {
   .react-flow.tt-thread-connecting .react-flow__handle.handle-dot.tt-connection-point.connectionindicator,
   .react-flow.tt-thread-connecting .react-flow__handle.handle-dot.tt-connection-point.connecting,
   .react-flow.tt-thread-connecting .react-flow__handle.handle-dot.tt-connection-point.valid {
-    width: 8px !important;
-    height: 8px !important;
-    min-width: 8px !important;
-    min-height: 8px !important;
+    /* boost/zoom — same screen hit size at every board zoom (invisible paint) */
+    width: calc(8px * var(--tt-frame-ui-scale, 1.4)) !important;
+    height: calc(8px * var(--tt-frame-ui-scale, 1.4)) !important;
+    min-width: calc(8px * var(--tt-frame-ui-scale, 1.4)) !important;
+    min-height: calc(8px * var(--tt-frame-ui-scale, 1.4)) !important;
     opacity: 0 !important;
     background: transparent !important;
     background-color: transparent !important;
@@ -1005,6 +1243,23 @@ span[data-added="true"] {
     cursor: grabbing;
   }
 
+  /* Draw bar Lasso: crosshair on empty page — left-drag traces a freehand selection */
+  .react-flow.tt-map-lasso-tool .react-flow__pane {
+    cursor: crosshair;
+  }
+
+  /* Draw bar insert space: drag opens a gap, so the whole board reads as a resize handle (frames included) */
+  .react-flow.tt-map-insert-space-v,
+  .react-flow.tt-map-insert-space-v .react-flow__pane,
+  .react-flow.tt-map-insert-space-v .react-flow__node {
+    cursor: row-resize;
+  }
+  .react-flow.tt-map-insert-space-h,
+  .react-flow.tt-map-insert-space-h .react-flow__pane,
+  .react-flow.tt-map-insert-space-h .react-flow__node {
+    cursor: col-resize;
+  }
+
   /* Board chrome: never select pane / overlay text on long-press (iOS callout) */
   .react-flow__pane,
   .react-flow__renderer,
@@ -1014,6 +1269,39 @@ span[data-added="true"] {
     user-select: none;
     -webkit-touch-callout: none;
   }
+  /*
+   * Screen-constant frame chrome — live `--tt-board-zoom` from syncBoardZoomCss (not React).
+   * boost/zoom keeps connection indicators, resize dots/stroke, and rotate·fit·wrap the same
+   * screen size while navigationZoom freezes store selectors mid-pinch/wheel.
+   */
+  .react-flow {
+    --tt-board-zoom: 1;
+    --tt-frame-chrome-boost: 1.4;
+    --tt-frame-ui-scale: calc(var(--tt-frame-chrome-boost) / var(--tt-board-zoom));
+    --tt-frame-line-w: calc(1px * var(--tt-frame-ui-scale));
+    --tt-frame-line-hit: calc(5px * var(--tt-frame-ui-scale));
+    /* Dot paint is FIXED local px — screen size via transform scale(ui), not shrinking width */
+    --tt-frame-handle: 10px;
+    --tt-frame-handle-border: 1.5px;
+    --tt-frame-indicator: 10px;
+    --tt-frame-indicator-border: 1.5px;
+  }
+  /*
+   * Threads: stroke / dash / knobs / hit band are view-relative via `--tt-board-zoom`.
+   * Do not set inline stroke-width from React — navigationZoom freezes mid-pinch and
+   * does not re-render on settle, so JS 1/zoom left strokes riding the viewport scale.
+   */
+  .react-flow__edge-path {
+    stroke-width: calc(var(--tt-edge-w, 2) * 1px / var(--tt-board-zoom, 1));
+  }
+  .react-flow__edge-path.tt-thread-dotted {
+    stroke-dasharray: calc(5px / var(--tt-board-zoom, 1)), calc(5px / var(--tt-board-zoom, 1));
+  }
+  .react-flow__edge-interaction {
+    stroke-width: calc(20px / var(--tt-board-zoom, 1)) !important; /* ~20px screen hit band */
+  }
+  /* Thread knobs / on-path dots: size via transform scale in thread-view-stroke.css
+     (same pattern as frame resize dots) — do not also divide `r` by zoom here. */
   /* Phone select: stop the browser from panning the page so the marquee/frame drag can run */
   .react-flow__pane {
     touch-action: none;
@@ -1107,7 +1395,7 @@ span[data-added="true"] {
 
   .react-flow__connectionline-path {
     stroke: #b1b1b7 !important;
-    stroke-width: 2 !important;
+    /* Width from `--tt-edge-w` / `--tt-board-zoom` (see thread block above) — not fixed 2 */
     opacity: 1 !important;
   }
 
@@ -1421,9 +1709,12 @@ span[data-added="true"] {
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1) !important;
   }
 
-  /* Frame connection points stay on the edge; selected state must NOT un-hide them (indicators are separate) */
-  .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point {
-    left: 0 !important;
+  /* Frame connection points stay on the **fill** edge; selected gutters are outside that.
+     Park L/R handles at `--tt-adjust-pad-x` so RF geometry + settled threads meet the peach
+     frame, not the blue adjust box. Top/bottom have no chrome band (pad Y = 0). */
+  .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point[data-handlepos="left"],
+  .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-left {
+    left: var(--tt-adjust-pad-x, 0px) !important;
     right: auto !important;
     top: 50% !important;
     bottom: auto !important;
@@ -1432,19 +1723,24 @@ span[data-added="true"] {
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point[data-handlepos="right"],
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-right {
     left: auto !important;
-    right: 0 !important;
+    right: var(--tt-adjust-pad-x, 0px) !important;
+    top: 50% !important;
+    bottom: auto !important;
     transform: translate(50%, -50%) !important;
   }
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point[data-handlepos="top"],
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-top {
     left: 50% !important;
     top: 0 !important;
+    right: auto !important;
+    bottom: auto !important;
     transform: translate(-50%, -50%) !important;
   }
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point[data-handlepos="bottom"],
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-bottom {
     left: 50% !important;
     top: auto !important;
+    right: auto !important;
     bottom: 0 !important;
     transform: translate(-50%, 50%) !important;
   }
@@ -1486,11 +1782,17 @@ span[data-added="true"] {
     background-image: linear-gradient(#3b82f6, #3b82f6) !important;
     background-size: var(--tt-frame-line-w, 1.5px) 100% !important;
   }
-  /* Square adjust ring paints the stroke — keep line controls as invisible hit targets only */
-  .react-flow__node-chatPanel .tt-frame-resize-line-hit.top,
-  .react-flow__node-chatPanel .tt-frame-resize-line-hit.bottom,
-  .react-flow__node-chatPanel .tt-frame-resize-line-hit.left,
-  .react-flow__node-chatPanel .tt-frame-resize-line-hit.right {
+  /* Square adjust ring paints the stroke — keep line controls as invisible hit targets only.
+     Must beat `.react-flow__resize-control.line.{side}` (4 classes) or the blue line stroke
+     still paints → double border (outer RF lines + inner fill boxShadow). */
+  .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.top,
+  .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.bottom,
+  .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.left,
+  .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.right,
+  .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.top,
+  .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.bottom,
+  .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.left,
+  .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.right {
     background-image: none !important;
   }
   .dark .react-flow__node-chatPanel .react-flow__resize-control.line.top,
@@ -1503,25 +1805,113 @@ span[data-added="true"] {
   .dark .react-flow__node-chatPanel .tt-frame-resize-line.right {
     background-image: linear-gradient(#60a5fa, #60a5fa) !important;
   }
-  .dark .react-flow__node-chatPanel .tt-frame-resize-line-hit.top,
-  .dark .react-flow__node-chatPanel .tt-frame-resize-line-hit.bottom,
-  .dark .react-flow__node-chatPanel .tt-frame-resize-line-hit.left,
-  .dark .react-flow__node-chatPanel .tt-frame-resize-line-hit.right {
+  .dark .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.top,
+  .dark .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.bottom,
+  .dark .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.left,
+  .dark .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.right,
+  .dark .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.top,
+  .dark .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.bottom,
+  .dark .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.left,
+  .dark .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.right {
     background-image: none !important;
   }
 
-  /* Item corner resize handles — circular dots; size from --tt-frame-handle on the panel */
+  /* Item corner resize handles — fixed local disc + scale(ui) (keeps ring:fill ratio + roundness) */
   .react-flow__node-chatPanel .react-flow__resize-control.handle {
     border-radius: 50% !important; /* Circles, not RF squares */
     width: var(--tt-frame-handle, 10px) !important;
     height: var(--tt-frame-handle, 10px) !important;
     min-width: var(--tt-frame-handle, 10px) !important;
     min-height: var(--tt-frame-handle, 10px) !important;
+    max-width: var(--tt-frame-handle, 10px) !important; /* Prevent non-square → pill */
+    max-height: var(--tt-frame-handle, 10px) !important;
     background-color: #ffffff !important;
     border: var(--tt-frame-handle-border, 1.5px) solid #9ca3af !important;
     box-sizing: border-box !important;
+    /* RF centers on the corner; scale counters board zoom so the ring never goes subpixel */
+    transform: translate(-50%, -50%) scale(var(--tt-frame-ui-scale, 1.4)) !important;
+    transform-origin: center center !important;
     pointer-events: all !important; /* Must receive drag (nodrag) before node drag */
     z-index: 60 !important;
+  }
+
+  /*
+   * Connection indicators — fixed local disc + scale(ui); outset still flow-scaled.
+   * Shrinking width/border in flow space made rings eat the fill and go jagged when zoomed in.
+   */
+  [data-panel-container='true'] > [data-tt-connection-indicator] {
+    width: var(--tt-frame-indicator, 10px) !important;
+    height: var(--tt-frame-indicator, 10px) !important;
+    border-width: var(--tt-frame-indicator-border, 1.5px) !important;
+    border-style: solid !important;
+    border-color: #ffffff !important;
+    box-sizing: border-box !important;
+    border-radius: 50% !important;
+    box-shadow: none !important;
+    transform-origin: center center !important;
+  }
+  [data-panel-container='true'] > [data-tt-connection-indicator='left'] {
+    left: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    top: 50% !important;
+    right: auto !important;
+    bottom: auto !important;
+    transform: translate(-50%, -50%) scale(var(--tt-frame-ui-scale, 1.4)) !important;
+  }
+  [data-panel-container='true'] > [data-tt-connection-indicator='right'] {
+    right: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    top: 50% !important;
+    left: auto !important;
+    bottom: auto !important;
+    transform: translate(50%, -50%) scale(var(--tt-frame-ui-scale, 1.4)) !important;
+  }
+  [data-panel-container='true'] > [data-tt-connection-indicator='top'] {
+    top: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    left: 50% !important;
+    right: auto !important;
+    bottom: auto !important;
+    transform: translate(-50%, -50%) scale(var(--tt-frame-ui-scale, 1.4)) !important;
+  }
+  [data-panel-container='true'] > [data-tt-connection-indicator='bottom'] {
+    bottom: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    left: 50% !important;
+    right: auto !important;
+    top: auto !important;
+    transform: translate(-50%, 50%) scale(var(--tt-frame-ui-scale, 1.4)) !important;
+  }
+
+  /* Chat-link cue — same screen-constant outset as connection indicators */
+  [data-panel-container='true'] > [data-tt-chat-link-cue='left'] {
+    left: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    top: 50% !important;
+    right: auto !important;
+    bottom: auto !important;
+  }
+  [data-panel-container='true'] > [data-tt-chat-link-cue='right'] {
+    right: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    top: 50% !important;
+    left: auto !important;
+    bottom: auto !important;
+  }
+  [data-panel-container='true'] > [data-tt-chat-link-cue='top'] {
+    top: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    left: 50% !important;
+    right: auto !important;
+    bottom: auto !important;
+  }
+  [data-panel-container='true'] > [data-tt-chat-link-cue='bottom'] {
+    top: calc(100% + 14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    left: 50% !important;
+    right: auto !important;
+    bottom: auto !important;
+  }
+
+  /* Rotate · fit · wrap — scale from live CSS zoom; margin-top = 2× indicator outset
+     so air below the bottom connection point matches air above it (box → point). */
+  [data-frame-chrome] {
+    margin-top: calc(28px * var(--tt-frame-ui-scale, 1.4)) !important;
+    margin-left: calc(-8px * var(--tt-frame-ui-scale, 1.4)) !important;
+    transform: scale(var(--tt-frame-ui-scale, 1.4)) !important;
+    transform-origin: top left !important;
   }
 
   .dark .react-flow__node-chatPanel .react-flow__resize-control.handle {
@@ -1694,6 +2084,14 @@ span[data-added="true"] {
   .dark [data-tt-property-header].tt-block-highlight {
     background-color: rgba(59, 130, 246, 0.22);
   }
+  /* Top property strip — wraps inside the frame (no horizontal scroll / …) */
+  [data-tt-property-band] {
+    min-width: 0;
+    max-width: 100%;
+  }
+  [data-tt-property-header] {
+    width: 100%;
+  }
   /* Connections bottom strip — strip wash only when ⋮⋮-armed (hover = mark only) */
   [data-tt-connections-header].tt-block-highlight {
     background-color: rgba(35, 131, 226, 0.14);
@@ -1701,6 +2099,69 @@ span[data-added="true"] {
   }
   .dark [data-tt-connections-header].tt-block-highlight {
     background-color: rgba(59, 130, 246, 0.22);
+  }
+
+  /* Menu surface for the frame / block / text / board menus (and their flyouts): slightly
+     see-through so board content reads underneath, with a blur so text stays legible.
+     Replaces the `bg-white dark:bg-[#1f1f1f]` pair on those shells — keep it a class (not a
+     Tailwind utility) so nothing has to fight utility source order for the background.
+     The blur lives on a ::before pane, NOT on the shell: `backdrop-filter` on the shell would
+     make it a backdrop root for its own flyouts, and a flyout hanging outside the card then
+     samples an empty backdrop — submenus rendered thinner than the card at any alpha. One level
+     down, the shell is a plain box, so every flyout samples the real page backdrop (board + any
+     card under it) and card/submenu blur identically. The pane needs the shell positioned (all
+     shells are) with a stacking context (placement `transform`, else an explicit `z-0`) so
+     `z-index: -1` lands behind the rows rather than behind the page. */
+  .tt-menu-surface {
+    /* Alpha is the knob: lower = more board shows through. Blur stays light — a heavy blur
+       smears the backdrop into a flat wash, which reads as opaque even at low alpha.
+       The wash stays on the element (a background never scrolls, so `overflow-y-auto` menus
+       keep it), while the blur rides the pane below. */
+    background-color: rgba(255, 255, 255, 0.6);
+  }
+  /* Frame / block / thread menus: shrink height from the bottom and scroll — never squash row height. */
+  [data-tt-menu-body],
+  [data-tt-menu-flyout] {
+    min-height: 0; /* Flex child can scroll instead of compressing rows */
+    overscroll-behavior: contain;
+    touch-action: pan-y; /* Phone: finger drag scrolls the list, not the board */
+    -webkit-overflow-scrolling: touch; /* iOS momentum scroll inside clamped menus */
+  }
+  [data-tt-menu-body] > *,
+  [data-tt-menu-flyout] > * {
+    flex-shrink: 0; /* Rows keep h-8; overflow-y-auto clips from the bottom */
+  }
+  [data-tt-menu-flyout] .overflow-y-auto {
+    min-height: 0; /* Nested scroller inside a clamped flyout */
+  }
+  [data-tt-menu-flyout] button {
+    flex-shrink: 0; /* Flyout rows stay full height when the lane is short */
+  }
+  .dark .tt-menu-surface {
+    background-color: rgba(31, 31, 31, 0.64); /* #1f1f1f, a touch denser so light text holds */
+  }
+  /* Selected tab / current menu row — grey wash (not nod-blue). */
+  .tt-selected {
+    background-color: var(--nod-selected);
+  }
+  /* Hovered board tab / chat user-prompt frame — solid light grey (not the composer). */
+  .tt-tab-hover {
+    background-color: var(--nod-tab-hover);
+  }
+  /* Board / frame / block / thread menu hover — same grey wash as selected tabs. Beats ghost hover:bg-accent. */
+  .tt-menu-surface button:hover:not(:disabled) {
+    background-color: var(--nod-selected);
+  }
+
+  .tt-menu-surface::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1; /* Paints after the shell's own wash, before the rows */
+    border-radius: inherit;
+    pointer-events: none;
+    backdrop-filter: blur(6px) saturate(140%);
+    -webkit-backdrop-filter: blur(6px) saturate(140%);
   }
 
   /* Preview chrome: semi-transparent, icon-only pill; left is set in JS so it stays inside the frame
@@ -1871,12 +2332,96 @@ span[data-added="true"] {
     color: #9ca3af;
   }
 
+  .ProseMirror .tt-capture-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    max-width: 100%;
+  }
+  .ProseMirror .tt-capture-link-label {
+    outline: none;
+    text-decoration: underline;
+    text-decoration-color: rgba(55, 53, 47, 0.28);
+    text-underline-offset: 2px;
+    cursor: pointer;
+    border-radius: 3px;
+    min-width: 1ch;
+    white-space: pre-wrap;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+  }
+  .dark .ProseMirror .tt-capture-link-label {
+    text-decoration-color: rgba(255, 255, 255, 0.28);
+  }
+
+  /* Deferred TipTap shell — boardLink title/icon without mounting the NodeView (semantic zoom / near-miss). */
+  .tt-board-link-deferred {
+    display: inline-flex;
+    align-items: flex-start;
+    gap: 0.4rem;
+    max-width: 100%;
+    pointer-events: none;
+  }
+  .tt-board-link-deferred-title {
+    margin-bottom: 0.4rem;
+  }
+  .tt-board-link-deferred-icon {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .tt-board-link-deferred-emoji {
+    font-size: 1.05em;
+    line-height: 1;
+  }
+  .tt-board-link-deferred-title .tt-board-link-deferred-emoji {
+    font-size: 1.6em;
+  }
+  .tt-board-link-deferred-title .tt-board-link-deferred-fallback {
+    width: 1.4rem;
+    height: 1.4rem;
+  }
+  .tt-board-link-deferred-label {
+    text-decoration: underline;
+    text-decoration-color: rgba(55, 53, 47, 0.28);
+    text-underline-offset: 2px;
+    min-width: 1ch;
+    white-space: pre-wrap;
+  }
+  .tt-board-link-deferred-title .tt-board-link-deferred-label {
+    font-size: 1.4em;
+    font-weight: 600;
+  }
+
   /* databaseBlock — Notion-like structured table (header + live property grid) */
   .ProseMirror .tt-database-block {
     position: relative;
     margin: 2px 0;
     width: max-content; /* Hug the table so locked frames size to columns */
     max-width: 100%;
+  }
+  /* Free-resize: full width only — height comes from scroll maxHeight (not flex, avoids 0-height collapse) */
+  .ProseMirror[data-frame-free-resize] .tt-database-block {
+    width: 100%;
+    max-width: 100%;
+  }
+  /* Hover clip preview: show the full table (all columns × rows), not the clipped viewport */
+  .ProseMirror[data-clip-preview] .tt-database-block,
+  .ProseMirror[data-frame-free-resize][data-clip-preview] .tt-database-block {
+    width: max-content;
+    max-width: none;
+  }
+  .ProseMirror[data-clip-preview] .tt-notion-db {
+    width: max-content;
+    max-width: none;
+  }
+  .ProseMirror[data-clip-preview] .tt-notion-db-scroll,
+  .ProseMirror[data-clip-preview] .tt-db-table-wrap {
+    max-height: none !important;
+    overflow: visible !important;
   }
   .ProseMirror .tt-database-block-row {
     display: inline-flex;
@@ -1890,17 +2435,63 @@ span[data-added="true"] {
     /* Let board-rotation receive two-finger pinch immediately (pan-x/pan-y blocks pinch on iOS) */
     touch-action: none;
   }
+  /* Selected frame: internal DB scroll (wheel / touch) — parent keeps touch-action:none for pinch */
+  .ProseMirror .tt-notion-db-scroll-active {
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  /* Capped DB table — … at top/bottom when not fully scrolled (matches property strip) */
+  .ProseMirror .tt-notion-db-scroll-wrap.tt-notion-db-v-overflow:not(.tt-notion-db-at-top)::before,
+  .ProseMirror .tt-notion-db-scroll-wrap.tt-notion-db-v-overflow:not(.tt-notion-db-at-bottom)::after {
+    content: '…';
+    position: absolute;
+    left: 0;
+    right: 0;
+    z-index: 3;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    line-height: 1;
+    color: rgb(156 163 175);
+    pointer-events: none;
+  }
+  .ProseMirror .tt-notion-db-scroll-wrap.tt-notion-db-v-overflow:not(.tt-notion-db-at-top)::before {
+    top: 0;
+    background: linear-gradient(to bottom, rgba(249, 250, 251, 0.98) 55%, transparent);
+  }
+  .ProseMirror .tt-notion-db-scroll-wrap.tt-notion-db-v-overflow:not(.tt-notion-db-at-bottom)::after {
+    bottom: 0;
+    background: linear-gradient(to top, rgba(249, 250, 251, 0.98) 55%, transparent);
+  }
+  .dark .ProseMirror .tt-notion-db-scroll-wrap.tt-notion-db-v-overflow:not(.tt-notion-db-at-top)::before {
+    background: linear-gradient(to bottom, rgba(15, 15, 15, 0.98) 55%, transparent);
+  }
+  .dark .ProseMirror .tt-notion-db-scroll-wrap.tt-notion-db-v-overflow:not(.tt-notion-db-at-bottom)::after {
+    background: linear-gradient(to top, rgba(15, 15, 15, 0.98) 55%, transparent);
+  }
   /* During pinch: don’t let the table steal touches for scroll (viewport still transforms live) */
   .react-flow.tt-board-navigating .ProseMirror .tt-notion-db {
     pointer-events: none;
   }
+  /* Do NOT promote frame nodes with will-change during navigate — that caches a texture so
+     screen-constant chrome (handles / stroke / indicators) only updates after the gesture. */
   /* TipTap `.prose table th/td` draws a full box on every cell — wipe that so DB
-     tables have no outer perimeter (Notion-like: internal dividers only). */
+     tables have no outer perimeter (Notion-like: internal dividers only).
+     Cold replay keeps a real `.ProseMirror` inside `[data-tt-cold-frame]`, so the same
+     selectors apply; also pin margin/font-size or `.prose table { margin:1.25em; font-size:0.875rem }`
+     still leaks through and makes idle/snapshot row rhythm diverge from warm. */
   .ProseMirror .tt-notion-db table,
   .ProseMirror .tt-notion-db th,
   .ProseMirror .tt-notion-db td {
     border: none !important;
     background-color: transparent;
+  }
+  .ProseMirror .tt-notion-db table {
+    margin: 0 !important;
+    font-size: inherit !important;
   }
   .ProseMirror .tt-notion-db tr:nth-child(even) {
     background-color: transparent; /* Override prose zebra striping */
@@ -1918,7 +2509,7 @@ span[data-added="true"] {
   }
   .ProseMirror .tt-notion-db th,
   .ProseMirror .tt-notion-db td {
-    padding: 0.25rem 0.5rem; /* Compact — override prose 0.75rem */
+    padding: 0.25rem 0.5rem !important; /* Compact — override prose 0.75rem */
     overflow: hidden; /* Cutoff unwrapped text at the cell edge */
     vertical-align: middle;
   }
@@ -2065,6 +2656,13 @@ span[data-added="true"] {
   .ProseMirror .tt-image-block-media {
     position: relative;
     width: 100%;
+    max-width: 100%;
+    cursor: pointer;
+  }
+  .ProseMirror .tt-image-block-media-selected {
+    outline: 2px solid #3b82f6;
+    outline-offset: 2px;
+    border-radius: 0.5rem;
   }
   .ProseMirror .tt-image-block-img {
     display: block;
@@ -2072,23 +2670,94 @@ span[data-added="true"] {
     height: auto;
     border-radius: 0.375rem;
   }
-  .ProseMirror .tt-image-block-replace {
-    position: absolute;
-    top: 0.4rem;
-    right: 0.4rem;
-    display: none;
-    height: 1.5rem;
-    padding: 0 0.5rem;
-    border-radius: 0.375rem;
-    border: none;
-    background: rgba(0, 0, 0, 0.65);
-    color: #fff;
-    font-size: 0.7rem;
+  /* Image blur — same frost as Hide text (click to reveal temporarily) */
+  .ProseMirror .tt-image-block-hazed[data-haze="true"] {
+    filter: blur(5px);
+    opacity: 0.85;
     cursor: pointer;
+    background: rgba(120, 120, 120, 0.12);
+    transition: filter 120ms ease, opacity 120ms ease, background 120ms ease;
   }
-  .ProseMirror .tt-image-block-media:hover .tt-image-block-replace {
+  .ProseMirror .tt-image-block-hazed[data-haze="true"].tt-image-block-hazed-revealed {
+    filter: none;
+    opacity: 1;
+    background: transparent;
+  }
+  .dark .ProseMirror .tt-image-block-hazed[data-haze="true"] {
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .ProseMirror .tt-image-block-busy {
+    position: absolute;
+    inset: 0;
+    border-radius: 0.375rem;
+    background: rgba(255, 255, 255, 0.55);
+    pointer-events: none;
+  }
+  .dark .ProseMirror .tt-image-block-busy {
+    background: rgba(0, 0, 0, 0.45);
+  }
+  .tt-image-block-crop-toolbar {
+    position: fixed;
+    top: 0.75rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1003;
+    display: flex;
+    gap: 0.35rem;
+    padding: 0.25rem;
+    border-radius: 0.5rem;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  }
+  .dark .tt-image-block-crop-toolbar {
+    background: rgba(31, 31, 31, 0.95);
+    border-color: #2f2f2f;
+  }
+  .tt-image-block-crop-btn {
     display: inline-flex;
     align-items: center;
+    gap: 0.25rem;
+    height: 1.75rem;
+    padding: 0 0.55rem;
+    border-radius: 0.375rem;
+    border: none;
+    background: transparent;
+    font-size: 0.75rem;
+    color: #374151;
+    cursor: pointer;
+  }
+  .tt-image-block-crop-btn:hover {
+    background: #f3f4f6;
+  }
+  .dark .tt-image-block-crop-btn {
+    color: #e5e7eb;
+  }
+  .dark .tt-image-block-crop-btn:hover {
+    background: #2a2a2a;
+  }
+  .tt-image-block-crop-done {
+    color: #2563eb;
+  }
+  .tt-image-block-crop-box {
+    position: fixed;
+    z-index: 1002;
+    border: 2px solid #3b82f6;
+    border-radius: 0.25rem;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
+    cursor: move;
+    touch-action: none;
+  }
+  .tt-image-block-crop-handle {
+    position: absolute;
+    right: -5px;
+    bottom: -5px;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    background: #3b82f6;
+    border: 1px solid #fff;
+    cursor: nwse-resize;
   }
 
   /* propertyBlock — Turn into Property (type icon + Empty cell; frame still has top icon) */
@@ -2122,7 +2791,7 @@ span[data-added="true"] {
     align-items: center;
     justify-content: center;
     width: 20px;
-    height: 20px;
+    height: 24px; /* Centers the glyph on the first value line (line-height 1.7 × 14px) */
     color: #6b7280;
   }
   .dark .ProseMirror .tt-property-block-icon {
@@ -2132,10 +2801,10 @@ span[data-added="true"] {
     flex: 1 1 auto;
     min-width: 140px; /* Icon + Empty placeholder inside the box */
     display: flex;
-    align-items: center;
+    align-items: flex-start; /* Wrapped value grows down; icon stays on the first line */
     gap: 6px;
-    height: 28px;
-    padding: 0 8px 0 4px; /* Tighter left so the type icon sits nearer the cell edge */
+    min-height: 28px; /* Single-line box unchanged; wrapped values grow taller */
+    padding: 2px 8px 2px 4px; /* Tighter left so the type icon sits nearer the cell edge */
     border: 1px solid transparent; /* Visible only when frame selected + block hovered */
     border-radius: 6px;
     background: transparent; /* No fill — sits on the frame wash */
@@ -2156,8 +2825,19 @@ span[data-added="true"] {
   .tt-frame-unselected .ProseMirror .tt-property-block-cell {
     border-color: transparent; /* Unselected hover must not reveal the cell chrome */
   }
+  .ProseMirror .tt-property-block-value {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+  }
   .ProseMirror .tt-property-block-input {
+    /* Wrap mode: stretch with the box and wrap at the frame width (height fits scrollHeight) */
     width: 100%;
+    min-width: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere; /* Unbroken ids (Notion relations) break instead of overflowing */
+    overflow: hidden; /* Height is fitted to scrollHeight — no inner scrollbar */
+    resize: none;
     border: none;
     background: transparent;
     outline: none;
@@ -2165,6 +2845,13 @@ span[data-added="true"] {
     font-size: 14px;
     line-height: 1.7;
     color: inherit;
+  }
+  /* Fit-to-text frame: value stays on ONE line like every other block; the NodeView sets an
+     explicit glyph width (a textarea sizes from `cols`, not its value) and the frame hug reads
+     that same width, so the frame fits the cell instead of clipping it. */
+  .ProseMirror[data-single-line="true"] .tt-property-block-input {
+    white-space: pre;
+    overflow-wrap: normal;
   }
   .ProseMirror .tt-property-block-input::placeholder {
     color: #9ca3af;
@@ -2176,7 +2863,7 @@ span[data-added="true"] {
   /* Turn into — Notion-like block type chrome */
   .ProseMirror .tt-callout {
     border-radius: 0.5rem;
-    padding: 0.75rem 0.9rem;
+    padding: 0.15rem 0.5rem; /* Tight to glyphs — was 0.75rem and floated text in the wash */
     background: #f1f5f9;
     border-left: 3px solid #64748b;
   }
@@ -2295,3 +2982,81 @@ span[data-added="true"] {
   border-color: #60a5fa; /* blue-400 */
   background-color: rgba(37, 99, 235, 0.22);
 }
+
+/*
+ * Electron desktop shell (Notion-style frameless window).
+ * `html.nn-desktop*` is set by desktop/preload.cjs + ViewportHeightFix.
+ */
+html.nn-desktop [data-edit-top-bar],
+html.nn-desktop [data-home-page] nav,
+html.nn-desktop [data-docs-page] nav {
+  -webkit-app-region: drag; /* Drag the window from the web top bar */
+}
+
+/* Clicks must reach controls — not start a window drag */
+html.nn-desktop [data-edit-top-bar] a,
+html.nn-desktop [data-edit-top-bar] button,
+html.nn-desktop [data-edit-top-bar] input,
+html.nn-desktop [data-edit-top-bar] textarea,
+html.nn-desktop [data-edit-top-bar] select,
+html.nn-desktop [data-edit-top-bar] [role='button'],
+html.nn-desktop [data-edit-top-bar] [role='combobox'],
+html.nn-desktop [data-edit-top-bar] [data-radix-collection-item],
+html.nn-desktop [data-home-page] nav a,
+html.nn-desktop [data-home-page] nav button,
+html.nn-desktop [data-docs-page] nav a,
+html.nn-desktop [data-docs-page] nav button {
+  -webkit-app-region: no-drag;
+}
+
+/* macOS traffic lights overlay the left of the board / marketing top bar */
+html.nn-desktop-darwin [data-edit-top-bar] {
+  padding-left: 78px !important; /* Clear red/yellow/green; matches trafficLightPosition */
+}
+html.nn-desktop-darwin [data-home-page] nav,
+html.nn-desktop-darwin [data-docs-page] nav {
+  padding-left: 4.5rem; /* Same clearance on marketing chrome */
+}
+
+/* Windows caption buttons sit on the right via titleBarOverlay */
+html.nn-desktop-win32 [data-edit-top-bar] {
+  padding-right: 140px !important;
+}
+html.nn-desktop-win32 [data-home-page] nav,
+html.nn-desktop-win32 [data-docs-page] nav {
+  padding-right: 8.75rem;
+}
+
+/*
+ * Capacitor iOS shell — notch / Dynamic Island / home indicator.
+ * `html.nn-capacitor*` is set by ViewportHeightFix when window.Capacitor is native.
+ * contentInset is `never` so we own insets via CSS (not a double-padded WKWebView).
+ */
+html.nn-capacitor {
+  --nn-safe-top: env(safe-area-inset-top, 0px);
+  --nn-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --nn-safe-left: env(safe-area-inset-left, 0px);
+  --nn-safe-right: env(safe-area-inset-right, 0px);
+}
+
+/* Push the whole top chrome (bar) below the status bar / Dynamic Island */
+html.nn-capacitor [data-edit-panel-root] {
+  padding-top: var(--nn-safe-top);
+}
+
+/* Marketing / docs nav — same clearance when opened in the shell */
+html.nn-capacitor [data-home-page] nav,
+html.nn-capacitor [data-docs-page] nav {
+  padding-top: var(--nn-safe-top);
+}
+
+/*
+ * Lift Free nav / minimap / brand above the home indicator.
+ * Inline `bottom` stays as-is; translate avoids fighting React style props.
+ */
+html.nn-capacitor [data-nn-safe-bottom] {
+  transform: translateY(calc(-1 * var(--nn-safe-bottom)));
+}
+
+
+

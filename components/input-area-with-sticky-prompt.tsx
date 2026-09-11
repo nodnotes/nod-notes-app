@@ -5,6 +5,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { EditPanel } from './sticky-prompt-panel'
 import { useReactFlowContext } from './react-flow-context'
 import { PillSelect } from './pill-select'
+import { BoardFilterSortBar } from './board-filter-sort-menu' // Criteria under the mode pill
 import { PhoneModeMenuProvider } from './phone-mode-menu-context' // Phone: mode dropdown + tools in the pill
 import { useSidebarContext } from './sidebar-context' // phoneDockTight: hide tools while landscape keyboard is up
 import { useUserPreference } from '@/lib/hooks/use-user-preferences'
@@ -12,7 +13,7 @@ import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
 
 export function InputAreaWithStickyPrompt({ conversationId, projectId }: { conversationId?: string; projectId?: string }) {
-  const { phoneDockTight } = useSidebarContext() // Landscape + keyboard: hide top bar / pill so the Ask row can sit in the strip
+  const { phoneDockTight, chatChromeReady } = useSidebarContext() // Wait for chat column restore before measuring map width
   const [inputHeight, setInputHeight] = useState(52) // Default height
   const [maxWidth, setMaxWidth] = useState(768) // Default max-w-3xl (768px)
   const [isCentered, setIsCentered] = useState(false) // Whether input should be centered
@@ -37,9 +38,10 @@ export function InputAreaWithStickyPrompt({ conversationId, projectId }: { conve
   const [isPromptFadingOut, setIsPromptFadingOut] = useState(false) // Track if prompt box is fading out (for smooth opacity transition)
   const [minimapRight, setMinimapRight] = useState(15) // Track minimap right position to align hover area
   const { setPanelWidth, setIsPromptBoxCentered, editMenuPillMode, setEditMenuPillMode } = useReactFlowContext() // Mode pill + prompt-box layout
-
   // Calculate available width for input - switches between left-aligned and centered based on right gap
   useEffect(() => {
+    if (!chatChromeReady) return // Chat column width not final yet — avoid full-width measure then collapse
+
     const calculateMaxWidth = () => {
       // Calculate width using actual map area width to maintain consistent gap
       // This prevents overlap with sidebar on window collapse and maintains same gap as top bar
@@ -161,14 +163,31 @@ export function InputAreaWithStickyPrompt({ conversationId, projectId }: { conve
     if (minimapResizeObserver && minimapElement) {
       minimapResizeObserver.observe(minimapElement)
     }
+
+    // Map column shrinks when chat opens/resizes — recalc prompt width from live pane size
+    const reactFlowElement = document.querySelector('.react-flow') as HTMLElement | null
+    const mapResizeObserver = reactFlowElement
+      ? new ResizeObserver(() => calculateMaxWidth())
+      : null
+    if (mapResizeObserver && reactFlowElement) mapResizeObserver.observe(reactFlowElement)
+
+    const chatColumn = document.querySelector(
+      '[data-chat-sidebar]:not([data-chat-map-dock])'
+    ) as HTMLElement | null
+    const chatResizeObserver = chatColumn
+      ? new ResizeObserver(() => calculateMaxWidth())
+      : null
+    if (chatResizeObserver && chatColumn) chatResizeObserver.observe(chatColumn)
     
     return () => {
       window.removeEventListener('resize', calculateMaxWidth)
       if (sidebarObserver) sidebarObserver.disconnect()
       if (minimapObserver) minimapObserver.disconnect()
       if (minimapResizeObserver) minimapResizeObserver.disconnect()
+      mapResizeObserver?.disconnect()
+      chatResizeObserver?.disconnect()
     }
-  }, [])
+  }, [chatChromeReady, setPanelWidth, setIsPromptBoxCentered])
 
   // Calculate minimap right position for hover area alignment
   useEffect(() => {
@@ -220,7 +239,7 @@ export function InputAreaWithStickyPrompt({ conversationId, projectId }: { conve
     }
   }, [])
 
-  // Overlay is full-width; PillSelect self-centers on desktop and left-aligns on phone.
+  // Overlay is full-width; PillSelect centers the segmented control, left-aligns when tools are in the pill.
 
   const pillSelectRef = useRef<HTMLDivElement>(null)
 
@@ -322,17 +341,18 @@ export function InputAreaWithStickyPrompt({ conversationId, projectId }: { conve
         <EditPanel conversationId={conversationId} projectId={projectId} />
       </div>
       
-      {/* Floating pill select — desktop centered; phone left-aligned inside PillSelect */}
+      {/* Floating pill select — centered segmented control; left-aligned when tools are in the pill */}
       <div 
         ref={pillSelectRef}
         data-edit-menu-context
         className={cn(
-          'absolute inset-x-0 z-20 pointer-events-none',
+          'absolute inset-x-0 z-20 pointer-events-none flex flex-col items-stretch',
           phoneDockTight ? 'invisible opacity-0' : 'opacity-100' // Same strip as the Ask row when the keyboard is up
         )}
         aria-hidden={phoneDockTight}
         style={{
-          top: '56px', // Just below the 52px top bar (no show/close pill)
+          // 52px top bar + 4px gap; env() is 0 in browsers without a notch
+          top: 'calc(56px + env(safe-area-inset-top, 0px))',
         }}
       >
         <PillSelect
@@ -348,6 +368,8 @@ export function InputAreaWithStickyPrompt({ conversationId, projectId }: { conve
             setEditMenuPillMode(value as 'home' | 'insert' | 'draw' | 'view')
           }}
         />
+        {/* Filter/Sort criteria — under the mode pill, no divider */}
+        <BoardFilterSortBar />
       </div>
     </>
     </PhoneModeMenuProvider>

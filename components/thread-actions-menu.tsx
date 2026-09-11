@@ -4,11 +4,8 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react' // Escape close + arrange flyout + in-window place
 import {
-  ChevronDown,
   ChevronRight,
-  ChevronUp,
   Copy,
-  Image as ImageIcon,
   Info,
   Link2,
   Lock,
@@ -22,13 +19,12 @@ import {
 } from 'lucide-react' // Row icons matching FigJam-style action list
 import { Button } from '@/components/ui/button' // Ghost row buttons
 import { cn } from '@/lib/utils' // Class merge
-import { applyMenuPlacement, watchMenuSafeRect } from '@/lib/menu-placement' // Stay in-window, miss top bar / chat
+import { applyMenuPlacement, getThreadCoverRects, watchMenuSafeRect } from '@/lib/menu-placement' // Stay in-window, miss top bar / chat / thread curve
 
 /** Actions the thread menu can emit (wired + stubs). */
 export type ThreadActionId =
   | 'copy'
   | 'copyLink'
-  | 'copyAsImage'
   | 'duplicate'
   | 'delete'
   | 'copyStyle'
@@ -37,7 +33,6 @@ export type ThreadActionId =
   | 'insertBetween'
   | 'saveAsTemplate'
   | 'info'
-  | 'collapse'
   | 'toggleDotted'
   | 'styleSmooth'
   | 'styleSharp'
@@ -51,12 +46,14 @@ export type ThreadActionsMenuProps = {
   x: number // Pane-relative screen x (click point)
   y: number // Pane-relative screen y (click point)
   isDotted?: boolean // Current dash state for Solid/Dotted label
-  isCollapsedLabel?: 'Collapse' | 'Expand' // Connected-frames collapse toggle
   canPasteStyle?: boolean // Enables Paste style when a style was copied
   currentStyle?: 'smooth' | 'sharp' | 'linear' // Checkmark in Style → path style
   currentStrokeWidth?: number // Checkmark in Thickness flyout (1–4)
   onAction: (action: ThreadActionId) => void // Parent wires delete / insert / style
   onClose: () => void // Dismiss on Escape / outside
+  edgeId?: string // Clicked thread RF id — avoid its path even before .selected
+  sourceId?: string // Source frame id — don't cover the snapped pair
+  targetId?: string // Target frame id
   className?: string
 }
 
@@ -79,12 +76,14 @@ export function ThreadActionsMenu({
   x,
   y,
   isDotted = false,
-  isCollapsedLabel = 'Collapse',
   canPasteStyle = false,
   currentStyle = 'smooth',
   currentStrokeWidth = 2,
   onAction,
   onClose,
+  edgeId,
+  sourceId,
+  targetId,
   className,
 }: ThreadActionsMenuProps) {
   const [openSubmenu, setOpenSubmenu] = useState<'arrange' | 'info' | 'thickness' | null>(null) // Flyout
@@ -97,12 +96,19 @@ export function ThreadActionsMenu({
   useLayoutEffect(() => {
     const root = rootRef.current // Menu shell
     if (!root) return // Not mounted
-    const place = () => applyMenuPlacement(root, { anchorX: x, anchorY: y, openLeft: false, fromExisting: true }) // Keep above-click, then clamp
+    const place = () =>
+      applyMenuPlacement(root, {
+        anchorX: x, // Click on the thread
+        anchorY: y,
+        openLeft: false, // Prefer the right of the curve
+        fromExisting: false, // Re-score every time so a tall card cannot clamp onto the arch
+        extraHard: getThreadCoverRects(edgeId, sourceId, targetId), // Never cover the curve or its frames
+      })
     place()
     return watchMenuSafeRect(place)
-  }, [x, y, openSubmenu])
+  }, [x, y, openSubmenu, edgeId, sourceId, targetId])
 
-  // FigJam-shaped list, product terms (thread / frame), Thinktable row chrome
+  // FigJam-shaped list, product terms (thread / frame), NodNotes row chrome
   const rows: RowDef[] = [
     {
       kind: 'action',
@@ -117,13 +123,6 @@ export function ThreadActionsMenu({
       label: 'Copy link',
       shortcut: '⌘⌥⇧C',
       icon: <Link2 className="h-4 w-4" />,
-    },
-    {
-      kind: 'action',
-      id: 'copyAsImage',
-      label: 'Copy as image',
-      shortcut: '⌘⇧C',
-      icon: <ImageIcon className="h-4 w-4" />,
     },
     {
       kind: 'action',
@@ -192,17 +191,6 @@ export function ThreadActionsMenu({
       label: isDotted ? 'Solid' : 'Dotted',
       icon: <PaintRoller className="h-4 w-4" />,
     },
-    {
-      kind: 'action',
-      id: 'collapse',
-      label: isCollapsedLabel,
-      icon:
-        isCollapsedLabel === 'Collapse' ? (
-          <ChevronUp className="h-4 w-4" />
-        ) : (
-          <ChevronDown className="h-4 w-4" />
-        ),
-    },
     { kind: 'separator' },
     {
       kind: 'action',
@@ -227,16 +215,15 @@ export function ThreadActionsMenu({
       tabIndex={-1}
       className={cn(
         // Same shell as BlockActionsMenu — white card, soft shadow, constant screen size
-        'thread-actions-menu edge-popup node-popup z-[1000] bg-white dark:bg-[#1f1f1f] rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1 min-w-[240px] outline-none',
+        'thread-actions-menu edge-popup node-popup z-[1000] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1 min-w-[240px] outline-none',
         'absolute',
         className
       )}
       style={{
         left: `${x}px`,
         top: `${y}px`,
-        transform: 'translate(-50%, -100%)', // Anchor above click; no zoom scale (matches handle menu)
-        transformOrigin: 'center bottom',
-        marginTop: '-8px',
+        transform: 'translate(8px, -50%)', // First paint: right of click, not on the arch
+        transformOrigin: 'left center',
       }}
       onClick={(e) => {
         e.stopPropagation()
@@ -256,7 +243,7 @@ export function ThreadActionsMenu({
     >
       <div className="px-2.5 pt-1.5 pb-1 text-xs text-gray-500 dark:text-gray-400">Thread</div>
 
-      <div data-tt-menu-body className="flex flex-col gap-0.5 overflow-y-auto px-0.5 pb-0.5">
+      <div data-tt-menu-body className="flex min-h-0 flex-col gap-0.5 overflow-y-auto px-0.5 pb-0.5">
         {rows.map((row, index) => {
           if (row.kind === 'separator') {
             return (
@@ -301,7 +288,7 @@ export function ThreadActionsMenu({
                 onAction(row.id)
               }}
               className={cn(
-                'justify-start text-sm h-8 px-2 font-normal',
+                'h-8 shrink-0 justify-start px-2 text-sm font-normal',
                 row.danger && 'text-red-600 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950',
                 row.disabled && 'opacity-40 pointer-events-none',
                 (isArrangeOpen || isInfoOpen || isThicknessOpen) && 'bg-gray-100 dark:bg-[#2a2a2a]'
@@ -325,7 +312,7 @@ export function ThreadActionsMenu({
       {openSubmenu === 'arrange' && (
         <div
           data-tt-menu-flyout="main"
-          className="absolute z-[1001] min-w-[180px] bg-white dark:bg-[#1f1f1f] rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1"
+          className="absolute z-[1001] min-w-[180px] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1"
           onMouseEnter={() => setOpenSubmenu('arrange')}
         >
           {(
@@ -351,7 +338,7 @@ export function ThreadActionsMenu({
                     ? 'smooth'
                     : opt.id === 'styleSharp'
                       ? 'sharp'
-                      : 'linear') && 'bg-blue-50 dark:bg-blue-950/40'
+                      : 'linear') && 'tt-selected'
               )}
             >
               <span className="flex-1 text-left">{opt.label}</span>
@@ -364,7 +351,7 @@ export function ThreadActionsMenu({
       {openSubmenu === 'thickness' && (
         <div
           data-tt-menu-flyout="main"
-          className="absolute z-[1001] min-w-[140px] bg-white dark:bg-[#1f1f1f] rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1"
+          className="absolute z-[1001] min-w-[140px] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1"
           onMouseEnter={() => setOpenSubmenu('thickness')}
         >
           {(
@@ -385,10 +372,16 @@ export function ThreadActionsMenu({
                 onAction(opt.id)
               }}
               className={cn(
-                'justify-start text-sm h-8 px-2 font-normal w-full',
-                currentStrokeWidth === opt.width && 'bg-blue-50 dark:bg-blue-950/40'
+                'justify-start text-sm h-8 px-2 font-normal w-full gap-2',
+                currentStrokeWidth === opt.width && 'tt-selected'
               )}
             >
+              {/* Preview stroke so 1–4px are visibly different in the flyout */}
+              <span
+                aria-hidden
+                className="w-8 shrink-0 rounded-full bg-gray-700 dark:bg-gray-300"
+                style={{ height: opt.width }}
+              />
               <span className="flex-1 text-left">{opt.label}</span>
             </Button>
           ))}
@@ -399,7 +392,7 @@ export function ThreadActionsMenu({
       {openSubmenu === 'info' && (
         <div
           data-tt-menu-flyout="main"
-          className="absolute z-[1001] min-w-[180px] bg-white dark:bg-[#1f1f1f] rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-2 text-xs text-gray-500"
+          className="absolute z-[1001] min-w-[180px] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-2 text-xs text-gray-500"
           onMouseEnter={() => setOpenSubmenu('info')}
         >
           Thread info coming soon

@@ -1,4 +1,4 @@
--- Rename Thinktable Page → Board share schema + AI thread association column.
+-- Rename Nod Notes Page → Board share schema + AI thread association column.
 -- Historical migrations keep old names; this cutover renames live objects.
 
 -- ---------------------------------------------------------------------------

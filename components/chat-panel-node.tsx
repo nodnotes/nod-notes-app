@@ -1,21 +1,34 @@
 'use client'
 
 // Custom React Flow node for chat panels (prompt + response)
-import { NodeProps, Handle, Position, useReactFlow, useStore, useStoreApi, NodeResizeControl, useUpdateNodeInternals } from 'reactflow' // RF node primitives + store (unselect groups before dragItems) + remeasure; useStore = live zoom for screen-constant chrome
+import { NodeProps, Handle, Position, useReactFlow, useStore, useStoreApi, NodeResizeControl, ResizeControlVariant, useUpdateNodeInternals } from 'reactflow' // RF node primitives + store (unselect groups before dragItems) + remeasure; useStore = live zoom for screen-constant chrome
 import {
   useIsThreadConnecting,
   useIsNearThreadConnection,
   ConnectionIndicator,
-  INDICATOR_OUTSET,
   frameScreenChromeScale,
+  INDICATOR_OUTSET,
 } from '@/components/threads' // Miro: DOM indicators arm edge connection points; proximity while dragging
-
+import {
+  useChatFrameLinkLogoSides,
+} from '@/lib/ai/chat-frame-link-cues' // Chat-linked sides → logo line beside simulator
+import { ChatLinkConnectionCue } from '@/components/threads/ChatLinkConnectionCue'
+import { LiveFrameChromeZoom } from '@/components/live-frame-chrome-zoom' // Live zoom → chrome CSS vars
+import {
+  BLOCK_HANDLE_GUTTER_W,
+  CONNECTIONS_GROUP_H,
+  adjustChromeXFlow,
+  handleGutterFlowPx,
+} from '@/lib/frame-adjust-box' // Gutter = painted ⋮⋮ width + small air
 
 import { cn, generateUUID } from '@/lib/utils'
+import { boardTitleOrDefault } from '@/lib/board-title' // Empty conversation names show New board
+import { resolveFrameBorderColor } from '@/lib/frame-colors' // Soften legacy preset frame borders
 import { useEditor, EditorContent } from '@tiptap/react'
 import { DOMParser as PMDOMParser } from '@tiptap/pm/model' // Parse stored HTML → PM doc for exact (non-string) sync compare
 import { TextSelection } from '@tiptap/pm/state' // Only text ranges keep a frame "active" — not boardLink NodeSelection
 import { createPanelExtensions } from '@/lib/tiptap/extensions' // StarterKit + Turn into nodes
+import { handleCaptureLinkPaste } from '@/lib/tiptap/capture-link-paste' // Paste capture URL → named link
 import { TipTapBlockHandles } from '@/components/tiptap-block-handles' // Per-content-block ⋮⋮ (Notion)
 import { FrameStackRevealLine } from '@/components/frame-stack-reveal-line' // Stack edge dashed line → reveal
 import { FrameShapeBackdrop } from '@/components/frame-shape-backdrop' // SVG silhouette behind TipTap
@@ -25,6 +38,7 @@ import {
   FRAME_SHAPE_DEFAULT_SIZE,
   rotatedFrameAabbSize,
   rotatedRectAabbSize,
+  shapeFitContentBox,
   type FrameShapeType,
 } from '@/lib/frame-shape' // Frame-as-shape parse + clip + rotation AABB
 import type { FrameStackSide } from '@/components/use-frame-nest-stack-drag'
@@ -36,23 +50,71 @@ import {
   FRAME_STACK_SIDES,
   readSideStacks,
 } from '@/lib/frame-side-stacks' // Per adjust-box side stack trees
-import { findEditorBlockAtClientY } from '@/lib/tiptap/block-selection' // Click in frame padding → block at Y
+import { findEditorBlockAtClientPoint } from '@/lib/tiptap/block-selection' // Click in frame padding → block (rotation-safe)
+import { useLiveBoardZoom } from '@/lib/use-live-board-zoom' // Viewport-CSS zoom (not lagging RF store)
+import {
+  getLiveBoardZoom,
+} from '@/lib/frame-chrome-zoom' // Select-time pad + fill-origin for live rAF glue
 import {
   isBoardNavigating,
-  navigationZoom,
-} from '@/lib/board-navigating' // Freeze zoom selectors + skip hug while pinching
-import { deleteLinkedBoardForBlock, getLinkedBoardId, isBlockContentEmpty, isBlockMeta, isBoardBodyMeta, readNotionConnection, type NotionSyncMode } from '@/lib/blocks' // Block detection + Notion connection
+  subscribeBoardNavigating,
+} from '@/lib/board-navigating' // Skip hug / stack work while pinching; selected chrome uses live zoom
+import { isFrameDragging } from '@/lib/frame-dragging' // Skip O(n) stack scans mid frame drag
 import {
-  propertyTypeIcon,
-  propertyTypeLabel,
+  captureFrameSnapshot,
+  dbExpandSnapshotSlot,
+  frameSnapshotKey,
+  getFrameSnapshotEpoch,
+  readFrameSnapshot,
+  subscribeFrameSnapshots,
+} from '@/lib/frame-dom-snapshot' // Cold frames replay the live subtree instead of approximating it
+import { setFramePanelSelected } from '@/lib/frame-panel-selected' // DB NodeView: live table only while RF-selected
+import {
+  clearFrameTextEditActive,
+  setFrameTextEditActive,
+} from '@/lib/frame-text-edit' // Select-before-caret: Delete removes frame until caret is placed
+import {
+  fillOriginFromFlowPosition,
+  flowPositionFromFillOrigin,
+  readFrameChromePad,
+} from '@/lib/frame-chrome-offset' // Fill-origin vs RF position when ⋮⋮ gutter is on
+import { readOnThread } from '@/lib/threads/on-thread-frame' // Compact chip layout for frames on threads
+import {
+  deleteLinkedBoardForBlock,
+  frameHasChromeProperties,
+  getLinkedBoardId,
+  isBlockContentEmpty,
+  isBlockMeta,
+  isBoardBodyMeta,
+  readNotionConnection,
+  type NotionSyncMode,
+  normalizeNotionSyncMode,
+  isNotionAutoSync,
+  notionPageBodySyncTarget,
+} from '@/lib/blocks' // Block detection + Notion connection
+import {
   readFramePropertyType,
   PROPERTY_GROUP_H,
   type PropertyTypeId,
 } from '@/lib/blocks/property' // Turn into → Property → top chrome
 import {
-  readPropertyBlockTypesFromDoc,
-  readPropertyBlockTypesFromHtml,
-} from '@/lib/tiptap/property-block' // Top icons follow propertyBlock order in the frame
+  htmlHasPropertyBlocks,
+  readPropertyBlockHeadersFromDoc,
+  readPropertyBlockHeadersFromHtml,
+  readPropertyBlockAt,
+  setPropertyBlockValue,
+  type PropertyHeaderItem,
+} from '@/lib/tiptap/property-block' // Top icons = empty propertyBlocks only
+import {
+  bindPropertyIconDrag,
+  resolvePropertyHeaderFrom,
+  type PropertyDropLine,
+} from '@/lib/tiptap/property-block-drag' // Drag between property cells
+import { PropertyDropLinePortal } from '@/components/property-drop-line-portal' // Blue dashed insert line
+import type { Editor } from '@tiptap/core' // Property header drag + popup edits
+import { PropertyIconWithTooltip } from '@/components/property-icon-with-tooltip' // Top-strip icon + name popup
+import { PropertyValuePopup, type PropertyEditorAnchor } from '@/components/property-value-popup' // Calendar / checkbox / text
+
 import { NotionMarkIcon } from '@/components/notion-mark-icon' // Logo at bottom of a Notion-connected frame
 import { createPortal } from 'react-dom'
 import {
@@ -60,12 +122,19 @@ import {
   frameHasVisibleText,
   shimmerBarCountFromHtml,
   BOARD_LOAD_FADE_MS,
+  resolveDeferredFrameBox,
+  parseBoardLinkPreview,
+  type DeferredFrameBox,
 } from '@/components/frame-content-shimmer' // Frame vs text-line load shell while TipTap mounts
-import { pruneEmptyTextblocks } from '@/lib/tiptap/empty-block-backspace' // Strip blank lines on frame deselect
+import {
+  useFrameContentMountReason,
+  useWarmFrameContentMount,
+} from '@/components/frame-viewport-mount-context' // Defer TipTap until the frame is interacted with
+import { pruneEmptyTextblocks, isEmptyTextblock } from '@/lib/tiptap/empty-block-backspace' // Strip blank lines on frame deselect
 import { setAiTextSelection } from '@/lib/ai/selection-bridge' // Live highlighted-text pills in AI composer
 import { BlockActionsMenu, type BoardInTarget } from '@/components/block-actions-menu'
-import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, Fragment } from 'react'
-import { MoreHorizontal, Trash2, Loader2, X, ChevronRight, ChevronLeft, ChevronsRight, ChevronsLeft, Plus, RotateCw, ScanText, WrapText } from 'lucide-react' // Rotate + fit-to-text / wrap
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, Fragment, memo } from 'react'
+import { MoreHorizontal, Trash2, Loader2, X, ChevronRight, ChevronLeft, ChevronsRight, ChevronsLeft, Plus, RotateCw, ScanText, WrapText, FileText } from 'lucide-react' // Rotate + fit-to-text / wrap; FileText = deferred boardLink fallback icon
 import { useAiEditSession } from '@/lib/ai/edit-session' // Pending rainbow / review focus
 
 // Helper to check if content is effectively empty (handling HTML tags)
@@ -77,23 +146,23 @@ const isContentEmpty = (content: string | undefined | null) => {
   return stripped.length === 0
 }
 
-const BLOCK_HANDLE_GUTTER_W = 24 // TipTap ⋮⋮ column inside the blue adjust strip
-/** Extra air between blue adjust ring and fill (beyond ⋮⋮ / property band) — × screenChromeScale */
-const ADJUST_CONTENT_GAP_Y = 6 // Top/bottom band air
-const ADJUST_CONTENT_GAP_X = 1 // L/R — tighter than T/B
 const BOARD_LINK_ICON_W = 22 // Title emoji / page icon column
 const BOARD_OPEN_MENU_W = 52 // Open-menu pill ≈ preview + open (Notion adds a bit more)
 const BLOCK_THREE_CHARS_W = 28 // ~3ch of body text for plain frames
-const BLOCK_MIN_FRAME_H = 32 // One line (~24) + equal 4px content pads — hug the block, don't float chrome
-const BLOCK_FRAME_PAD_Y = 4 // Top/bottom inset inside the fill
-const BLOCK_FRAME_PAD_X = 6 // Slightly more L/R than T/B (property cell ↔ frame edge)
+const BLOCK_MIN_FRAME_H = 22 // One line (~18 at lh 1.25) + equal 2px content pads — hug the block, don't float chrome
+const ROTATE_CLICK_SLOP_PX = 4 // Rotate button: below this pointer travel → click resets; above → drag rotate
+const BLOCK_FRAME_PAD_Y = 2 // Top/bottom inset inside the fill — tight to glyphs
+const BLOCK_FRAME_PAD_X = 2 // Match T/B so the peach edge sits close to blocks
 const BLOCK_FRAME_PAD = BLOCK_FRAME_PAD_X // Default / band inset = horizontal pad
 /** Property cell radius at scale 1 — fill lives outside CSS scale so multiply by chromeScale; adjust ring stays square */
 const FRAME_CORNER_RADIUS = 6
-const CONNECTIONS_GROUP_H = 28 // h-7 footer strip — hug spacer + pinned group when the free frame clips
+/** Corner-drag floor — small but grab-able; grow stays unbounded (RF max = MAX_VALUE). */
+const FRAME_RESIZE_MIN = 40
+/** Locked scale epsilon — avoid 0; no 0.15 floor (shrink matches grow). */
+const FRAME_SCALE_EPSILON = 0.001
 const DATABASE_BLOCK_HTML_RE = /data-type=["']databaseBlock["']/i // TipTap Notion DB atom in frame HTML
 const FRAME_ATOM_HTML_RE =
-  /data-type=["'](?:boardLink|pageLink|databaseBlock|imageBlock|propertyBlock)["']/i // Attr-only TipTap atoms
+  /data-type=["'](?:boardLink|pageLink|captureLink|databaseBlock|imageBlock|videoBlock|audioBlock|fileBlock|bookmarkBlock|propertyBlock)["']/i // Attr-only TipTap atoms
 const MIN_DATABASE_FRAME_W = 240 // Below this a DB frame is a collapsed stub (grip + title only)
 const MIN_DATABASE_FRAME_H = 120 // Title row alone is ~40; table needs more height than that
 
@@ -172,11 +241,112 @@ function contentSizeFromAabb(
   }
 }
 
+// Wrap-mode property column — the value re-wraps to the frame box, so the intrinsic hug uses
+// this nominal column (mirrors Notion `defaultColumnWidthPx`) instead of the full glyph run.
+const PROPERTY_VALUE_WRAP_W = 160
+
 /**
  * Natural content width = longest rendered line of real text, not the stretched w-full box.
  * Pure measurement via Range (actual glyph extents) — children are width:100%, so offsetWidth /
  * scrollWidth report the frame width, not the text. Never mutates live styles (RO-safe).
  */
+function measureTextWidthLocal(
+  text: string,
+  fontEl: Element,
+  toLocal: (screenW: number) => number
+): number {
+  const trimmed = text.trim()
+  if (!trimmed) return 0
+  const span = document.createElement('span')
+  const cs = getComputedStyle(fontEl)
+  span.style.position = 'absolute'
+  span.style.visibility = 'hidden'
+  span.style.whiteSpace = 'nowrap'
+  span.style.font = cs.font
+  span.textContent = trimmed
+  document.body.appendChild(span)
+  const w = toLocal(span.getBoundingClientRect().width)
+  span.remove()
+  return w
+}
+
+/** Filled property cell — icon + value box (never the width:100% stretch of the textarea). */
+function measurePropertyBlockWidth(
+  block: HTMLElement,
+  toLocal: (screenW: number) => number
+): number {
+  if (block.getAttribute('data-header-only') === 'true') return 0
+  if (getComputedStyle(block).display === 'none') return 0
+  const icon = block.querySelector('.tt-property-block-icon') as HTMLElement | null
+  const input = block.querySelector('.tt-property-block-input') as HTMLTextAreaElement | null
+  const cell = block.querySelector('.tt-property-block-cell') as HTMLElement | null
+  const iconW = icon?.offsetWidth ?? 20
+  const gap = cell ? parseFloat(getComputedStyle(cell).gap) || 6 : 6
+  const cellPadL = cell ? parseFloat(getComputedStyle(cell).paddingLeft) || 4 : 4
+  const cellPadR = cell ? parseFloat(getComputedStyle(cell).paddingRight) || 8 : 8
+  let textW = 48 // "Empty" placeholder
+  if (input) {
+    if (block.closest('.ProseMirror')?.getAttribute('data-single-line') === 'true') {
+      // Fit to text: hug the one-line cell. Prefer the width the NodeView already set from the
+      // glyph run (a style read, not layout) so render and hug agree exactly to the pixel.
+      const styled = parseFloat(input.style.width)
+      const text = input.value || input.placeholder || 'Empty'
+      textW = Number.isFinite(styled) && styled > 0
+        ? styled
+        : measureTextWidthLocal(text, input, toLocal)
+    } else {
+      textW = PROPERTY_VALUE_WRAP_W // Wrap mode: value re-wraps to the frame, so hug the column
+    }
+  }
+  // Honor the cell's CSS floor, or a measure below it would clip the rendered cell.
+  const cssMinW = parseFloat(getComputedStyle(block).minWidth) || 0
+  return Math.max(cssMinW, iconW + gap + cellPadL + cellPadR + textW)
+}
+
+/** Row→card frames: title + filled property cells only (icons wrap inside — never sum the strip). */
+function measureRowCardContentWidth(contentFit: HTMLElement): number {
+  const cs = getComputedStyle(contentFit)
+  const padL = parseFloat(cs.paddingLeft) || 0
+  const pm = contentFit.querySelector('.ProseMirror') as HTMLElement | null
+  if (!pm) return Math.max(1, contentFit.scrollWidth)
+  // Wrap mode (no `data-single-line`): the content box is the fixed `wrapContentWidth` column
+  // that the text has already re-wrapped into, so hug THAT box — glyph runs would under-hug the
+  // wrapped lines, and the width:100% cells have no fixed point in the sum below.
+  if (pm.getAttribute('data-single-line') !== 'true') {
+    return Math.max(1, Math.ceil(contentFit.offsetWidth))
+  }
+
+  const row = pm.closest('.relative') as HTMLElement | null
+  const gutter = row && row !== contentFit ? parseFloat(getComputedStyle(row).paddingLeft) || 0 : 0
+  const fitRect = contentFit.getBoundingClientRect()
+  const scale = contentFit.offsetWidth > 0 ? fitRect.width / contentFit.offsetWidth : 1
+  const toLocal = (screenW: number) => (scale > 0 ? screenW / scale : screenW)
+
+  let maxLine = 0
+  const label = pm.querySelector(
+    '.tt-board-link-label, .tt-page-link-label'
+  ) as HTMLElement | null
+  if (label) {
+    const link = label.closest('.tt-board-link, .tt-page-link') as HTMLElement | null
+    const icon = link?.querySelector(
+      '.tt-board-link-icon-wrap, .tt-board-link-icon, .tt-page-link-icon'
+    ) as HTMLElement | null
+    const gap = link ? parseFloat(getComputedStyle(link).gap) || 6 : 6
+    const iconW = icon?.offsetWidth ?? 0
+    const labelText = label.textContent || ''
+    const labelW = labelText.trim() ? measureTextWidthLocal(labelText, label, toLocal) : 0
+    maxLine = Math.max(maxLine, iconW + gap + labelW)
+  }
+
+  pm.querySelectorAll('.tt-property-block').forEach((el) => {
+    maxLine = Math.max(maxLine, measurePropertyBlockWidth(el as HTMLElement, toLocal))
+  })
+
+  const padR = parseFloat(cs.paddingRight) || 0
+  const rightInset = gutter > 0 ? Math.max(padR, padL + GRIP_ICON_INSET) : Math.max(padR, padL)
+  return Math.ceil(Math.max(1, padL + gutter + maxLine + rightInset))
+}
+
 function measureNaturalContentWidth(contentFit: HTMLElement): number {
   const cs = getComputedStyle(contentFit)
   const padL = parseFloat(cs.paddingLeft) || 0 // Content-box left pad (BLOCK_FRAME_PAD on blocks)
@@ -228,6 +398,13 @@ function measureNaturalContentWidth(contentFit: HTMLElement): number {
       maxLine = Math.max(maxLine, iconW + gap + labelW)
       continue
     }
+    const propBlock =
+      (child.classList.contains('tt-property-block') && child) ||
+      (child.querySelector('.tt-property-block:not([data-header-only="true"])') as HTMLElement | null)
+    if (propBlock) {
+      maxLine = Math.max(maxLine, measurePropertyBlockWidth(propBlock, toLocal))
+      continue
+    }
     // databaseBlock: Range over the live Notion table is transform-fragile during RF frame
     // drag (gBCR can collapse → hug shrinks the frame and the table appears to vanish).
     const dbBlock =
@@ -238,15 +415,22 @@ function measureNaturalContentWidth(contentFit: HTMLElement): number {
       // width:100%, so offsetWidth echoes the frame and atomExplicitBox/hug inflate forever.
       const table = dbBlock.querySelector('.tt-notion-db') as HTMLElement | null
       const tableEl = table?.querySelector('table') as HTMLElement | null
+      const styledW = tableEl ? parseFloat(tableEl.style.width) : 0
+      const wrap = tableEl?.closest('.tt-db-table-wrap') as HTMLElement | null
+      const gutter =
+        wrap != null
+          ? parseFloat(getComputedStyle(wrap).paddingLeft) || DB_TABLE_ROW_GUTTER
+          : DB_TABLE_ROW_GUTTER
       const w = Math.max(
+        styledW > 0 ? styledW + gutter : 0,
         tableEl?.scrollWidth || 0,
         table?.scrollWidth || 0,
-        // Title row only (loading shell) — still need a floor wider than the grip stub
         (dbBlock.querySelector('.tt-database-block-row') as HTMLElement | null)?.scrollWidth || 0
       )
       maxLine = Math.max(maxLine, w)
       continue
     }
+    if (child.classList.contains('react-renderer')) continue // NodeView shell — measured via inner atoms
     maxLine = Math.max(maxLine, rangeWidth(child)) // Longest real text line
   }
   // Right margin: equal to padL when there is no ⋮⋮ gutter (gutter lives in select chrome).
@@ -257,11 +441,100 @@ function measureNaturalContentWidth(contentFit: HTMLElement): number {
 }
 
 /** Unscaled content height — prefer scrollHeight so clipped/wrapped overflow still counts. */
-function measureNaturalContentHeight(contentFit: HTMLElement): number {
-  return Math.max(1, Math.ceil(contentFit.scrollHeight || contentFit.offsetHeight))
+function measureNaturalContentHeight(
+  contentFit: HTMLElement,
+  reserveConnectionsStrip = false
+): number {
+  const dbExtents = measureDatabaseBlockExtents(contentFit, reserveConnectionsStrip)
+  if (dbExtents) return dbExtents.height
+  // Hug to the last TipTap block’s bottom + equal pads — NOT contentFit/PM’s border box.
+  // PM can run taller than the highlighted paragraph (trailing widgets / strut); that leftover
+  // was multiplied by frameScale and, with top-left origin, all landed as peach under the wash.
+  const cs = getComputedStyle(contentFit)
+  const padT = parseFloat(cs.paddingTop) || 0 // Equal T pad painted with the fill
+  const padB = parseFloat(cs.paddingBottom) || 0 // Equal B pad — keep symmetric with padT
+  const pm = contentFit.querySelector('.ProseMirror') as HTMLElement | null
+  let body = 0
+  if (pm) {
+    for (const child of Array.from(pm.children) as HTMLElement[]) {
+      // offsetTop+Height is transform-agnostic (unscaled), same space as padT/padB
+      const bottom = child.offsetTop + child.offsetHeight
+      if (bottom > body) body = bottom
+    }
+    if (body <= 0) {
+      // Empty frame: one line box so the I-bar still has a clickable band
+      const lh = parseFloat(getComputedStyle(pm).lineHeight)
+      body = Number.isFinite(lh) && lh > 0 ? lh : BLOCK_MIN_FRAME_H - padT - padB
+    }
+  }
+  // Connections / Notion strip sits under blocks inside contentFit (outside .ProseMirror)
+  const stripEl = contentFit.querySelector(
+    '[data-tt-connections-header], [data-tt-notion-hug]'
+  ) as HTMLElement | null
+  // Only count a mounted strip — don't reserve phantom band on plain text (was db-only before)
+  const stripH = stripEl && stripEl.offsetHeight > 0 ? stripEl.offsetHeight : 0
+  void reserveConnectionsStrip // Kept for call-site parity with db measure path
+  if (body > 0 || stripH > 0) {
+    return Math.max(1, Math.round((padT + body + padB + stripH) * 100) / 100) // 2dp — kill float dust
+  }
+  const fallback = contentFit.offsetHeight || contentFit.scrollHeight || 1 // Detached / display:none
+  return Math.max(1, Math.round(fallback * 100) / 100)
+}
+
+/** h-7 Notion connections band when present (or reserved while Notion-linked). */
+function measureConnectionsStripHeight(contentFit: HTMLElement): number {
+  const el = contentFit.querySelector(
+    '[data-tt-connections-header], [data-tt-notion-hug]'
+  ) as HTMLElement | null
+  return el && el.offsetHeight > 0 ? el.offsetHeight : 0
+}
+
+/** Full Notion table box (all columns × rows + title/toolbar) — not the free-resize clip viewport. */
+function measureDatabaseBlockExtents(
+  contentFit: HTMLElement,
+  reserveConnectionsStrip = false
+): { width: number; height: number } | null {
+  const dbBlock = contentFit.querySelector('.tt-database-block') as HTMLElement | null
+  if (!dbBlock) return null
+  const table = dbBlock.querySelector('.tt-notion-db table') as HTMLElement | null
+  const notionDb = dbBlock.querySelector('.tt-notion-db') as HTMLElement | null
+  if (!table || !notionDb) return null
+
+  const styledTableW = parseFloat(table.style.width)
+  const wrap = table.closest('.tt-db-table-wrap') as HTMLElement | null
+  const gutter =
+    wrap != null
+      ? parseFloat(getComputedStyle(wrap).paddingLeft) || DB_TABLE_ROW_GUTTER
+      : DB_TABLE_ROW_GUTTER
+  const tableW = styledTableW > 0 ? styledTableW + gutter : table.scrollWidth
+
+  const titleRow = dbBlock.querySelector('.tt-database-block-row') as HTMLElement | null
+  const titleH = titleRow ? titleRow.offsetHeight + 8 : 0 // mb-2 under title row
+  const notionH = notionDb.scrollHeight // Toolbar + full row stack (not scroll cap)
+
+  let connectionsH = measureConnectionsStripHeight(contentFit)
+  if (connectionsH === 0 && reserveConnectionsStrip) {
+    connectionsH = CONNECTIONS_GROUP_H // Footer not mounted yet — still reserve the in-fill band
+  }
+
+  const cs = getComputedStyle(contentFit)
+  const padL = parseFloat(cs.paddingLeft) || 0
+  const padR = parseFloat(cs.paddingRight) || 0
+  const padT = parseFloat(cs.paddingTop) || 0
+  const padB = parseFloat(cs.paddingBottom) || 0
+  const pm = contentFit.querySelector('.ProseMirror') as HTMLElement | null
+  const row = pm?.closest('.relative') as HTMLElement | null
+  const gripGutter = row && row !== contentFit ? parseFloat(getComputedStyle(row).paddingLeft) || 0 : 0
+  const rightInset = gripGutter > 0 ? Math.max(padR, padL + GRIP_ICON_INSET) : Math.max(padR, padL)
+
+  return {
+    width: Math.ceil(padL + gripGutter + Math.max(tableW, 420) + rightInset),
+    height: Math.ceil(padT + padB + titleH + notionH + connectionsH),
+  }
 }
 
 const CLIP_FADE_PX = 16 // Soft edge so half-cut glyphs fade instead of chopping
+const DB_TABLE_ROW_GUTTER = 20 // Keep in sync with notion-database-table ROW_GUTTER
 
 /** Mask style that fades content out at overflowing frame edges (right / bottom). */
 function clipFadeMaskStyle(
@@ -288,16 +561,48 @@ function clipFadeMaskStyle(
 // Visual frame = unscaled content × frameScale. Do NOT add a phantom +2 border — selected
 // frames use borderWidth 0 (blue adjust chrome), so +2 left slack under the content and the
 // left/right connection indicators sat below the ⋮⋮ / text midline.
+// No FRAME_RESIZE_MIN (40) floor here — that left short/scaled text top-left in an empty box.
+// Empty one-line size comes from measured intrinsic (already ~BLOCK_MIN_FRAME_H), not a second floor.
 function scaledFrameSize(
   intrinsic: { width: number; height: number },
   scale: number,
-  minWidth = BLOCK_LOCKED_MIN_W,
+  minWidth = 1, // Fit-to-text hugs content; NodeResizeControl still uses FRAME_RESIZE_MIN while dragging
+  minHeight = 1,
 ) {
-  const safeScale = Math.max(0.15, scale) // Same floor as locked corner-drag
+  const safeScale = Math.max(FRAME_SCALE_EPSILON, scale) // Match locked corner-drag — no 0.15 shrink floor
   return {
-    width: Math.max(minWidth, Math.ceil(intrinsic.width * safeScale)),
-    height: Math.max(BLOCK_MIN_FRAME_H, Math.ceil(intrinsic.height * safeScale)),
+    width: Math.max(minWidth, Math.ceil(intrinsic.width * safeScale)), // Ceil — never clip glyphs on the right
+    // Keep 2dp on height — integer round left slack that top-left scale dumps under the block
+    height: Math.max(minHeight, Math.round(intrinsic.height * safeScale * 100) / 100),
   }
+}
+
+/** Sync first-paint scale from place/persist metadata (async loadResizeState is too late for I-bar type). */
+function initialFrameScaleFromMeta(meta: unknown): number {
+  const fs = (meta as Record<string, unknown> | null | undefined)?.frameScale
+  return typeof fs === 'number' && Number.isFinite(fs) && fs > 0 ? fs : 1
+}
+
+/** Sync first-paint box from place/persist metadata — enables CSS frameScale on mount. */
+function initialResizeDimsFromMeta(meta: unknown): { width: number; height: number } | null {
+  const dims = (meta as Record<string, unknown> | null | undefined)?.resizeDimensions
+  if (!dims || typeof dims !== 'object') return null
+  const d = dims as { width?: number; height?: number }
+  if (typeof d.width === 'number' && typeof d.height === 'number' && d.width > 0 && d.height > 0) {
+    return { width: d.width, height: d.height }
+  }
+  return null
+}
+
+/** Locked hug: scale intrinsic text, inflating first when a silhouette would clip. */
+function hugLockedFrameSize(
+  intrinsic: { width: number; height: number },
+  scale: number,
+  minWidth: number,
+  shape: FrameShapeType | null,
+) {
+  // Height/width floors stay at 1 — intrinsic already includes one-line pads
+  return scaledFrameSize(shapeFitContentBox(intrinsic, shape, true), scale, minWidth, 1)
 }
 
 import { Button } from '@/components/ui/button'
@@ -313,15 +618,25 @@ import { useQueryClient, useQuery } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { useEditorContext } from './editor-context'
 import { useBoardAccess } from '@/lib/share/board-access-context' // Gate TipTap editable for shared viewers
+import {
+  isEphemeralMessageId,
+  patchEphemeralMessage,
+} from '@/lib/ephemeral-sandbox' // Homepage /view clones — local content only
 import { useReactFlowContext } from './react-flow-context'
+import { useSidebarContext } from './sidebar-context' // Phone layout — hold before unselected frame drag
+import { usePhoneFrameDrag } from './phone-frame-drag-context' // Blue move border during phone hold-drag
 import { useTheme } from './theme-provider'
 import { SelectionFormatPopupAnchor } from './selection-format-popup' // Notion-style selection menu (stable edge anchor)
 import { BoardLinkProvider, type BoardLinkActions } from '@/lib/board-link-context' // Bridge boardLink NodeViews → frame preview/open/rename
+import { PropertyHeaderSlotProvider } from '@/lib/property-header-context' // Empty property icons under the card title
 import { BoardOpenMenu } from '@/components/board-open-menu' // Preview/open chrome for page frames without a boardLink
 import { NestedBoardPreview, prefetchBoardEmbed } from './nested-board-preview' // Page-within-page board preview
 import { unwrapNestedFramesHtml } from '@/lib/tiptap/unwrap-nested-frames' // Flatten legacy nest wrappers
 import { applyTurnInto, bodyHtmlWithoutBoardTitle } from '@/lib/blocks/turn-into' // Page promote + strip title from board body
 import { migrateSoleDatabaseBlockToBoardLink, ensureNotionMapFrameIsBoardLink, isSoleDatabaseBlockContent, isSoleBoardLinkContent, repairBoardFrameToSoleLink, restoreWipedDatabaseBlockHtml } from '@/lib/notion/migrate-frame' // Notion DB map frames → boardLink; repair polluted board frames; heal wiped tables
+import { COMPACT_PREVIEW_ROWS } from '@/lib/notion/database' // Table rows Reset floor / snapshot split
+import { useNotionPageBodySync } from '@/lib/notion/use-notion-page-sync' // Imported page body ↔ Notion
+import { patchBoardMessageMetadata } from '@/lib/notion/connection-sync-pending'
 
 interface Message {
   id: string
@@ -360,8 +675,11 @@ interface ChatPanelNodeData {
   fillColor?: string // Panel fill color (optional, defaults to transparent)
   borderColor?: string // Panel border color (optional, defaults to theme-based)
   borderStyle?: string // Panel border style (solid, dashed, dotted)
-  borderWeight?: string // Panel border thickness (1px, 2px, 4px)
+  // Border thickness: '2px' from persisted metadata, bare number from the weight slider.
+  // Readers normalize with parseFloat(String(...)); CSS borderWidth takes either.
+  borderWeight?: string | number
   frameShape?: FrameShapeType | null // Silhouette when frames act as shapes
+  frameChromePad?: { x: number; y: number } // RF position shift while ⋮⋮ gutter is visible
 }
 
 interface ProjectBoardPanelNodeData {
@@ -373,7 +691,7 @@ interface ProjectBoardPanelNodeData {
   fillColor?: string // Panel fill color (optional, defaults to transparent)
   borderColor?: string // Panel border color (optional, defaults to theme-based)
   borderStyle?: string // Panel border style (solid, dashed, dotted)
-  borderWeight?: string // Panel border thickness (1px, 2px, 4px)
+  borderWeight?: string | number // Same as ChatPanelNodeData — persisted 'px' string or slider number
 }
 
 // Union type for node data
@@ -438,37 +756,127 @@ function formatResponseContent(content: string): string {
   return htmlParagraphs
 }
 
-/** Top strip: type icons in document order — one **block** (⋮⋮ comes from TipTapBlockHandles). */
+/** In-frame strip: **empty** type icons in doc order — one block (⋮⋮ from TipTapBlockHandles); wraps to frame width. */
 function FramePropertyGroup({
-  types,
+  items,
   className,
+  editor = null,
+  editorRef,
+  iconScale = 1,
 }: {
-  types: PropertyTypeId[] // Same sequence as property blocks in the frame
+  items: PropertyHeaderItem[]
   className?: string
+  editor?: Editor | null
+  editorRef?: React.MutableRefObject<Editor | null>
+  iconScale?: number
 }) {
-  if (types.length === 0) return null // No property cells → no top chrome
+  const liveEditor = () => {
+    const fromRef = editorRef?.current
+    if (fromRef && !fromRef.isDestroyed) return fromRef
+    if (editor && !editor.isDestroyed) return editor
+    return null
+  }
+  const containerRef = useRef<HTMLDivElement>(null) // Icon row — drag target
+  const scale = iconScale > 0 ? iconScale : 1
+  const iconPx = Math.max(16, Math.round(20 * scale))
+  const gapPx = Math.max(4, Math.round(6 * scale))
+  const rowPadY = Math.max(2, Math.round(4 * scale))
+  const [editorOpen, setEditorOpen] = useState<PropertyEditorAnchor & { from: number; type: PropertyTypeId; name: string; value: string } | null>(null)
+  const [dropLine, setDropLine] = useState<PropertyDropLine | null>(null)
+  const [ghost, setGhost] = useState<{ x: number; y: number; type: PropertyTypeId } | null>(null)
+
+  const openEditorAt = useCallback(
+    (item: PropertyHeaderItem, el: HTMLElement) => {
+      const ed = liveEditor()
+      if (!ed || item.from < 0) return
+      const live = readPropertyBlockAt(ed, item.from)
+      const r = el.getBoundingClientRect()
+      setEditorOpen({
+        from: item.from,
+        type: live?.type ?? item.type,
+        name: live?.name || item.name,
+        value: live?.value ?? '',
+        left: r.left,
+        top: r.top,
+        width: r.width,
+        height: r.height,
+      })
+    },
+    [editor, editorRef]
+  )
+
+  const onHeaderPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLSpanElement>, item: PropertyHeaderItem) => {
+      const ed = liveEditor()
+      if (!ed) return
+      const from = resolvePropertyHeaderFrom(ed, item)
+      if (from < 0) return
+      bindPropertyIconDrag(e, {
+        getEditor: liveEditor,
+        from,
+        el: e.currentTarget,
+        headerEl: containerRef.current,
+        iconType: item.type,
+        onClick: () => openEditorAt({ ...item, from }, e.currentTarget),
+        callbacks: { setGhost, setDropLine },
+      })
+    },
+    [editor, editorRef, openEditorAt]
+  )
+
+  if (items.length === 0) return null
+
+  const markClass =
+    'nodrag nopan flex shrink-0 items-center justify-center rounded text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]'
+
   return (
+    <>
     <div
+      ref={containerRef}
       data-tt-property-header
-      className={cn('flex h-7 w-full items-center gap-1.5', className)} // Full-width Y band like other blocks
+      className={cn(
+        'flex w-full min-w-0 max-w-full flex-wrap items-center',
+        className
+      )}
+      style={{ gap: gapPx, paddingTop: rowPadY, paddingBottom: rowPadY }}
     >
-      {types.map((type, i) => {
-        const label = propertyTypeLabel(type) // Title / aria for this glyph
-        return (
-          <span
-            key={`${type}-${i}`} // Duplicate types are allowed (two Number cells, etc.)
-            // Square hover only (like Notion connection mark) — not the whole property band
-            // nodrag: interacting with a mark must not start RF frame drag
-            className="nodrag nopan flex h-5 w-5 shrink-0 items-center justify-center rounded text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]"
-            title={label}
-            aria-label={`Property · ${label}`}
-            onPointerDown={(e) => e.stopPropagation()} // Own the gesture; band body may still drag the frame
-          >
-            {propertyTypeIcon(type, 'h-4 w-4')}
-          </span>
-        )
-      })}
+      {items.map((item, i) => (
+        <PropertyIconWithTooltip
+          key={`${item.type}-${item.name}-${item.from}-${i}`}
+          type={item.type}
+          name={item.name}
+          iconClassName="h-4 w-4"
+          className={cn(markClass, item.from >= 0 && liveEditor() && 'cursor-grab active:cursor-grabbing')}
+          style={{ width: iconPx, height: iconPx }}
+          onPointerDown={(e) => onHeaderPointerDown(e, item)}
+        />
+      ))}
     </div>
+    {ghost &&
+      typeof document !== 'undefined' &&
+      createPortal(
+        <div
+          className="pointer-events-none fixed z-[120] flex h-6 w-6 items-center justify-center rounded bg-white shadow-md ring-1 ring-gray-200 dark:bg-[#1f1f1f] dark:ring-[#2f2f2f]"
+          style={{ left: ghost.x + 8, top: ghost.y + 8 }}
+        >
+          <PropertyIconWithTooltip type={ghost.type} name="" className="flex h-5 w-5 items-center justify-center text-gray-500" />
+        </div>,
+        document.body
+      )}
+    <PropertyDropLinePortal line={dropLine} />
+    <PropertyValuePopup
+      open={!!editorOpen}
+      anchor={editorOpen}
+      type={editorOpen?.type ?? 'text'}
+      name={editorOpen?.name ?? ''}
+      value={editorOpen?.value ?? ''}
+      onCommit={(next) => {
+        const ed = liveEditor()
+        if (ed && editorOpen && editorOpen.from >= 0) setPropertyBlockValue(ed, editorOpen.from, next)
+      }}
+      onClose={() => setEditorOpen(null)}
+    />
+    </>
   )
 }
 
@@ -513,11 +921,11 @@ function FrameConnectionsGroup({
             e.preventDefault()
             e.stopPropagation()
             const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-            setMenu({ x: r.left, y: r.bottom }) // Open Live Sync / Manual / Remove
+            setMenu({ x: r.left, y: r.bottom }) // Live Sync status + Remove
           }}
         >
           <NotionMarkIcon
-            className={cn('h-4 w-4', notionSync === 'live' ? 'text-[#2383e2]' : 'text-gray-500')}
+            className={cn('h-4 w-4', isNotionAutoSync(notionSync) ? 'text-[#2383e2]' : 'text-gray-500')}
           />
         </button>
       </div>
@@ -547,7 +955,187 @@ function FrameConnectionsGroup({
   )
 }
 
-function TipTapContent({
+/** Lightweight shell while the frame is off-screen — no TipTap / NodeViews. */
+// Inline formatting a text frame can contain. Anything else is dropped rather than trusted: this HTML
+// normally reaches the DOM through TipTap, which filters it to the editor schema, and injecting it
+// directly skips that — so a stored `<script>` or `onerror=` would otherwise run.
+const STATIC_FRAME_TAGS = new Set([
+  'P', 'BR', 'HR', 'SPAN', 'DIV', 'A', 'STRONG', 'B', 'EM', 'I', 'U', 'S', 'MARK', 'SUP', 'SUB',
+  'CODE', 'PRE', 'BLOCKQUOTE', 'UL', 'OL', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+])
+const STATIC_FRAME_ATTRS = new Set(['class', 'style', 'href', 'data-text-align'])
+// Frames that have had a live editor at some point this session, keyed message:section. RF unmounts
+// culled frames, so this is the only way a remount can tell "first paint of this board" from "this
+// frame came back into view" — the props that used to stand in for that (`loadCrossfade`) are static.
+const livePromotedFrames = new Set<string>()
+
+const staticFrameHtmlCache = new Map<string, string>() // Keyed by stored HTML — same frame, same result
+
+/** Sanitized, inert copy of a frame's stored HTML, for frames that have no DOM snapshot yet. */
+function staticFrameHtml(content: string): string {
+  const cached = staticFrameHtmlCache.get(content)
+  if (cached !== undefined) return cached
+  let html = ''
+  if (typeof document !== 'undefined') {
+    const root = new DOMParser().parseFromString(`<div>${content}</div>`, 'text/html').body
+      .firstElementChild
+    if (root) {
+      for (const el of Array.from(root.querySelectorAll('*'))) {
+        if (!STATIC_FRAME_TAGS.has(el.tagName)) {
+          el.remove() // Atoms/media need their NodeViews; an unknown tag would render as nothing anyway
+          continue
+        }
+        for (const attr of Array.from(el.attributes)) {
+          const name = attr.name.toLowerCase()
+          if (!STATIC_FRAME_ATTRS.has(name)) el.removeAttribute(attr.name)
+          else if (name === 'href' && /^\s*(javascript|data):/i.test(attr.value)) {
+            el.removeAttribute(attr.name)
+          }
+        }
+      }
+      html = root.innerHTML
+    }
+  }
+  staticFrameHtmlCache.set(content, html)
+  return html
+}
+
+function TipTapContentDeferred({
+  content,
+  className,
+  enableBlockHandles = false,
+  isFlashcard,
+  isPanelSelected,
+  deferredBox,
+  conversationId,
+  hostMessageId,
+  section,
+  dbAlwaysExpanded,
+}: {
+  content: string
+  className?: string
+  enableBlockHandles?: boolean
+  isFlashcard?: boolean
+  isPanelSelected?: boolean
+  dbAlwaysExpanded?: boolean // Compact vs expanded idle snapshot slots
+  deferredBox?: DeferredFrameBox | null // Cached/estimated inner fill — parent owns outer chrome
+  conversationId?: string // Snapshot store is per board
+  hostMessageId?: string // Snapshot key — this frame's message row
+  section?: 'prompt' | 'response' // Prompt/response bodies are separate editors in one frame
+}) {
+  if (!enableBlockHandles || isFlashcard) return null
+  // Preferred path: replay this frame's own last live DOM. Same markup, same stylesheet, so the cold
+  // frame is identical to the live one by construction — including JS-set inline sizes, which the
+  // hand-built shells below could only guess at. Notion DB frames use the idle TipTap snapshot only —
+  // there is no second static-twin renderer here (that drifted and does not generalize to connections).
+  const snapshot = readFrameSnapshot(
+    conversationId,
+    frameSnapshotKey(hostMessageId, section, {
+      dbExpand: dbExpandSnapshotSlot(content, dbAlwaysExpanded),
+    }),
+    content
+  )
+  // Prefer deferredBox.kind; fall back — boardLink titles are attrs-only (not frameHasVisibleText)
+  const kind =
+    deferredBox?.kind ??
+    (/data-type=["'](?:boardLink|pageLink)["']/i.test(content)
+      ? 'boardLink'
+      : frameHasVisibleText(content)
+        ? 'text'
+        : 'empty')
+  const shimmerHasText = deferredBox?.hasText ?? frameHasVisibleText(content)
+  const barCount = deferredBox?.barCount ?? shimmerBarCountFromHtml(content)
+  const innerW = deferredBox
+    ? Math.max(1, deferredBox.width - BLOCK_FRAME_PAD_X * 2)
+    : BLOCK_LOCKED_MIN_W
+  const innerH = deferredBox
+    ? Math.max(BLOCK_MIN_FRAME_H, deferredBox.height - BLOCK_FRAME_PAD_Y * 2)
+    : BLOCK_MIN_FRAME_H
+  const isInline = className?.includes('inline')
+  const otherClasses = className?.replace(/\binline\b/g, '').trim()
+  // boardLink titles live in data-title attrs — solid shimmer looked “empty until hover”
+  const boardLinkPreview = kind === 'boardLink' ? parseBoardLinkPreview(content) : null
+  // Only plain text frames: every other kind is an atom handled by a branch above, and atom HTML
+  // without its NodeView renders nothing. DB without a snapshot must mount TipTap (see shouldMountLive).
+  const staticHtml = kind === 'text' && content ? staticFrameHtml(content) : ''
+  return (
+    <div
+      className={cn(
+        'relative overflow-visible w-full h-full min-h-0',
+        isFlashcard ? 'cursor-pointer' : isPanelSelected ? 'cursor-text' : 'cursor-grab',
+        !isPanelSelected && 'tt-frame-unselected',
+        isInline && 'inline-block',
+        otherClasses
+      )}
+    >
+      <div
+        className={cn(
+          'relative w-full h-full min-h-0',
+          // Snapshots carry live's own box; the hand-built shells are sized to innerW/innerH and
+          // still need the clip.
+          snapshot ? 'overflow-visible' : 'overflow-hidden'
+        )}
+      >
+        {snapshot ? (
+          // Wrapper mirrors live's EditorContent host so inherited layout matches; `nodrag`/`nopan`
+          // are omitted because a cold frame is by definition not selected — the board owns the drag.
+          <div
+            className="block w-full"
+            data-tt-cold-frame=""
+            aria-hidden
+            dangerouslySetInnerHTML={{ __html: snapshot }}
+          />
+        ) : boardLinkPreview ? (
+          <div
+            className={cn(
+              'tt-board-link-deferred',
+              boardLinkPreview.variant === 'title'
+                ? 'tt-board-link-deferred-title'
+                : 'tt-board-link-deferred-inline'
+            )}
+            style={{ width: innerW, minHeight: innerH }}
+            aria-hidden
+          >
+            <span className="tt-board-link-deferred-icon">
+              {boardLinkPreview.icon ? (
+                <span className="tt-board-link-deferred-emoji">{boardLinkPreview.icon}</span>
+              ) : (
+                <FileText className="tt-board-link-deferred-fallback h-4 w-4 text-gray-500 dark:text-gray-400" />
+              )}
+            </span>
+            <span className="tt-board-link-deferred-label">
+              {boardLinkPreview.title || boardTitleOrDefault(null)}
+            </span>
+          </div>
+        ) : staticHtml ? (
+          // No capture yet (first visit to a board, or a frame the pointer has never reached) and the
+          // stored HTML is right here, so render it inert rather than shimmer bars. Staged promotion is
+          // one frame per animation frame, so during a zoom-out the last arrivals waited a few hundred
+          // ms — and an empty box for that long is exactly what "frames out of view don't render until
+          // I release the zoom" looked like. Same prose classes as the live editor, so it reads as the
+          // frame, not as a placeholder; the live editor still replaces it when the frame promotes.
+          <div
+            className="tiptap prose max-w-none block w-full"
+            data-tt-cold-frame=""
+            aria-hidden
+            dangerouslySetInnerHTML={{ __html: staticHtml }}
+          />
+        ) : (
+          <FrameContentShimmer
+            hasText={shimmerHasText}
+            barCount={barCount}
+            withGutter={false}
+            matchFramePad
+            className="h-full w-full"
+            style={{ width: innerW, height: innerH, minWidth: innerW, minHeight: innerH }}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function TipTapContentLive({
   content,
   className,
   originalContent,
@@ -577,6 +1165,12 @@ function TipTapContent({
   onPageTurnInto,
   suspendContentSync = false, // True while RF frame-dragging — skip setContent remounts
   dragSuspendRef, // Sync flag armed on pointerdown (React state alone is one frame late)
+  frameDragging = false, // RF frame drag — databaseBlock swaps to a light shell
+  frameFreeResize = false, // Unlocked user-sized frame — DB table fills clip box
+  frameClipHeight = null, // Host clipBoxH (layout px) for DB scroll sizing
+  frameClipPreview = false, // Hover peek — show full table, not the clip viewport
+  dbAlwaysExpanded = false, // Frame menu: DB shows every row even unselected (still static)
+  dbVisibleRowCap = 12, // Per-frame Notion DB show-more unlock (message metadata)
   forceContentSyncKey = 0, // Bump to setContent even while editor is focused (AI eye / remove / save)
   notionConnected = false, // Connections → Notion selected
   notionSync = 'live', // Live Sync vs Manual
@@ -585,11 +1179,12 @@ function TipTapContent({
   onPropertyTurnInto,
   pinConnectionsToFrame = false, // Free-frame clip: hug spacer only; real group is pinned to the frame
   loadCrossfade = false, // Board load: keep the shell overlay and fade it out; new frames skip this
-  chromeBandsOutside = false, // Host paints property / connections in adjust chrome (selected only)
-  onPropertyTypesChange,
+  viewportCrossfade = false, // Viewport mount: dissolve shell when TipTap first mounts off cold load
+  deferredBox = null, // Cached box/kind — sizes the cold copy held while a re-promotion mounts
   contentPadLeft = 0, // contentFit paddingLeft — ⋮⋮ centers in the blue gutter past this pad
   frameScale = 1, // Locked-resize CSS scale — grips remeasure when it changes
   handleGutterFlow = 0, // Blue L/R gutter width (flow px) — ⋮⋮ local left compensates contentFit scale
+  centerInShape = false, // Silhouette frames: center TipTap in the visible cross / diamond
 }: {
   content: string
   className?: string
@@ -620,6 +1215,12 @@ function TipTapContent({
   onPageTurnInto?: (blockType: 'board' | 'boardIn', boardInParentId?: string | null) => void
   suspendContentSync?: boolean
   dragSuspendRef?: React.MutableRefObject<boolean> // Parent mutates sync on pointerdown
+  frameDragging?: boolean
+  frameFreeResize?: boolean
+  frameClipHeight?: number | null
+  frameClipPreview?: boolean
+  dbAlwaysExpanded?: boolean
+  dbVisibleRowCap?: number
   forceContentSyncKey?: number
   notionConnected?: boolean
   notionSync?: NotionSyncMode
@@ -628,11 +1229,12 @@ function TipTapContent({
   onPropertyTurnInto?: (propertyType: PropertyTypeId) => void // ⋮⋮ Turn into → Property
   pinConnectionsToFrame?: boolean
   loadCrossfade?: boolean // Fade the load shell out as TipTap fades in (skip for fadeIn creates)
-  chromeBandsOutside?: boolean // Host paints property / connections in adjust chrome
-  onPropertyTypesChange?: (types: PropertyTypeId[]) => void // Live types for host chrome bands
+  viewportCrossfade?: boolean // Pan-in mount: same dissolve as load crossfade
+  deferredBox?: DeferredFrameBox | null
   contentPadLeft?: number // contentFit padL — grip centering past the fill edge
   frameScale?: number // Locked-resize scale — ⋮⋮ remeasure (CSS transform skips RO)
   handleGutterFlow?: number // Adjust-box L gutter (flow px); grips inverse-scale into it
+  centerInShape?: boolean // Shaped frame: center text in silhouette
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const { setActiveEditor } = useEditorContext()
@@ -640,6 +1242,8 @@ function TipTapContent({
   // Live frame-selected flag for TipTap DOM handlers (useEditor config is not recreated each render)
   const isPanelSelectedRef = useRef(!!isPanelSelected)
   isPanelSelectedRef.current = !!isPanelSelected
+  const hostNodeIdRef = useRef(hostNodeId) // Stable for editorProps memo (avoid setOptions every render)
+  hostNodeIdRef.current = hostNodeId
   // Same gesture that selects an unselected frame must not place the I-bar
   const selectOnlyClickRef = useRef(false)
   const lastAiForceSyncRef = useRef(0) // Last forceContentSyncKey we allowed while focused
@@ -682,7 +1286,8 @@ function TipTapContent({
       attributes: {
         class: cn(
           'prose max-w-none focus:outline-none min-h-[20px] cursor-text nokey', // nokey: RF must not treat Backspace as frame delete while typing
-          isFlashcard && 'text-xl' // Increase font size for flashcards
+          isFlashcard && 'text-xl', // Increase font size for flashcards
+          centerInShape && 'text-center' // Shaped frames: lines centered in silhouette
         ),
         ...(singleLineUntilEnter ? { 'data-single-line': 'true' } : {}), // CSS nowrap until Enter
       },
@@ -698,29 +1303,17 @@ function TipTapContent({
           const target = pe.target as HTMLElement | null
           if (
             target?.closest?.(
-              '[data-tt-block-handle], [data-tt-insert-line], .block-actions-menu, [data-page-link-preview], .tt-database-block, .tt-notion-db'
+              '[data-tt-block-handle], [data-tt-insert-line], .block-actions-menu, [data-page-link-preview], .tt-capture-link, .tt-database-block, .tt-notion-db'
             )
           ) {
             return false
           }
-          pe.preventDefault()
+          // stopPropagation alone keeps RF/d3 from starting a frame drag; preventDefault here
+          // would kill the native selection gesture, so press+drag could never select text.
           pe.stopPropagation()
           selectOnlyClickRef.current = false
-          try {
-            const hit = view.posAtCoords({ left: pe.clientX, top: pe.clientY })
-            if (hit != null && hit.pos >= 0) {
-              const sel = TextSelection.near(view.state.doc.resolve(hit.pos))
-              view.dispatch(view.state.tr.setSelection(sel).scrollIntoView())
-            }
-            view.focus()
-          } catch {
-            try {
-              view.focus()
-            } catch {
-              /* ignore */
-            }
-          }
-          return true
+          if (hostNodeIdRef.current) setFrameTextEditActive(hostNodeIdRef.current) // Selected-frame press → text edit mode
+          return false // Browser/PM own caret placement + drag-select
         },
         mousedown: (view: any, event: Event) => {
           const mouseEvent = event as MouseEvent
@@ -733,6 +1326,7 @@ function TipTapContent({
           // (that aborted RF/d3 frame drag on press+move). Only suppress the follow-up I-bar.
           if (!isPanelSelectedRef.current) {
             selectOnlyClickRef.current = true // Suppress I-bar on the matching click
+            clearFrameTextEditActive() // Selecting the frame — not editing yet
             return false
           }
           // DB table / title chrome owns clicks (cells, toolbar) — table nodrag stops RF drag
@@ -741,9 +1335,9 @@ function TipTapContent({
             return false
           }
           selectOnlyClickRef.current = false
-          // Selected frame: keep pointer inside the editor so RF does not start a frame drag
+          if (hostNodeIdRef.current) setFrameTextEditActive(hostNodeIdRef.current) // Already selected → caret / text select
+          // No preventDefault — the browser needs the default mousedown to run a drag-select.
           mouseEvent.stopPropagation()
-          mouseEvent.preventDefault() // Sync with pointerdown — own caret placement
 
           // Temporary reveal: click a hazed span to clear blur until click-away / blur
           const hazeTarget = (mouseEvent.target as HTMLElement | null)?.closest?.(
@@ -756,21 +1350,7 @@ function TipTapContent({
             hazeTarget.classList.add('tt-haze-revealed') // Reveal this hazed block temporarily
           }
 
-          try {
-            const hit = view.posAtCoords({ left: mouseEvent.clientX, top: mouseEvent.clientY })
-            if (hit != null && hit.pos >= 0) {
-              const sel = TextSelection.near(view.state.doc.resolve(hit.pos))
-              view.dispatch(view.state.tr.setSelection(sel).scrollIntoView())
-            }
-            view.focus()
-          } catch {
-            try {
-              view.focus()
-            } catch {
-              /* ignore */
-            }
-          }
-          return true
+          return false // PM's own mousedown owns caret + shift/double/triple-click + drag-select
         },
         contextmenu: (_view: any, event: Event) => {
           event.preventDefault() // Block native Cut/Copy so the frame menu can show
@@ -784,13 +1364,12 @@ function TipTapContent({
           return false
         },
         paste: (view: any, event: Event) => {
+          if (handleCaptureLinkPaste(view, event as ClipboardEvent)) return true
+          const clipboardData = (event as ClipboardEvent).clipboardData
           // Single-line frames: paste as one visual line (Enter still creates blocks)
           if (view.dom.getAttribute('data-single-line') !== 'true') return false // Wrap mode keeps normal multi-line paste
-          const clipboardData = (event as ClipboardEvent).clipboardData
           if (clipboardData) {
-            // Get plain text from clipboard
             const pastedText = clipboardData.getData('text/plain')
-            // Replace newlines and multiple spaces with single space to keep on same line
             const normalizedText = pastedText.replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim()
             if (normalizedText) {
               // Insert text at current cursor position
@@ -808,7 +1387,7 @@ function TipTapContent({
         },
       },
     }),
-    [isFlashcard, singleLineUntilEnter]
+    [isFlashcard, singleLineUntilEnter, centerInShape]
   )
 
   const editor = useEditor(
@@ -858,39 +1437,122 @@ function TipTapContent({
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
     const storage = editor.storage as {
-      frameHost?: { conversationId: string | null; hostMessageId: string | null }
+      frameHost?: {
+        conversationId: string | null
+        hostMessageId: string | null
+        hostNodeId: string | null
+        frameDragging: boolean
+      }
     }
     if (!storage.frameHost) return
     storage.frameHost.conversationId = conversationId || null
     storage.frameHost.hostMessageId = hostMessageId || null
-  }, [editor, conversationId, hostMessageId])
+    storage.frameHost.hostNodeId = hostNodeId || null
+  }, [editor, conversationId, hostMessageId, hostNodeId])
 
-  // Top icons = propertyBlock types in doc order (live; reorder / add / delete updates the strip)
-  const [propertyTypes, setPropertyTypes] = useState<PropertyTypeId[]>(() => {
-    const fromHtml = readPropertyBlockTypesFromHtml(content) // Seed from saved HTML before TipTap mounts
+  // Sync RF drag + free-resize + selection before paint so databaseBlock expands on every select
+  useLayoutEffect(() => {
+    if (!editor || editor.isDestroyed) return
+    const storage = editor.storage as {
+      frameHost?: {
+        conversationId: string | null
+        hostMessageId: string | null
+        frameDragging: boolean
+        frameSelected: boolean
+      }
+    }
+    if (!storage.frameHost) return
+    storage.frameHost.frameDragging = !!frameDragging
+    storage.frameHost.frameSelected = !!isPanelSelected
+    const dom = editor.view?.dom as HTMLElement | undefined
+    if (dom) {
+      if (frameDragging) dom.setAttribute('data-frame-dragging', 'true')
+      else dom.removeAttribute('data-frame-dragging')
+      if (isPanelSelected) dom.setAttribute('data-frame-selected', 'true')
+      else dom.removeAttribute('data-frame-selected')
+      if (frameFreeResize) dom.setAttribute('data-frame-free-resize', 'true')
+      else dom.removeAttribute('data-frame-free-resize')
+      if (frameFreeResize && frameClipHeight != null && frameClipHeight > 0) {
+        dom.setAttribute('data-frame-clip-height', String(Math.round(frameClipHeight)))
+      } else {
+        dom.removeAttribute('data-frame-clip-height')
+      }
+      if (frameClipPreview) dom.setAttribute('data-clip-preview', 'true')
+      else dom.removeAttribute('data-clip-preview')
+      // databaseBlock reads expand policy + row unlock off the host frame (per message — not per Notion DB id)
+      if (dbAlwaysExpanded) dom.setAttribute('data-db-always-expanded', 'true')
+      else dom.removeAttribute('data-db-always-expanded')
+      dom.setAttribute('data-db-visible-row-cap', String(dbVisibleRowCap))
+      // Wake databaseBlock NodeViews — storage mutation alone does not re-render them
+      dom.dispatchEvent(
+        new CustomEvent('tt-frame-selected', { detail: { selected: !!isPanelSelected } })
+      )
+    }
+  }, [editor, frameDragging, frameFreeResize, frameClipHeight, frameClipPreview, isPanelSelected, dbAlwaysExpanded, dbVisibleRowCap])
+
+  // Top icons = **empty** propertyBlock headers in doc order (filled cells stay in the body only)
+  const [propertyHeaders, setPropertyHeaders] = useState<PropertyHeaderItem[]>(() => {
+    const fromHtml = readPropertyBlockHeadersFromHtml(content)
     if (fromHtml.length > 0) return fromHtml
-    return propertyType ? [propertyType] : [] // Legacy: frame metadata only, no cells yet
+    if (htmlHasPropertyBlocks(content)) return []
+    return propertyType ? [{ type: propertyType, name: '', from: -1 }] : []
   })
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
     const sync = () => {
-      const fromDoc = readPropertyBlockTypesFromDoc(editor.state.doc) // Walk blocks top → bottom
-      const next =
-        fromDoc.length > 0 ? fromDoc : propertyType ? [propertyType] : [] // Keep metadata fallback
-      setPropertyTypes((prev) =>
-        prev.length === next.length && prev.every((t, i) => t === next[i]) ? prev : next
+      const fromDoc = readPropertyBlockHeadersFromDoc(editor.state.doc)
+      let next = fromDoc
+      if (fromDoc.length === 0) {
+        let anyProp = false
+        editor.state.doc.descendants((node) => {
+          if (node.type.name === 'propertyBlock') {
+            anyProp = true
+            return false
+          }
+          return true
+        })
+        next = !anyProp && propertyType ? [{ type: propertyType, name: '', from: -1 }] : []
+      }
+      setPropertyHeaders((prev) =>
+        prev.length === next.length &&
+        prev.every(
+          (it, i) =>
+            it.type === next[i].type && it.name === next[i].name && it.from === next[i].from
+        )
+          ? prev
+          : next
       )
     }
     sync()
-    editor.on('update', sync) // Turn into / ⋮⋮ reorder / delete
+    editor.on('update', sync)
     return () => {
       editor.off('update', sync)
     }
   }, [editor, propertyType])
-  // Host paints property icons in the blue-box top band when selected
+
+  // Card-view frames lead with a title boardLink — paint empty property icons under that name.
+  const [propertyUnderBoardLink, setPropertyUnderBoardLink] = useState(() => {
+    const trimmed = (content || '').trimStart()
+    if (!trimmed.startsWith('<div')) return false
+    return (
+      /^<div\b[^>]*data-type=["']boardLink["'][^>]*data-variant=["']title["']/i.test(trimmed) ||
+      /^<div\b[^>]*data-variant=["']title["'][^>]*data-type=["']boardLink["']/i.test(trimmed)
+    )
+  })
   useEffect(() => {
-    onPropertyTypesChange?.(propertyTypes)
-  }, [propertyTypes, onPropertyTypesChange])
+    if (!editor || editor.isDestroyed) return
+    const sync = () => {
+      const first = editor.state.doc.firstChild
+      setPropertyUnderBoardLink(
+        !!first && first.type.name === 'boardLink' && first.attrs.variant === 'title'
+      )
+    }
+    sync()
+    editor.on('update', sync)
+    return () => {
+      editor.off('update', sync)
+    }
+  }, [editor])
 
   // Editable only when this frame is selected (and share role allows). Unselected = no iOS text loupe.
   useEffect(() => {
@@ -899,6 +1561,7 @@ function TipTapContent({
     if (editor.isEditable !== next) editor.setEditable(next)
     // Drop any caret / native selection when the frame becomes unselected
     if (!next && editor.view?.dom) {
+      clearFrameTextEditActive() // Deselect → Delete no longer targets this frame's text
       try {
         editor.commands.blur()
         window.getSelection()?.removeAllRanges()
@@ -928,6 +1591,7 @@ function TipTapContent({
       e.preventDefault() // Requires non-passive — stops iOS focus-only first tap
       e.stopPropagation() // RF d3-drag listens for touchstart on the node
       selectOnlyClickRef.current = false
+      if (hostNodeId) setFrameTextEditActive(hostNodeId) // Caret placed → Backspace edits text
       const t = e.touches[0]
       try {
         const hit = editor.view.posAtCoords({ left: t.clientX, top: t.clientY })
@@ -946,7 +1610,7 @@ function TipTapContent({
     }
     dom.addEventListener('touchstart', onTouchStart, { passive: false, capture: true })
     return () => dom.removeEventListener('touchstart', onTouchStart, { capture: true })
-  }, [editor, isPanelSelected, canEdit])
+  }, [editor, isPanelSelected, canEdit, hostNodeId])
 
   // Register editor on mount and cleanup on unmount
   useEffect(() => {
@@ -992,6 +1656,43 @@ function TipTapContent({
       editorDOM.style.minWidth = ''
     }
   }, [editor, singleLineUntilEnter])
+
+  // Snapshot this frame's rendered subtree so the cold frame can replay it inert instead of
+  // re-deriving an approximation. Idle-scheduled and debounced: the capture is only needed the
+  // *next* time this frame goes cold, so it must never compete with typing or a gesture.
+  // DB frames use a compact/expanded key slot and only capture while `!data-tt-db-live` (idle static).
+  const snapshotKey = frameSnapshotKey(hostMessageId, section, {
+    dbExpand: dbExpandSnapshotSlot(content, dbAlwaysExpanded),
+  })
+  useEffect(() => {
+    if (!editor || editor.isDestroyed || !conversationId || !snapshotKey) return
+    let idleHandle: number | null = null
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const capture = () => {
+      if (!editor || editor.isDestroyed) return
+      if (isFrameDragging() || isBoardNavigating()) return // Mid-gesture DOM is a moving target
+      captureFrameSnapshot({
+        conversationId,
+        key: snapshotKey,
+        content,
+        root: editor.view.dom as HTMLElement,
+      })
+    }
+    // Wait for NodeViews + hug measurement to settle, then take the idle slot if the browser has one.
+    // Deselect / expand toggle re-runs this so we replace any live-table attempt with the idle paint.
+    timer = setTimeout(() => {
+      timer = null
+      const ric = (window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number })
+        .requestIdleCallback
+      if (ric) idleHandle = ric(capture, { timeout: 2000 })
+      else timer = setTimeout(capture, 300)
+    }, 500)
+    return () => {
+      if (timer) clearTimeout(timer)
+      const cic = (window as Window & { cancelIdleCallback?: (handle: number) => void }).cancelIdleCallback
+      if (idleHandle != null && cic) cic(idleHandle)
+    }
+  }, [editor, conversationId, snapshotKey, content, isPanelSelected, dbAlwaysExpanded])
 
   // Apply blue highlights to commented text when comments change
   useEffect(() => {
@@ -1155,113 +1856,109 @@ function TipTapContent({
   }, [editor, comments, onCommentClick])
 
   useEffect(() => {
-    if (editor) {
-      // Caret owns the doc while typing — except when AI review forces a content swap
-      if (editor.isFocused && forceContentSyncKey === lastAiForceSyncRef.current) return
-      // While RF is dragging the frame, never setContent AND never consume a force-sync key
-      // (consuming here dropped the post-drag restore and left row cards empty until a 2nd drag).
-      if (suspendContentSync || dragSuspendRef?.current) return
-      if (forceContentSyncKey !== lastAiForceSyncRef.current) {
-        lastAiForceSyncRef.current = forceContentSyncKey
-      }
-      // Compare DOCUMENTS, not HTML strings. The boardLink NodeView adds a class and TipTap emits
-      // attributes in its own order, so editor.getHTML() never byte-equals the stored HTML once a
-      // boardLink exists — a raw string compare re-ran setContent every sync (infinite loop / page
-      // unresponsive). doc.eq() ignores cosmetic class/attr-order/whitespace, so it's exact + stable.
-      let differs = true
+    if (!editor || editor.isDestroyed || !editor.view) return
+    // Caret owns the doc while typing — except when AI review forces a content swap
+    if (editor.isFocused && forceContentSyncKey === lastAiForceSyncRef.current) return
+    // While RF is dragging the frame, never setContent AND never consume a force-sync key
+    // (consuming here dropped the post-drag restore and left row cards empty until a 2nd drag).
+    if (suspendContentSync || dragSuspendRef?.current) return
+    if (forceContentSyncKey !== lastAiForceSyncRef.current) {
+      lastAiForceSyncRef.current = forceContentSyncKey
+    }
+    const readEditorHtml = (): string | null => {
+      if (editor.isDestroyed || !editor.view) return null
       try {
-        const tmp = document.createElement('div') // Off-DOM parse target
-        tmp.innerHTML = unwrapNestedFramesHtml(content || '<p></p>')
-        const parsed = PMDOMParser.fromSchema(editor.schema).parse(tmp) // Stored HTML → PM doc
-        differs = !editor.state.doc.eq(parsed) // Semantic equality (not string)
+        return editor.getHTML()
       } catch {
-        differs = editor.getHTML() !== content // Fallback to string compare on parse error
+        return null
       }
+    }
+    // Compare DOCUMENTS, not HTML strings. The boardLink NodeView adds a class and TipTap emits
+    // attributes in its own order, so editor.getHTML() never byte-equals the stored HTML once a
+    // boardLink exists — a raw string compare re-ran setContent every sync (infinite loop / page
+    // unresponsive). doc.eq() ignores cosmetic class/attr-order/whitespace, so it's exact + stable.
+    let differs = true
+    try {
+      const tmp = document.createElement('div') // Off-DOM parse target
+      tmp.innerHTML = unwrapNestedFramesHtml(content || '<p></p>')
+      const parsed = PMDOMParser.fromSchema(editor.schema).parse(tmp) // Stored HTML → PM doc
+      differs = !editor.state.doc.eq(parsed) // Semantic equality (not string)
+    } catch {
+      const live = readEditorHtml()
+      differs = live == null ? true : live !== content // View torn down mid-sync → restore on remount
+    }
       // Same Notion DB atom already in the editor — skip setContent (avoids table remount on drag-end)
       if (differs && hasDatabaseBlockHtml(content)) {
         const propId = content.match(/data-notion-database-id=["']([^"']+)["']/i)?.[1]
-        let editorId: string | null = null
+        // Holder object, not a `let`: TS narrows a captured `let` to its initializer and can't see
+        // the assignment inside `descendants`, which typed the id as `never` at the compare below.
+        const found: { id: string | null } = { id: null }
         editor.state.doc.descendants((node) => {
           if (node.type.name === 'databaseBlock') {
-            editorId = (node.attrs.notionDatabaseId as string) || null
+            found.id = (node.attrs.notionDatabaseId as string) || null
             return false
           }
           return true
         })
+        const editorId = found.id
         if (propId && editorId && propId.replace(/-/g, '') === editorId.replace(/-/g, '')) {
           differs = false
         }
       }
       // Row card / atom frames: editor may look “eq” after a remount stripped propertyBlocks — force restore
       if (hasFrameAtomHtml(content)) {
-        const live = editor.getHTML()
-        const lostProps =
-          countPropertyBlocks(content) > 0 && countPropertyBlocks(live) < countPropertyBlocks(content)
-        const lostAtoms = !hasFrameAtomHtml(live) || isBlockContentEmpty(live)
-        if (lostProps || lostAtoms) differs = true
+        const live = readEditorHtml()
+        if (live != null) {
+          const lostProps =
+            countPropertyBlocks(content) > 0 && countPropertyBlocks(live) < countPropertyBlocks(content)
+          const lostAtoms = !hasFrameAtomHtml(live) || isBlockContentEmpty(live)
+          if (lostProps || lostAtoms) differs = true
+        }
       }
       // Sync prop → editor only when the document actually changed
       if (differs) {
-        // emitUpdate:false — programmatic AI eye/discard/save must not fire onUpdate
-        // (that set promptHasChanges and blocked discard from restoring the original)
-        editor.commands.setContent(unwrapNestedFramesHtml(content || '<p></p>'), { emitUpdate: false })
-        // Ensure cursor is visible by focusing if editor is empty
-        if (!content || content.trim() === '' || content === '<p></p>') {
-          // Set cursor position to start to show cursor
-          setTimeout(() => {
-            editor.commands.setTextSelection(0)
-          }, 0)
-        }
-        // Re-apply comment highlights after content is set
-        if (comments.length > 0) {
-          setTimeout(() => {
-            const tr = editor.state.tr
-            comments.forEach((comment) => {
-              try {
-                const { from, to } = comment
-                if (from >= 0 && to <= editor.state.doc.content.size && from < to) {
-                  // Remove all existing highlight marks (including yellow) and apply blue highlight
-                  tr.removeMark(from, to, editor.schema.marks.highlight)
-                  tr.addMark(from, to, editor.schema.marks.highlight.create({ color: '#dbeafe' })) // blue-100 - slightly darker than blue-50
+        // TipTap setContent uses flushSync — defer so we never flush mid-React render/lifecycle
+        const html = unwrapNestedFramesHtml(content || '<p></p>')
+        const shouldFocusEmpty = !content || content.trim() === '' || content === '<p></p>'
+        const commentList = comments
+        queueMicrotask(() => {
+          if (editor.isDestroyed || !editor.view) return
+          // emitUpdate:false — programmatic AI eye/discard/save must not fire onUpdate
+          // (that set promptHasChanges and blocked discard from restoring the original)
+          editor.commands.setContent(html, { emitUpdate: false })
+          // Ensure cursor is visible by focusing if editor is empty
+          if (shouldFocusEmpty) {
+            // Set cursor position to start to show cursor
+            setTimeout(() => {
+              if (!editor.isDestroyed) editor.commands.setTextSelection(0)
+            }, 0)
+          }
+          // Re-apply comment highlights after content is set
+          if (commentList.length > 0) {
+            setTimeout(() => {
+              if (editor.isDestroyed) return
+              const tr = editor.state.tr
+              commentList.forEach((comment) => {
+                try {
+                  const { from, to } = comment
+                  if (from >= 0 && to <= editor.state.doc.content.size && from < to) {
+                    // Remove all existing highlight marks (including yellow) and apply blue highlight
+                    tr.removeMark(from, to, editor.schema.marks.highlight)
+                    tr.addMark(from, to, editor.schema.marks.highlight.create({ color: '#dbeafe' })) // blue-100 - slightly darker than blue-50
+                  }
+                } catch (error) {
+                  console.error('Error applying comment highlight:', error)
                 }
-              } catch (error) {
-                console.error('Error applying comment highlight:', error)
+              })
+              // Dispatch the transaction if there are any changes
+              if (tr.steps.length > 0) {
+                editor.view.dispatch(tr)
               }
-            })
-            // Dispatch the transaction if there are any changes
-            if (tr.steps.length > 0) {
-              editor.view.dispatch(tr)
-            }
-          }, 0)
-        }
+            }, 0)
+          }
+        })
       }
-    }
   }, [editor, content, comments, suspendContentSync, forceContentSyncKey])
-
-  // Reposition extension UI elements (like Grammarly) when panel moves
-  useEffect(() => {
-    if (!containerRef.current) return
-
-    const observer = new MutationObserver(() => {
-      // Find and reposition extension UI elements
-      const extensionElements = containerRef.current?.querySelectorAll('[data-grammarly-shadow-root], [id^="grammarly-"], [class*="grammarly"]')
-      extensionElements?.forEach((el) => {
-        const htmlEl = el as HTMLElement
-        // Extension elements are typically positioned absolutely or fixed
-        // We can't directly control them, but we can ensure the container is positioned correctly
-      })
-    })
-
-    if (containerRef.current) {
-      observer.observe(containerRef.current, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-      })
-    }
-
-    return () => observer.disconnect()
-  }, [containerRef])
 
   // Focus editor + place I-bar — only when the frame is already selected (not the select click)
   const handleContainerClick = useCallback((e: React.MouseEvent) => {
@@ -1272,10 +1969,17 @@ function TipTapContent({
     // Same gesture that just selected the frame / armed a nest — no I-bar
     if (selectOnlyClickRef.current) {
       selectOnlyClickRef.current = false
+      clearFrameTextEditActive() // First-select click must not arm text-edit Delete
+      return
+    }
+    // DB table / cell inputs own the gesture — don't steal focus after a row warm.
+    const t = e.target as HTMLElement | null
+    if (t?.closest?.('.tt-notion-db, .tt-database-block, input, textarea, select, [data-tt-db-row-warm]')) {
       return
     }
     e.stopPropagation()
     if (editor.isDestroyed) return
+    if (hostNodeId) setFrameTextEditActive(hostNodeId) // Second click → caret; Backspace edits text
     // Sync in this tap — setTimeout(0) broke iOS: first tap focused nothing, second placed I-bar
     try {
       // Always resolve against click coords so empty lines get the caret (not doc start/end)
@@ -1288,29 +1992,55 @@ function TipTapContent({
       /* fall through */
     }
     editor.commands.focus()
-  }, [editor, isPanelSelected])
+  }, [editor, isPanelSelected, hostNodeId])
 
   // Extract 'inline' from className if present to apply inline-block display
   const isInline = className?.includes('inline')
   const otherClasses = className?.replace(/\binline\b/g, '').trim()
+  // `loadCrossfade` is really just `fadeIn !== true`: a permanent per-frame prop, not "this is the
+  // board load". So every *later* live mount replayed the board-load shell, and because RF unmounts
+  // culled frames, panning one out and back re-promoted it and flashed shimmer bars over content that
+  // had been correct on screen a moment earlier — caught in the act as live + shimmer + fade-out on the
+  // same frame. A frame that has been live before this mount is a re-promotion: the right placeholder
+  // is its own cold copy (what the eye just saw), held until the editor exists.
+  const promoteKey = `${hostMessageId || hostNodeId || ''}:${section || ''}`
+  const [isRepromotion] = useState(() => livePromotedFrames.has(promoteKey))
+  useEffect(() => {
+    livePromotedFrames.add(promoteKey)
+  }, [promoteKey])
   // Keep the load shell until it finishes fading — TipTap mounts under it (immediatelyRender: false)
   const [keepShimmer, setKeepShimmer] = useState(
-    () => !!loadCrossfade && !!enableBlockHandles && !isFlashcard && !editor // Load shells only — not new fadeIn frames
+    () =>
+      !!enableBlockHandles &&
+      !isFlashcard &&
+      !livePromotedFrames.has(promoteKey) &&
+      (!!loadCrossfade || !!viewportCrossfade) &&
+      !editor // Load / viewport shells — not new fadeIn frames
   )
   const [shimmerExiting, setShimmerExiting] = useState(false) // Opacity 1→0 once the editor exists
-  const showFrameShimmer = !!enableBlockHandles && !isFlashcard && (!editor || keepShimmer) // Mount shell, then load overlay
+  // A re-promotion shows its cold copy instead of a shell, so the frame reads as itself for the whole
+  // ~100–300ms TipTap mount rather than blinking to bars (or to nothing) and back.
+  const coldPlaceholder = isRepromotion && !editor
+  const showFrameShimmer =
+    !!enableBlockHandles && !isFlashcard && !coldPlaceholder && (!editor || keepShimmer) // Mount shell, then load overlay
   const shimmerHasText = frameHasVisibleText(content) // Text lines vs solid box (empty / spaces)
+  const showPropertyStrip = Boolean(
+    propertyHeaders.length > 0 && enableBlockHandles && !isFlashcard && !showFrameShimmer
+  )
+  const propertyStrip = showPropertyStrip ? (
+    <FramePropertyGroup items={propertyHeaders} editor={editor} />
+  ) : null
 
   useEffect(() => {
     if (!editor || !keepShimmer) return // Nothing to fade, or already gone
-    if (!enableBlockHandles || isFlashcard || !loadCrossfade) {
+    if (!enableBlockHandles || isFlashcard || (!loadCrossfade && !viewportCrossfade)) {
       setKeepShimmer(false) // Chat/flashcard/new frames never overlay a load shell
       return
     }
     setShimmerExiting(true) // Fade the shell out as real blocks are on screen
     const t = window.setTimeout(() => setKeepShimmer(false), BOARD_LOAD_FADE_MS) // Unmount after the CSS fade
     return () => window.clearTimeout(t)
-  }, [editor, enableBlockHandles, isFlashcard, keepShimmer, loadCrossfade])
+  }, [editor, enableBlockHandles, isFlashcard, keepShimmer, loadCrossfade, viewportCrossfade])
 
   if (!editor && (!enableBlockHandles || isFlashcard)) return null // Chat/flashcard keep prior null mount
 
@@ -1318,8 +2048,8 @@ function TipTapContent({
     <div
       ref={containerRef}
       className={cn(
-        'relative overflow-visible w-full', // Full frame content width so short/empty blocks stretch
-        // Unselected → grab (drag frame); selected → text caret; flashcards keep pointer
+        'relative overflow-visible', // Grips sit in the panel’s left chrome (negative left)
+        centerInShape ? 'w-fit max-w-full mx-auto' : 'w-full',
         isFlashcard ? 'cursor-pointer' : isPanelSelected ? 'cursor-text' : 'cursor-grab',
         !isPanelSelected && 'tt-frame-unselected', // CSS: no text select / callout until selected
         // Selected: nodrag on the whole editor chrome so padding taps don't start RF drag either
@@ -1339,24 +2069,23 @@ function TipTapContent({
       {/* Apply shimmer animation to prompt text when response is loading (not for flashcards) */}
       <div
         className={cn(
-          'relative w-full overflow-visible', // Grips sit in the panel’s left chrome (negative left)
+          'relative overflow-visible',
+          centerInShape ? 'w-fit max-w-full mx-auto' : 'w-full',
           isLoading && !isFlashcard && 'shimmer'
         )}
       >
         {editor ? (
+          <PropertyHeaderSlotProvider value={propertyUnderBoardLink ? propertyStrip : null}>
           <div>
-            {/* Unselected: icons stay in the fill. Selected: host paints them in the top chrome band. */}
-            {!chromeBandsOutside &&
-              propertyTypes.length > 0 &&
-              enableBlockHandles &&
-              !isFlashcard &&
-              !showFrameShimmer && <FramePropertyGroup types={propertyTypes} />}
+            {/* Default: top of the fill. Card frames mount the same strip under the title boardLink. */}
+            {!propertyUnderBoardLink && showPropertyStrip && (
+              <div className="w-full min-w-0 max-w-full" data-tt-property-band>
+                {propertyStrip}
+              </div>
+            )}
             {/* ⋮⋮ paints outside the fill (negative left into panel chrome); no pl-6 inside the frame.
-                Keep mounted during RF drag (invisible) — unmounting mid-drag remounted atom NodeViews. */}
-            <div
-              className={cn(suspendContentSync && 'invisible pointer-events-none')}
-              aria-hidden={suspendContentSync || undefined}
-            >
+                Keep mounted during RF drag — unmounting mid-drag remounted atom NodeViews. */}
+            <div>
               <TipTapBlockHandles
                 editor={editor}
                 enabled={enableBlockHandles && showBlockHandles && !isFlashcard}
@@ -1377,9 +2106,28 @@ function TipTapContent({
             </div>
             <EditorContent
               editor={editor}
-              className={cn('block w-full', isPanelSelected && 'nodrag nopan')}
+              className={cn(
+                'block',
+                centerInShape ? 'w-fit max-w-full' : 'w-full',
+                isPanelSelected && 'nodrag nopan'
+              )}
             />
           </div>
+          </PropertyHeaderSlotProvider>
+        ) : null}
+        {coldPlaceholder ? (
+          <TipTapContentDeferred
+            content={content}
+            className={className}
+            enableBlockHandles={enableBlockHandles}
+            isFlashcard={isFlashcard}
+            isPanelSelected={isPanelSelected}
+            deferredBox={deferredBox}
+            conversationId={conversationId}
+            hostMessageId={hostMessageId}
+            section={section}
+            dbAlwaysExpanded={dbAlwaysExpanded}
+          />
         ) : null}
         {showFrameShimmer ? (
           <div
@@ -1401,12 +2149,12 @@ function TipTapContent({
             />
           </div>
         ) : null}
-        {/* Connections: unselected stay in the fill; selected → host bottom chrome band */}
-        {!chromeBandsOutside &&
-          notionConnected &&
+        {/* Connections: last block INSIDE the fill (host pins it only when the frame clips) */}
+        {notionConnected &&
           enableBlockHandles &&
           !isFlashcard &&
           !showFrameShimmer &&
+          !coldPlaceholder && // Cold copy owns the whole fill; a second connections band would double up
           (pinConnectionsToFrame ? (
             <div className="h-7" aria-hidden data-tt-notion-hug />
           ) : (
@@ -1417,6 +2165,62 @@ function TipTapContent({
           ))}
       </div>
     </div>
+  )
+}
+
+function TipTapContent(
+  props: Parameters<typeof TipTapContentLive>[0] & {
+    mountImmediately?: boolean
+    deferredBox?: DeferredFrameBox | null
+    coldReady?: boolean
+  }
+) {
+  const { mountImmediately, coldReady, ...liveProps } = props
+  // Host computes coldReady once; re-deriving it here could disagree with `contentDeferred` and size
+  // the frame as if live while this renders cold.
+  const mountReason = useFrameContentMountReason(liveProps.hostNodeId)
+  // DB frames always promote on near — TipTapContentDeferred cannot paint a databaseBlock.
+  const isDbFrame = hasDatabaseBlockHtml(liveProps.content || '')
+  const mountContent =
+    mountReason !== false && !(mountReason === 'near' && coldReady && !isDbFrame)
+  // RF mounts nodes as they cross the viewport edge. A first TipTap mount costs 100–300ms
+  // (editor + NodeViews), so frames appearing mid-pan used to hitch the gesture — measured
+  // p95 120ms / p99 306ms panning a 33-frame board vs 9ms/18ms when the visible set held still.
+  const navigating = useSyncExternalStore(
+    subscribeBoardNavigating,
+    isBoardNavigating,
+    () => false
+  )
+  const everLiveRef = useRef(false) // Already-live frames stay live — unmounting mid-pan remounts DB NodeViews
+  const wantLive =
+    mountImmediately ||
+    liveProps.isPanelSelected ||
+    liveProps.isFlashcard ||
+    !liveProps.enableBlockHandles ||
+    mountContent
+  // Deferring a *first* mount through a gesture is only acceptable when a snapshot can stand in.
+  // Without one there is no twin path anymore (it drifted and does not generalize), so mount TipTap
+  // even mid-gesture — once, to capture idle paint — then stay cold on later proximity.
+  // DB frames and already-live frames mount / stay live mid-nav so tables are not blank until stop.
+  const canRenderCold = !!liveProps.enableBlockHandles && !liveProps.isFlashcard && !isDbFrame
+  const shouldMountLive =
+    wantLive && (!navigating || everLiveRef.current || !canRenderCold || !coldReady)
+  useEffect(() => {
+    if (shouldMountLive) everLiveRef.current = true
+  }, [shouldMountLive])
+  if (!shouldMountLive) {
+    return <TipTapContentDeferred {...liveProps} deferredBox={liveProps.deferredBox} />
+  }
+  return (
+    <TipTapContentLive
+      {...liveProps}
+      viewportCrossfade={
+        !mountImmediately &&
+        !liveProps.loadCrossfade &&
+        !!liveProps.enableBlockHandles &&
+        !liveProps.isFlashcard
+      }
+    />
   )
 }
 
@@ -1925,7 +2729,10 @@ function TagButton({ responseMessageId }: { responseMessageId: string }) {
   )
 }
 
-export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelNodeData>) {
+/** Shared empty result so the stack-side selector can bail without allocating. */
+const EMPTY_STACK_SIDES: Array<{ side: FrameStackSide; groupId: string }> = []
+
+function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNodeData>) {
   // Handle both ChatPanelNodeData and ProjectBoardPanelNodeData
   const isProjectBoard = isProjectBoardData(data)
 
@@ -1938,6 +2745,17 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     : data.responseMessage
   const conversationId = isProjectBoard ? data.boardId : data.conversationId
   const projectId = isProjectBoard ? data.projectId : undefined
+  // Chat-linked logo sides (thread-hidden) + sides with a painted chat thread
+  const { logoSides: chatLinkLogoSides, threadVisibleSides: chatThreadVisibleSides } =
+    useChatFrameLinkLogoSides(promptMessage?.id)
+  // TipTap NodeViews cannot see RF `selected` — publish so databaseBlock collapses on deselect
+  useLayoutEffect(() => {
+    const keys = [id, promptMessage?.id].filter(Boolean) as string[]
+    for (const k of keys) setFramePanelSelected(k, !!selected)
+    return () => {
+      for (const k of keys) setFramePanelSelected(k, false)
+    }
+  }, [id, promptMessage?.id, selected])
   const dataCollapsed = data.isResponseCollapsed || false
   const supabase = createClient()
   const queryClient = useQueryClient()
@@ -1951,10 +2769,13 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     justRestoredByMessage,
     consumeRestoredContent,
   } = useAiEditSession() // AI edit review session
+  const warmFrameContentMount = useWarmFrameContentMount() // Prefetch TipTap before pan-in
   const wasAiPendingRef = useRef(false) // Detect pending → cleared (Remove / Save)
   const [aiForceSyncKey, setAiForceSyncKey] = useState(0) // Bump to setContent even while focused
   const { reactFlowInstance, panelWidth, getSetNodes, flashcardMode, setFlashcardMode, selectedTag } = useReactFlowContext() // Get zoom, panel width, setNodes function, flashcard study mode, and selected tag
   const { setNodes, getNodes } = useReactFlow() // Get setNodes and getNodes for NodeToolbar actions
+  const { isMobileMode } = useSidebarContext() // Unselected frames need a hold before drag on phone
+  const { manualDragNodeId } = usePhoneFrameDrag() // Manual hold-drag (RF nodrag on unselected phone panels)
   const handleNotionConnection = useCallback(async (next: { connected: boolean; sync?: NotionSyncMode }) => {
     if (!promptMessage?.id) return // No row to patch
     const existing = { ...((promptMessage.metadata as Record<string, unknown>) || {}) } // Keep other frame meta
@@ -1963,7 +2784,7 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
       delete existing.notionSync
     } else {
       existing.notionConnected = true
-      existing.notionSync = next.sync === 'manual' ? 'manual' : 'live'
+      existing.notionSync = normalizeNotionSyncMode(next.sync)
     }
     setNodes((nds) =>
       nds.map((n) =>
@@ -2019,15 +2840,12 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
   )
   const updateNodeInternals = useUpdateNodeInternals() // Remeasure auto-sized frames without setNodes (avoids RO→setNodes storms)
   const rfStoreApi = useStoreApi() // Unselect legacy wrapper before RF snapshots dragItems (frame-body drag)
-  // Zoom only drives selected-frame chrome. Unselected frames return a constant so pinch/pan
-  // does not re-render TipTap + large Notion DB tables every tick (phone Safari OOM over tunnel).
-  // While pinching, navigationZoom freezes the value so chrome doesn’t re-render mid-gesture.
-  const rfZoom = useStore((s) => {
-    if (!selected) return 1
-    return navigationZoom(Math.round((s.transform[2] || 1) * 8) / 8)
-  })
+  // Selected-frame chrome layout (gutters / ⋮⋮ column) tracks LIVE viewport CSS zoom
+  // (store transform can lag until the gesture ends — that was the post-zoom snap).
+  const rfZoom = useLiveBoardZoom(Boolean(selected))
   const [promptHasChanges, setPromptHasChanges] = useState(false)
   const [responseHasChanges, setResponseHasChanges] = useState(false)
+  const editorActiveRef = useRef(false) // Skip Notion page pull while the frame editor is focused
   // Single text body: plain-merge legacy prompt + response (no section split).
   // Legacy: sole databaseBlock → boardLink when linkedBoardId exists (pages only).
   // Notion DB frames / board bodies keep the live databaseBlock (row→card must not wipe the table).
@@ -2078,32 +2896,43 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
   const hasAutoFocusedRef = useRef(false) // Track if note editor has been auto-focused
   const { resolvedTheme } = useTheme() // Get theme to set transparent background color
   
-  // Resize state for panel scaling
-  const [resizeDimensions, setResizeDimensions] = useState<{ width: number; height: number } | null>(null) // Track resized dimensions
-  const [isUserResized, setIsUserResized] = useState(false) // True only after corner-drag or saved resizeDimensions — not auto line-grow
+  // Resize state for panel scaling — seed from place/persist meta so I-bar type paints scaled on first frame
+  const seedResizeDims = initialResizeDimsFromMeta(promptMessage?.metadata)
+  const seedFrameScale = initialFrameScaleFromMeta(promptMessage?.metadata)
+  const [resizeDimensions, setResizeDimensions] = useState<{ width: number; height: number } | null>(
+    () => seedResizeDims
+  ) // Track resized dimensions
+  const [isUserResized, setIsUserResized] = useState(() => seedResizeDims != null) // True after corner-drag, place seed, or saved resizeDimensions
   const [fontScale, setFontScale] = useState(1) // Legacy editor font-size scale (blocks use frameScale instead)
   const [frameUnlocked, setFrameUnlocked] = useState(false) // Unlocked: free resize; locked: content scales with frame
   const [frameTextWrap, setFrameTextWrap] = useState(false) // Unlocked only: wrap lines in the frame box instead of clipping
   const [wrapColWidth, setWrapColWidth] = useState<number | null>(null) // Unscaled wrap column width — fixed on locked resize, restored on rewrap
-  const [frameScale, setFrameScale] = useState(1) // Uniform content scale while frame is locked
-  const [unlockedFrameSize, setUnlockedFrameSize] = useState<{ width: number; height: number } | null>(null) // Last free-resize shape (metadata continuity; unlock does NOT snap to this)
+  const [dbAlwaysExpanded, setDbAlwaysExpanded] = useState(false) // Notion DB frames: Expanded vs Preview (frame menu)
+  // Per-frame row unlock for Notion DB show-more (12 → 50 → +50). Not shared across duplicate frames.
+  const [dbVisibleRowCap, setDbVisibleRowCap] = useState(12)
+  const [frameScale, setFrameScale] = useState(() => seedFrameScale) // Uniform content scale while frame is locked
+  const [unlockedFrameSize, setUnlockedFrameSize] = useState<{ width: number; height: number } | null>(null) // Saved free-resize box — restored on unlock after fit-to-text
   const [unlockedFrameScale, setUnlockedFrameScale] = useState<number | null>(null) // Scale paired with unlockedFrameSize (bookkeeping only)
   const needsCollapsedDbFrameHealRef = useRef(false) // Load skipped corrupt DB clip — persist clear once persistFrameMeta exists
 
   // Seed at plain-text hug (grip+3ch × one line) — boardLink floor inflated empty frames before first measure
   const [intrinsicSize, setIntrinsicSize] = useState({ width: BLOCK_LOCKED_MIN_W, height: BLOCK_MIN_FRAME_H })
+  const [databaseExtents, setDatabaseExtents] = useState<{ width: number; height: number } | null>(null) // Full table box for clip preview / overflow
   const [intrinsicMeasured, setIntrinsicMeasured] = useState(false) // True after first contentFit measure (avoid hug flash)
   const [isFrameHovering, setIsFrameHovering] = useState(false) // Frame hover — page-open menu (not lock/rotate)
   const [clipPreviewReady, setClipPreviewReady] = useState(false) // True after hover dwell — delayed full-content peek
   const [rotation, setRotation] = useState(0) // Degrees of item rotation (persisted in message metadata)
   const [frameShape, setFrameShape] = useState<FrameShapeType | null>(null) // Silhouette (null = default frame)
-  const [chromePropertyTypes, setChromePropertyTypes] = useState<PropertyTypeId[]>([]) // Live types for top adjust-chrome band
   const isResizingRef = useRef(false) // Track if currently resizing
   const contentFitRef = useRef<HTMLDivElement>(null) // Inner unscaled content wrapper for intrinsic measure
   const frameScaleRef = useRef(1) // Latest scale — resize-end must not close over a stale render
   frameScaleRef.current = frameScale // Keep ref in sync every render
   const frameUnlockedRef = useRef(frameUnlocked) // Live lock — resize callbacks stay identity-stable
   frameUnlockedRef.current = frameUnlocked // Sync every render so d3-drag can read without rebinding
+  const unlockedFrameSizeRef = useRef(unlockedFrameSize) // Last free-resize box — restore after fit-to-text
+  unlockedFrameSizeRef.current = unlockedFrameSize
+  const unlockedFrameScaleRef = useRef(unlockedFrameScale)
+  unlockedFrameScaleRef.current = unlockedFrameScale
   const frameTextWrapRef = useRef(frameTextWrap) // Live wrap flag for the same stable resize handlers
   frameTextWrapRef.current = frameTextWrap
   const wrapColWidthRef = useRef(wrapColWidth) // Live wrap columns — locked proportional math
@@ -2133,6 +2962,9 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     startRotation: number
     pivotX: number
     pivotY: number
+    startX: number // Pointer down screen X — click vs drag
+    startY: number // Pointer down screen Y
+    didDrag: boolean // True once pointer moved past click slop
   } | null>(null)
 
   // Helper function to convert hex color to rgba with opacity
@@ -2174,6 +3006,11 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     return 'transparent'
   }, [data.fillColor])
 
+  const resolvedBorderColor = useMemo(
+    () => resolveFrameBorderColor(data.borderColor),
+    [data.borderColor]
+  )
+
   // Connection points: blue fill + white border (matches selection chrome blue-500)
   const handleColor = '#3b82f6'
   const handleHoverColor = '#2563eb' // Slightly darker on hover/active
@@ -2187,9 +3024,12 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     !data.borderColor || data.borderColor === '' || data.borderColor === null
   const isBorderNone =
     isBorderColorTransparent || data.borderStyle === 'none' // Color alone is enough to show a border
+  const slashMenuPending =
+    (promptMessage?.metadata as Record<string, unknown> | undefined)?.slashMenuPending === true
   // Empty frames (no text / atoms) get a soft grey outline so the box is findable on the board
   const showEmptyFrameBorder =
     isBlockContentEmpty(promptContent) && // Live TipTap HTML — flips off as soon as content lands
+    !slashMenuPending && // I-bar `/` spawn — no grey flash before the slash menu opens
     isBorderColorTransparent && // User-set borderColor wins over empty chrome
     data.borderStyle !== 'none' && // Explicit "no border" stays invisible
     !frameShape // Silhouette stroke is the outline when shaped
@@ -2301,15 +3141,22 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
        (!promptMessage?.content || promptMessage.content.trim() === '' || promptMessage.content === '<p></p>' || promptMessage.content === '<p><br></p>'))
 
     const loadResizeState = async () => {
-      // Get message metadata to check for saved resize state
-      const { data: message } = await supabase
-        .from('messages')
-        .select('metadata')
-        .eq('id', promptMessage.id)
-        .single()
+      // Saved frame state lives in the same metadata blob the board's bulk message query already
+      // loaded. Re-reading the row per frame was an N+1: 33 frames fired 33
+      // `messages?select=metadata&id=eq.…` GETs inside one millisecond, ~3.6s of request time on a
+      // cold load. Fall back to the network only when node data arrived without metadata.
+      let blob = promptMessage.metadata as Record<string, any> | null | undefined
+      if (!blob || typeof blob !== 'object') {
+        const { data: message } = await supabase
+          .from('messages')
+          .select('metadata')
+          .eq('id', promptMessage.id)
+          .single()
+        blob = (message?.metadata ?? null) as Record<string, any> | null
+      }
 
-      if (message?.metadata && typeof message.metadata === 'object') {
-        const metadata = message.metadata as Record<string, any>
+      if (blob && typeof blob === 'object') {
+        const metadata = blob
         
         // For note panels: load fontScale (legacy scale-to-fit)
         if (isBlockPanel && metadata.fontScale && typeof metadata.fontScale === 'number') {
@@ -2332,6 +3179,16 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
         }
         if (isBlockPanel && typeof metadata.frameTextWrap === 'boolean') {
           setFrameTextWrap(metadata.frameTextWrap) // Restore wrap-in-frame preference (unlocked chrome)
+        }
+        if (isBlockPanel && typeof metadata.dbAlwaysExpanded === 'boolean') {
+          setDbAlwaysExpanded(metadata.dbAlwaysExpanded) // Restore Always expanded vs Expand when selected
+        }
+        if (isBlockPanel && typeof metadata.dbVisibleRowCap === 'number' && metadata.dbVisibleRowCap > 0) {
+          setDbVisibleRowCap(metadata.dbVisibleRowCap) // Per-frame show-more depth
+        } else if (isBlockPanel && metadata.dbAlwaysExpanded === true) {
+          setDbVisibleRowCap(50) // Expanded default: one Notion page
+        } else if (isBlockPanel) {
+          setDbVisibleRowCap(12) // Preview default
         }
         if (isBlockPanel && typeof metadata.wrapColWidth === 'number' && metadata.wrapColWidth > 0) {
           setWrapColWidth(metadata.wrapColWidth) // Restore the fixed wrap column width (unwrap/rewrap point)
@@ -2394,6 +3251,45 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
                 .eq('id', promptMessage.id)
             })()
           } else if (dims.width && dims.height && dims.width > 0 && dims.height > 0) {
+            const lockedRowCard =
+              isRowCardAtomHtml(contentHtml) && metadata.frameUnlocked !== true
+            if (lockedRowCard) {
+              // Locked row cards live-hug — stale resize boxes must not load (RF node + panel).
+              setResizeDimensions(null)
+              setIsUserResized(false)
+              const setNodesFunc = getSetNodes()
+              if (setNodesFunc) {
+                setNodesFunc((nodes: any[]) =>
+                  nodes.map((node: any) => {
+                    if (node.id !== id) return node
+                    const style = { ...(node.style || {}) }
+                    delete style.width
+                    delete style.height
+                    return { ...node, style, width: undefined, height: undefined }
+                  })
+                )
+              }
+              void (async () => {
+                if (isProjectBoard || !promptMessage) return
+                const { data: message } = await supabase
+                  .from('messages')
+                  .select('metadata')
+                  .eq('id', promptMessage.id)
+                  .single()
+                const existingMetadata = (message?.metadata as Record<string, any>) || {}
+                if (existingMetadata.resizeDimensions == null) return
+                await supabase
+                  .from('messages')
+                  .update({
+                    metadata: {
+                      ...existingMetadata,
+                      resizeDimensions: null,
+                      frameUnlocked: false,
+                    },
+                  })
+                  .eq('id', promptMessage.id)
+              })()
+            } else {
             setResizeDimensions({ width: dims.width, height: dims.height })
             setIsUserResized(true) // Persisted resize → wrap in fixed box; skip line-grow
 
@@ -2423,6 +3319,7 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
                     : node
                 )
               )
+            }
             }
           }
         }
@@ -2641,6 +3538,67 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     (promptMessage?.role === 'user' && 
      !responseMessage && 
      (!promptMessage?.content || promptMessage.content.trim() === '' || promptMessage.content === '<p></p>' || promptMessage.content === '<p><br></p>'))
+  const mountReason = useFrameContentMountReason(id) // always / warm / near — proximity is not enough
+  // A frame with a current DOM snapshot renders cold pixel-identically, so proximity no longer earns
+  // a live editor: mounting is reserved for interaction (hover, pointer-down, selection). Frames with
+  // no capture yet still promote on proximity so the board warms itself once and then stays cheap.
+  // A frame with a current DOM snapshot renders cold pixel-identically, so proximity no longer earns
+  // a live editor: mounting is reserved for interaction (hover, pointer-down, selection). Frames with
+  // no capture yet still promote on proximity so the board warms itself once and then stays cheap.
+  // Subscribe to store epoch so the first idle capture flips coldReady without a content edit.
+  const snapshotEpoch = useSyncExternalStore(
+    subscribeFrameSnapshots,
+    getFrameSnapshotEpoch,
+    () => 0
+  )
+  const coldReady = useMemo(
+    () =>
+      readFrameSnapshot(
+        conversationId,
+        frameSnapshotKey(promptMessage?.id, 'prompt', {
+          dbExpand: dbExpandSnapshotSlot(promptContent || '', dbAlwaysExpanded),
+        }),
+        promptContent || ''
+      ) !== null,
+    [conversationId, promptMessage?.id, promptContent, dbAlwaysExpanded, snapshotEpoch]
+  )
+  // Notion DB frames have no cold twin without a TipTap idle paint — proximity must mount TipTap
+  // even when a snapshot exists, or they stay blank until hover / nav stop.
+  const isDbFrame = hasDatabaseBlockHtml(promptContent || '')
+  const mountContent =
+    mountReason !== false && !(mountReason === 'near' && coldReady && !isDbFrame)
+  const contentDeferred =
+    isBlock &&
+    !isFlashcard &&
+    !selected &&
+    promptMessage?.metadata?.fadeIn !== true &&
+    !mountContent
+  // Not gated on `contentDeferred`: `TipTapContent` also renders cold when a gesture blocks a *first*
+  // live mount, and that happens after `mountContent` (and so `contentDeferred`) has already flipped.
+  // Without a box the cold branch loses its cached size *and* its kind, so a 1422×546 database frame
+  // entering view mid-zoom rendered a bare 52×32 shimmer — a frame that looks blank until release.
+  // Both consumers below still check `contentDeferred`, so a live frame's geometry is untouched.
+  // `fadeIn` is deliberately absent: it marks a frame created by the I-bar / grip so it mounts live for
+  // typing, but it is persisted on the message, so months later those frames still skip the box — and
+  // the gesture gate defers them anyway. On this board 5 of 9 frames carry it, which is most of what
+  // "frames don't show until I release" was.
+  const coldBoxEligible = isBlock && !isFlashcard && !selected
+  const deferredBox = useMemo(() => {
+    if (!coldBoxEligible) return null
+    return resolveDeferredFrameBox(
+      id,
+      conversationId,
+      promptContent,
+      (promptMessage?.metadata as Record<string, unknown>) || null
+    )
+  }, [coldBoxEligible, id, conversationId, promptContent, promptMessage?.metadata])
+  const deferredLayoutBox = useMemo(() => {
+    if (!deferredBox) return null
+    return { width: deferredBox.width, height: deferredBox.height }
+  }, [deferredBox])
+  const isOnThreadFrame = Boolean(
+    readOnThread(promptMessage?.metadata as Record<string, unknown> | undefined)
+  )
   const { connected: notionConnected, sync: notionSync } = readNotionConnection(
     promptMessage?.metadata as Record<string, unknown> | undefined
   ) // Frame Connections → Notion
@@ -2670,6 +3628,16 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     if (dims && typeof dims.width === 'number' && typeof dims.height === 'number') {
       const contentHtml =
         typeof promptMessage?.content === 'string' ? promptMessage.content : ''
+      // Don't re-apply locked hug dims while unlocked — metadata can lag after fit→free toggle.
+      if (meta.frameUnlocked) {
+        const cur = resizeDimensionsRef.current
+        if (
+          cur &&
+          (Math.abs(cur.width - dims.width) > 1 || Math.abs(cur.height - dims.height) > 1)
+        ) {
+          return
+        }
+      }
       // Don't re-apply a post-drag stub size onto a live Notion database frame
       if (
         hasDatabaseBlockHtml(contentHtml) &&
@@ -2700,60 +3668,83 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
   // Full adjust chrome when selected + idle (not mid-drag / thread connect)
   const showAdjustFrame = Boolean(selected && isBlock && !isThreadConnecting && !dragging)
   // Transient blue outline while moving; selected frames keep `selected` and regain adjust chrome on release
-  const showDragBorderOnly = Boolean(dragging && isBlock)
-  // Blue-box L/R gutters when selected. Property / connections bands sit OUTSIDE the fill
-  // — only while selected (hide entirely when the frame is idle).
-  const showFrameChrome = Boolean(isBlock && (selected || dragging) && !isThreadConnecting)
-  const hasPropBand = Boolean(showFrameChrome && chromePropertyTypes.length > 0)
-  const hasConnBand = Boolean(showFrameChrome && notionConnected && isBlock && !isFlashcard)
-  // Screen-relative L/R gutter fits the ⋮⋮ (zoom comfort) — not × frameScale (that left empty
-  // blue pad when grips counter-scaled). Grips use localGutter = adjustChromeX/chromeScale so
-  // after contentFit CSS scale they still sit centered in this strip.
+  const showDragBorderOnly = Boolean((dragging || manualDragNodeId === id) && isBlock)
+  // Blue-box L/R gutters when selected. Property / connections strips paint INSIDE the fill,
+  // so the blue box never reserves an empty band above or below the frame.
+  // Full L/R gutters + RF position shift only when selected — not on unselected drag (showDragBorderOnly).
+  // Turning chrome on at drag-start used to shift RF position while d3 already had the grab point → jump.
+  const showFrameChrome = Boolean(isBlock && selected && !isThreadConnecting)
+  // Live L/R pad while selected (⋮⋮ stays centered in the blue↔fill strip as zoom changes).
+  // Fill stays put: glueFrameChromePad shifts RF XY by the pad delta (fill-origin fixed).
   const chromeScale =
-    isBlock && isUserResized && frameScale !== 1 ? Math.max(0.15, frameScale) : 1
+    isBlock && Math.abs(frameScale - 1) > FRAME_SCALE_EPSILON
+      ? Math.max(FRAME_SCALE_EPSILON, frameScale)
+      : 1 // Place + locked resize — gutters track CSS-scaled fill
   // Cell radius is 6px inside contentFit’s CSS scale; fill + blue ring are outside — keep them matched
   const frameCornerRadius = frameShape ? 0 : FRAME_CORNER_RADIUS * chromeScale
-  // Band height + L/R strip: ⋮⋮/property column + extra blue→content air (screen-relative)
-  const screenChromeScale = frameScreenChromeScale(rfZoom || 1)
-  // ⋮⋮ column only — grips size/center here (flush to fill); blue box is wider by ADJUST_CONTENT_GAP
-  const handleGutterFlow = showFrameChrome
-    ? Math.round(BLOCK_HANDLE_GUTTER_W * screenChromeScale)
-    : 0
+  const screenChromeScale = frameScreenChromeScale(rfZoom || 1) // Handles / dots / rotate only
   const adjustChromeX = showFrameChrome
-    ? Math.round((BLOCK_HANDLE_GUTTER_W + ADJUST_CONTENT_GAP_X) * screenChromeScale)
-    : 0 // Blue→fill = handle column + extra gap (tighter on L/R)
-  const chromeBandH = Math.round(
-    (CONNECTIONS_GROUP_H + ADJUST_CONTENT_GAP_Y) * screenChromeScale
-  ) // Property / connections strip + T/B blue→content air
+    ? Math.round(adjustChromeXFlow(rfZoom || 1, chromeScale))
+    : 0
+  const handleGutterFlow = showFrameChrome
+    ? handleGutterFlowPx(rfZoom || 1, chromeScale) // Live — matches pad so grip stays centered in the strip
+    : 0
+  const adjustPadCss = showFrameChrome ? `${adjustChromeX}px` : undefined
+  // pushAabb / painted sync read this — callbacks must not close over a stale pad
+  const adjustChromeXRef = useRef(0)
+  adjustChromeXRef.current = adjustChromeX
+  const connStripH = Math.round(CONNECTIONS_GROUP_H * screenChromeScale) // In-fill bottom connections strip
   const chromePadX = Math.round(BLOCK_FRAME_PAD_X * chromeScale) // Band inset matches scaled fill pad
-  // T/B bands only while selected — even empty strips keep the blue box balanced
-  const adjustChromeYTop = showFrameChrome ? chromeBandH : 0
-  const adjustChromeYBottom = showFrameChrome ? chromeBandH : 0
-  // Keep the filled frame glued when selection chrome appears/disappears (grow left/up).
-  // Do NOT shift RF position when chrome scale changes with zoom — that deferred setNodes
-  // jumped the frame (looked like the board slid) after phone pinch over DB tables.
+  // No T/B chrome bands: property icons and the connections strip both live inside the fill,
+  // so the blue adjust box hugs the blocks vertically (no empty strip under the last block).
+  const adjustChromeYTop = 0
+  const adjustChromeYBottom = 0
+  // Keep the filled frame glued when selection chrome appears/disappears OR pad changes with zoom.
+  // Upright: L/R pad shifts RF −X. Rotated: chrome is baked into the upright AABB — shift by half the
+  // AABB delta so the fill (and ⋮⋮) stay centered instead of growing only down/right.
   const frameChromeOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
-  useLayoutEffect(() => {
-    if (!isBlock) return
-    const wantX = showFrameChrome ? adjustChromeX : 0
-    const wantY = showFrameChrome ? adjustChromeYTop : 0
+  const glueFrameChromePad = useCallback(() => {
+    if (!isBlock || dragging) return
+    let wantX = 0
+    let wantY = 0
+    if (showFrameChrome) {
+      if (Math.abs(rotation) > 0.5) {
+        const dims = liveLockedContentRef.current ?? resizeDimensionsRef.current
+        if (dims) {
+          const inner = rotatedFrameAabbSize(dims.width, dims.height, rotation, frameShape)
+          const outer = rotatedFrameAabbSize(
+            dims.width + adjustChromeX * 2,
+            dims.height,
+            rotation,
+            frameShape
+          )
+          wantX = (outer.width - inner.width) / 2
+          wantY = (outer.height - inner.height) / 2
+        } else {
+          wantX = adjustChromeX
+        }
+      } else {
+        wantX = adjustChromeX
+        wantY = adjustChromeYTop
+      }
+    }
     const prev = frameChromeOffsetRef.current
-    const wasOn = prev.x > 0 || prev.y > 0
-    const nowOn = wantX > 0 || wantY > 0
-    // Still selected (or still idle): zoom only resizes chrome visually — leave node put
-    if (wasOn === nowOn) return
-    const dx = wantX - prev.x
-    const dy = wantY - prev.y
-    if (dx === 0 && dy === 0) return
-    frameChromeOffsetRef.current = { x: wantX, y: wantY }
+    if (prev.x === wantX && prev.y === wantY) return
+
     const setNodesFunc = getSetNodes()
     if (!setNodesFunc) return
     setNodesFunc((nds: any[]) =>
-      nds.map((n) =>
-        n.id === id
-          ? { ...n, position: { x: n.position.x - dx, y: n.position.y - dy } }
-          : n
-      )
+      nds.map((n) => {
+        if (n.id !== id) return n
+        const applied = readFrameChromePad(n.data)
+        const fill = fillOriginFromFlowPosition(n.position, applied)
+        frameChromeOffsetRef.current = { x: wantX, y: wantY }
+        const nextPos = flowPositionFromFillOrigin(fill, { x: wantX, y: wantY })
+        const data = { ...(n.data || {}) }
+        if (wantX || wantY) data.frameChromePad = { x: wantX, y: wantY }
+        else delete data.frameChromePad
+        return { ...n, position: nextPos, data }
+      })
     )
     updateNodeInternals(id)
   }, [
@@ -2762,16 +3753,53 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     showFrameChrome,
     adjustChromeX,
     adjustChromeYTop,
+    rotation,
+    frameShape,
+    dragging,
     getSetNodes,
     updateNodeInternals,
   ])
+  useLayoutEffect(() => {
+    glueFrameChromePad()
+  }, [glueFrameChromePad, showFrameChrome, adjustChromeX, rotation])
+  // Stack/hide unmounts the node while chrome is still on — without this, RF keeps the
+  // chrome-shifted XY and remount reapplies chrome → frame jumps up/left one gutter.
+  useLayoutEffect(() => {
+    if (!isBlock) return
+    return () => {
+      const baked = frameChromeOffsetRef.current
+      if (baked.x === 0 && baked.y === 0) return
+      frameChromeOffsetRef.current = { x: 0, y: 0 }
+      const setNodesFunc = getSetNodes()
+      if (!setNodesFunc) return
+      setNodesFunc((nds: any[]) =>
+        nds.map((n) => {
+          if (n.id !== id) return n
+          const pad = readFrameChromePad(n.data)
+          const fill = fillOriginFromFlowPosition(n.position, pad)
+          const data = { ...(n.data || {}) }
+          delete data.frameChromePad
+          return { ...n, position: fill, data }
+        })
+      )
+    }
+  }, [isBlock, id, getSetNodes])
   // Stack lines: one per adjust-box side that has a mate further out on that side’s tree.
   // Equality fn is required — a fresh `[]` every store tick re-rendered every frame on pinch
   // (large Notion DB tables → phone Safari tab reload over tunnel).
   const stackMeta = (promptMessage?.metadata || {}) as Record<string, unknown>
+  // Whether *this* frame is stacked depends only on its own metadata, so it is answered before the
+  // store scan below. Without it, every mounted frame walked all of nodeInternals × 4 sides on every
+  // store update: a pan that fired 13 RF `dimensions` changes did ~57k metadata reads and measured
+  // 421ms of blocking. `isBoardNavigating()` does not cover this — wheel/trackpad pan in Scroll mode
+  // goes through setViewport, which fires neither onMoveStart nor onMove.
+  const myStackSides = useMemo(() => readSideStacks(stackMeta), [stackMeta])
+  const hasAnyStackSide = FRAME_STACK_SIDES.some((side) => !!myStackSides[side])
   const stackGapSides = useStore(
     (s) => {
-      const mine = readSideStacks(stackMeta)
+      if (!hasAnyStackSide) return EMPTY_STACK_SIDES
+      if (isBoardNavigating() || isFrameDragging()) return EMPTY_STACK_SIDES
+      const mine = myStackSides
       const sides: Array<{ side: FrameStackSide; groupId: string }> = []
       for (const side of FRAME_STACK_SIDES) {
         const entry = mine[side]
@@ -2805,27 +3833,14 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     !pressing && // Body mid-press hides simulators; resize corners stay (onFrameChrome exclusion)
     ((selected && !isThreadConnecting) || (isThreadConnecting && isNearThreadSnap))
 
-  // Invisible edge connection point — idle: no hit/cursor; while selected, source can be armed by indicator
+  // Invisible edge connection point — size from live CSS --tt-frame-ui-scale; paint stays transparent
   const connectionPointStyle = (): React.CSSProperties => ({
-    width: '8px',
-    height: '8px',
     opacity: 0,
     backgroundColor: 'transparent',
     border: 'none',
     boxShadow: 'none',
     cursor: 'default',
   }) as React.CSSProperties
-
-  // Outer indicator (DOM only) placement — center sits just outside the blue edge
-  const connectionIndicatorStyle = (
-    side: 'left' | 'right' | 'top' | 'bottom',
-    out: number // Distance from frame edge to indicator center (flow px)
-  ): React.CSSProperties => {
-    if (side === 'left') return { left: -out, top: '50%', transform: 'translate(-50%, -50%)' }
-    if (side === 'right') return { right: -out, top: '50%', transform: 'translate(50%, -50%)' }
-    if (side === 'top') return { top: -out, left: '50%', transform: 'translate(-50%, -50%)' }
-    return { bottom: -out, left: '50%', transform: 'translate(-50%, 50%)' }
-  }
   
   // Measured frame box for chrome scale / AABB — seed at plain-text hug (not 200×120 card stub)
   const [itemBoxSize, setItemBoxSize] = useState({ width: BLOCK_LOCKED_MIN_W, height: BLOCK_MIN_FRAME_H })
@@ -3138,7 +4153,7 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
       renameTitle: async (pid: string, title: string) => {
         try {
           const supabase = createClient()
-          await supabase.from('conversations').update({ title: title || 'Untitled' }).eq('id', pid)
+          await supabase.from('conversations').update({ title: boardTitleOrDefault(title) }).eq('id', pid)
           await queryClient.invalidateQueries({ queryKey: ['conversations'] })
         } catch (err) {
           console.error('Failed to rename linked page:', err)
@@ -3215,6 +4230,11 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
         if (isResizingRef.current) return // Corner-drag owns size — hug RO would hitch the gesture (esp. phone)
         if (Date.now() < hugFreezeUntilRef.current) return // Post-drag: wait for property NodeViews
         if (isBoardNavigating()) return // Pinch freeze silhouette — don’t hug to stub size
+        // A deferred frame is showing a shell, not its content, so its natural width is the ~98px
+        // empty-frame hug. Hugging that writes the stub into node state (and the layout cache), and
+        // the frame then stays a clipped one-word column at every zoom until it next goes live —
+        // which is what "frames don't show when I zoom out / pan" actually was. Only measure content.
+        if (contentDeferred) return
         // databaseBlock: wait until the Notion table NodeView is mounted. Measuring the title
         // stub (~52×40) after a remount would hug-shrink the frame and clip the table away.
         const dbHost = el.querySelector('.tt-database-block') as HTMLElement | null
@@ -3229,8 +4249,23 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
         if (hasFrameAtomHtml(promptContent) && !el.querySelector('.tt-board-link, .tt-database-block, .tt-property-block')) {
           return
         }
-        const width = Math.max(1, Math.round(measureNaturalContentWidth(el)))
-        const height = Math.max(1, Math.round(measureNaturalContentHeight(el)))
+        const rowCard = isRowCardAtomHtml(promptContent)
+        // Prefer DB scrollHeight extents — contentFit border-box stays fixed when the frame
+        // already has resizeDimensions, so RO on contentFit alone never sees live-table growth.
+        const dbBox = measureDatabaseBlockExtents(el, notionConnected)
+        const width = Math.max(
+          1,
+          Math.round(
+            dbBox?.width ??
+              (rowCard ? measureRowCardContentWidth(el) : measureNaturalContentWidth(el))
+          )
+        )
+        // Keep 2dp: rounding here would be re-multiplied by frameScale into visible bottom slack
+        const height = Math.max(
+          1,
+          Math.round((dbBox?.height ?? measureNaturalContentHeight(el, notionConnected)) * 100) / 100
+        )
+        setDatabaseExtents(dbBox)
         if (
           (dbHost || hasDatabaseBlockHtml(promptContent)) &&
           isCollapsedDatabaseFrameSize(width, height)
@@ -3244,11 +4279,11 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
         ) {
           return
         }
-        // Never shrink a row card to ≤ half its last good size (Empty-stub race).
-        // Do NOT apply this to databaseBlock tables — offsetWidth feedback used to lock a huge box.
+        // Post-drag only: block stub measures that would halve a good box (not shrink from a bad wide measure).
         const prev = intrinsicSizeRef.current
         if (
           isRowCardAtomHtml(promptContent) &&
+          Date.now() < hugFreezeUntilRef.current &&
           prev.width > 80 &&
           prev.height > 40 &&
           (width < prev.width * 0.5 || height < prev.height * 0.5)
@@ -3256,22 +4291,52 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
           return
         }
         setIntrinsicMeasured(true)
-        setIntrinsicSize((prev) =>
-          Math.abs(prev.width - width) <= 1 && Math.abs(prev.height - height) <= 1
-            ? prev
-            : { width, height }
-        )
+        setIntrinsicSize((prevSize) => {
+          // Sub-px epsilon on height: the measure is fractional and stable per keystroke now, and
+          // frameScale multiplies any stale fraction into slack under the block — so don't hold a
+          // near-match. Width keeps the 1px epsilon (glyph advance noise, no scale amplification).
+          if (Math.abs(prevSize.width - width) <= 1 && Math.abs(prevSize.height - height) <= 0.02) {
+            return prevSize
+          }
+          return { width, height }
+        })
       })
     }
     measure()
     const ro = new ResizeObserver(measure)
     ro.observe(el)
+    // Live/static DB swaps change inner scrollHeight without resizing contentFit’s border box
+    const dbHost = el.querySelector('.tt-database-block') as HTMLElement | null
+    if (dbHost) ro.observe(dbHost)
+    const notionDb = dbHost?.querySelector('.tt-notion-db') as HTMLElement | null
+    if (notionDb) ro.observe(notionDb)
+    const connStrip = el.querySelector(
+      '[data-tt-connections-header], [data-tt-notion-hug]'
+    ) as HTMLElement | null
+    if (connStrip) ro.observe(connStrip)
+    const onDbResize = () => measure()
+    el.addEventListener('tt-db-content-resize', onDbResize)
+    const mo = new MutationObserver(() => {
+      const nextDb = el.querySelector('.tt-notion-db') as HTMLElement | null
+      if (nextDb) ro.observe(nextDb)
+      const conn = el.querySelector(
+        '[data-tt-connections-header], [data-tt-notion-hug]'
+      ) as HTMLElement | null
+      if (conn) ro.observe(conn)
+      measure()
+    })
+    if (dbHost) {
+      mo.observe(dbHost, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-tt-db-live'] })
+    }
     return () => {
       cancelAnimationFrame(raf)
       ro.disconnect()
+      el.removeEventListener('tt-db-content-resize', onDbResize)
+      mo.disconnect()
     }
-  }, [isBlock, dragging, promptContent, frameUnlocked, frameTextWrap, frameScale])
+  }, [isBlock, dragging, promptContent, frameUnlocked, frameTextWrap, frameScale, selected, contentDeferred, notionConnected])
   // Note: do NOT depend on resizeDimensions — hug writes that and would loop
+  // `contentDeferred` is a dep so the frame re-measures the moment real content replaces the shell
 
   // After frame drag: restore atom HTML only if the editor actually lost atoms.
   // Always force-setContent remounted property NodeViews → hug measured Empty stubs → first-drag collapse.
@@ -3404,12 +4469,53 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     return () => window.clearTimeout(t)
   }, [dragging, promptContent, promptMessage?.content])
 
+  // Push cached outer box to RF while TipTap is deferred (threads/minimap need real geometry).
+  useEffect(() => {
+    if (!contentDeferred || !deferredLayoutBox || !isBlock) return
+    const setNodesFunc = getSetNodes()
+    if (!setNodesFunc) return
+    setNodesFunc((nodes: any[]) => {
+      const node = nodes.find((n: any) => n.id === id)
+      if (!node) return nodes
+      const styleW =
+        typeof node.style?.width === 'number' ? node.style.width : parseFloat(node.style?.width)
+      const styleH =
+        typeof node.style?.height === 'number' ? node.style.height : parseFloat(node.style?.height)
+      if (
+        Number.isFinite(styleW) &&
+        Number.isFinite(styleH) &&
+        Math.abs(styleW - deferredLayoutBox.width) <= 1 &&
+        Math.abs(styleH - deferredLayoutBox.height) <= 1
+      ) {
+        return nodes
+      }
+      return nodes.map((n: any) =>
+        n.id === id
+          ? {
+              ...n,
+              width: deferredLayoutBox.width,
+              height: deferredLayoutBox.height,
+              style: { ...n.style, width: deferredLayoutBox.width, height: deferredLayoutBox.height },
+            }
+          : n
+      )
+    })
+  }, [contentDeferred, deferredLayoutBox, isBlock, id, getSetNodes])
+
+  useEffect(() => {
+    if (!contentDeferred || !deferredBox || intrinsicMeasured) return
+    setIntrinsicSize({
+      width: Math.max(BLOCK_LOCKED_MIN_W, deferredBox.width - BLOCK_FRAME_PAD_X * 2),
+      height: Math.max(BLOCK_MIN_FRAME_H, deferredBox.height - BLOCK_FRAME_PAD_Y * 2),
+    })
+  }, [contentDeferred, deferredBox, intrinsicMeasured])
+
   // Regular chat panels are those that are not flashcards and not notes
   const isRegularChatPanel = !isFlashcard && !isBlock
 
   // Explicit box → RF node style. NEVER drive this from ResizeObserver: RF also writes measured
-  // node.width/height, so RO→setNodes fights those numbers and allocates a new nodes[] every tick
-  // (LOOP-DIAG: nodes(ref) len N→N). Push when resizeDimensions or rotation (AABB) change.
+  // node.width/height, so RO→setNodes fights those numbers and allocates a new nodes[] every tick.
+  // Push when resizeDimensions or rotation (AABB) change.
   // Rotated: RF size = upright AABB so blue adjust chrome tracks live; left edge stays locked.
   // Snap mates repark against that AABB so side-stacks ride rotation (not only the blue box).
   const lastPushedBoxRef = useRef<{ w: number; h: number; rot: number } | null>(null)
@@ -3417,18 +4523,29 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
   resizeDimensionsRef.current = resizeDimensions
   const frameShapeRef = useRef(frameShape)
   frameShapeRef.current = frameShape
+  // Locked fit-to-text: live hug (stamped each render) so RF selection can't stay taller than peach fill
+  const liveLockedContentRef = useRef<{ width: number; height: number } | null>(null)
 
   /** Push host AABB + repark snap/stack mates for `rot` (live rotate + effect). */
   const pushAabbAndSnapMates = useCallback(
     (rot: number, opts?: { forceMates?: boolean }) => {
-      const dims = resizeDimensionsRef.current
+      // Prefer live hug over stale resizeDimensions (place/seed often left height at FRAME_RESIZE_MIN)
+      const dims = liveLockedContentRef.current ?? resizeDimensionsRef.current
       if (!isBlock || !dims) return
-      const aabb =
-        Math.abs(rot) > 0.5
-          ? rotatedFrameAabbSize(dims.width, dims.height, rot, frameShapeRef.current)
-          : { width: dims.width, height: dims.height }
-      const boxW = Math.ceil(aabb.width)
-      const boxH = Math.ceil(aabb.height)
+      // Selected L/R chrome is outside the fill — RF box must include it or handles sit inset of the blue ring
+      const chromeX = adjustChromeXRef.current * 2
+      // Prefer painted panel box when upright + locked hug — estimates drifted from peach (blue>peach gap)
+      const panel = panelRef.current
+      const usePainted =
+        !!panel && !!liveLockedContentRef.current && Math.abs(rot) <= 0.5 && !opts?.forceMates
+      const aabb = usePainted
+        ? { width: panel.offsetWidth, height: panel.offsetHeight }
+        : Math.abs(rot) > 0.5
+          ? // Inflate unrotated width by chrome so ⋮⋮ overhang stays inside the upright AABB
+            rotatedFrameAabbSize(dims.width + chromeX, dims.height, rot, frameShapeRef.current)
+          : { width: dims.width + chromeX, height: dims.height }
+      const boxW = Math.round(aabb.width)
+      const boxH = Math.round(aabb.height)
       const prev = lastPushedBoxRef.current
       const sizeSame =
         !!prev && Math.abs(prev.w - boxW) <= 1 && Math.abs(prev.h - boxH) <= 1
@@ -3497,8 +4614,14 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     isUserResized,
     resizeDimensions?.width,
     resizeDimensions?.height,
+    // Re-push when measure/scale changes even before hug writes resizeDimensions (clears bottom gap)
+    intrinsicSize.width,
+    intrinsicSize.height,
+    frameScale,
+    frameUnlocked,
     rotation,
     frameShape,
+    adjustChromeX, // Live L/R pad — RF outer box must include chrome as zoom changes
     pushAabbAndSnapMates,
   ])
 
@@ -3594,6 +4717,79 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
   const persistFrameMetaRef = useRef(persistFrameMeta) // Stable resize-end persist — don't rebind d3-drag
   persistFrameMetaRef.current = persistFrameMeta // Always the latest saver
 
+  const notionPageSyncTarget = notionPageBodySyncTarget(
+    promptMessage?.metadata as Record<string, unknown> | undefined
+  )
+  const notionLastEditedTime =
+    typeof (promptMessage?.metadata as Record<string, unknown> | undefined)?.notionLastEditedTime ===
+    'string'
+      ? ((promptMessage?.metadata as Record<string, unknown>).notionLastEditedTime as string)
+      : null
+
+  const handleNotionUpdatesAvailable = useCallback(
+    (payload: { lastEditedTime: string }) => {
+      const patch = {
+        notionUpdatesPending: true,
+        notionRemoteLastEditedTime: payload.lastEditedTime,
+      }
+      if (promptMessage?.id && conversationId) {
+        patchBoardMessageMetadata(queryClient, conversationId, promptMessage.id, patch)
+        setNodes((nds) =>
+          nds.map((n) => {
+            if (n.id !== id || !n.data?.promptMessage) return n
+            const pm = n.data.promptMessage as { metadata?: Record<string, unknown> }
+            return {
+              ...n,
+              data: {
+                ...n.data,
+                promptMessage: {
+                  ...pm,
+                  metadata: { ...(pm.metadata || {}), ...patch },
+                },
+              },
+            }
+          })
+        )
+      }
+      void persistFrameMeta(patch)
+    },
+    [persistFrameMeta, promptMessage?.id, conversationId, queryClient, setNodes, id]
+  )
+
+  const handleNotionLastEditedTime = useCallback(
+    (iso: string) => {
+      const patch = { notionLastEditedTime: iso, notionUpdatesPending: false }
+      if (promptMessage?.id && conversationId) {
+        patchBoardMessageMetadata(queryClient, conversationId, promptMessage.id, patch)
+        setNodes((nds) =>
+          nds.map((n) => {
+            if (n.id !== id || !n.data?.promptMessage) return n
+            const pm = n.data.promptMessage as { metadata?: Record<string, unknown> }
+            return {
+              ...n,
+              data: {
+                ...n.data,
+                promptMessage: {
+                  ...pm,
+                  metadata: { ...(pm.metadata || {}), ...patch },
+                },
+              },
+            }
+          })
+        )
+      }
+      void persistFrameMeta(patch)
+    },
+    [persistFrameMeta, promptMessage?.id, conversationId, queryClient, setNodes, id]
+  )
+
+  const { schedulePush: scheduleNotionPagePush } = useNotionPageBodySync({
+    pageId: notionPageSyncTarget?.pageId ?? null,
+    lastEditedTime: notionLastEditedTime,
+    onNotionUpdatesAvailable: handleNotionUpdatesAvailable,
+    onLastEditedTime: handleNotionLastEditedTime,
+  })
+
   // Paint the latest corner-drag sample (one React update per frame, not per touchmove)
   const flushPendingResize = useCallback(() => {
     resizeRafRef.current = null // This rAF has run
@@ -3652,36 +4848,37 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     setIsUserResized(true) // Persist mode: explicit frame box
     lockedResizeStartRef.current = null // Drop drag baseline
 
-    const minW = blockMinFrameWidth(promptContentRef.current)
     const dims = resizeDimensionsRef.current
     const rot = rotationRef.current
     const unlocked = frameUnlockedRef.current
     const wrapping = frameTextWrapRef.current
     const colW = wrapColWidthRef.current
     const intrinsic = intrinsicSizeRef.current
-    let width = Math.max(params?.width ?? dims?.width ?? 0, minW)
-    let height = Math.max(params?.height ?? dims?.height ?? 0, BLOCK_MIN_FRAME_H)
+    // No content floor — shrink matches grow (RF max is unbounded; min is FRAME_RESIZE_MIN only)
+    let width = Math.max(params?.width ?? dims?.width ?? 0, FRAME_RESIZE_MIN)
+    let height = Math.max(params?.height ?? dims?.height ?? 0, FRAME_RESIZE_MIN)
     // RF end params are AABB when rotated — store unrotated content size
     if (Math.abs(rot) > 0.5 && params?.width && params?.height) {
       const fallback = dims || { width, height }
       const content = contentSizeFromAabb(params.width, params.height, rot, fallback)
-      width = Math.max(content.width, minW)
-      height = Math.max(content.height, BLOCK_MIN_FRAME_H)
+      width = Math.max(content.width, FRAME_RESIZE_MIN)
+      height = Math.max(content.height, FRAME_RESIZE_MIN)
     }
     const finalScale = frameScaleRef.current // Latest scale from the drag (avoid stale closure)
+    const safeScale = Math.max(FRAME_SCALE_EPSILON, finalScale) // Epsilon only — no 0.15 shrink floor
     let colToPersist: number | undefined // New wrap column width to store (unlocked-wrap resize sets the point)
     if (!unlocked && wrapping) {
       // Locked wrap: hug WIDTH to the scaled FIXED columns (no reflow) + HEIGHT to wrapped content.
       // No +2 border — selected adjust chrome uses borderWidth 0 (same as scaledFrameSize).
-      if (colW != null) width = Math.round(colW * Math.max(0.15, finalScale))
-      height = Math.max(BLOCK_MIN_FRAME_H, Math.ceil(intrinsic.height * Math.max(0.15, finalScale)))
+      if (colW != null) width = Math.round(colW * safeScale)
+      height = Math.max(1, Math.ceil(intrinsic.height * safeScale))
     } else if (!unlocked) {
-      const hugged = scaledFrameSize(intrinsic, finalScale, minW) // Nowrap: snap to scaled text
+      const hugged = hugLockedFrameSize(intrinsic, finalScale, 1, frameShapeRef.current) // Nowrap: snap to scaled text — no 40px empty pad
       width = hugged.width
       height = hugged.height
     } else if (wrapping) {
       // Unlocked wrap: the dragged width IS the new wrap point — remember it (unscaled columns).
-      colToPersist = Math.max(1, Math.floor(width / Math.max(0.15, finalScale)))
+      colToPersist = Math.max(1, Math.floor(width / safeScale))
       setWrapColWidth(colToPersist)
     }
     // Unlocked (wrap or nowrap): keep the user's dragged box — a frame shorter than its
@@ -3689,7 +4886,7 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     if (width > 0 && height > 0) {
       setResizeDimensions({ width, height }) // Lock final box size into local state
     }
-    // Unlocked drag refreshes the last free-resize shape (bookkeeping only — unlock keeps current size).
+    // Unlocked drag refreshes the last free-resize shape (restored on unlock after fit-to-text).
     if (unlocked) {
       setUnlockedFrameSize({ width, height })
       setUnlockedFrameScale(finalScale)
@@ -3710,36 +4907,36 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
   // When rotated, RF reports AABB size — convert back to unrotated content size.
   const handleResize = useCallback((_event: any, params: { width: number; height: number }) => {
     if (!isResizingRef.current) return // Ignore mount/select noise — only after handleResizeStart
-    const minW = blockMinFrameWidth(promptContentRef.current)
     const fallback = resizeDimensionsRef.current || lockedResizeStartRef.current || {
-      width: minW,
-      height: BLOCK_MIN_FRAME_H,
+      width: FRAME_RESIZE_MIN,
+      height: FRAME_RESIZE_MIN,
     }
-    let width = Math.max(params.width, minW)
-    let height = Math.max(params.height, BLOCK_MIN_FRAME_H)
+    // No content floor — shrink is unbounded like grow (epsilon only so dims stay positive)
+    let width = Math.max(params.width, FRAME_RESIZE_MIN)
+    let height = Math.max(params.height, FRAME_RESIZE_MIN)
     const rot = rotationRef.current
     if (Math.abs(rot) > 0.5) {
       const content = contentSizeFromAabb(width, height, rot, fallback)
-      width = Math.max(content.width, minW)
-      height = Math.max(content.height, BLOCK_MIN_FRAME_H)
+      width = Math.max(content.width, FRAME_RESIZE_MIN)
+      height = Math.max(content.height, FRAME_RESIZE_MIN)
     }
     let nextScale: number | undefined
     if (!frameUnlockedRef.current && lockedResizeStartRef.current) {
       // Locked (wrap OR nowrap): proportional content scale — width/text scale together.
       const start = lockedResizeStartRef.current
       const ratio = width / Math.max(1, start.width) // keepAspectRatio → width tracks height
-      nextScale = Math.max(0.15, start.scale * ratio)
+      nextScale = Math.max(FRAME_SCALE_EPSILON, start.scale * ratio) // No 0.15 floor — match unbounded grow
       const colW = wrapColWidthRef.current
       if (frameTextWrapRef.current && colW != null) {
         // Locked WRAP: derive the box from the FIXED column width × scale so NO character reflows —
         // the wrapped text just scales up/down (columns stay constant; no phantom border).
         width = Math.round(colW * nextScale)
-        height = Math.max(BLOCK_MIN_FRAME_H, Math.round(intrinsicSizeRef.current.height * nextScale))
+        height = Math.max(1, Math.round(intrinsicSizeRef.current.height * nextScale))
       } else {
         // Locked nowrap: hug the blue box to scaled content during the gesture (same as resize-end).
         // Using RF's raw drag size left a larger empty frame with the block stuck top-left so
         // connection/resize chrome no longer lined up with the ⋮⋮.
-        const hugged = scaledFrameSize(intrinsicSizeRef.current, nextScale, minW)
+        const hugged = hugLockedFrameSize(intrinsicSizeRef.current, nextScale, 1, frameShapeRef.current)
         width = hugged.width
         height = hugged.height
       }
@@ -3770,6 +4967,31 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     if (updateError) console.error('Error saving rotation to database:', updateError) // Surface write failures
   }, [isProjectBoard, promptMessage, supabase])
 
+  // Persist final angle + AABB/mates (shared by drag-end and click-reset)
+  const finishRotation = useCallback(
+    (next: number) => {
+      setRotation(next) // Commit angle (0 on click-reset)
+      void saveRotation(next) // Fire-and-forget metadata save
+      pushAabbAndSnapMates(next, { forceMates: true }) // Upright AABB + repark snap mates
+      const cw = resizeDimensionsRef.current?.width
+      const ch = resizeDimensionsRef.current?.height
+      if (!cw || !ch) return // No content box yet
+      const aabb =
+        Math.abs(next) > 0.5
+          ? rotatedFrameAabbSize(cw, ch, next, frameShapeRef.current)
+          : { width: cw, height: ch }
+      queueMicrotask(() => {
+        // Defer so setNodes from pushAabbAndSnapMates has flushed
+        const live = getNodes()
+        void persistSnapMateRelayout(live, id, {
+          width: Math.ceil(aabb.width),
+          height: Math.ceil(aabb.height),
+        })
+      })
+    },
+    [saveRotation, pushAabbAndSnapMates, getNodes, id]
+  )
+
   // Begin rotate: measure angle from panel center to pointer and lock drag state
   const handleRotatePointerDown = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
     e.stopPropagation() // Do not select/drag the RF node
@@ -3797,6 +5019,9 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
       startRotation: rotation,
       pivotX: cx,
       pivotY: cy,
+      startX: e.clientX,
+      startY: e.clientY,
+      didDrag: false,
     }
     e.currentTarget.setPointerCapture(e.pointerId) // Keep events on this handle while dragging
   }, [rotation, resizeDimensions, promptContent])
@@ -3804,7 +5029,14 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
   // Live-update rotation from pointer deltas relative to frozen pivot
   const handleRotatePointerMove = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
     if (!isRotatingRef.current || !rotationDragRef.current) return // Ignore stray moves
-    const { startAngle, startRotation, pivotX, pivotY } = rotationDragRef.current
+    const drag = rotationDragRef.current
+    const dx = e.clientX - drag.startX // Screen delta from down
+    const dy = e.clientY - drag.startY
+    if (!drag.didDrag && dx * dx + dy * dy > ROTATE_CLICK_SLOP_PX * ROTATE_CLICK_SLOP_PX) {
+      drag.didDrag = true // Past click slop — treat as rotate drag
+    }
+    if (!drag.didDrag) return // Still a potential click — don’t nudge angle yet
+    const { startAngle, startRotation, pivotX, pivotY } = drag
     const angle = Math.atan2(e.clientY - pivotY, e.clientX - pivotX) // Angle about start pivot
     const deltaDeg = ((angle - startAngle) * 180) / Math.PI // Radians → degrees
     let next = startRotation + deltaDeg // Apply delta to start rotation
@@ -3814,47 +5046,166 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     pushAabbAndSnapMates(next)
   }, [pushAabbAndSnapMates])
 
-  // End rotate: release capture, persist angle, and persist snap-mate parks against final AABB
+  // End rotate: click → reset 0°; drag → persist live angle + mates
   const handleRotatePointerUp = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
     if (!isRotatingRef.current) return // Only finish an active gesture
+    const didDrag = rotationDragRef.current?.didDrag === true // Click vs drag before clearing
     isRotatingRef.current = false // Clear rotating flag
     rotationDragRef.current = null // Drop drag baseline
     try { e.currentTarget.releasePointerCapture(e.pointerId) } catch { /* already released */ }
-    setRotation((current) => { // Read latest angle then persist
-      void saveRotation(current) // Fire-and-forget metadata save
-      // Final AABB+mates push (in case last move was skipped) then persist mate parks
-      pushAabbAndSnapMates(current, { forceMates: true })
-      const cw = resizeDimensionsRef.current?.width
-      const ch = resizeDimensionsRef.current?.height
-      if (cw && ch) {
-        const aabb =
-          Math.abs(current) > 0.5
-            ? rotatedFrameAabbSize(cw, ch, current, frameShapeRef.current)
-            : { width: cw, height: ch }
-        // Defer read so setNodes from pushAabbAndSnapMates has flushed
-        queueMicrotask(() => {
-          const live = getNodes()
-          void persistSnapMateRelayout(live, id, {
-            width: Math.ceil(aabb.width),
-            height: Math.ceil(aabb.height),
-          })
-        })
-      }
-      return current // No state change needed
-    })
-  }, [saveRotation, pushAabbAndSnapMates, getNodes, id])
+    if (!didDrag) {
+      finishRotation(0) // Click (no drag) resets upright
+      return
+    }
+    finishRotation(rotationRef.current) // Persist dragged angle from live ref
+  }, [finishRotation])
 
-  // Toggle frame lock: lock hugs scaled text; unlock keeps the CURRENT visual box + scale
-  // (blocks stay the size they were adjusted to while locked — no snap-back to a pre-lock shape).
+  // Toggle frame lock: lock hugs scaled text; unlock restores prior free-resize box when set.
   const toggleFrameLock = useCallback((forceUnlocked?: boolean) => {
-    const nextUnlocked = typeof forceUnlocked === 'boolean' ? forceUnlocked : !frameUnlocked
-    if (nextUnlocked === frameUnlocked) return // Already in desired state
+    const wasUnlocked = frameUnlocked
+    const nextUnlocked = typeof forceUnlocked === 'boolean' ? forceUnlocked : !wasUnlocked
+    if (nextUnlocked === wasUnlocked) return // Already in desired state
+
+    const readSavedFreeBox = (): { width: number; height: number; scale: number } | null => {
+      const fromRef = unlockedFrameSizeRef.current
+      if (fromRef && fromRef.width > 0 && fromRef.height > 0) {
+        return {
+          width: fromRef.width,
+          height: fromRef.height,
+          scale:
+            unlockedFrameScaleRef.current != null && unlockedFrameScaleRef.current > 0
+              ? unlockedFrameScaleRef.current
+              : frameScaleRef.current,
+        }
+      }
+      const meta = promptMessage?.metadata as Record<string, unknown> | undefined
+      const fromMeta = meta?.unlockedFrameSize as { width?: number; height?: number } | undefined
+      if (fromMeta?.width && fromMeta?.height && fromMeta.width > 0 && fromMeta.height > 0) {
+        const metaScale = meta?.unlockedFrameScale
+        return {
+          width: fromMeta.width,
+          height: fromMeta.height,
+          scale:
+            typeof metaScale === 'number' && metaScale > 0 ? metaScale : frameScaleRef.current,
+        }
+      }
+      return null
+    }
+
+    const measureLiveBox = () => {
+      const el = panelRef.current
+      return {
+        width: Math.max(
+          blockMinFrameWidth(promptContent),
+          resizeDimensionsRef.current?.width ??
+            el?.offsetWidth ??
+            intrinsicSizeRef.current.width
+        ),
+        height: Math.max(
+          BLOCK_MIN_FRAME_H,
+          resizeDimensionsRef.current?.height ??
+            el?.offsetHeight ??
+            intrinsicSizeRef.current.height
+        ),
+        scale: frameScaleRef.current,
+      }
+    }
+
+    let metaPatch: Record<string, unknown> = { frameUnlocked: nextUnlocked }
+
+    if (nextUnlocked) {
+      const savedFree = readSavedFreeBox()
+      const fallback = measureLiveBox()
+      const nextDims = savedFree
+        ? { width: savedFree.width, height: savedFree.height }
+        : { width: fallback.width, height: fallback.height }
+      const nextScale = savedFree?.scale ?? fallback.scale
+      if (nextScale !== frameScale) setFrameScale(nextScale)
+      setResizeDimensions(nextDims)
+      setIsUserResized(true)
+      metaPatch = {
+        ...metaPatch,
+        frameScale: nextScale,
+        resizeDimensions: nextDims,
+        frameTextWrap,
+        ...(savedFree
+          ? {
+              unlockedFrameSize: { width: savedFree.width, height: savedFree.height },
+              unlockedFrameScale: nextScale,
+            }
+          : {}),
+      }
+    } else {
+      // Snapshot the live free box before hugging to fit (refs — not stale closure).
+      const freeSnapshot = wasUnlocked ? measureLiveBox() : readSavedFreeBox() ?? measureLiveBox()
+      setUnlockedFrameSize({ width: freeSnapshot.width, height: freeSnapshot.height })
+      setUnlockedFrameScale(freeSnapshot.scale)
+      const fitEl = contentFitRef.current
+      const dbBox = fitEl ? measureDatabaseBlockExtents(fitEl, notionConnected) : null
+      if (dbBox) {
+        setDatabaseExtents(dbBox)
+        setIntrinsicMeasured(true)
+        setIntrinsicSize({ width: dbBox.width, height: dbBox.height })
+      }
+      const naturalH =
+        dbBox?.height ??
+        (fitEl ? measureNaturalContentHeight(fitEl, notionConnected) : intrinsicSize.height)
+      if (frameTextWrap && resizeDimensionsRef.current) {
+        const keepW = resizeDimensionsRef.current.width
+        const wrapH = Math.max(
+          FRAME_RESIZE_MIN,
+          Math.ceil(naturalH * Math.max(FRAME_SCALE_EPSILON, freeSnapshot.scale))
+        )
+        const nextDims = { width: keepW, height: wrapH }
+        setResizeDimensions(nextDims)
+        setIsUserResized(true)
+        metaPatch = {
+          ...metaPatch,
+          frameScale: freeSnapshot.scale,
+          resizeDimensions: nextDims,
+          frameTextWrap: true,
+          unlockedFrameSize: { width: freeSnapshot.width, height: freeSnapshot.height },
+          unlockedFrameScale: freeSnapshot.scale,
+        }
+      } else {
+        const naturalW =
+          dbBox?.width ??
+          (fitEl
+            ? isRowCardAtomHtml(promptContent)
+              ? measureRowCardContentWidth(fitEl)
+              : measureNaturalContentWidth(fitEl)
+            : intrinsicSize.width)
+        const minW = blockMinFrameWidth(promptContent)
+        const hugged = hugLockedFrameSize(
+          { width: naturalW, height: naturalH },
+          freeSnapshot.scale,
+          minW,
+          frameShapeRef.current
+        )
+        const nextDims = { width: hugged.width, height: hugged.height }
+        setIntrinsicSize((prev) =>
+          Math.abs(prev.width - naturalW) <= 1 && Math.abs(prev.height - naturalH) <= 1
+            ? prev
+            : { width: naturalW, height: naturalH }
+        )
+        setResizeDimensions(nextDims)
+        setIsUserResized(true)
+        metaPatch = {
+          ...metaPatch,
+          frameScale: freeSnapshot.scale,
+          resizeDimensions: nextDims,
+          frameTextWrap: false,
+          unlockedFrameSize: { width: freeSnapshot.width, height: freeSnapshot.height },
+          unlockedFrameScale: freeSnapshot.scale,
+        }
+      }
+    }
+
     setFrameUnlocked(nextUnlocked)
-    // Keep RF node metadata in sync so top-bar frame lock reads correctly
     const setNodes = getSetNodes()
     if (setNodes) {
-      setNodes((nds) =>
-        nds.map((n) => {
+      setNodes((nds: any[]) =>
+        nds.map((n: any) => {
           if (n.id !== id) return n
           const pm = n.data?.promptMessage
           if (!pm) return n
@@ -3864,90 +5215,16 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
               ...n.data,
               promptMessage: {
                 ...pm,
-                metadata: { ...(pm.metadata || {}), frameUnlocked: nextUnlocked },
+                metadata: { ...(pm.metadata || {}), ...metaPatch },
               },
             },
           }
         })
       )
     }
-    window.dispatchEvent(new Event('tt-frame-lock-changed')) // Refresh top-bar frame lock icon
-    if (nextUnlocked) {
-      // Keep locked visual size: same box + same frameScale (proportional resize stays).
-      const el = panelRef.current
-      const nextDims = resizeDimensions ?? {
-        width: Math.max(blockMinFrameWidth(promptContent), el?.offsetWidth ?? intrinsicSize.width),
-        height: Math.max(BLOCK_MIN_FRAME_H, el?.offsetHeight ?? intrinsicSize.height),
-      }
-      setResizeDimensions(nextDims)
-      setIsUserResized(true)
-      // Also seed the unlocked returnable shape to the CURRENT size so later unlocked
-      // resize-end bookkeeping stays coherent (not used to snap size on unlock).
-      setUnlockedFrameSize(nextDims)
-      setUnlockedFrameScale(frameScale)
-      void persistFrameMeta({
-        frameUnlocked: true,
-        frameScale, // Preserve locked scale so block size does not jump
-        resizeDimensions: nextDims,
-        frameTextWrap,
-        unlockedFrameSize: nextDims,
-        unlockedFrameScale: frameScale,
-      })
-      return
-    }
-    // Locking: remember the CURRENT unlocked shape (+scale) for metadata continuity.
-    const unlockedShape =
-      resizeDimensions ?? {
-        width: Math.max(blockMinFrameWidth(promptContent), panelRef.current?.offsetWidth ?? intrinsicSize.width),
-        height: Math.max(BLOCK_MIN_FRAME_H, panelRef.current?.offsetHeight ?? intrinsicSize.height),
-      }
-    setUnlockedFrameSize(unlockedShape)
-    setUnlockedFrameScale(frameScale)
-    const fitEl = contentFitRef.current
-    const naturalH = fitEl ? measureNaturalContentHeight(fitEl) : intrinsicSize.height
-    // Relock WHILE wrapped: keep the unlocked wrap WIDTH (text stays wrapped at that width);
-    // hug HEIGHT only to the wrapped content. Wrap persists through lock.
-    if (frameTextWrap && resizeDimensions) {
-      const keepW = resizeDimensions.width // Same width the wrap had when unlocked
-      const wrapH = Math.max(BLOCK_MIN_FRAME_H, Math.ceil(naturalH * Math.max(0.15, frameScale)))
-      const nextDims = { width: keepW, height: wrapH }
-      setResizeDimensions(nextDims)
-      setIsUserResized(true)
-      void persistFrameMeta({
-        frameUnlocked: false,
-        frameScale,
-        resizeDimensions: nextDims,
-        frameTextWrap: true, // Keep wrap on through lock
-        unlockedFrameSize: unlockedShape,
-        unlockedFrameScale: frameScale,
-      })
-      return
-    }
-    // Relock (nowrap): hug width AND height to natural text (locked = hug to content)
-    const naturalW = fitEl ? measureNaturalContentWidth(fitEl) : intrinsicSize.width
-    const minW = blockMinFrameWidth(promptContent)
-    const hugged = scaledFrameSize(
-      { width: naturalW, height: naturalH },
-      frameScale,
-      minW
-    )
-    const nextDims = { width: hugged.width, height: hugged.height }
-    setIntrinsicSize((prev) =>
-      Math.abs(prev.width - naturalW) <= 1 && Math.abs(prev.height - naturalH) <= 1
-        ? prev
-        : { width: naturalW, height: naturalH }
-    )
-    setResizeDimensions(nextDims)
-    setIsUserResized(true)
-    void persistFrameMeta({
-      frameUnlocked: false,
-      frameScale,
-      resizeDimensions: nextDims,
-      frameTextWrap: false,
-      unlockedFrameSize: unlockedShape,
-      unlockedFrameScale: frameScale,
-    })
-  }, [frameUnlocked, frameScale, resizeDimensions, intrinsicSize, frameTextWrap, persistFrameMeta, promptContent, getSetNodes, id])
+    window.dispatchEvent(new Event('tt-frame-lock-changed'))
+    void persistFrameMeta({ ...metaPatch, frameTextWrap: metaPatch.frameTextWrap ?? frameTextWrap })
+  }, [frameUnlocked, frameScale, frameTextWrap, intrinsicSize, persistFrameMeta, promptContent, promptMessage?.metadata, getSetNodes, id])
 
   const handleToggleFrameLock = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
@@ -3966,13 +5243,33 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     return () => window.removeEventListener('tt-toggle-frame-lock', onTopBar)
   }, [id, toggleFrameLock])
 
+  // Frame menu / footer → Table rows depth. Menus live outside this node, so they broadcast and
+  // the owning frame persists — one writer for frame metadata (same as `tt-toggle-frame-lock`).
+  useEffect(() => {
+    const onSetDbRowCap = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ nodeIds?: string[]; messageIds?: string[]; cap?: number }>).detail
+      const forNode = !!detail?.nodeIds?.includes(id)
+      const forMsg = !!promptMessage?.id && !!detail?.messageIds?.includes(promptMessage.id)
+      if (!forNode && !forMsg) return
+      const cap = detail?.cap
+      if (typeof cap !== 'number' || !Number.isFinite(cap) || cap < 1) return
+      const next = Math.floor(cap)
+      const always = next > COMPACT_PREVIEW_ROWS // Snapshot slot: past compact floor = expanded
+      setDbVisibleRowCap(next)
+      setDbAlwaysExpanded(always)
+      void persistFrameMeta({ dbVisibleRowCap: next, dbAlwaysExpanded: always })
+    }
+    window.addEventListener('tt-set-db-visible-row-cap', onSetDbRowCap)
+    return () => window.removeEventListener('tt-set-db-visible-row-cap', onSetDbRowCap)
+  }, [id, persistFrameMeta, promptMessage?.id])
+
   // Unlocked: wrap lines inside the frame width (vs clip overflow)
   const handleToggleFrameTextWrap = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
     e.preventDefault()
     // Wrap works locked or unlocked: it wraps at a FIXED column width and keeps it.
     const next = !frameTextWrap
-    const s = Math.max(0.15, frameScale)
+    const s = Math.max(FRAME_SCALE_EPSILON, frameScale)
     // Wrap needs a fixed box to wrap into. A locked frame that was hugging content may not have
     // resizeDimensions yet — snapshot the live box and switch to explicit-box (isUserResized) mode.
     const box = resizeDimensions ?? {
@@ -4007,7 +5304,14 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
           const base = prev ?? box
           const width = next // Wrap-on: restore stored columns × scale; Wrap-off: hug to nowrap content
             ? (col != null ? Math.round(col * s) : base.width)
-            : Math.max(blockMinFrameWidth(promptContent), Math.ceil(measureNaturalContentWidth(cf) * s))
+            : Math.max(
+                blockMinFrameWidth(promptContent),
+                Math.ceil(
+                  (isRowCardAtomHtml(promptContent)
+                    ? measureRowCardContentWidth(cf)
+                    : measureNaturalContentWidth(cf)) * s
+                )
+              )
           return { width, height }
         })
       }))
@@ -4019,10 +5323,21 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
   // Locked + resized: hug WIDTH and HEIGHT to natural text (locked = hug to content) —
   // shrink/grow both dimensions on lock/type instead of keeping the taller resize box.
   useEffect(() => {
-    if (!isBlock || frameUnlocked || !isUserResized || pagePreviewOpen || dragging) return
+    const rowCard = isRowCardAtomHtml(promptContent)
+    const dbFrame = isDbFrame
+    if (!isBlock || frameUnlocked || pagePreviewOpen || dragging) return
     if (!intrinsicMeasured || isResizingRef.current) return
-    const minW = blockMinFrameWidth(promptContent, false) // Fill hug — no ⋮⋮ column inside the frame
-    const natural = scaledFrameSize(intrinsicSize, frameScale, minW)
+    if (!isUserResized && !rowCard && !dbFrame && Math.abs(frameScale - 1) <= FRAME_SCALE_EPSILON) {
+      return // Row/DB cards + place-scaled frames hug as soon as content is measured
+    }
+    // No boardLink/3ch / 40px floor — locked hug must match scaled glyphs (else text sits top-left in empty pad)
+    const minW = 1
+    const hugSource = shapeFitContentBox(
+      dbFrame && databaseExtents ? databaseExtents : intrinsicSize,
+      frameShape,
+      true
+    )
+    const natural = scaledFrameSize(hugSource, frameScale, minW, 1)
     // Never hug a databaseBlock frame down to the remount stub — that persists as a permanent clip.
     if (
       hasDatabaseBlockHtml(promptContent) &&
@@ -4045,11 +5360,12 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
       // Nowrap hugs width to content.
       const width =
         frameTextWrap && wrapColWidth != null
-          ? Math.round(wrapColWidth * Math.max(0.15, frameScale))
+          ? Math.round(wrapColWidth * Math.max(FRAME_SCALE_EPSILON, frameScale))
           : frameTextWrap && prev
             ? prev.width
             : natural.width
-      // Hug height to content too (was: keep the taller box until a manual resize)
+      // Hug height to content — never keep a ≤1px-taller seed (place min 22×scale); that leftover
+      // is multiplied into peach under the block with top-left scale origin.
       const height = natural.height
       next = { width, height }
       if (
@@ -4064,7 +5380,7 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
       if (
         prev &&
         Math.abs(prev.width - width) <= 1 &&
-        Math.abs(prev.height - height) <= 1
+        Math.abs(prev.height - height) <= 0.02 // Sub-px — 1px epsilon kept place-seed slack under the block
       ) {
         changed = false
         return prev
@@ -4072,6 +5388,10 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
       return next
     })
     if (!changed) return
+    // RF node sync uses resizeDimensions; place-scaled + row/DB cards need the resized path
+    if (!isUserResized && (rowCard || dbFrame || Math.abs(frameScale - 1) > FRAME_SCALE_EPSILON)) {
+      setIsUserResized(true)
+    }
     if (persistFrameMetaTimerRef.current) clearTimeout(persistFrameMetaTimerRef.current)
     persistFrameMetaTimerRef.current = setTimeout(() => {
       void persistFrameMeta({
@@ -4096,6 +5416,9 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     wrapColWidth,
     persistFrameMeta,
     promptContent,
+    isDbFrame,
+    databaseExtents,
+    frameShape,
   ])
 
   // Unlocked WRAP no longer auto-hugs height: like non-wrap clip, the frame keeps the user's box
@@ -4103,6 +5426,7 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
 
   // Auto-select panel when editor is focused or has a text range (not boardLink NodeSelection)
   const handleEditorActiveChange = useCallback((isActive: boolean) => {
+    editorActiveRef.current = isActive
     if (isActive && !selected) {
       // Editor is active (focused or has selection) but panel is not selected - auto-select it
       // First deselect all other nodes, then select this one
@@ -4687,8 +6011,21 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     const meta = (promptMessage?.metadata || {}) as Record<string, unknown>
     if (meta.linkedBoardId) return
     if (typeof meta.blockTitle === 'string' && meta.blockTitle.trim()) return
+    // Color, resize, shape, rotation, lock, or property type — keep the empty box
+    if (
+      frameHasChromeProperties(meta, {
+        fillColor: data.fillColor,
+        borderColor: data.borderColor,
+        borderStyle: data.borderStyle,
+        isUserResized,
+        frameShape,
+        rotation,
+      })
+    ) {
+      return
+    }
 
-    // Must be exactly one empty textblock after prune (not a boardLink-only frame)
+    // Must be exactly one empty textblock after prune (not captureLink / boardLink-only body)
     let soleEmpty = false
     if (ed && !ed.isDestroyed) {
       const doc = ed.state.doc
@@ -4696,7 +6033,7 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
       soleEmpty = !!(
         only &&
         only.isTextblock &&
-        (only.content.size === 0 || only.textContent.length === 0)
+        (isEmptyTextblock(only) || only.textContent === '/') // `/` spawn dismissed without choosing
       )
     } else {
       soleEmpty = isBlockContentEmpty(promptContent)
@@ -4715,31 +6052,32 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     isBoardBody,
     promptContent,
     promptMessage?.metadata,
+    data.fillColor,
+    data.borderColor,
+    data.borderStyle,
+    isUserResized,
+    frameShape,
+    rotation,
     id,
   ])
 
-  // Get current zoom level and update panel width when zoom is 100% or less
-  const [currentZoom, setCurrentZoom] = useState(reactFlowInstance?.getViewport().zoom ?? 1)
   // Frames hug the longest TipTap line until corner-resized (match `isBlock`, not isBlockMeta alone)
   const usesFitContent = isBlock // Empty user-only bodies without isBlock still hug
   const frameMinW = blockMinFrameWidth(promptContent, false) // Frame fill only — ⋮⋮ lives in select chrome, not inside the fill
-  const growsWithLine = usesFitContent && !isUserResized && !pagePreviewOpen // Line runs until Enter / corner resize
+  const growsWithLine =
+    usesFitContent &&
+    !isUserResized &&
+    Math.abs(frameScale - 1) <= FRAME_SCALE_EPSILON && // Place-scaled frames use explicit box + CSS scale
+    !pagePreviewOpen &&
+    !isRowCardAtomHtml(promptContent) && // Row cards live-hug — max-content blows out to icon-row width
+    !isDbFrame // DB tables live-hug from measureDatabaseBlockExtents — max-content clips the table
   // Empty unresized: explicit px (not max-content) — CSS % children used to inflate ~120×160 boxes
   const emptyLineHug = growsWithLine && isBlockContentEmpty(promptContent)
   const hasBlockContent = isBlock && !isBlockContentEmpty(promptContent) // Lock only when a content block exists
-  // Shared screen-relative scale for selection chrome: resize handles, blue lines, connection
-  // indicators, rotate/free/wrap. Boosted frameScreenChromeScale — not bare thread comfort.
+  // Constant screen size for selection chrome via live CSS `--tt-board-zoom`.
+  // React still uses frameUiScale for gutters / stack lines (updates after settle).
   const frameUiScale = screenChromeScale
-  const frameChromeScale = frameUiScale // Rotate · lock · wrap icons stay screen-sized
-  const frameIndicatorSize = 8 * frameUiScale // Connection simulator dots (slightly under resize corners)
-  // Sit outside the blue edge — scales with zoom comfort so gap tracks the indicator
-  const frameIndicatorOut = INDICATOR_OUTSET * frameUiScale
-  // Clear bottom simulator, then the same air as blue→block on the ⋮⋮ side (handle gutter)
-  const frameChromeGapY =
-    frameIndicatorOut + frameIndicatorSize / 2 + adjustChromeX
-  const frameHandleSize = 7 * frameUiScale // Corner resize dots — screen-relative
-  const frameLineW = Math.max(1, frameUiScale) // Blue selection stroke
-  const frameLineHit = Math.max(4, 5 * frameUiScale) // Line hit target thickness
+  const frameLineW = Math.max(0.25, frameUiScale) // Shape select stroke (square ring uses CSS var)
   const wrapActive =
     isBlock && frameTextWrap && isUserResized && !!resizeDimensions && !pagePreviewOpen // Soft-wrap in a fixed width (locked or unlocked)
   const wrapUnlocked = wrapActive && frameUnlocked // Unlocked wrap: fixed width + free/clip height
@@ -4750,11 +6088,149 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     isUserResized &&
     !!resizeDimensions &&
     !pagePreviewOpen // Free frame may hide overflow when not wrapping
-  const huggedSize = scaledFrameSize(intrinsicSize, frameScale, frameMinW) // Scaled content (no phantom border)
-  const applyFrameScale = isBlock && isUserResized && frameScale !== 1 // Layout spacer + CSS scale
-  const scaledLayoutW = Math.ceil(intrinsicSize.width * Math.max(0.15, frameScale)) // Visual content width (no border)
-  const scaledLayoutH = Math.ceil(intrinsicSize.height * Math.max(0.15, frameScale)) // Visual content height (no border)
+  // Silhouettes clip to a center cross / diamond — hugged text must sit in the middle, not top-left
+  const shapeCenterContent = Boolean(
+    frameShape &&
+      isBlock &&
+      !pagePreviewOpen &&
+      !isDbFrame &&
+      !isRowCardAtomHtml(promptContent)
+  )
+  const huggedSize = scaledFrameSize(
+    shapeFitContentBox(intrinsicSize, frameShape, !frameUnlocked),
+    frameScale,
+    1, // Fit-to-text: hug glyphs — FRAME_RESIZE_MIN (40) left empty pad with text stuck top-left
+    1
+  ) // Scaled content (no phantom border)
+  // Stamp before effects: RF push reads this so blue selection matches peach (not stale tall dims)
+  if (
+    isBlock &&
+    intrinsicMeasured &&
+    !frameUnlocked &&
+    !isDbFrame &&
+    !isRowCardAtomHtml(promptContent) &&
+    !pagePreviewOpen &&
+    !wrapActive &&
+    !isResizingRef.current
+  ) {
+    liveLockedContentRef.current = { width: huggedSize.width, height: huggedSize.height }
+  } else {
+    liveLockedContentRef.current = null
+  }
+  // After paint: RF node box = painted panel box (not an estimated hug). Fixes blue>peach
+  // when place-seed / stale dims left the RF node taller than the fill.
+  useLayoutEffect(() => {
+    if (!isBlock || frameUnlocked || !panelRef.current) return
+    if (!intrinsicMeasured || isDbFrame || isRowCardAtomHtml(promptContent)) return
+    if (pagePreviewOpen || isResizingRef.current || isRotatingRef.current || dragging) return
+    // Need an explicit RF box path (place-scale / resized / live hug)
+    if (!isUserResized && Math.abs(frameScale - 1) <= FRAME_SCALE_EPSILON) return
+
+    const panel = panelRef.current
+    const boxW = Math.round(panel.offsetWidth)
+    const boxH = Math.round(panel.offsetHeight)
+    if (boxW < 1 || boxH < 1) return
+
+    const prev = lastPushedBoxRef.current
+    if (
+      prev &&
+      Math.abs(prev.w - boxW) <= 0.5 &&
+      Math.abs(prev.h - boxH) <= 0.5 &&
+      Math.abs(prev.rot - rotation) < 0.05
+    ) {
+      return
+    }
+    lastPushedBoxRef.current = { w: boxW, h: boxH, rot: rotation }
+
+    // Persist content size (strip L/R select chrome) so AABB math stays on the fill
+    const chromeX = showFrameChrome ? adjustChromeXRef.current * 2 : 0
+    const contentW = Math.max(1, boxW - chromeX)
+    const contentH = boxH
+    liveLockedContentRef.current = { width: contentW, height: contentH }
+    setResizeDimensions((prevDims) => {
+      if (
+        prevDims &&
+        Math.abs(prevDims.width - contentW) <= 0.5 &&
+        Math.abs(prevDims.height - contentH) <= 0.5
+      ) {
+        return prevDims
+      }
+      return { width: contentW, height: contentH }
+    })
+    if (!isUserResized) setIsUserResized(true)
+
+    const setNodesFunc = getSetNodes()
+    if (!setNodesFunc) return
+    setNodesFunc((nodes: any[]) => {
+      let changed = false
+      const next = nodes.map((node: any) => {
+        if (node.id !== id) return node
+        const styleW =
+          typeof node.style?.width === 'number' ? node.style.width : parseFloat(node.style?.width)
+        const styleH =
+          typeof node.style?.height === 'number'
+            ? node.style.height
+            : parseFloat(node.style?.height)
+        if (
+          Number.isFinite(styleW) &&
+          Number.isFinite(styleH) &&
+          Math.abs(styleW - boxW) <= 0.5 &&
+          Math.abs(styleH - boxH) <= 0.5
+        ) {
+          return node
+        }
+        changed = true
+        return {
+          ...node,
+          width: boxW,
+          height: boxH,
+          style: { ...node.style, width: boxW, height: boxH },
+        }
+      })
+      return changed ? next : nodes
+    })
+    updateNodeInternals(id)
+  }, [
+    isBlock,
+    frameUnlocked,
+    intrinsicMeasured,
+    isDbFrame,
+    promptContent,
+    pagePreviewOpen,
+    dragging,
+    isUserResized,
+    frameScale,
+    huggedSize.width,
+    huggedSize.height,
+    showFrameChrome,
+    selected,
+    rotation,
+    id,
+    getSetNodes,
+    updateNodeInternals,
+  ])
+  const scaledDbSize = databaseExtents
+    ? scaledFrameSize(
+        shapeFitContentBox(databaseExtents, frameShape, !frameUnlocked),
+        frameScale,
+        1,
+        1
+      )
+    : null
+  const contentVisualW = scaledDbSize?.width ?? huggedSize.width
+  const contentVisualH = scaledDbSize?.height ?? huggedSize.height
+  const applyFrameScale =
+    isBlock && Math.abs(frameScale - 1) > FRAME_SCALE_EPSILON // Place + locked resize — CSS scale text/glyphs
+  // Place seeds isUserResized; if only frameScale landed, still treat as resized so hug/box track scale
+  const scaledAsResized = isUserResized || applyFrameScale
+  const scaledLayoutW = Math.ceil(contentVisualW) // Visual content width (full table when DB)
+  // Exact scaled height — Math.round left ≤0.5px that top-left scale dumped under the block
+  const scaledLayoutH = contentVisualH
   const unlockedResized = wrapUnlocked || clipUnlocked // Free-resized frame (wrap or nowrap-clip)
+  // Rounded custom borders paint on the fill shell — not the square outer panel
+  const paintBorderOnFillShell = Boolean(
+    isBlock && !frameShape && Math.abs(rotation) <= 0.5 && !isBorderNone && resolvedBorderColor
+  )
   // Selected/adjust chrome forces borderWidth 0 — do not subtract a phantom 2px or content clips
   // and the blue box looks larger than the block (⋮⋮ / text sit above the left connection mid).
   const panelBorderBox =
@@ -4762,7 +6238,9 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     showDragBorderOnly ||
     frameShape ||
     Math.abs(rotation) > 0.5 ||
-    (isBorderNone && !showEmptyFrameBorder)
+    isBorderNone ||
+    showEmptyFrameBorder ||
+    paintBorderOnFillShell // Inset on fill shell — not part of the panel box
       ? 0
       : 2 * (parseFloat(String(data.borderWeight)) || 1) // borderWeight is typed as a string ('2px')
   const unlockedInnerW = resizeDimensions
@@ -4773,10 +6251,10 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     : null
   // Unlocked frame smaller than its visual content → blocks are clipped (nowrap: both axes; wrap: height only)
   const overflowRight =
-    clipUnlocked && unlockedInnerW! < huggedSize.width // Nowrap may hide trailing glyphs
+    clipUnlocked && unlockedInnerW! < contentVisualW // Nowrap may hide trailing glyphs / table columns
   const overflowBottom =
-    (clipUnlocked && unlockedInnerH! < huggedSize.height) ||
-    (wrapUnlocked && unlockedInnerH! < huggedSize.height) // Short frame cuts lower blocks
+    (clipUnlocked && unlockedInnerH! < contentVisualH) ||
+    (wrapUnlocked && unlockedInnerH! < contentVisualH) // Short frame cuts lower blocks
   const contentOverflows = overflowRight || overflowBottom
   // Hover dwell can arm a preview — hide immediately while dragging / page preview / connecting
   const clipPreviewEligible =
@@ -4789,7 +6267,7 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
   const clipBoxH =
     unlockedInnerH != null
       ? pinConnectionsToFrame
-        ? Math.max(1, unlockedInnerH - adjustChromeYBottom) // Leave a strip for the scaled pinned group
+        ? Math.max(1, unlockedInnerH - connStripH) // Leave a strip for the scaled pinned group
         : unlockedInnerH
       : undefined
   // Soften chopped edges while clipped (removed during hover preview)
@@ -4803,7 +6281,7 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     wrapActive && !frameUnlocked && wrapColWidth != null // LOCKED wrap: FIXED columns — no reflow on proportional resize, stable across unwrap/rewrap
       ? wrapColWidth
       : (unlockedResized || wrapActive) && unlockedInnerW != null // UNLOCKED wrap / clip: derive from current width (re-wrap on drag)
-        ? Math.max(1, Math.floor(unlockedInnerW / Math.max(0.15, frameScale)))
+        ? Math.max(1, Math.floor(unlockedInnerW / Math.max(FRAME_SCALE_EPSILON, frameScale)))
         : null
   // Frames start at plain-text hug; chat/flashcards use their fixed starting widths
   const initialWidth = isFlashcard ? 600 : (usesFitContent ? BLOCK_LOCKED_MIN_W : 768)
@@ -4817,14 +6295,17 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
   // Track if note panel uses fit-content (to prevent zoom-based width updates)
   const noteInitializedRef = useRef(usesFitContent)
 
-  // Continuously check zoom level and update panel width
+  // Width only cares whether zoom is at or below 100%, so subscribe to that *boolean*: this used to be
+  // `setInterval(…, 100)` per frame, i.e. 10 setState calls per second per frame (330/s on a 33-frame
+  // board). During a wheel zoom the polled value really changed, so every frame re-rendered 10×/s —
+  // 642 frame renders for one 1.6s gesture. A boolean selector re-renders only when 100% is crossed.
+  const zoomAtMostOne = useStore((s) => (s.transform[2] ?? 1) <= 1)
+
+  // Recompute panel width when the 100% threshold, the prompt-box width, or the shrink flags change
   useEffect(() => {
     if (!reactFlowInstance) return
 
     const updateZoomAndWidth = () => {
-      const zoom = reactFlowInstance.getViewport().zoom
-      setCurrentZoom(zoom)
-
       const targetMaxWidth = isFlashcard ? 600 : 768
 
       // Don't override manually shrunk width - only update if not manually shrunk
@@ -4842,7 +6323,7 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
       // 1. Zoom is 100% or less (<= 1.0)
       // 2. AND panel width (from context) is >= prompt box width (so panels can shrink with prompt box)
       // This allows panels to shrink with prompt box when zoomed out or at 100%
-      if (zoom <= 1.0 && panelWidth > 0) {
+      if (zoomAtMostOne && panelWidth > 0) {
         // Use the smaller of panelWidth (from prompt box) or targetMaxWidth
         // This ensures panels shrink when prompt box shrinks, but don't exceed targetMaxWidth
         setPanelWidthToUse(Math.min(panelWidth, targetMaxWidth))
@@ -4851,14 +6332,8 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
       }
     }
 
-    // Initial update
     updateZoomAndWidth()
-
-    // Update periodically to catch zoom changes
-    const interval = setInterval(updateZoomAndWidth, 100)
-
-    return () => clearInterval(interval)
-  }, [reactFlowInstance, panelWidth, isManuallyShrunk])
+  }, [reactFlowInstance, panelWidth, isManuallyShrunk, zoomAtMostOne, isFlashcard])
 
   // Track zoom level when nav mode started (to detect zoom out)
   const navModeStartZoomRef = useRef<number | null>(null)
@@ -4953,6 +6428,8 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
       return
     }
     if (isUserResized && resizeDimensions) return // Explicit box owns width
+    // Row/DB cards: layoutBox live-hug owns width — never stomp with panelWidthRef.
+    if (isBlock && (isRowCardAtomHtml(promptContent) || isDbFrame)) return
     if (panelRef.current && panelWidthRef.current) {
       const next = `${panelWidthRef.current}px`
       if (panelRef.current.style.width !== next) panelRef.current.style.width = next
@@ -5018,6 +6495,13 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
   // Expand/shrink panel width from longest line — sync DOM before React paint to avoid wrap
   const expandPanelWidth = useCallback((newContent?: string) => {
     if (pagePreviewOpen) return
+    // Row/DB cards live-hug from intrinsic measure — concatenated textContent here is bogus wide.
+    if (
+      isRowCardAtomHtml(newContent !== undefined ? newContent : promptContent) ||
+      hasDatabaseBlockHtml(newContent !== undefined ? newContent : promptContent)
+    ) {
+      return
+    }
     // Unresized blocks: empty → one-line hug px; typed → max-content (don’t force chat widths)
     if (growsWithLine) {
       if (panelRef.current) {
@@ -5073,6 +6557,7 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
   // Shrink block/flashcard to longest line on blur
   const handleEditorBlur = useCallback(() => {
     if (isRegularChatPanel) return // Chat stays wide
+    if (isRowCardAtomHtml(promptContent) || isDbFrame) return // Row/DB cards hug via intrinsic measure
     if ((isUserResized && resizeDimensions) || pagePreviewOpen) return
 
     setTimeout(() => {
@@ -5256,6 +6741,7 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
   // Debounced width adjust when content changes (blocks grow/shrink with longest line)
   useEffect(() => {
     if ((isUserResized && resizeDimensions) || pagePreviewOpen) return
+    if (isRowCardAtomHtml(promptContent) || isDbFrame) return // Intrinsic hug owns width
     if (!promptContent && !responseContent) return
     if (isRegularChatPanel && !promptContent && !responseContent) return
 
@@ -5282,7 +6768,7 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
       !newContent ||
       newContent.trim() === '' ||
       newContent.trim() === '<p></p>'
-    const prevHasAtoms = hasFrameAtomHtml(prev) || !isBlockContentEmpty(prev)
+    const prevHasAtoms = hasFrameAtomHtml(prev) // boardLink / DB / property atoms only — not plain typed text
     const lostPropertyCells =
       countPropertyBlocks(prev) > 0 && countPropertyBlocks(newContent) < countPropertyBlocks(prev)
     const lostAtoms = hasFrameAtomHtml(prev) && !hasFrameAtomHtml(newContent)
@@ -5322,6 +6808,11 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
         if (isFramePending(promptMessage.id)) {
           return
         }
+        // Visitor sandbox: keep the clone in sync; never write the showcase master
+        if (isEphemeralMessageId(promptMessage.id)) {
+          patchEphemeralMessage(promptMessage.id, { content: newContent })
+          return
+        }
         const { error } = await supabase
           .from('messages')
           .update({ content: newContent })
@@ -5329,10 +6820,31 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
 
         if (error) {
           console.error('Error updating prompt:', error)
+        } else {
+          scheduleNotionPagePush(newContent)
         }
       }
     }
   }
+
+  // Frame deselect: flush TipTap → promptContent/DB before sync can wipe a just-pasted captureLink.
+  const prevSelectedFlushRef = useRef(selected)
+  useLayoutEffect(() => {
+    const wasSelected = prevSelectedFlushRef.current
+    prevSelectedFlushRef.current = selected
+    if (!wasSelected || selected) return
+    if (!isBlock || isFlashcard || isProjectBoard) return
+    const ed = promptEditorRef.current
+    if (!ed || ed.isDestroyed) return
+    let liveHtml: string
+    try {
+      liveHtml = ed.getHTML()
+    } catch {
+      return // Doc mid-mutation (e.g. atom serialize) — skip flush this tick
+    }
+    if (!liveHtml || liveHtml === promptContentRef.current) return
+    void handlePromptChange(liveHtml)
+  }, [selected, isBlock, isFlashcard, isProjectBoard])
 
   const handlePromptRevert = async () => {
     // Revert to original content
@@ -5515,11 +7027,14 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
 
   // Auto-focus note editor when first created (empty component panel or inline note with fadeIn flag)
   // Map I-bar typing seeds arrive via tt-ibar-typed-seed so keystrokes aren't dropped while the frame spawns
+  const slashMenuOpenedRef = useRef(false)
   useEffect(() => {
     if (!isComponentPanel || isFlashcard) return
+    slashMenuOpenedRef.current = false
 
     // TipTap iOS focus() omits preventScroll; pin page + overflow ancestors so edge creates don’t jump
     const focusFrameEditor = (ed: NonNullable<typeof promptEditorRef.current>) => {
+      if (id) setFrameTextEditActive(id) // I-bar / fadeIn handoff — Backspace edits text
       const sx = window.scrollX // Document scroll (rare on board, but cheap to pin)
       const sy = window.scrollY
       // Board shell uses overflow-auto main — Safari pans that when the caret is near the edge
@@ -5581,6 +7096,26 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     const applySeed = (html: string, text: string) => {
       const ed = promptEditorRef.current
       if (!ed || ed.isDestroyed) return false
+
+      const meta = (promptMessage?.metadata || {}) as Record<string, unknown>
+      const slashPending = meta.slashMenuPending === true
+
+      // I-bar `/` spawn: empty frame first, then insert `/` once so the slash menu opens without deselecting
+      if (slashPending && !slashMenuOpenedRef.current) {
+        slashMenuOpenedRef.current = true
+        ed.commands.setContent('<p></p>')
+        ed.chain().focus('end').insertContent('/').run()
+        setPromptContent('<p>/</p>')
+        setPromptHasChanges(true)
+        hasAutoFocusedRef.current = true
+        if (!keepCaptureForPhone() && ed.isFocused && promptMessage?.id) {
+          window.dispatchEvent(
+            new CustomEvent('tt-ibar-seed-applied', { detail: { messageId: promptMessage.id } })
+          )
+        }
+        return true
+      }
+
       const current = ed.getText()
       const captureOwns = captureOwnsKeyboard() // Capture field still has the I-bar keyboard
       // Capture is source of truth until TipTap focuses — apply Backspace (shorter) as well as new chars.
@@ -5629,13 +7164,26 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
       if (isEmpty || isNewInlineNote) {
         const t = window.setTimeout(() => {
           if (!promptEditorRef.current || promptEditorRef.current.isDestroyed) return
-          // Phone: I-bar capture already focused — sync only; TipTap focus would Safari-zoom near edges
-          if (!keepCaptureForPhone()) {
-            focusFrameEditor(promptEditorRef.current)
+          const ed = promptEditorRef.current
+          const meta = (promptMessage?.metadata || {}) as Record<string, unknown>
+          if (meta.slashMenuPending === true && !slashMenuOpenedRef.current) {
+            slashMenuOpenedRef.current = true
+            ed.commands.setContent('<p></p>')
+            ed.chain().focus('end').insertContent('/').run()
+            setPromptContent('<p>/</p>')
+            setPromptHasChanges(true)
+            if (!keepCaptureForPhone() && ed.isFocused && promptMessage?.id) {
+              window.dispatchEvent(
+                new CustomEvent('tt-ibar-seed-applied', { detail: { messageId: promptMessage.id } })
+              )
+            }
+          } else if (!keepCaptureForPhone()) {
+            focusFrameEditor(ed)
           }
           hasAutoFocusedRef.current = true
-          // If a seed is still in flight, ask board-flow to re-push it
-          if (promptMessage?.id) {
+          // If a seed is still in flight, ask board-flow to re-push it (not for `/` slash spawn — empty seed would wipe `/`)
+          const metaAfter = (promptMessage?.metadata || {}) as Record<string, unknown>
+          if (promptMessage?.id && metaAfter.slashMenuPending !== true) {
             window.dispatchEvent(
               new CustomEvent('tt-ibar-request-seed', { detail: { messageId: promptMessage.id } })
             )
@@ -5655,6 +7203,7 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     promptContent,
     promptMessage?.id,
     promptMessage?.metadata?.fadeIn,
+    promptMessage?.metadata,
   ])
 
   // Debug logging for flashcard conversion
@@ -5684,12 +7233,9 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
   // - Even focused flashcard comments should blur
   const shouldBlurComments = flashcardMode !== null && !isZoomedOutInNavMode
 
-  // Corner resize dots — size tracks screen chrome (zoom comfort), not frame width
+  // Corner resize dots — size from live CSS --tt-frame-handle; keep fill / z only here
   const itemCornerResizeStyle = {
-    width: frameHandleSize,
-    height: frameHandleSize,
     background: resolvedTheme === 'dark' ? '#1a1a1a' : '#ffffff', // Contrast against board
-    border: `${Math.max(1, 1.5 * frameUiScale)}px solid #9ca3af`, // Ring scales with the dot
     borderRadius: '50%', // Circular corner handles
     boxSizing: 'border-box' as const, // Include border in box size
     zIndex: 60, // Above title chip / connection dots so drag hits resize, not node drag
@@ -5704,6 +7250,20 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
     const t = window.setTimeout(() => setClipPreviewReady(true), 500) // ~tooltip dwell
     return () => window.clearTimeout(t)
   }, [clipPreviewEligible])
+
+  // Re-measure full table extents once hover preview arms (CSS drops scroll cap / width:100%)
+  useLayoutEffect(() => {
+    if (!showClipPreview) return
+    const el = contentFitRef.current
+    if (!el) return
+    const run = () => {
+      const dbBox = measureDatabaseBlockExtents(el, notionConnected)
+      if (dbBox) setDatabaseExtents(dbBox)
+    }
+    run()
+    const raf = requestAnimationFrame(run)
+    return () => cancelAnimationFrame(raf)
+  }, [showClipPreview, notionConnected])
 
   // Hover clip-preview: lift this RF node above siblings so spilled blocks paint on top
   useEffect(() => {
@@ -5773,25 +7333,87 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
 
   // Map-card frame is a container (like a Notion page) — ⋮⋮ lives on TipTap content blocks inside
   // Logical (unrotated) content box — never use outer AABB measure when rotated
+  const rowCardLockedHug =
+    isBlock && isRowCardAtomHtml(promptContent) && intrinsicMeasured && !frameUnlocked
+  const dbLockedHug = isDbFrame && intrinsicMeasured && !frameUnlocked
+  // Fit-to-text nowrap: live-hug from measure (stale resizeDimensions left a big peach box + top-left text)
+  const textLockedHug =
+    isBlock &&
+    intrinsicMeasured &&
+    !frameUnlocked &&
+    !isDbFrame &&
+    !isRowCardAtomHtml(promptContent) &&
+    !pagePreviewOpen &&
+    !wrapActive
+  const lockedDbSize = scaledDbSize ?? huggedSize
   const contentBoxW =
-    (isUserResized && resizeDimensions?.width) ||
+    (rowCardLockedHug
+      ? huggedSize.width
+      : dbLockedHug
+        ? lockedDbSize.width
+        : textLockedHug
+          ? huggedSize.width
+          : isUserResized && resizeDimensions?.width) ||
     (Math.abs(rotation) > 0.5
       ? Math.max(intrinsicSize.width + 8, BLOCK_MIN_FRAME_W) // +pad; outer RO is AABB — don't use it
       : itemBoxSize.width) ||
     FRAME_SHAPE_DEFAULT_SIZE.width
   const contentBoxH =
-    (isUserResized && resizeDimensions?.height) ||
+    (rowCardLockedHug
+      ? huggedSize.height
+      : dbLockedHug
+        ? lockedDbSize.height
+        : textLockedHug
+          ? huggedSize.height
+          : isUserResized && resizeDimensions?.height) ||
     (Math.abs(rotation) > 0.5
       ? Math.max(intrinsicSize.height + 8, BLOCK_MIN_FRAME_H)
       : itemBoxSize.height) ||
     FRAME_SHAPE_DEFAULT_SIZE.height
   const isContentRotated = isBlock && Math.abs(rotation) > 0.5
-  // Upright blue adjust frame = tight AABB of the *visible* silhouette (ellipse/polygon), not just the content rect
+  // Upright blue adjust frame = tight AABB of the *visible* silhouette (ellipse/polygon), not just the content rect.
+  // When selected, inflate the *unrotated* width by L/R chrome first — ⋮⋮ hangs past the fill on the left,
+  // and after rotate that overhang must stay inside the blue box (otherwise grips clip at ~90°).
   const displayBox = isContentRotated
-    ? rotatedFrameAabbSize(contentBoxW, contentBoxH, rotation, frameShape)
+    ? rotatedFrameAabbSize(
+        contentBoxW + (showFrameChrome ? adjustChromeX * 2 : 0),
+        contentBoxH,
+        rotation,
+        frameShape
+      )
     : { width: contentBoxW, height: contentBoxH }
   // Row cards only: never rely on fit-content — NodeView remount on first select+drag collapses
-  // the box. Sole databaseBlock tables must NOT use this (width:100% + offsetWidth → runaway size).
+  // the box. Locked cards always live-hug from intrinsic measure (not stale resizeDimensions).
+  const rowCardLiveBox =
+    isBlock &&
+    isRowCardAtomHtml(promptContent) &&
+    intrinsicMeasured &&
+    !pagePreviewOpen &&
+    !layoutBoxFreeze &&
+    !frameUnlocked
+      ? {
+          width: huggedSize.width + adjustChromeX * 2,
+          height: huggedSize.height + adjustChromeYTop + adjustChromeYBottom,
+        }
+      : null
+  const dbLiveBox =
+    isBlock &&
+    isDbFrame &&
+    intrinsicMeasured &&
+    !pagePreviewOpen &&
+    !frameUnlocked
+      ? {
+          width: lockedDbSize.width + adjustChromeX * 2,
+          height: lockedDbSize.height + adjustChromeYTop + adjustChromeYBottom,
+        }
+      : null
+  const textLockedLiveBox =
+    textLockedHug && !layoutBoxFreeze
+      ? {
+          width: huggedSize.width + adjustChromeX * 2,
+          height: huggedSize.height + adjustChromeYTop + adjustChromeYBottom,
+        }
+      : null
   const atomExplicitBox =
     isBlock &&
     isRowCardAtomHtml(promptContent) &&
@@ -5803,27 +7425,84 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
           height: huggedSize.height + adjustChromeYTop + adjustChromeYBottom,
         }
       : null
-  const layoutBox = layoutBoxFreeze || atomExplicitBox
+  const layoutBox =
+    layoutBoxFreeze ||
+    rowCardLiveBox ||
+    dbLiveBox ||
+    textLockedLiveBox ||
+    atomExplicitBox ||
+    (contentDeferred && !intrinsicMeasured && deferredLayoutBox ? deferredLayoutBox : null)
   const shapeBoxW = contentBoxW
   const shapeBoxH = contentBoxH
   const shapeClip = frameShape ? frameShapeClipCss(frameShape) : undefined
   const shapeStroke =
-    data.borderColor && data.borderColor !== ''
-      ? data.borderColor
+    resolvedBorderColor && resolvedBorderColor !== ''
+      ? resolvedBorderColor
       : resolvedTheme === 'dark'
         ? '#9ca3af'
         : '#6b7280'
-  const shapeFill =
-    data.fillColor && data.fillColor !== ''
-      ? data.fillColor
-      : 'transparent'
+  const shapeFill = isFillTransparent ? 'transparent' : data.fillColor!
   const shapeStrokeW = Math.max(1, parseFloat(String(data.borderWeight || '2')) || 2)
+  // Silhouette paints on the content box — not the blue L/R gutters when selected
+  const shapeAreaStyle: React.CSSProperties = {
+    left: adjustPadCss || 0,
+    top: adjustChromeYTop || 0,
+    right: adjustPadCss || 0,
+    bottom: adjustChromeYBottom || 0,
+  }
+  // Fill width (no chrome). Rotated: content box only — displayBox already baked L/R chrome into the AABB.
+  const fillWidthPx = layoutBox
+    ? layoutBox.width - (showFrameChrome ? adjustChromeX * 2 : 0)
+    : pagePreviewOpen
+      ? 520
+      : isContentRotated
+        ? contentBoxW
+        : isUserResized && resizeDimensions
+          ? resizeDimensions.width
+          : applyFrameScale
+            ? scaledLayoutW // Place scale without dims yet — visual box = scaled content
+          : emptyLineHug
+            ? frameMinW
+            : (isRowCardAtomHtml(promptContent) || isDbFrame) && !intrinsicMeasured
+              ? frameMinW
+              : growsWithLine
+                ? null
+                : panelWidthToUse
+  const outerWidthCss =
+    fillWidthPx == null
+      ? 'max-content'
+      : isContentRotated
+        ? `${displayBox.width}px` // AABB already includes select chrome when rotated
+      : showFrameChrome
+        ? `${fillWidthPx + adjustChromeX * 2}px` // Live pad; glueFrameChromePad holds fill XY
+        : `${fillWidthPx}px`
+  const shapeSelectChrome = Boolean(
+    frameShape && (showAdjustFrame || showDragBorderOnly) && !pagePreviewOpen && !isContentRotated
+  )
+  const fillShellBorderShadow = (() => {
+    if (frameShape || isContentRotated) return undefined
+    // Blue adjust / drag ring already outlines the frame — skip empty grey so it doesn’t read as an inner border
+    if (showAdjustFrame || showDragBorderOnly) {
+      if (!paintBorderOnFillShell) return undefined
+      const w = Math.max(1, parseFloat(String(data.borderWeight)) || 1)
+      return `inset 0 0 0 ${w}px ${resolvedBorderColor}` // Keep user-set stroke on the rounded fill
+    }
+    if (showEmptyFrameBorder) return `inset 0 0 0 1px ${emptyFrameBorderColor}`
+    if (paintBorderOnFillShell) {
+      const w = Math.max(1, parseFloat(String(data.borderWeight)) || 1)
+      return `inset 0 0 0 ${w}px ${resolvedBorderColor}`
+    }
+    return undefined
+  })()
 
   return (
     <div
         ref={panelRef}
         data-panel-container="true" // Data attribute to help find panel container for comment popup
         data-block-node={isBlock ? 'true' : undefined} // Marks blocks for selected connection-dot styling
+        data-tt-frame-scale={showFrameChrome ? String(chromeScale) : undefined} // Grip/chrome scale context
+        data-tt-chrome-pad-x={showFrameChrome ? String(adjustChromeX) : undefined} // Live L/R pad for rAF CSS var / connection points
+        data-on-thread={isOnThreadFrame ? 'true' : undefined}
         data-block-resized={wrapActive ? 'wrap' : undefined} // Wrap (locked/unlocked): soft-wrap in fixed width; else nowrap / clip
         data-clip-preview={showClipPreview ? 'true' : undefined} // Unlocked hover: full-content peek
         data-frame-shape={frameShape || undefined} // Silhouette id when frames act as shapes
@@ -5832,6 +7511,7 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
         }
         className={cn(
           'group nopan border relative cursor-grab active:cursor-grabbing overflow-visible transition-[opacity,box-shadow,background-color,border-color] duration-300', // overflow-visible: ⋮⋮ in left chrome; nopan: right-click opens frame menu
+          isMobileMode && isBlock && !selected && 'nodrag', // Phone: RF drag only after hold (manual controller)
           // When rotated, fill lives on the inner shell only (avoids upright+rotated double shape)
           !frameShape && !isContentRotated && !isBlock && 'rounded-2xl',
           !isFillTransparent && !frameShape && !isContentRotated && !isBlock && 'backdrop-blur-sm',
@@ -5841,7 +7521,7 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
             ? 'border-transparent'
             : selected
               ? 'border-blue-500 dark:border-blue-400'
-              : (data.borderColor || frameShape || showEmptyFrameBorder ? '' : 'border-transparent'), // Empty → grey via style; styled/shape → style; else transparent
+              : (data.borderColor || frameShape ? '' : 'border-transparent'), // Empty chrome → inset on fill; styled/shape → style
           isBookmarked
             ? 'shadow-[0_0_8px_rgba(250,204,21,0.6)] dark:shadow-[0_0_8px_rgba(250,204,21,0.4)]'
             : isBorderNone || frameShape || isContentRotated || showEmptyFrameBorder
@@ -5857,21 +7537,15 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
             'tt-ai-pending-frame'
         )}
       style={{
-        // Selected: even L/R gutters. T/B bands always host property / connections outside the fill.
-        width: layoutBox
+        // L/R gutters: select-frozen pad (live zoom must not shove the fill / threads)
+        width: layoutBox && !showFrameChrome
           ? `${layoutBox.width}px`
-          : pagePreviewOpen
+          : pagePreviewOpen && !showFrameChrome
           ? '520px'
-          : isContentRotated
-            ? `${displayBox.width + adjustChromeX * 2}px`
-            : isUserResized && resizeDimensions
-              ? `${resizeDimensions.width + adjustChromeX * 2}px`
-              : emptyLineHug
-                ? `${frameMinW + adjustChromeX * 2}px`
-                : growsWithLine
-                  ? 'max-content'
-                  : `${panelWidthToUse + adjustChromeX * 2}px`,
-        height: layoutBox
+          : outerWidthCss,
+        height: textLockedHug
+          ? `${huggedSize.height}px` // Exact scaled hug — fit-content could include PM strut under the wash
+          : layoutBox
           ? `${layoutBox.height}px`
           : pagePreviewOpen
           ? '420px'
@@ -5879,80 +7553,106 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
             ? `${displayBox.height + adjustChromeYTop + adjustChromeYBottom}px`
             : isUserResized && resizeDimensions
               ? `${resizeDimensions.height + adjustChromeYTop + adjustChromeYBottom}px`
+              : applyFrameScale
+                ? `${scaledLayoutH + adjustChromeYTop + adjustChromeYBottom}px` // Place-scaled text box
               : emptyLineHug
                 ? `${BLOCK_MIN_FRAME_H + adjustChromeYTop + adjustChromeYBottom}px`
                 : growsWithLine
                   ? 'fit-content'
                   : undefined,
-        minWidth: layoutBox
+        minWidth: layoutBox && !showFrameChrome
           ? `${layoutBox.width}px`
-          : pagePreviewOpen
+          : pagePreviewOpen && !showFrameChrome
           ? '520px'
-          : isContentRotated
-            ? `${displayBox.width + adjustChromeX * 2}px`
+          : fillWidthPx != null
+            // Explicit fill (incl. tiny free-resize) — don't re-floor to frameMinW after deselect
+            ? showFrameChrome
+              ? outerWidthCss
+              : `${fillWidthPx}px`
             : usesFitContent
-              ? `${frameMinW + adjustChromeX * 2}px`
+              ? `${frameMinW}px`
               : isFlashcard
                 ? '300px'
                 : '200px',
-        minHeight: layoutBox
+        minHeight: textLockedHug
+          ? `${huggedSize.height}px` // Lock to scaled hug — don't grow from PM strut
+          : layoutBox
           ? `${layoutBox.height}px`
           : pagePreviewOpen
             ? '420px'
             : '0px',
-        maxWidth: layoutBox
+        maxWidth: layoutBox && !showFrameChrome
           ? `${layoutBox.width}px`
-          : isContentRotated
-          ? `${displayBox.width + adjustChromeX * 2}px`
+          : isContentRotated && fillWidthPx != null
+          ? outerWidthCss
           : undefined,
-        maxHeight: layoutBox
+        maxHeight: textLockedHug
+          ? `${huggedSize.height}px`
+          : layoutBox
           ? `${layoutBox.height}px`
           : isContentRotated
           ? `${displayBox.height + adjustChromeYTop + adjustChromeYBottom}px`
           : undefined,
-        // Bands outside the fill: property (top) / connections (bottom); L/R gutters when selected
+        // Bands outside the fill: property (top) / connections (bottom); L/R gutters when selected.
+        // Rotated: chrome is in the upright AABB (pre-rotate inflate) — padding would squeeze the shell.
         paddingTop: adjustChromeYTop || undefined,
-        paddingRight: adjustChromeX || undefined,
+        paddingRight: isContentRotated ? undefined : adjustPadCss,
         paddingBottom: adjustChromeYBottom || undefined,
-        paddingLeft: adjustChromeX || undefined,
+        paddingLeft: isContentRotated ? undefined : adjustPadCss,
         boxSizing: 'border-box',
-        opacity: isInitialShrinkComplete ? 1 : 0,
+        // `isInitialShrinkComplete` starts false and is only flipped by an effect, so *every* mount
+        // paints one frame at 0 and then transitions to 1 over 300ms (the class above transitions
+        // opacity). RF unmounts culled nodes, so panning a frame off-screen and back replayed that
+        // fade — measured 0.002 opacity while fully on screen mid-pan, i.e. "it doesn't show until I
+        // stop, then it flashes". The effect already exempts blocks from the shrink outright; this
+        // makes that exemption apply to the first paint too, where it matters.
+        opacity: isInitialShrinkComplete || isBlock ? 1 : 0,
+        willChange: dragging && isBlock ? 'transform' : undefined,
         // Fill always paints on the inner frame shell (shape-capable surface) — not here
         backgroundColor:
           frameShape || isContentRotated || isBlock ? 'transparent' : panelBackgroundColor,
         borderColor:
-          // Blue adjust / drag rect owns the outline — keep panel border off so chrome isn't inset
-          showAdjustFrame || showDragBorderOnly || frameShape || isContentRotated
+          // Blue adjust / drag rect owns the outline — custom borders paint on the rounded fill shell
+          showAdjustFrame ||
+          showDragBorderOnly ||
+          frameShape ||
+          isContentRotated ||
+          showEmptyFrameBorder ||
+          paintBorderOnFillShell
             ? 'transparent'
-            : data.borderColor
-              ? data.borderColor // Custom border when idle
-              : showEmptyFrameBorder
-                ? emptyFrameBorderColor // Thin grey outline for blank frames
-                : 'transparent',
+            : resolvedBorderColor
+              ? resolvedBorderColor // Custom border when idle (non-block panels)
+              : 'transparent',
         borderStyle:
           showAdjustFrame ||
           showDragBorderOnly ||
           frameShape ||
           isContentRotated ||
-          (isBorderNone && !showEmptyFrameBorder)
+          isBorderNone ||
+          showEmptyFrameBorder ||
+          paintBorderOnFillShell
             ? 'none'
-            : ((data.borderStyle as React.CSSProperties['borderStyle']) || 'solid'), // Color / empty chrome → solid
+            : ((data.borderStyle as React.CSSProperties['borderStyle']) || 'solid'), // Custom color → solid
         borderWidth:
           showAdjustFrame ||
           showDragBorderOnly ||
           frameShape ||
           isContentRotated ||
-          (isBorderNone && !showEmptyFrameBorder)
+          isBorderNone ||
+          showEmptyFrameBorder ||
+          paintBorderOnFillShell
             ? 0
-            : (data.borderWeight || 1), // 1px for empty chrome or when a border color is set
-        ['--tt-frame-ui-scale' as string]: frameUiScale,
-        ['--tt-frame-line-w' as string]: `${frameLineW}px`,
-        ['--tt-frame-line-hit' as string]: `${frameLineHit}px`,
-        ['--tt-frame-handle' as string]: `${frameHandleSize}px`,
-        ['--tt-frame-handle-border' as string]: `${Math.max(1, 1.5 * frameUiScale)}px`,
+            : (data.borderWeight || 1),
         ['--tt-frame-radius' as string]: `${frameCornerRadius}px`, // Fill radius only — adjust ring is square
+        // Handle / line / ui-scale sizes come from live `--tt-board-zoom` CSS (not React)
+      }}
+      onPointerEnter={() => {
+        if (isBlock && !isFlashcard) warmFrameContentMount(id) // Mount TipTap before the frame fully enters view
       }}
       onPointerDownCapture={(e) => {
+        // Touch taps and fast direct clicks never fire pointerenter, so hover-warming alone would
+        // leave the frame cold under the press. Promote here too — same idempotent warm set.
+        if (isBlock && !isFlashcard) warmFrameContentMount(id)
         const t = e.target as HTMLElement | null
         // Text / ⋮⋮ / resize / rotate / connection simulators / property·connection marks —
         // those own the gesture. Body press only hides connection indicators (`pressing`).
@@ -6021,41 +7721,36 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
         }
       }}
     >
-      {/* Frame silhouette + body: one rotated shell (no double fill). Outer AABB stays upright. */}
-      {isBlock && frameShape && !pagePreviewOpen && !isContentRotated && (
-        <FrameShapeBackdrop
-          type={frameShape}
-          width={shapeBoxW}
-          height={shapeBoxH}
-          fill={shapeFill}
-          fillOpacity={0.2}
-          stroke={shapeStroke}
-          strokeWidth={shapeStrokeW}
-        />
+      {isBlock && selected && (
+        <LiveFrameChromeZoom selected={selected} panelRef={panelRef} />
       )}
-
-      {/* Drag move: blue box only (no resize corners / indicators / chrome) — not a real selection */}
-      {showDragBorderOnly && (
+      {/* Drag move: blue box on default frames; silhouettes use SVG stroke on the fill shell */}
+      {showDragBorderOnly && !frameShape && (
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 z-[20]"
+          data-tt-adjust-ring
+          className="pointer-events-none absolute z-[20]"
           style={{
-            borderRadius: 0, // Square adjust chrome — fill keeps rounded corners
-            boxShadow: `inset 0 0 0 ${frameLineW}px #3b82f6`, // Same blue as selection chrome, no hit target
-            // Upright AABB outline — don't clip to rotated silhouette
+            // Full panel (incl. ⋮⋮ gutters) — same box the corner handles sit on
+            inset: 0,
+            borderRadius: 0, // Adjust ring is square — fill shell keeps the corner radius
+            boxShadow: 'inset 0 0 0 var(--tt-frame-line-w, 1.4px) #3b82f6', // Live CSS stroke — constant on screen
             clipPath: !isContentRotated ? shapeClip : undefined,
           }}
         />
       )}
 
-      {/* Selected frames: square blue ring (RF line controls stay for hit/resize but paint is off) */}
+      {/* Selected default frames: square blue ring on the outer panel (RF lines stay hit-only) */}
       {showAdjustFrame && !frameShape && (
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 z-[19]"
+          data-tt-adjust-ring
+          className="pointer-events-none absolute z-[19]"
           style={{
-            borderRadius: 0, // Square resize outline — fill / property cell keep rounded corners
-            boxShadow: `inset 0 0 0 ${frameLineW}px #3b82f6`,
+            // Full panel — not fill-inset (that floated corner handles outside the ring)
+            inset: 0,
+            borderRadius: 0, // Square ring — fill shell owns --tt-frame-radius
+            boxShadow: 'inset 0 0 0 var(--tt-frame-line-w, 1.4px) #3b82f6', // Live CSS stroke — constant on screen
             clipPath: !isContentRotated ? shapeClip : undefined,
           }}
         />
@@ -6068,13 +7763,14 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
             <NodeResizeControl
               key={`line-${position}`} // Side line that joins the four corners
               position={position}
-              variant="line" // Hit target only — stroke painted by the square ring above
+              variant={ResizeControlVariant.Line} // Hit target only — stroke painted by the square ring above
+              // Enum, not the "line" literal: RF types `variant` as the enum (same runtime value)
               className={cn(
                 'nodrag nopan tt-frame-resize-line', // nodrag: resize must not start frame drag
                 !frameShape && 'tt-frame-resize-line-hit' // Hit only — square ring paints the stroke
               )}
-              minWidth={frameMinW}
-              minHeight={BLOCK_MIN_FRAME_H}
+              minWidth={frameUnlocked ? FRAME_RESIZE_MIN : 1} // Locked fit-to-text may be <40px; unlocked keeps soft floor
+              minHeight={frameUnlocked ? FRAME_RESIZE_MIN : 1}
               keepAspectRatio={!frameUnlocked && hasBlockContent}
               onResizeStart={handleResizeStart}
               onResize={handleResize}
@@ -6087,8 +7783,8 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
               position={position} // RF places the handle on that corner
               className="nodrag nopan" // Resize only — never start RF frame drag / pan
               style={itemCornerResizeStyle} // White circular handle styling
-              minWidth={frameMinW} // boardLink vs plain-text floor
-              minHeight={BLOCK_MIN_FRAME_H} // Keep a usable box; pairs with handleResize clamp
+              minWidth={frameUnlocked ? FRAME_RESIZE_MIN : 1} // Locked may hug below 40 — don't clamp RF node
+              minHeight={frameUnlocked ? FRAME_RESIZE_MIN : 1}
               keepAspectRatio={!frameUnlocked && hasBlockContent} // Locked + content: proportional only
               onResizeStart={handleResizeStart} // Arm user-resize mode (line-grow off)
               onResize={handleResize} // Apply explicit width/height while dragging
@@ -6110,45 +7806,53 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
           />
         ))}
 
-      {/* Connection indicators — DOM only (not RF Handles); arm the edge connection point */}
+      {/* Connection indicators — DOM only (not RF Handles); arm the edge connection point.
+          Chat-linked sides keep the blue simulator and add the brand line beside it —
+          only while indicators normally show and the chat↔board thread stroke is not drawn. */}
       {showIndicators && (
         <>
-          {(['left', 'right', 'top', 'bottom'] as const).map((side) => (
-            <ConnectionIndicator
-              key={`indicator-${side}`}
-              side={side}
-              className={cn(
-                'nodrag nopan absolute z-[30] rounded-full border border-white bg-blue-500 shadow-sm',
-                isThreadConnecting
-                  ? 'pointer-events-none' // Visual snap target only — don't steal hit from edge Handles
-                  : 'cursor-crosshair hover:bg-blue-600'
-              )}
-              style={{
-                ...connectionIndicatorStyle(side, frameIndicatorOut), // Outside blue edge (scaled outset)
-                width: frameIndicatorSize, // Dot grows/shrinks with frame size
-                height: frameIndicatorSize,
-              }}
-            />
-          ))}
+          {(['left', 'right', 'top', 'bottom'] as const).map((side) => {
+            if (chatThreadVisibleSides.has(side)) return null // Thread stroke owns this end — no simulator
+            if (chatLinkLogoSides.has(side) && promptMessage?.id) {
+              return (
+                <ChatLinkConnectionCue
+                  key={`chat-link-cue-${side}`}
+                  side={side}
+                  frameMessageId={promptMessage.id} // Reverse-lookup linked chat turn
+                  isThreadConnecting={isThreadConnecting}
+                />
+              )
+            }
+            return (
+              <ConnectionIndicator
+                key={`indicator-${side}`}
+                side={side}
+                className={cn(
+                  // No Tailwind border/size — those are flow-px and grow with board zoom
+                  'nodrag nopan absolute z-[30] rounded-full bg-blue-500',
+                  isThreadConnecting
+                    ? 'pointer-events-none' // Visual snap target only — don't steal hit from edge Handles
+                    : 'cursor-crosshair hover:bg-blue-600'
+                )}
+                // Size + white ring + outset from live `--tt-frame-ui-scale` CSS (no React zoom re-render)
+              />
+            )
+          })}
         </>
       )}
 
-      {/* Frame chrome — rotate · lock · wrap (selected + idle only; hidden while dragging) */}
+      {/* Frame chrome — rotate · fit · wrap (selected + idle only; hidden while dragging).
+          Scale + margin-left from live `--tt-frame-ui-scale` CSS; marginTop keeps clear of indicators. */}
       {isBlock && !pagePreviewOpen && !isThreadConnecting && selected && !dragging && (
           <div
             data-frame-chrome
             className="nodrag nopan absolute z-[25] flex items-center gap-0.5" // Below connection indicators (z-30)
-            style={(() => {
-              // Outer node is always upright — pin chrome under the blue box bottom-left
-              return {
-                left: 0,
-                top: '100%',
-                marginLeft: `${-8 * frameChromeScale}px`, // Nudge under left edge as chrome counter-scales
-                marginTop: `${frameChromeGapY}px`, // Flow gap only — scale() sizes icons, not this offset
-                transform: `scale(${frameChromeScale})`,
-                transformOrigin: 'top left' as const,
-              }
-            })()}
+            style={{
+              left: 0,
+              top: '100%',
+              // 2× indicator outset: equal air above/below the bottom connection point
+              marginTop: `calc(${2 * INDICATOR_OUTSET}px * var(--tt-frame-ui-scale, 1.4))`,
+            }}
             onMouseEnter={() => setIsFrameHovering(true)} // Keep hover while on chrome
             onMouseLeave={(e) => {
               const related = e.relatedTarget as HTMLElement | null
@@ -6159,23 +7863,24 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
           >
             <button
               type="button"
-              className="flex h-6 w-6 items-center justify-center rounded-full text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
+              className="flex h-5 w-5 items-center justify-center rounded-full text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
               style={{ cursor: 'grab' }}
-              title="Rotate"
-              aria-label="Rotate item"
+              title="Drag to rotate · click to reset"
+              aria-label="Rotate — drag to turn, click to reset"
               onPointerDown={handleRotatePointerDown}
               onPointerMove={handleRotatePointerMove}
               onPointerUp={handleRotatePointerUp}
               onPointerCancel={handleRotatePointerUp}
               onClick={(e) => e.stopPropagation()}
             >
-              <RotateCw className="h-4 w-4 pointer-events-none" />
+              {/* Local 10px → ~14px on screen after ui-scale (matches Free-nav pan Hand) */}
+              <RotateCw className="h-2.5 w-2.5 pointer-events-none" />
             </button>
             {hasBlockContent && (
               <button
                 type="button"
                 className={cn(
-                  'flex h-6 w-6 items-center justify-center rounded-full text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800',
+                  'flex h-5 w-5 items-center justify-center rounded-full text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800',
                   !frameUnlocked && 'bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-50' // Active when fitted to text
                 )}
                 title={frameUnlocked ? 'Fit to text' : 'Free resize (keep size)'}
@@ -6183,14 +7888,14 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
                 aria-pressed={!frameUnlocked}
                 onClick={handleToggleFrameLock}
               >
-                <ScanText className="h-4 w-4 pointer-events-none" />
+                <ScanText className="h-2.5 w-2.5 pointer-events-none" />
               </button>
             )}
             {hasBlockContent && (
               <button
                 type="button"
                 className={cn(
-                  'flex h-6 w-6 items-center justify-center rounded-full text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800',
+                  'flex h-5 w-5 items-center justify-center rounded-full text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800',
                   frameTextWrap && 'bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-50' // Active wrap state
                 )}
                 title={frameTextWrap ? 'Unwrap text (clip overflow)' : 'Wrap text in frame'}
@@ -6198,7 +7903,7 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
                 aria-pressed={frameTextWrap}
                 onClick={handleToggleFrameTextWrap}
               >
-                <WrapText className="h-4 w-4 pointer-events-none" />
+                <WrapText className="h-2.5 w-2.5 pointer-events-none" />
               </button>
             )}
           </div>
@@ -6404,62 +8109,17 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
         </>
       )}
 
-      {/* Property icons — above the fill, inset to match fill content (not flush to fill’s left edge) */}
-      {hasPropBand && (
-        <div
-          data-tt-frame-chrome-top
-          // Band body may drag the frame; individual property marks are nodrag
-          className="absolute z-[2] flex items-end" // Sit on the fill (extra band air is above)
-          style={{
-            top: 0,
-            left: adjustChromeX + chromePadX,
-            right: adjustChromeX + chromePadX,
-            height: adjustChromeYTop,
-          }}
-        >
-          {/* Screen-comfort icons — do not grow with locked frameScale */}
-          <div
-            style={{
-              transform: screenChromeScale !== 1 ? `scale(${screenChromeScale})` : undefined,
-              transformOrigin: 'left bottom',
-            }}
-          >
-            <FramePropertyGroup types={chromePropertyTypes} />
-          </div>
-        </div>
-      )}
-      {/* Connections — below the fill, same horizontal inset as properties / cell */}
-      {hasConnBand && (
-        <div
-          data-tt-frame-chrome-bottom
-          // Band body may drag the frame; Notion mark button is nodrag
-          className="absolute z-[2] flex items-start" // Sit on the fill (extra band air is below)
-          style={{
-            bottom: 0,
-            left: adjustChromeX + chromePadX,
-            right: adjustChromeX + chromePadX,
-            height: adjustChromeYBottom,
-          }}
-        >
-          <div
-            style={{
-              transform: screenChromeScale !== 1 ? `scale(${screenChromeScale})` : undefined,
-              transformOrigin: 'left top',
-            }}
-          >
-            <FrameConnectionsGroup
-              notionSync={notionSync}
-              onNotionConnection={handleNotionConnection}
-            />
-          </div>
-        </div>
-      )}
-
       {/* Single text body — when rotated, one centered shell holds fill + shape + blocks (no double card).
           This shell IS the shape-capable frame surface: same fill + radius selected or not. */}
       <div
         className={cn(
-          'relative z-[1] w-full h-full', // Above shape backdrop; fills the padded content box
+          'relative z-[1] w-full', // Above shape backdrop; fills the padded content box
+          // Always fill the panel for blocks — h-auto on-thread left peach shorter than the blue ring
+          isBlock || !(isOnThreadFrame && !layoutBox) ? 'h-full' : 'h-auto flex items-center',
+          shapeCenterContent &&
+            (pinConnectionsToFrame
+              ? 'flex flex-col items-center justify-center'
+              : 'flex items-center justify-center'),
           !isFillTransparent && !frameShape && 'backdrop-blur-sm',
           !isBlock && 'p-1',
           pagePreviewOpen && 'flex flex-col h-full min-h-0',
@@ -6473,16 +8133,17 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
           isContentRotated && 'absolute'
         )}
         style={{
-          // Always paint fill here — never swap to a text-only pill when selected
+          // Shaped frames: SVG silhouette paints fill + stroke; shell stays transparent
           backgroundColor: frameShape ? 'transparent' : responseAreaBackgroundColor || panelBackgroundColor,
           // Live radius: property cells sit inside CSS scale (6px grows); fill must match
           borderRadius: frameCornerRadius || undefined,
-          // Empty-frame outline on the fill shell (panel border is off while adjust chrome is on)
-          boxShadow:
-            showEmptyFrameBorder && !frameShape
-              ? `inset 0 0 0 1px ${emptyFrameBorderColor}`
+          // Empty / selected custom borders paint here — panel border is off while adjust chrome is on
+          boxShadow: fillShellBorderShadow,
+          // Polygon clips work in CSS; cylinder/ellipse use SVG fill instead (path clip is unreliable)
+          clipPath:
+            frameShape && !showClipPreview && frameShape !== 'cylinder' && frameShape !== 'circle'
+              ? shapeClip
               : undefined,
-          clipPath: frameShape && !showClipPreview ? shapeClip : undefined,
           ...(isContentRotated
             ? {
                 width: contentBoxW,
@@ -6495,15 +8156,15 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
             : {}),
         }}
       >
-        {isBlock && frameShape && !pagePreviewOpen && isContentRotated && (
+        {isBlock && frameShape && !pagePreviewOpen && (
           <FrameShapeBackdrop
             type={frameShape}
             width={shapeBoxW}
             height={shapeBoxH}
             fill={shapeFill}
-            fillOpacity={0.2}
-            stroke={shapeStroke}
-            strokeWidth={shapeStrokeW}
+            fillOpacity={1}
+            stroke={shapeSelectChrome ? '#3b82f6' : shapeStroke}
+            strokeWidth={shapeSelectChrome ? frameLineW : shapeStrokeW}
           />
         )}
         {/* Hover full-content preview: fill behind spilled blocks (frame box stays the saved size) */}
@@ -6513,8 +8174,8 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
             className="pointer-events-none absolute left-0 top-0 -z-[1]"
             style={{
               borderRadius: frameCornerRadius || undefined, // Same as fill so hover-unclip corners don’t snap square
-              width: Math.max(resizeDimensions.width, huggedSize.width),
-              height: Math.max(resizeDimensions.height, huggedSize.height),
+              width: Math.max(resizeDimensions.width, contentVisualW),
+              height: Math.max(resizeDimensions.height, contentVisualH),
               backgroundColor: responseAreaBackgroundColor || panelBackgroundColor,
               boxShadow:
                 resolvedTheme === 'dark'
@@ -6539,9 +8200,15 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
         {!pagePreviewOpen && (
           <>
           <div
-            className={pinConnectionsToFrame ? 'min-h-0 flex-1' : undefined} // Shrink so the connections group keeps the bottom strip
+            className={cn(
+              pinConnectionsToFrame ? 'min-h-0 flex-1' : undefined,
+              shapeCenterContent && 'flex items-center justify-center',
+              frameShape && 'relative z-[1]' // TipTap above stroke-only shape SVG in the fill shell
+            )}
             style={
-              applyFrameScale
+              shapeCenterContent
+                ? { width: '100%', height: '100%', minHeight: 0 }
+                : applyFrameScale
                 ? {
                     // Unlocked resized (wrap or clip): spacer = frame inner box; content is scaled to fill it.
                     // Locked/other: spacer = scaled content (hug). Hover preview grows spacer to full content.
@@ -6577,33 +8244,45 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
           >
           <div
             ref={contentFitRef} // Unscaled content box (offsetWidth ignores CSS scale)
+            data-tt-shape-center={shapeCenterContent ? 'true' : undefined}
             className={cn(
-              'relative', // Anchor for in-content absolute chrome
+              'relative shrink-0', // Shaped frames: don’t stretch to the inflated hug box
               // Locked+resized: natural width so hug measures real text (not the stretched box).
               // Unlocked resized / wrap: fill the free frame. Unresized: w-max from longest line.
               wrapContentWidth != null
                 ? undefined
-                : !frameUnlocked && isUserResized
-                  ? 'w-max'
-                  : isUserResized || !growsWithLine || emptyLineHug
-                    ? 'w-full' // Fill explicit empty hug / resized box for full-row clicks
-                    : 'w-max',
-              // Blocks: padX > padY slightly so L/R of the property cell breathe vs the fill edge
+                : shapeCenterContent
+                  ? 'w-max max-w-full'
+                  : !frameUnlocked && scaledAsResized
+                    ? 'w-max'
+                    : isRowCardAtomHtml(promptContent) || (isDbFrame && !frameUnlocked)
+                      ? 'w-max' // Never stretch the measure box to a stale wide panel / clipped DB table
+                      : isUserResized || !growsWithLine || emptyLineHug
+                        ? 'w-full' // Fill explicit empty hug / resized box for full-row clicks
+                        : 'w-max',
+              // Blocks: tight equal pad so the peach edge sits close to glyphs
               isBlock ? undefined : 'px-3 py-3'
             )}
             style={{
               ...(isBlock
-                ? {
-                    paddingTop: BLOCK_FRAME_PAD_Y,
-                    paddingBottom: BLOCK_FRAME_PAD_Y,
-                    paddingLeft: BLOCK_FRAME_PAD_X,
-                    paddingRight: BLOCK_FRAME_PAD_X,
-                  }
+                ? shapeCenterContent
+                  ? {
+                      padding: BLOCK_FRAME_PAD_Y,
+                    }
+                  : {
+                      paddingTop: BLOCK_FRAME_PAD_Y,
+                      paddingBottom: BLOCK_FRAME_PAD_Y,
+                      paddingLeft: BLOCK_FRAME_PAD_X,
+                      paddingRight: BLOCK_FRAME_PAD_X,
+                    }
                 : {}),
-              lineHeight: '1.7', // Stable typography — height-based line-height broke lock-to-text
+              lineHeight: isBlock ? '1.25' : '1.7', // Blocks hug glyphs; chat panels keep looser rhythm
               ...(wrapContentWidth != null ? { width: wrapContentWidth, maxWidth: wrapContentWidth } : {}), // Soft-wrap inside frame
               ...(applyFrameScale
-                ? { transform: `scale(${frameScale})`, transformOrigin: 'top left' }
+                ? {
+                    transform: `scale(${frameScale})`,
+                    transformOrigin: shapeCenterContent ? 'center center' : 'top left', // Top-left — hug height must be exact (no bottom slack)
+                  }
                 : {}),
             }}
             onClick={(e) => {
@@ -6616,7 +8295,7 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
               const ed = promptEditorRef.current
               if (!ed || ed.isDestroyed) return
               e.stopPropagation()
-              const block = findEditorBlockAtClientY(ed, e.clientY)
+              const block = findEditorBlockAtClientPoint(ed, e.clientX, e.clientY)
               if (!block) return
               const caret = Math.max(block.from + 1, block.to - 1) // End of that block’s content
               ed.chain().focus().setTextSelection(caret).run()
@@ -6661,6 +8340,12 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
               isFlashcard={isFlashcard}
               isPanelSelected={!!selected} // Keep editable on tap — !dragging was flipping off mid-gesture (I-bar needed 2 taps)
               suspendContentSync={!!dragging || dragAtomGuard} // Freeze TipTap before RF sets dragging (first-drag race)
+              frameDragging={!!dragging || dragAtomGuard}
+              frameFreeResize={unlockedResized}
+              frameClipHeight={unlockedResized ? clipBoxH : null}
+              frameClipPreview={showClipPreview}
+              dbAlwaysExpanded={dbAlwaysExpanded}
+              dbVisibleRowCap={dbVisibleRowCap}
               dragSuspendRef={frameDragSuspendRef} // Sync arm on pointerdown — state lags one frame
               forceContentSyncKey={aiForceSyncKey} // AI eye / remove / save swaps content even while focused
               isLoading={false}
@@ -6679,11 +8364,13 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
               onPropertyTurnInto={handlePropertyTurnInto}
               pinConnectionsToFrame={pinConnectionsToFrame}
               loadCrossfade={promptMessage?.metadata?.fadeIn !== true} // Load: dissolve the shell; new frames use note-fade-in
-              chromeBandsOutside // Suppress in-fill strips — host paints only while selected
+              mountImmediately={promptMessage?.metadata?.fadeIn === true} // I-bar / grip creates mount TipTap immediately
+              coldReady={coldReady} // Snapshot exists → proximity alone must not mount a live editor
+              deferredBox={deferredBox}
               contentPadLeft={isBlock ? BLOCK_FRAME_PAD_X : 0}
               frameScale={frameScale}
               handleGutterFlow={handleGutterFlow}
-              onPropertyTypesChange={setChromePropertyTypes}
+              centerInShape={shapeCenterContent}
               boardInTargets={(() => {
                 const convs =
                   (queryClient.getQueryData(['conversations']) as
@@ -6694,7 +8381,7 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
                   ...convs
                     .filter((c) => c.id !== conversationId)
                     .slice(0, 40)
-                    .map((c) => ({ id: c.id, title: c.title?.trim() || 'Untitled' })),
+                    .map((c) => ({ id: c.id, title: boardTitleOrDefault(c.title) })),
                 ]
               })()}
               onPageTurnInto={async (blockType, boardInParentId) => {
@@ -6721,12 +8408,12 @@ export function ChatPanelNode({ data, selected, id, dragging }: NodeProps<PanelN
             </BoardLinkProvider>
           </div>
           </div>
-          {showFrameChrome && pinConnectionsToFrame && !hasConnBand && (
+          {pinConnectionsToFrame && (
             <div
               className="flex-shrink-0"
               style={{
                 paddingLeft: chromePadX, // Match scaled fill content inset when pinned in-flow
-                height: chromeBandH,
+                height: connStripH,
                 display: 'flex',
                 alignItems: 'center',
                 backgroundColor: frameShape ? 'transparent' : responseAreaBackgroundColor,
@@ -7171,4 +8858,16 @@ function CommentPanel({
     </div>
   )
 }
+
+// The comparator only guards props. Context is the other way in, and it accounted for every pan-time
+// re-render this frame used to do — see PhoneFrameDragProvider.
+export const ChatPanelNode = memo(
+  ChatPanelNodeInner,
+  (prev, next) =>
+    prev.id === next.id &&
+    prev.selected === next.selected &&
+    prev.dragging === next.dragging &&
+    prev.data === next.data &&
+    prev.type === next.type
+)
 

@@ -1,21 +1,35 @@
 'use client'
 
-// Stack line between snap-linked frames on one adjust-box side (one line per gap).
+// Paired stack bars on the facing adjust-box sides of snap-linked frames.
 // Each side (top/right/bottom/left) has its own stack tree.
+// • Visible when either frame on that gap is selected; always visible while mates are stacked
 // • Click → Open stack / directional Stack arrows / Lock
 // • First Stack sets lock for that group (snap alone does not lock)
 // • Hover when any mate is stacked → fast faded preview; click one to open just that frame
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { useReactFlow, useStore } from 'reactflow'
+import { isBoardNavigating } from '@/lib/board-navigating'
+import { isFrameDragging } from '@/lib/frame-dragging'
 import { Eye, Lock, ArrowLeft, ArrowRight, ArrowUp, ArrowDown } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import {
   stackExpandLayout,
-  STACK_LINE_GAP,
+  stackExpandRfAbs,
   type FrameStackSide,
 } from '@/components/use-frame-nest-stack-drag'
+import {
+  frameAdjustFlowBox,
+  frameAdjustFlowBoxAt,
+  frameAdjustFlowSize,
+  frameAdjustScreenRect,
+  rfAbsFromAdjustOrigin,
+} from '@/lib/frame-adjust-box'
+import {
+  stackLineMarksHorizontal,
+  stackLinePairScreenStyles,
+} from '@/lib/frame-stack-line'
 import {
   collectNestedSatelliteIds,
   findOwningMateId,
@@ -29,11 +43,12 @@ import {
   stackIndexInGroup,
   FRAME_STACK_SIDES,
 } from '@/lib/frame-side-stacks'
-import { absFlowPosition, nodeFlowSize } from '@/components/use-block-group-drag'
+import { absFlowPosition } from '@/components/use-block-group-drag'
 import { persistBlockPlacement } from '@/lib/blocks'
 import { cn } from '@/lib/utils'
 
 const HOVER_DWELL_MS = 100 // Fast preview on stack-line hover
+const FRAME_TO_LINE_HOVER_GRACE_MS = 450 // Time to cross the outside gap before hiding the bar
 /** Mate count above this uses a dotted line (dash-count encoding stops). */
 const STACK_LINE_DASH_CAP = 5
 const STACK_LINE_COLOR = '#3b82f6'
@@ -117,13 +132,11 @@ function collectGroup(
 function layoutNestedFromMates(
   live: ReturnType<ReturnType<typeof useReactFlow>['getNodes']>,
   placedPos: Map<string, { x: number; y: number }>,
-  excludeGroupId: string
+  excludeGroupId: string,
+  zoom: number
 ): Map<string, { x: number; y: number }> {
   const nestedPos = new Map<string, { x: number; y: number }>()
-  const sizeOf = (id: string) => {
-    const n = live.find((x) => x.id === id)
-    return n ? nodeFlowSize(n) : { width: 280, height: 120 }
-  }
+  const sizeOf = (id: string) => frameAdjustFlowSize(live.find((x) => x.id === id)!, zoom)
   const queue = [...placedPos.keys()]
   const visitedGroups = new Set<string>([excludeGroupId])
   while (queue.length > 0) {
@@ -132,8 +145,7 @@ function layoutNestedFromMates(
     if (!pPos) continue
     const pNode = live.find((n) => n.id === pid)
     if (!pNode) continue
-    const pSize = sizeOf(pid)
-    const pBox = { x: pPos.x, y: pPos.y, width: pSize.width, height: pSize.height }
+    const pAdjust = frameAdjustFlowBoxAt(pNode, pPos, zoom)
     const stacks = readSideStacks(nodeStackMeta(pNode))
     for (const side of FRAME_STACK_SIDES) {
       const entry = stacks[side]
@@ -153,7 +165,14 @@ function layoutNestedFromMates(
         )
       const sizes = mates.map((n) => sizeOf(n.id))
       mates.forEach((mate, order) => {
-        const pos = stackExpandLayout(pBox, side, sizes[order], order, sizes.slice(0, order))
+        const adjustOrigin = stackExpandLayout(
+          pAdjust,
+          side,
+          sizes[order],
+          order,
+          sizes.slice(0, order)
+        )
+        const pos = rfAbsFromAdjustOrigin(adjustOrigin, mate, zoom)
         nestedPos.set(mate.id, pos)
         placedPos.set(mate.id, pos) // Allow deeper nesting from this mate
         queue.push(mate.id)
@@ -180,8 +199,11 @@ export function FrameStackRevealLine({
   frameUiScale = 1,
 }: FrameStackRevealLineProps) {
   const { getNodes, setNodes } = useReactFlow()
+  const mateKeyRef = useRef('')
+  const transformKeyRef = useRef('')
   // Re-render when stack mate expand/hidden/lock changes (RF v11: nodeInternals)
   const mateStateKey = useStore((s) => {
+    if (isBoardNavigating() || isFrameDragging()) return mateKeyRef.current
     const parts: string[] = []
     s.nodeInternals.forEach((n) => {
       if (n.type !== 'chatPanel') return
@@ -190,18 +212,28 @@ export function FrameStackRevealLine({
       if (n.id === nodeId && !findStackEntry(m, stackGroupId)) return
       const lock = isGroupLocked(m, stackGroupId) ? 1 : 0
       const expanded = entryExpanded(m, stackGroupId) ? 1 : 0
-      parts.push(`${n.id}:${expanded}:${n.hidden ? 1 : 0}:${lock}`)
+      parts.push(`${n.id}:${expanded}:${n.hidden ? 1 : 0}:${lock}:${n.selected ? 1 : 0}`)
     })
-    return parts.join('|')
+    const next = parts.join('|')
+    mateKeyRef.current = next
+    return next
   })
+  const viewportKey = useStore((s) => {
+    const key = s.transform.join(',')
+    if (isBoardNavigating() || isFrameDragging()) return transformKeyRef.current || key
+    transformKeyRef.current = key
+    return key
+  }) // Re-place the portaled line on pan/zoom (frozen mid-gesture)
   const [previewing, setPreviewing] = useState(false) // Hover-dwell preview active
   const [menuOpen, setMenuOpen] = useState(false) // Eye / Stack / Lock menu
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 }) // Screen coords for portal menu
+  const [hoveredFrameId, setHoveredFrameId] = useState<string | null>(null) // Portal needs live frame hover
+  const [hoveredLineKey, setHoveredLineKey] = useState<'inner' | 'outer' | null>(null) // Keep bar alive across gap
   const dwellRef = useRef<number | null>(null)
   const endPreviewRef = useRef<number | null>(null) // Delayed dismiss so pointer can cross gap → mate
+  const frameHoverClearRef = useRef<number | null>(null) // Grace from frame border to portaled bar
   const previewingRef = useRef(false)
   previewingRef.current = previewing
-  const lineBtnRef = useRef<HTMLButtonElement>(null)
   const mateIdsRef = useRef<Set<string>>(new Set()) // Live mate ids for preview-zone hit tests
   // Snapshot before hover preview so cancel can restore (e.g. one open, rest stacked)
   const prePreviewRef = useRef<
@@ -226,9 +258,47 @@ export function FrameStackRevealLine({
     () => () => {
       clearDwell()
       clearEndPreview()
+      if (frameHoverClearRef.current != null) window.clearTimeout(frameHoverClearRef.current)
     },
     [clearDwell, clearEndPreview]
   )
+
+  useEffect(() => {
+    const frameIdAt = (target: EventTarget | null): string | null => {
+      if (!(target instanceof Element)) return null
+      return target.closest('.react-flow__node[data-id]')?.getAttribute('data-id') ?? null
+    }
+    const clearPending = () => {
+      if (frameHoverClearRef.current == null) return
+      window.clearTimeout(frameHoverClearRef.current)
+      frameHoverClearRef.current = null
+    }
+    const onPointerOver = (event: PointerEvent) => {
+      const id = frameIdAt(event.target)
+      if (!id) return
+      clearPending()
+      setHoveredFrameId(id)
+    }
+    const onPointerOut = (event: PointerEvent) => {
+      const nextId = frameIdAt(event.relatedTarget)
+      clearPending()
+      if (nextId) {
+        setHoveredFrameId(nextId)
+        return
+      }
+      frameHoverClearRef.current = window.setTimeout(() => {
+        setHoveredFrameId(null)
+        frameHoverClearRef.current = null
+      }, FRAME_TO_LINE_HOVER_GRACE_MS)
+    }
+    document.addEventListener('pointerover', onPointerOver)
+    document.addEventListener('pointerout', onPointerOut)
+    return () => {
+      clearPending()
+      document.removeEventListener('pointerover', onPointerOver)
+      document.removeEventListener('pointerout', onPointerOut)
+    }
+  }, [])
 
   /** Place mates at expand layout (visible). `expanded` = full open vs faded preview.
    *  Nested side-tree satellites (e.g. C on A’s bottom) park with their owning mate.
@@ -238,14 +308,7 @@ export function FrameStackRevealLine({
       const live = getNodes()
       const host = live.find((n) => n.id === nodeId)
       if (!host) return
-      const frontAbs = absFlowPosition(host, live)
-      const frontSize = nodeFlowSize(host)
-      const frontBox = {
-        x: frontAbs.x,
-        y: frontAbs.y,
-        width: frontSize.width,
-        height: frontSize.height,
-      }
+      const zoom = Number(String(viewportKey).split(',')[2]) || 1
       const sortedMates = collectMates(getNodes, nodeId, stackGroupId)
       // Layout order: single open → just that mate at host edge;
       // preview/show-all → already-open mates stay closest, then stacked ones further out
@@ -262,18 +325,20 @@ export function FrameStackRevealLine({
         }
         layoutMates = [...openFirst, ...rest]
       }
-      const sizes = layoutMates.map((n) => nodeFlowSize(n))
       const posById = new Map<string, { x: number; y: number }>()
       layoutMates.forEach((n, order) => {
-        posById.set(
-          n.id,
-          stackExpandLayout(frontBox, stackSide, sizes[order], order, sizes.slice(0, order))
-        )
+        // Full open of the whole stack: keep each mate’s live XY (collapse left them put).
+        // Preview / open-one still fans from the host so the hover/line chrome has somewhere to go.
+        const pos =
+          expanded && !onlyId
+            ? absFlowPosition(n, live)
+            : stackExpandRfAbs(host, live, stackSide, n, order, layoutMates.slice(0, order), zoom)
+        posById.set(n.id, pos)
       })
       // Nested satellites of the mates we’re showing (A’s bottom C, etc.)
       const showMateIds = layoutMates.map((n) => n.id)
       const nestedIds = collectNestedSatelliteIds(live, showMateIds, [stackGroupId])
-      const nestedPos = layoutNestedFromMates(live, new Map(posById), stackGroupId)
+      const nestedPos = layoutNestedFromMates(live, new Map(posById), stackGroupId, zoom)
       for (const [id, pos] of nestedPos) {
         if (nestedIds.includes(id)) posById.set(id, pos)
       }
@@ -365,7 +430,7 @@ export function FrameStackRevealLine({
         })
       )
     },
-    [getNodes, nodeId, setNodes, stackGroupId, stackSide]
+    [getNodes, nodeId, setNodes, stackGroupId, stackSide, viewportKey]
   )
 
   /** Stack under `keeperId` — that frame stays visible; others (+ nested side packs) hide. Locks this side’s group. */
@@ -609,26 +674,19 @@ export function FrameStackRevealLine({
       const live = getNodes()
       const host = live.find((n) => n.id === nodeId)
       if (!host) return
+      const zoom = Number(String(viewportKey).split(',')[2]) || 1
       const frontAbs = absFlowPosition(host, live)
-      const frontSize = nodeFlowSize(host)
       const sortedMates = collectMates(getNodes, nodeId, stackGroupId)
-      const sizes = sortedMates.map((n) => nodeFlowSize(n))
       const posById = new Map<string, { x: number; y: number }>()
       sortedMates.forEach((n, order) => {
+        const stamped = findStackEntry(nodeStackMeta(n), stackGroupId)?.entry.restoreAbs
+        const liveAbs = absFlowPosition(n, live) // Collapse left mates put — persist that
+        const onHost = Math.hypot(liveAbs.x - frontAbs.x, liveAbs.y - frontAbs.y) < 2
         posById.set(
           n.id,
-          stackExpandLayout(
-            {
-              x: frontAbs.x,
-              y: frontAbs.y,
-              width: frontSize.width,
-              height: frontSize.height,
-            },
-            stackSide,
-            sizes[order],
-            order,
-            sizes.slice(0, order)
-          )
+          stamped && onHost
+            ? stamped // Was parked on the host — write the stamped board XY
+            : liveAbs
         )
       })
       const nestedIds = collectNestedSatelliteIds(
@@ -636,7 +694,7 @@ export function FrameStackRevealLine({
         sortedMates.map((n) => n.id),
         [stackGroupId]
       )
-      const nestedPos = layoutNestedFromMates(live, new Map(posById), stackGroupId)
+      const nestedPos = layoutNestedFromMates(live, new Map(posById), stackGroupId, zoom)
       for (const [id, pos] of nestedPos) {
         if (nestedIds.includes(id)) posById.set(id, pos)
       }
@@ -680,7 +738,7 @@ export function FrameStackRevealLine({
         await persistBlockPlacement(supabase, { messageId: msgId, position: pos })
       }
     },
-    [getNodes, nodeId, stackGroupId, stackSide]
+    [getNodes, nodeId, stackGroupId, stackSide, viewportKey]
   )
 
   /** Eye — fully open all mates. */
@@ -757,19 +815,13 @@ export function FrameStackRevealLine({
         const live = getNodes()
         const host = live.find((n) => n.id === nodeId)
         if (!host) return
-        const frontAbs = absFlowPosition(host, live)
-        const frontSize = nodeFlowSize(host)
-        const frontBox = {
-          x: frontAbs.x,
-          y: frontAbs.y,
-          width: frontSize.width,
-          height: frontSize.height,
-        }
+        const zoom = Number(String(viewportKey).split(',')[2]) || 1
         const sorted = collectMates(getNodes, nodeId, stackGroupId)
         const target = sorted.find((n) => n.id === mateId)
-        const targetSize = target ? nodeFlowSize(target) : { width: 280, height: 120 }
         // Always adjacent to host (order 0), even if this mate was deeper in the stack
-        const adjacentPos = stackExpandLayout(frontBox, stackSide, targetSize, 0, [])
+        const adjacentPos = target
+          ? stackExpandRfAbs(host, live, stackSide, target, 0, [], zoom)
+          : absFlowPosition(host, live)
         // Promote clicked mate to stackIndex 1; renumber others 2..n in prior order
         const indexById = new Map<string, number>()
         indexById.set(mateId, 1)
@@ -783,7 +835,7 @@ export function FrameStackRevealLine({
         const hideMateIds = sorted.filter((n) => n.id !== mateId).map((n) => n.id)
         const hideNested = collectNestedSatelliteIds(live, hideMateIds, [stackGroupId])
         const placed = new Map<string, { x: number; y: number }>([[mateId, adjacentPos]])
-        const nestedPos = layoutNestedFromMates(live, placed, stackGroupId)
+        const nestedPos = layoutNestedFromMates(live, placed, stackGroupId, zoom)
 
         for (const mate of sorted) {
           const msgId = nodeMessageId(mate)
@@ -860,6 +912,7 @@ export function FrameStackRevealLine({
       showMatesOut,
       stackGroupId,
       stackSide,
+      viewportKey,
     ]
   )
 
@@ -969,11 +1022,6 @@ export function FrameStackRevealLine({
   )
   // Preview hit-tests: direct mates + nested satellites (C on A’s bottom, etc.)
   mateIdsRef.current = new Set([...mates.map((n) => n.id), ...nestedForLine])
-  // Truly stacked (collapsed) — not counting in-progress hover preview
-  const anyHidden = mates.some((n) => n.hidden === true) || nestedForLine.some((id) => {
-    const n = getNodes().find((x) => x.id === id)
-    return n?.hidden === true
-  })
   const allOpen =
     mates.length > 0 &&
     mates.every((n) => {
@@ -1048,7 +1096,7 @@ export function FrameStackRevealLine({
     if (previewingRef.current) {
       endPreview()
     }
-    const rect = lineBtnRef.current?.getBoundingClientRect()
+    const rect = e.currentTarget.getBoundingClientRect()
     setMenuPos({
       x: rect ? rect.left + rect.width / 2 : e.clientX,
       y: rect ? rect.top : e.clientY,
@@ -1056,50 +1104,36 @@ export function FrameStackRevealLine({
     setMenuOpen((o) => !o)
   }
 
+  const onWheelLine = (e: React.WheelEvent<HTMLButtonElement>) => {
+    e.preventDefault() // Portaled line must never scroll/zoom the browser window
+    e.stopPropagation()
+    const ownerNode = document.querySelector(
+      `.react-flow__node[data-id="${CSS.escape(nodeId)}"]`
+    ) as HTMLElement | null
+    const flowRoot = ownerNode?.closest('.react-flow') as HTMLElement | null
+    const pane = flowRoot?.querySelector('.react-flow__pane') as HTMLElement | null
+    const target = pane || flowRoot
+    if (!target) return
+    target.dispatchEvent(
+      new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        clientX: e.clientX,
+        clientY: e.clientY,
+        deltaX: e.deltaX,
+        deltaY: e.deltaY,
+        deltaZ: e.deltaZ,
+        deltaMode: e.deltaMode,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+      })
+    )
+  }
+
   if (mates.length === 0) return null
 
-  // Line sits in the gap between host and mate (mid-gap) so it isn’t covered
-  const lineOutset = Math.max(4, STACK_LINE_GAP / 2)
-  const lineStyle: React.CSSProperties =
-    stackSide === 'top'
-      ? {
-          left: '8%',
-          width: '84%',
-          top: 0,
-          height: LINE_THICKNESS,
-          transform: `translateY(calc(-50% - ${lineOutset}px))`,
-          transformOrigin: 'center',
-        }
-      : stackSide === 'bottom'
-        ? {
-            left: '8%',
-            width: '84%',
-            bottom: 0,
-            height: LINE_THICKNESS,
-            transform: `translateY(calc(50% + ${lineOutset}px))`,
-            transformOrigin: 'center',
-          }
-        : stackSide === 'left'
-          ? {
-              top: '8%',
-              height: '84%',
-              left: 0,
-              width: LINE_THICKNESS,
-              transform: `translateX(calc(-50% - ${lineOutset}px))`,
-              transformOrigin: 'center',
-            }
-          : {
-              top: '8%',
-              height: '84%',
-              right: 0,
-              width: LINE_THICKNESS,
-              transform: `translateX(calc(50% + ${lineOutset}px))`,
-              transformOrigin: 'center',
-            }
-
-  const isHorizontal = stackSide === 'top' || stackSide === 'bottom'
-  // Hit band fills most of the snap gap so the line is easy to grab
-  const hitPad = Math.max(STACK_LINE_GAP, 10 * frameUiScale)
   // This gap's "outward" count = mates further out than this frame
   const myIndex = (() => {
     const self = getNodes().find((n) => n.id === nodeId)
@@ -1119,6 +1153,42 @@ export function FrameStackRevealLine({
   const markCount = stackMarkCount(Math.max(1, totalOutCount))
   const isDotted = totalOutCount > STACK_LINE_DASH_CAP
   const gapPct = isDotted ? undefined : markCount <= 1 ? 0 : `${100 / (markCount * 4)}%`
+  const zoom = Number(String(viewportKey).split(',')[2]) || 1
+  const nextOutNode = nextOutId ? getNodes().find((n) => n.id === nextOutId) : undefined
+  const hostLineActive =
+    !!hostNode?.selected || hoveredFrameId === nodeId || hoveredLineKey === 'inner'
+  const outerLineActive =
+    !!nextOutNode?.selected || hoveredFrameId === nextOutId || hoveredLineKey === 'outer'
+  // Each bar belongs to its own frame: no selection/hover on that frame means no bar.
+  const showLine = hostLineActive || outerLineActive || menuOpen
+  const innerRect = showLine ? frameAdjustScreenRect(nodeId, hostNode, zoom) : null
+  const outerDomRect =
+    showLine && nextOutId
+      ? frameAdjustScreenRect(nextOutId, nextOutNode, zoom)
+      : null
+  let outerRect: { left: number; top: number; width: number; height: number } | null =
+    outerDomRect
+  // A collapsed mate has no mounted RF DOM node. Simulate its adjacent parked adjust box from
+  // flow geometry so the stack line remains visible beside the host while the mate is hidden.
+  if (!outerRect && innerRect && hostNode && nextOutNode) {
+    const live = getNodes()
+    const parkedAbs = stackExpandRfAbs(hostNode, live, stackSide, nextOutNode, 0, [], zoom)
+    const hostAdjust = frameAdjustFlowBox(hostNode, live, zoom)
+    const parkedAdjust = frameAdjustFlowBoxAt(nextOutNode, parkedAbs, zoom)
+    outerRect = {
+      left: innerRect.left + (parkedAdjust.x - hostAdjust.x) * zoom,
+      top: innerRect.top + (parkedAdjust.y - hostAdjust.y) * zoom,
+      width: parkedAdjust.width * zoom,
+      height: parkedAdjust.height * zoom,
+    }
+  }
+  if (!showLine || !innerRect || !outerRect || typeof document === 'undefined') return null
+  const linePair = stackLinePairScreenStyles(innerRect, outerRect, stackSide, zoom, frameUiScale)
+  const lineBoxes: Array<{ key: 'inner' | 'outer'; style: CSSProperties }> = []
+  if (hostLineActive) lineBoxes.push({ key: 'inner', style: linePair.inner })
+  if (outerDomRect && outerLineActive) lineBoxes.push({ key: 'outer', style: linePair.outer })
+  const stroke = LINE_THICKNESS * zoom // Match former in-node thickness (viewport-scaled)
+  const marksHorizontal = stackLineMarksHorizontal(stackSide)
 
   // Arrow toward this frame (inward) vs toward the next mate (outward)
   const InwardIcon =
@@ -1142,58 +1212,73 @@ export function FrameStackRevealLine({
 
   return (
     <>
-      <button
-        ref={lineBtnRef}
-        type="button"
-        data-tt-stack-reveal
-        className={cn(
-          'nodrag nopan absolute z-[40] cursor-pointer border-0 p-0',
-          'opacity-80 hover:opacity-100'
-        )}
-        style={{
-          ...lineStyle,
-          ...(isHorizontal
-            ? { marginTop: -hitPad / 2, height: hitPad, paddingTop: hitPad / 2 - 1 }
-            : { marginLeft: -hitPad / 2, width: hitPad, paddingLeft: hitPad / 2 - 1 }),
-          background: 'transparent',
-        }}
-        title="Stack line"
-        aria-label="Stack line menu"
-        aria-expanded={menuOpen}
-        onMouseEnter={onEnter}
-        onMouseLeave={onLinePointerLeave}
-        onClick={onClickLine}
-      >
-        <span
-          className="pointer-events-none flex h-full w-full"
-          style={{
-            flexDirection: isHorizontal ? 'row' : 'column',
-            alignItems: 'center',
-            justifyContent: isDotted ? 'space-between' : 'stretch',
-            gap: gapPct,
-            height: isHorizontal ? LINE_THICKNESS : '100%',
-            width: isHorizontal ? '100%' : LINE_THICKNESS,
-            margin: isHorizontal ? undefined : '0 auto',
-          }}
-        >
-          {Array.from({ length: markCount }, (_, i) => (
-            <span
-              key={i}
-              aria-hidden
+      {createPortal(
+        <>
+          {lineBoxes.map((lineBox) => (
+            <button
+              key={lineBox.key}
+              type="button"
+              data-tt-stack-reveal
+              className={cn(
+                'nodrag nopan flex cursor-pointer items-center justify-center border-0 p-0',
+                'opacity-80 hover:opacity-100'
+              )}
               style={{
-                flex: isDotted ? '0 0 auto' : '1 1 0',
-                ...(isDotted
-                  ? { width: LINE_THICKNESS, height: LINE_THICKNESS }
-                  : isHorizontal
-                    ? { height: LINE_THICKNESS, minWidth: LINE_THICKNESS }
-                    : { width: LINE_THICKNESS, minHeight: LINE_THICKNESS }),
-                background: STACK_LINE_COLOR,
-                borderRadius: 9999,
+                ...lineBox.style,
+                background: 'transparent',
               }}
-            />
+              title="Stack line"
+              aria-label={`Stack line menu (${lineBox.key} frame)`}
+              aria-expanded={menuOpen}
+              onMouseEnter={() => {
+                if (frameHoverClearRef.current != null) {
+                  window.clearTimeout(frameHoverClearRef.current)
+                  frameHoverClearRef.current = null
+                }
+                setHoveredLineKey(lineBox.key)
+                onEnter()
+              }}
+              onMouseLeave={() => {
+                setHoveredLineKey(null)
+                onLinePointerLeave()
+              }}
+              onClick={onClickLine}
+              onWheel={onWheelLine}
+            >
+              <span
+                className="pointer-events-none flex h-full w-full"
+                style={{
+                  flexDirection: marksHorizontal ? 'row' : 'column',
+                  alignItems: 'center',
+                  justifyContent: isDotted ? 'space-between' : 'stretch',
+                  gap: gapPct,
+                  height: marksHorizontal ? stroke : '100%',
+                  width: marksHorizontal ? '100%' : stroke,
+                  margin: marksHorizontal ? undefined : '0 auto',
+                }}
+              >
+                {Array.from({ length: markCount }, (_, i) => (
+                  <span
+                    key={i}
+                    aria-hidden
+                    style={{
+                      flex: isDotted ? '0 0 auto' : '1 1 0',
+                      ...(isDotted
+                        ? { width: stroke, height: stroke }
+                        : marksHorizontal
+                          ? { height: stroke, minWidth: stroke }
+                          : { width: stroke, minHeight: stroke }),
+                      background: STACK_LINE_COLOR,
+                      borderRadius: 9999,
+                    }}
+                  />
+                ))}
+              </span>
+            </button>
           ))}
-        </span>
-      </button>
+        </>,
+        document.body
+      )}
 
       {menuOpen &&
         typeof document !== 'undefined' &&
@@ -1214,7 +1299,7 @@ export function FrameStackRevealLine({
               role="menuitem"
               className={cn(
                 'flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800',
-                allOpen && 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
+                allOpen && 'tt-selected text-blue-500 dark:text-blue-400'
               )}
               title="Open stack"
               aria-label="Open stack"
@@ -1250,7 +1335,7 @@ export function FrameStackRevealLine({
               role="menuitem"
               className={cn(
                 'flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800',
-                isLocked && 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300'
+                isLocked && 'tt-selected text-blue-500 dark:text-blue-400'
               )}
               title={isLocked ? 'Unlock' : 'Lock'}
               aria-label={isLocked ? 'Unlock' : 'Lock'}

@@ -11,7 +11,7 @@ export async function GET(request: Request) {
     const {
       data: { user },
       error: userError,
-    } = await supabase.auth.getUser() // Require signed-in Thinktable user
+    } = await supabase.auth.getUser() // Require signed-in NodNotes user
 
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) // Not signed in

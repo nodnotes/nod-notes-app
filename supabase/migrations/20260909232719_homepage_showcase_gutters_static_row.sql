@@ -1,0 +1,3 @@
+-- Homepage showcase: equal edge/gutter spacing on split sections;
+-- AI preview ~3× gutter side inset; static small-image row (no carousel).
+-- App/docs marker only; no DDL.

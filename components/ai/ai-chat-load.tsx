@@ -72,6 +72,7 @@ export function ChatLoadStage({
     <>
       {showPlaceholder && (
         <div
+          className="w-full min-w-0"
           aria-busy="true"
           aria-label="Loading chat"
           style={{
@@ -85,6 +86,7 @@ export function ChatLoadStage({
       )}
       {showContent && (
         <div
+          className="w-full min-w-0"
           style={{
             opacity: phase === 'shown' ? 1 : 0, // in = 0 (first paint); shown = fade in
             transition: `opacity ${CHAT_CONTENT_IN_MS}ms ease-out`,
@@ -97,10 +99,10 @@ export function ChatLoadStage({
   )
 }
 
-/** Fake You / Thinktable turns while the real transcript fetches. */
+/** Fake prompt / response turns while the real transcript fetches. */
 export function AiTranscriptPlaceholder() {
   return (
-    <div className="flex flex-col gap-3 w-full max-w-[320px] mx-auto" role="presentation">
+    <div className="flex flex-col gap-3 w-full" role="presentation">
       <PlaceholderTurn user widths={['72%', '44%']} />
       <PlaceholderTurn user={false} widths={['92%', '78%', '61%']} />
       <PlaceholderTurn user widths={['58%']} />
@@ -113,11 +115,11 @@ function PlaceholderTurn({ user, widths }: { user: boolean; widths: string[] }) 
   return (
     <div
       className={cn(
-        'rounded-lg border border-transparent px-2 py-2', // Match AiTranscript turn chrome
-        user ? 'bg-black/[0.03] dark:bg-white/[0.04]' : '' // User turns have a wash; assistant do not
+        'rounded-lg px-2 py-2', // Match AiTranscript turn chrome (no hover border)
+        user ? 'tt-tab-hover' : '' // Transcript user prompts — same grey as hovered board tabs; responses clear
       )}
+      style={{ paddingLeft: 24, paddingRight: 24, paddingTop: 4, paddingBottom: 4 }} // Match live ⋮⋮ gutter
     >
-      <div className="h-2.5 w-8 rounded-sm tt-frame-shimmer-line mb-2" style={{ width: '2.25rem' }} />
       <div className="tt-frame-shimmer-lines">
         {widths.map((width, i) => (
           <div key={i} className="tt-frame-shimmer-line" style={{ width }} />

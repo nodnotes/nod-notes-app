@@ -5,13 +5,15 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
   buildNotionPageTree,
+  buildNotionPickerSections,
   resolveBlockIdParents,
   searchAllAccessibleNotionPages,
 } from '@/lib/notion/pages'
+import { getNotionConnection } from '@/lib/notion/connection'
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const supabase = await createClient() // Session
+    const supabase = await createClient()
     const {
       data: { user },
       error: userError,
@@ -21,24 +23,24 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const admin = createAdminClient() // Read stored Notion token
-    const { data: connection, error: connError } = await admin
-      .from('notion_connections')
-      .select('access_token, workspace_name')
-      .eq('user_id', user.id)
-      .maybeSingle()
+    const workspaceId = new URL(request.url).searchParams.get('workspaceId')
+    const admin = createAdminClient()
+    const connection = await getNotionConnection(admin, user.id, workspaceId)
 
-    if (connError || !connection?.access_token) {
+    if (!connection?.access_token) {
       return NextResponse.json({ error: 'Notion is not connected' }, { status: 400 })
     }
 
     const raw = await searchAllAccessibleNotionPages(connection.access_token) // Flat accessible set
     const pages = await resolveBlockIdParents(connection.access_token, raw) // Nest DBs under pages
-    const tree = buildNotionPageTree(pages) // Notion-native nesting
+    const tree = buildNotionPageTree(pages) // Notion-native nesting (search fallback)
+    const sections = buildNotionPickerSections(pages) // Recently edited + Library
 
     return NextResponse.json({
+      workspaceId: connection.workspace_id,
       workspaceName: connection.workspace_name,
-      tree, // Nested pages for the modal
+      tree, // Nested pages for search results
+      sections, // Sidebar-style groups for the empty-query picker
       count: pages.length, // Total accessible pages
     })
   } catch (error) {

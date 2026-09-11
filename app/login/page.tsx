@@ -1,9 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { waitForAuthUserId } from '@/lib/use-live-auth-user'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -13,14 +13,13 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
-  const router = useRouter()
   const supabase = createClient()
 
   useEffect(() => {
     // Check if user is already logged in and verified
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user?.email_confirmed_at) {
-        router.push('/board')
+        window.location.assign('/board') // Full load so account menu matches session
       } else if (session && !session.user.email_confirmed_at) {
         // User is logged in but not verified - sign them out
         supabase.auth.signOut()
@@ -45,7 +44,7 @@ export default function LoginPage() {
         text: 'Account setup incomplete. Please sign up again.',
       })
     }
-  }, [router, supabase])
+  }, [supabase])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -101,10 +100,11 @@ export default function LoginPage() {
         text: 'Logged in successfully!',
       })
 
-      // Redirect to board
-      setTimeout(() => {
-        router.push('/board')
-      }, 500)
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (user?.id) await waitForAuthUserId(user.id, { timeoutMs: 8000 })
+      window.location.assign('/board')
     } catch (error: any) {
       setMessage({
         type: 'error',
@@ -138,7 +138,7 @@ export default function LoginPage() {
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle className="text-2xl">Welcome back</CardTitle>
-          <CardDescription>Sign in to your ThinkTable account</CardDescription>
+          <CardDescription>Sign in to your Nod Notes account</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {message && (

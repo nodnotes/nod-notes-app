@@ -1,7 +1,8 @@
 'use client'
 
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
+import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { addEdge, useNodeId, useStoreApi, type Connection } from 'reactflow'
+import { PANE_CLICK_SLOP_PX } from '@/lib/pane-click-slop'
 
 type Side = 'left' | 'right' | 'top' | 'bottom'
 
@@ -9,6 +10,11 @@ type ConnectionIndicatorProps = {
   side: Side // Which frame-edge connection point this indicator arms
   style?: CSSProperties // Outset placement from the parent
   className?: string
+  /**
+   * When set: press+release within slop calls this (e.g. open linked chat);
+   * drag past slop still starts a thread. When omitted, pointerdown arms connect immediately.
+   */
+  onPlainClick?: () => void
 }
 
 /** Only snap when the free end is this close (screen px) to a connection point — not merely near the frame. */
@@ -34,20 +40,23 @@ type SnapResult = {
  * Outer blue connection **indicator** — plain DOM (not an RF Handle).
  * Pointer-down arms RF's connection gesture from the frame-edge connection **point**
  * so `ThreadConnectionLine` renders and settle uses handle id = side.
+ * Optional `onPlainClick`: click opens that path; drag still creates a thread.
  */
 export function ConnectionIndicator({
   side,
   style,
   className,
+  onPlainClick,
 }: ConnectionIndicatorProps) {
   const store = useStoreApi()
   const nodeId = useNodeId()
 
-  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || !nodeId) return // Left button + must be inside an RF node
-    // Capture-friendly: stop before panel/`pressing` side-effects and RF node d3-drag
-    event.preventDefault() // Don't select/drag the frame; also suppresses mouse* for d3-drag
-    event.stopPropagation()
+  /** Arm RF connection + move/up listeners from a pointer (down or deferred drag). */
+  const beginConnect = (
+    startEvent: { clientX: number; clientY: number; pointerId: number; nativeEvent?: Event },
+    liveMove?: { clientX: number; clientY: number } // Immediate first move after deferred arm
+  ) => {
+    if (!nodeId) return
 
     const {
       domNode,
@@ -69,11 +78,11 @@ export function ConnectionIndicator({
     const handleId = side // Edge connection point id (left/right/top/bottom)
     const handleType = 'source' as const
     const doc = document
-    const pointerId = event.pointerId // Track this pointer only (preventDefault kills mouse*)
+    const pointerId = startEvent.pointerId // Track this pointer only (preventDefault kills mouse*)
 
     let autoPanId = 0
     let autoPanStarted = false
-    let connectionPosition = eventPos(event, containerBounds)
+    let connectionPosition = eventPos(startEvent, containerBounds)
     let isValid = false
     let connection: Connection | null = null
     let prevActive: Element | null = null
@@ -88,7 +97,10 @@ export function ConnectionIndicator({
       connectionStartHandle: { nodeId, handleId, type: handleType },
       connectionEndHandle: null,
     })
-    onConnectStart?.(event.nativeEvent, { nodeId, handleId, handleType })
+    // RF types OnConnectStart's event as React MouseEvent/TouchEvent but only forwards it to the
+    // consumer, so the native PointerEvent driving this gesture needs a cast through unknown.
+    const startNative = (startEvent.nativeEvent ?? startEvent) as unknown as ReactMouseEvent
+    onConnectStart?.(startNative, { nodeId, handleId, handleType })
 
     const resetActive = () => {
       prevActive?.classList.remove(
@@ -100,21 +112,22 @@ export function ConnectionIndicator({
       prevActive = null
     }
 
+    // Match RF calcAutoPan: near left/top → +panBy (reveal that side); near right/bottom → −
     const autoPan = () => {
       if (!autoPanOnConnect) return
       const inset = 35
       const speed = 20
       const x =
         (connectionPosition.x < inset
-          ? -1
+          ? 1
           : connectionPosition.x > containerBounds.width - inset
-            ? 1
+            ? -1
             : 0) * speed
       const y =
         (connectionPosition.y < inset
-          ? -1
+          ? 1
           : connectionPosition.y > containerBounds.height - inset
-            ? 1
+            ? -1
             : 0) * speed
       if (x || y) panBy({ x, y })
       autoPanId = requestAnimationFrame(autoPan)
@@ -128,7 +141,9 @@ export function ConnectionIndicator({
       const validFn = isValidConnection || (() => true)
       const radiusPx = SNAP_RADIUS_PX
 
-      let bestEl: HTMLElement | null = null
+      // Holder object, not a `let`: TS narrows a captured `let` to its initializer and can't see the
+      // assignment inside forEach, which typed the element as `never` at the reads below.
+      const best: { el: HTMLElement | null } = { el: null }
       let bestDist = Infinity
       let bestIsTarget = false
       doc.querySelectorAll('.react-flow__handle.connectable.connectableend').forEach((node) => {
@@ -144,12 +159,13 @@ export function ConnectionIndicator({
         const isTarget = el.classList.contains('target')
         // Prefer closer; at equal distance prefer target handles
         if (dist < bestDist - 0.5 || (Math.abs(dist - bestDist) <= 0.5 && isTarget && !bestIsTarget)) {
-          bestEl = el
+          best.el = el
           bestDist = dist
           bestIsTarget = isTarget
         }
       })
 
+      const bestEl = best.el
       if (!bestEl) return null
 
       const targetNodeId = bestEl.getAttribute('data-nodeid')!
@@ -225,7 +241,9 @@ export function ConnectionIndicator({
         const edgeParams = { ...defaultEdgeOptions, ...connection }
         // Controlled edges: only onConnect adds (avoid double-add via hasDefaultEdges)
         if (hasDefaultEdges && !onConnectAction) {
-          setEdges((eds) => addEdge(edgeParams, eds))
+          // RF's store setEdges takes an array (not a setState updater) — passing a function here
+          // stored the function itself as the edge list.
+          setEdges(addEdge(edgeParams, store.getState().edges))
         }
         onConnectAction?.(edgeParams as Connection)
       }
@@ -243,17 +261,92 @@ export function ConnectionIndicator({
     doc.addEventListener('pointermove', onMove)
     doc.addEventListener('pointerup', onUp)
     doc.addEventListener('pointercancel', onUp)
+
+    // Deferred arm: jump the free end to the current pointer (past slop already)
+    if (liveMove) {
+      onMove({
+        pointerId,
+        clientX: liveMove.clientX,
+        clientY: liveMove.clientY,
+      } as PointerEvent)
+    }
+  }
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || !nodeId) return // Left button + must be inside an RF node
+    // Capture-friendly: stop before panel/`pressing` side-effects and RF node d3-drag
+    event.preventDefault() // Don't select/drag the frame; also suppresses mouse* for d3-drag
+    event.stopPropagation()
+
+    // No click path — arm connect immediately (normal indicators)
+    if (!onPlainClick) {
+      beginConnect({
+        clientX: event.clientX,
+        clientY: event.clientY,
+        pointerId: event.pointerId,
+        nativeEvent: event.nativeEvent,
+      })
+      return
+    }
+
+    // Click vs drag: wait for slop before arming; release inside slop → onPlainClick
+    const startX = event.clientX
+    const startY = event.clientY
+    const pointerId = event.pointerId
+    const slop2 = PANE_CLICK_SLOP_PX * PANE_CLICK_SLOP_PX
+    const doc = document
+    let armed = false
+
+    const clearPending = () => {
+      doc.removeEventListener('pointermove', onPendingMove)
+      doc.removeEventListener('pointerup', onPendingUp)
+      doc.removeEventListener('pointercancel', onPendingUp)
+    }
+
+    const onPendingMove = (e: PointerEvent) => {
+      if (e.pointerId !== pointerId || armed) return
+      const dx = e.clientX - startX
+      const dy = e.clientY - startY
+      if (dx * dx + dy * dy <= slop2) return
+      armed = true
+      clearPending()
+      beginConnect(
+        {
+          clientX: startX,
+          clientY: startY,
+          pointerId,
+          nativeEvent: event.nativeEvent,
+        },
+        { clientX: e.clientX, clientY: e.clientY }
+      )
+    }
+
+    const onPendingUp = (e: PointerEvent) => {
+      if (e.pointerId !== pointerId) return
+      clearPending()
+      if (armed) return // Connect gesture owns the pointer now
+      onPlainClick() // Click within slop
+    }
+
+    doc.addEventListener('pointermove', onPendingMove)
+    doc.addEventListener('pointerup', onPendingUp)
+    doc.addEventListener('pointercancel', onPendingUp)
   }
 
   return (
     <div
       role="button"
       tabIndex={-1}
-      aria-label={`Start thread from ${side}`}
+      aria-label={
+        onPlainClick
+          ? `Open linked chat or start thread from ${side}`
+          : `Start thread from ${side}`
+      }
       data-tt-connection-indicator={side}
       className={
         className ??
-        'nodrag nopan absolute z-[30] h-2.5 w-2.5 cursor-crosshair rounded-full border border-white bg-blue-500 shadow-sm hover:bg-blue-600'
+        // No Tailwind border/size — screen-constant via --tt-frame-ui-scale in globals.css
+        'nodrag nopan absolute z-[30] cursor-crosshair rounded-full bg-blue-500 hover:bg-blue-600'
       }
       style={style}
       // Capture so we beat the frame panel’s pressing/unmount path and RF node drag

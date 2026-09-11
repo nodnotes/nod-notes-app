@@ -1,7 +1,7 @@
-// Map Notion database property types ↔ Thinktable propertyBlock cells (Convert layout → Card view).
+// Map Notion database property types ↔ NodNotes propertyBlock cells (Convert layout → Card view).
 
 import type { PropertyTypeId } from '@/lib/blocks/property' // Frame property cell kinds
-import { propertyBlockHtml } from '@/lib/tiptap/property-block' // Serialized property cell HTML
+import { propertyBlockHtml } from '@/lib/tiptap/property-block-html' // Serialized property cell HTML (server-safe — no TipTap)
 import type { NotionDbCell, NotionDbProperty } from '@/lib/notion/database' // Live table schema + cells
 
 /** Escape a value for a double-quoted HTML attribute. */
@@ -9,7 +9,7 @@ function escapeAttr(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
 }
 
-/** Notion API property type → Thinktable PropertyTypeId (best-effort). */
+/** Notion API property type → NodNotes PropertyTypeId (best-effort). */
 export function notionPropTypeToPropertyType(notionType: string): PropertyTypeId {
   switch (notionType) {
     case 'title':
@@ -71,33 +71,40 @@ export function notionCellDisplayValue(cell: NotionDbCell | undefined): string {
 /** Build propertyBlock HTML for one schema column + row cell. */
 export function propertyCellHtmlForNotion(
   prop: NotionDbProperty,
-  cell: NotionDbCell | undefined
+  cell: NotionDbCell | undefined,
+  opts?: { inlineNames?: ReadonlySet<string> | null } // Names that stay inline when empty
 ): string {
-  const type = notionPropTypeToPropertyType(prop.type) // Map Notion → Thinktable type
+  const type = notionPropTypeToPropertyType(prop.type) // Map Notion → NodNotes type
   const value = notionCellDisplayValue(cell) // Plain value for the cell
-  return propertyBlockHtml(type, value) // Atom HTML TipTap round-trips
+  const inline = !!opts?.inlineNames?.has(prop.name) // Restored from prior card layout
+  return propertyBlockHtml(type, value, {
+    inline, // Empty + !inline → top strip only on the card
+    propertyName: prop.name, // Key for card↔table inline preference
+  })
 }
 
 /** Concatenate property cells for every column except title (card frame body under the boardLink). */
 export function nonTitlePropertyCellsHtml(
   properties: NotionDbProperty[],
-  cells: Record<string, NotionDbCell>
+  cells: Record<string, NotionDbCell>,
+  opts?: { inlineNames?: ReadonlySet<string> | null }
 ): string {
   return properties
     .filter((p) => p.type !== 'title') // Title is the boardLink, not a cell on the card
-    .map((p) => propertyCellHtmlForNotion(p, cells[p.name]))
+    .map((p) => propertyCellHtmlForNotion(p, cells[p.name], opts))
     .join('')
 }
 
 /** All property cells including title (child board body — properties above notes). */
 export function allPropertyCellsHtml(
   properties: NotionDbProperty[],
-  cells: Record<string, NotionDbCell>
+  cells: Record<string, NotionDbCell>,
+  opts?: { inlineNames?: ReadonlySet<string> | null }
 ): string {
-  return properties.map((p) => propertyCellHtmlForNotion(p, cells[p.name])).join('')
+  return properties.map((p) => propertyCellHtmlForNotion(p, cells[p.name], opts)).join('')
 }
 
-/** Title-variant boardLink HTML for a row’s name → linked Thinktable board. */
+/** Title-variant boardLink HTML for a row’s name → linked NodNotes board. */
 export function rowBoardLinkHtml(opts: {
   boardId: string
   title: string

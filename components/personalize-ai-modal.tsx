@@ -1,11 +1,12 @@
 'use client'
 
-// Personalize Thinktable AI — default mark is a hand-drawn T; saved PNG stays editable
+// Personalize Nod Notes AI — default mark is a hand-drawn T; saved PNG stays editable
 import {
   useCallback,
   useEffect,
   useRef,
   useState,
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { Eraser, Pencil, RotateCcw, X } from 'lucide-react'
@@ -18,16 +19,16 @@ import {
 import { cn } from '@/lib/utils'
 
 /** localStorage key for the custom logo drawing (PNG data URL) */
-export const TT_LOGO_DRAWING_STORAGE_KEY = 'thinktable-ai-logo-drawing'
+export const NN_LOGO_DRAWING_STORAGE_KEY = 'nodnotes-ai-logo-drawing'
 
 /** Legacy topper key — cleared on hydrate so old toppers do not linger */
-const TT_TOPPER_STORAGE_KEY_LEGACY = 'thinktable-ai-topper'
+const NN_TOPPER_STORAGE_KEY_LEGACY = 'nodnotes-ai-topper'
 
-/** Logo circle fill — matches public/thinktable-logo.svg .cls-1 */
+/** Logo disc fill for the personalize draw canvas */
 export const LOGO_CIRCLE_COLOR = '#a2a7af'
 
-/** AI sparkles badge fill — yellow accent on brand mark */
-const AI_STAR_COLOR = '#f5c518'
+/** AI sparkles fill — same blue-500 as the Nod wordmark on every logo that shows stars */
+export const AI_STAR_COLOR = '#3b82f6'
 
 /** Stroke color for custom marks (white cutout look) */
 const DRAW_WHITE = '#ffffff'
@@ -77,20 +78,43 @@ function strokeDefaultDrawnMark(ctx: CanvasRenderingContext2D) {
   ctx.restore() // Drop clip
 }
 
-/** Default AI mark — same marker strokes the canvas seeds with */
-function DefaultDrawnLogoSvg({ size, className }: { size: number; className?: string }) {
+/** Table-dot centroid in the 256 canvas — T hinges here for the load nod */
+const DRAWN_DOT_CX = 176
+const DRAWN_DOT_CY = 104
+
+function DefaultDrawnLogoSvg({
+  size,
+  className,
+  onBoard = false,
+  nod = false,
+}: {
+  size: number
+  className?: string
+  onBoard?: boolean // Map chat toggle: black/white strokes on board fill
+  nod?: boolean // Board open/load: T bows around the dot, then settles
+}) {
+  const stroke = onBoard ? 'currentColor' : DRAW_WHITE
   return (
     <svg
       viewBox={`0 0 ${CANVAS_SIZE} ${CANVAS_SIZE}`}
       width={size}
       height={size}
-      className={className}
+      className={cn(onBoard && 'text-gray-900 dark:text-white', className)}
+      style={
+        nod
+          ? ({
+              ['--nn-nod-cx']: `${(DRAWN_DOT_CX / CANVAS_SIZE) * 100}%`, // Table-dot center x
+              ['--nn-nod-cy']: `${(DRAWN_DOT_CY / CANVAS_SIZE) * 100}%`, // Table-dot center y
+            } as CSSProperties)
+          : undefined
+      }
       role="img"
-      aria-label="Thinktable"
+      aria-label="Nod Notes"
     >
       <g
+        className={nod ? 'nn-icon-nod-arm' : undefined}
         fill="none"
-        stroke={DRAW_WHITE}
+        stroke={stroke}
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth={DRAWN_T_WIDTH}
@@ -99,7 +123,7 @@ function DefaultDrawnLogoSvg({ size, className }: { size: number; className?: st
         <path d={DRAWN_T_STEM} />
         <path d={DRAWN_T_FOOT} />
       </g>
-      <path d={DRAWN_DOT} fill={DRAW_WHITE} />
+      <path d={DRAWN_DOT} fill={stroke} />
     </svg>
   )
 }
@@ -108,46 +132,61 @@ function DefaultDrawnLogoSvg({ size, className }: { size: number; className?: st
 export function getStoredLogoDrawing(): string | null {
   if (typeof window === 'undefined') return null
   try {
-    localStorage.removeItem(TT_TOPPER_STORAGE_KEY_LEGACY)
+    localStorage.removeItem(NN_TOPPER_STORAGE_KEY_LEGACY)
   } catch {
     // Ignore storage errors
   }
-  return localStorage.getItem(TT_LOGO_DRAWING_STORAGE_KEY)
+  return localStorage.getItem(NN_LOGO_DRAWING_STORAGE_KEY)
 }
 
-type ThinktableBrandMarkProps = {
+type NodNotesBrandMarkProps = {
   drawingUrl?: string | null // Saved composite PNG (solid circle + white strokes)
   size?: number
   className?: string
+  /** Board fill + theme strokes (default); brand = legacy grey disc for personalize canvas */
+  discVariant?: 'brand' | 'board'
+  /** AI sparkles badge — on for map toggle + chat logos; off on customize-agent icon */
+  showAiStar?: boolean
+  /** Default mark only: T hinges on the table-dot once (board open / load) */
+  nod?: boolean
 }
 
 /**
  * Brand mark — default hand-drawn T + table-dot, or a saved circle PNG.
  * Solid circle behind the mark so any transparency still reads as the logo disc.
- * AI sparkles badge sits top-left with a white border (outside the disc clip).
+ * AI sparkles badge sits top-right with a white border (outside the disc clip).
  */
-export function ThinktableBrandMark({
+export function NodNotesBrandMark({
   drawingUrl = null,
   size = 56,
   className,
-}: ThinktableBrandMarkProps) {
+  discVariant = 'board',
+  showAiStar = true,
+  nod = false,
+}: NodNotesBrandMarkProps) {
   const badgeSize = Math.max(14, Math.round(size * 0.34)) // Scales with logo
+  const onBoard = discVariant === 'board'
 
   return (
     <div
       className={cn('relative flex-shrink-0', className)}
       style={{ width: size, height: size }}
     >
-      {/* Logo disc — clipped circle + border matching grey button icons */}
+      {/* Logo disc — board fill + border by default; legacy grey on personalize canvas */}
       <div
-        className="h-full w-full overflow-hidden rounded-full border-[1.5px] border-gray-500 dark:border-gray-400"
-        style={{ backgroundColor: LOGO_CIRCLE_COLOR }}
+        className={cn(
+          'h-full w-full overflow-hidden rounded-full border-[1.5px]',
+          onBoard
+            ? 'bg-gray-50 dark:bg-[#0f0f0f] border-gray-500 dark:border-gray-400'
+            : 'border-gray-500 dark:border-gray-400'
+        )}
+        style={onBoard ? undefined : { backgroundColor: LOGO_CIRCLE_COLOR }}
       >
         {drawingUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={drawingUrl}
-            alt="Thinktable"
+            alt="Nod Notes"
             width={size}
             height={size}
             className="h-full w-full object-cover"
@@ -157,19 +196,22 @@ export function ThinktableBrandMark({
           <DefaultDrawnLogoSvg
             size={size}
             className="h-full w-full"
+            onBoard={onBoard}
+            nod={nod}
           />
         )}
       </div>
 
-      {/* AI stars — top-left; main + top spark only (no bottom), soft yellow + white outline */}
+      {/* AI stars — top-right; Nod blue on map toggle + open chat */}
+      {showAiStar ? (
       <svg
         viewBox="0 0 24 24"
-        className="absolute pointer-events-none"
+        className="absolute pointer-events-none z-10"
         style={{
           width: badgeSize,
           height: badgeSize,
           top: -Math.round(badgeSize * 0.15),
-          left: -Math.round(badgeSize * 0.15),
+          right: -Math.round(badgeSize * 0.15),
           color: AI_STAR_COLOR,
           filter: 'drop-shadow(0 0 0.6px #fff) drop-shadow(0 0 0.6px #fff) drop-shadow(0 0 0.6px #fff)',
         }}
@@ -188,6 +230,7 @@ export function ThinktableBrandMark({
         <path d="M20 2v4" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
         <path d="M22 4h-4" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
       </svg>
+      ) : null}
     </div>
   )
 }
@@ -394,14 +437,14 @@ export function PersonalizeAiModal({
           '[&>button]:hidden'
         )}
       >
-        <DialogTitle className="sr-only">Personalize your Thinktable AI</DialogTitle>
+        <DialogTitle className="sr-only">Personalize your Nod Notes AI</DialogTitle>
         <DialogDescription className="sr-only">
           Draw on the solid logo circle; your image is saved and can be edited later
         </DialogDescription>
 
         <div className="relative flex items-center justify-center px-4 pt-4 pb-2">
           <h2 className="text-base font-semibold text-gray-100">
-            Personalize your Thinktable AI
+            Personalize your Nod Notes AI
           </h2>
           <button
             type="button"

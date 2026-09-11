@@ -1,0 +1,10 @@
+schemaVersion: 1
+# Capacitor iOS shell — simulator-first tooling for the agent
+enabledWorkflows:
+  - simulator
+  - ui-automation
+sessionDefaults:
+  projectPath: ./mobile/ios/App/App.xcworkspace
+  scheme: App
+  simulatorName: iPhone 17
+sentryDisabled: true

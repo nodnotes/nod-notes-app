@@ -1,4 +1,4 @@
--- Thinktable AI copilot foundation: universal sidebar threads (separate from page frames)
+-- Nod Notes AI copilot foundation: universal sidebar threads (separate from page frames)
 -- Page frames stay in messages; AI chat lives here so Ask never auto-places on the page.
 
 -- ---------------------------------------------------------------------------

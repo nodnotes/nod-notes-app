@@ -1,0 +1,3 @@
+-- Homepage: Notion-style footer (section title links), get-started grey band,
+-- showcase media/carousel/shadows; section anchors for footer deep links.
+-- App/docs marker only; no DDL.

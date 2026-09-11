@@ -12,13 +12,71 @@ export const THREAD_SELECTED_COLOR = '#0375ff'
 /** Default stroke for idle threads. */
 export const THREAD_DEFAULT_COLOR = '#6b7280' // gray-500
 
+/** localStorage key for the Style-bar Thread color board default. */
+export const THREAD_STROKE_COLOR_KEY = 'nodnotes-thread-stroke-color'
+
+/** Notion-style stroke swatches for the Thread style color picker (empty = default gray). */
+export const THREAD_COLOR_SWATCHES = [
+  { id: 'default', name: 'Default', value: '' },
+  { id: 'gray', name: 'Gray', value: '#787774' },
+  { id: 'brown', name: 'Brown', value: '#9F6B53' },
+  { id: 'orange', name: 'Orange', value: '#D9730D' },
+  { id: 'yellow', name: 'Yellow', value: '#CB912F' },
+  { id: 'green', name: 'Green', value: '#448361' },
+  { id: 'blue', name: 'Blue', value: '#337EA9' },
+  { id: 'purple', name: 'Purple', value: '#9065B0' },
+  { id: 'pink', name: 'Pink', value: '#C14C8A' },
+  { id: 'red', name: 'Red', value: '#E03E3E' },
+] as const
+
+/** Normalize a stored / picker stroke to a paint hex (empty → default gray). */
+export function resolveThreadStrokeColor(color?: string | null): string {
+  const t = (color || '').trim()
+  return t || THREAD_DEFAULT_COLOR
+}
+
 /** Default thread thickness in flow px (menu 1–4px options). */
 export const THREAD_DEFAULT_STROKE_WIDTH = 2
+
+/** Reference √(w×h) for a typical small one-line frame — below this thins, above thickens. */
+const THREAD_FRAME_SIDE_REF = 80
+
+/**
+ * How thick a thread should read for a frame’s flow box (factor on menu stroke).
+ * Uses √(area) so tall/wide place-scaled frames read big; steep power so small↔small vs
+ * big↔big is obvious on screen.
+ */
+export function threadWidthFactorForFrameSize(size: {
+  width: number
+  height: number
+}): number {
+  const w = Math.max(1, size.width)
+  const h = Math.max(1, size.height)
+  const side = Math.sqrt(w * h) // Characteristic size (not max-side — wide short lines stayed too thick)
+  // ^1.75 + wide clamp — small~0.25–0.5×, large~4–7× menu stroke
+  return Math.min(7, Math.max(0.2, Math.pow(side / THREAD_FRAME_SIDE_REF, 1.75)))
+}
+
+/**
+ * One uniform stroke for a thread from both endpoint frame sizes.
+ * Big↔big thicker, small↔small thinner, mixed in between (geometric mean of factors).
+ * No along-path taper — that split each edge into many SVG pieces and hurt pan/zoom.
+ */
+export function threadStrokeWidthForFrames(
+  menuWidth: number,
+  a: { width: number; height: number },
+  b: { width: number; height: number }
+): number {
+  const factor = Math.sqrt(
+    threadWidthFactorForFrameSize(a) * threadWidthFactorForFrameSize(b)
+  )
+  return Math.max(0.35, menuWidth * factor)
+}
 
 /** Algorithm used for new threads. */
 export const DEFAULT_THREAD_ALGORITHM: ThreadAlgorithm = ThreadAlgorithm.BezierCatmullRom
 
-/** Toolbar thread style prefs (localStorage `thinktable-horizontal-line-style`). */
+/** Toolbar thread style prefs (localStorage `nodnotes-horizontal-line-style`). */
 export type ThreadStylePref = 'curved' | 'boxed' | 'linear'
 
 /** Map toolbar Smooth / Sharp / Linear → path algorithm. */
@@ -47,25 +105,24 @@ export function isSharpThreadAlgorithm(
 }
 
 /**
- * Flow-space multiplier for stroke / knobs (same comfort as ⋮⋮ grips).
- * Zoomed out → 1 (rides with content, thins on screen). Zoomed in → 1/√zoom
- * (screen size grows only ∝ √zoom). Avoids fat threads when the page is zoomed out.
+ * Flow-space multiplier for callers that still need a JS zoom factor.
+ * Prefer CSS `--tt-board-zoom` for thread stroke (live, no React freeze).
+ * Pure 1/zoom so thickness stays constant on screen when applied.
  */
 export function threadComfortScale(zoom: number): number {
   const z = Math.max(0.01, zoom) // Guard against 0 / negative store values
-  return 1 / Math.max(1, Math.sqrt(z)) // max(1,√z) → no counter-scale below 100%
+  return 1 / z // Screen px ≈ menu stroke width at every zoom
 }
 
 /** Base boost so frame chrome (handles / ⋮⋮ gutter / rotate) reads at a usable screen size. */
 export const FRAME_SCREEN_CHROME_BOOST = 1.4
 
 /**
- * Screen-relative scale for frame selection chrome (resize dots, indicators, gutters,
- * property/conn bands, rotate/free/wrap, ⋮⋮). Softer than thread √ comfort + boost —
- * pure 1× thread comfort felt too small on the board.
+ * Flow-space multiplier for frame selection chrome widgets so they stay constant on screen:
+ * connection indicators, resize dots + blue stroke, rotate/fit/wrap, and blue↔fill L/R gutters.
+ * Pure 1/zoom (× boost). TipTap ⋮⋮ / add-lines use a separate √ comfort curve (text-relative).
  */
 export function frameScreenChromeScale(zoom: number): number {
   const z = Math.max(0.01, zoom) // Guard against 0 / negative store values
-  const comfort = 1 / Math.max(1, Math.pow(z, 0.35)) // Milder than √ so zoom-in does not crush chrome
-  return comfort * FRAME_SCREEN_CHROME_BOOST
+  return FRAME_SCREEN_CHROME_BOOST / z // Screen px ≈ base × boost at every zoom
 }

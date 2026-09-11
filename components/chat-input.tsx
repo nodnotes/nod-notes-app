@@ -10,6 +10,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useQueryClient } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
 import { replaceBoardUrl } from '@/lib/replace-board-url' // history.replaceState — router.replace remounts the board
+import { DEFAULT_BOARD_TITLE } from '@/lib/board-title' // Chat mint + default-title check match nav +
 import { useReactFlowContext } from './react-flow-context'
 import {
   Dialog,
@@ -287,7 +288,7 @@ export function ChatInput({ conversationId, projectId, onHeightChange, variant =
           .from('conversations')
           .insert({
             user_id: user.id,
-            title: 'New Conversation', // Temporary title, will be updated by AI
+            title: DEFAULT_BOARD_TITLE, // Empty `/board` mint — AI may rename after the first prompt
             metadata: metadata,
           })
           .select()
@@ -354,9 +355,10 @@ export function ChatInput({ conversationId, projectId, onHeightChange, variant =
           .single()
 
         // Only skip if user manually renamed (metadata flag is true)
-        // "New Conversation" is just the default title and should be overridden by AI
+        // Default titles should still be overridden by AI (legacy "New Conversation" included)
         const isManuallyRenamed = conv?.metadata?.manuallyRenamed === true
-        const isDefaultTitle = conv?.title === 'New Conversation'
+        const isDefaultTitle =
+          conv?.title === DEFAULT_BOARD_TITLE || conv?.title === 'New Conversation' || conv?.title === 'Untitled'
 
         // Generate AI name if: not manually renamed, OR it's still the default title
         if (!isManuallyRenamed || isDefaultTitle) {
@@ -723,7 +725,7 @@ export function ChatInput({ conversationId, projectId, onHeightChange, variant =
           .from('conversations')
           .insert({
             user_id: user.id,
-            title: 'New Conversation', // Temporary title, will be updated by AI
+            title: DEFAULT_BOARD_TITLE, // Empty `/board` mint — AI may rename after the first prompt
             metadata: { position: -1 }, // Set position to -1 to appear at top
           })
           .select()
@@ -735,8 +737,9 @@ export function ChatInput({ conversationId, projectId, onHeightChange, variant =
 
         currentConversationId = newConversation.id
 
-        // Dispatch + address-bar only — Next router.replace would remount BoardFlow mid-send
-        replaceBoardUrl(currentConversationId)
+        // Dispatch + address-bar only — Next router.replace would remount BoardFlow mid-send.
+        // Pass the row id directly: `currentConversationId` stays `string | undefined` to the compiler.
+        replaceBoardUrl(newConversation.id)
       }
 
       // If already loading, add to queue instead of processing immediately
@@ -861,7 +864,7 @@ export function ChatInput({ conversationId, projectId, onHeightChange, variant =
                 }}
                 className={cn(
                   "text-gray-700 dark:text-gray-300", // Default: grey tab text color
-                  isResearchMode && "bg-blue-50 dark:bg-[#2a2a3a] text-gray-900 dark:text-white hover:text-gray-900 dark:hover:text-white", // Selected: black text, same blue background
+                  isResearchMode && "tt-selected text-gray-900 dark:text-white hover:text-gray-900 dark:hover:text-white", // Selected: black text, grey wash
                   "hover:text-gray-900 dark:hover:text-white" // Hover: black text
                 )}
               >
@@ -881,7 +884,7 @@ export function ChatInput({ conversationId, projectId, onHeightChange, variant =
                 }}
                 className={cn(
                   "text-gray-700 dark:text-gray-300", // Default: grey tab text color
-                  isFlashcardsMode && "bg-blue-50 dark:bg-[#2a2a3a] text-gray-900 dark:text-white hover:text-gray-900 dark:hover:text-white", // Selected: black text, same blue background
+                  isFlashcardsMode && "tt-selected text-gray-900 dark:text-white hover:text-gray-900 dark:hover:text-white", // Selected: black text, grey wash
                   "hover:text-gray-900 dark:hover:text-white" // Hover: black text
                 )}
               >

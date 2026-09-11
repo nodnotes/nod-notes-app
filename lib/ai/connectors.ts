@@ -18,10 +18,10 @@ export const AI_CONNECTORS: AiConnector[] = [ // Seed list; Notion OAuth already
     enabled: true, // Connection exists; AI tools for it come later
   },
   {
-    id: 'mcp', // Future MCP clients talking to Thinktable
+    id: 'mcp', // Future MCP clients talking to NodNotes
     kind: 'mcp', // Kind
     name: 'MCP', // UI
-    description: 'External agents via Thinktable MCP (next phase).', // Help
+    description: 'External agents via Nod Notes MCP (next phase).', // Help
     enabled: false, // Stub
   },
 ]

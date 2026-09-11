@@ -8,16 +8,16 @@ import {
 } from '@/lib/ai/context-pack'
 import { skillHintsForIds } from '@/lib/ai/skills'
 import { isSelectableAiMode } from '@/lib/ai/modes'
+import { resolveOpenAiModel, isAiModelId } from '@/lib/ai/models'
 import { newBlockMetadata } from '@/lib/blocks'
 import { markHtmlWithAiPending } from '@/lib/ai/wrap-ai-html'
 import { frameContentFromAi, markdownToTipTapHtml } from '@/lib/ai/markdown-to-tiptap'
+import { expandHideMarkersInHtml } from '@/lib/ai/hide-text'
 import type { AiProposedEdit } from '@/lib/ai/types'
+import { frameColorMetaPatch, resolveAiFrameColor } from '@/lib/frame-colors'
 import { NextRequest } from 'next/server'
-import OpenAI from 'openai'
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
+import type OpenAI from 'openai'
+import { getOpenAI } from '@/lib/openai'
 
 const CREATE_FRAME_GAP = 320 // Horizontal spacing between newly created frames
 
@@ -29,7 +29,7 @@ function sse(data: unknown): string {
 function normalizeEditHtml(contentHtml: string): string {
   const raw = (contentHtml || '').trim()
   if (!raw) return ''
-  return markdownToTipTapHtml(raw)
+  return expandHideMarkersInHtml(markdownToTipTapHtml(raw))
 }
 
 export async function POST(request: NextRequest) {
@@ -45,12 +45,15 @@ export async function POST(request: NextRequest) {
       headers: { 'Content-Type': 'application/json' },
     })
   }
+  const openai = getOpenAI()
 
   const body = await request.json().catch(() => ({}))
   const message = typeof body.message === 'string' ? body.message.trim() : ''
   let threadId = typeof body.threadId === 'string' ? body.threadId : null
   const boardId = typeof body.boardId === 'string' ? body.boardId : null
   const mode = isSelectableAiMode(body.mode) ? body.mode : 'ask'
+  const modelId = typeof body.modelId === 'string' && isAiModelId(body.modelId) ? body.modelId : 'auto'
+  const openaiModel = resolveOpenAiModel(modelId)
   const selectedFrameIds = Array.isArray(body.selectedFrameIds)
     ? body.selectedFrameIds.filter((id: unknown) => typeof id === 'string')
     : []
@@ -243,14 +246,14 @@ export async function POST(request: NextRequest) {
 
         if (mode === 'edit') {
           const completion = await openai.chat.completions.create({
-            model: 'gpt-4o-mini',
+            model: openaiModel,
             messages: openaiMessages,
             temperature: 0.5,
             max_tokens: 3000,
             response_format: {
               type: 'json_schema',
               json_schema: {
-                name: 'thinktable_edit_response',
+                name: 'nodnotes_edit_response',
                 strict: true,
                 schema: {
                   type: 'object',
@@ -265,7 +268,7 @@ export async function POST(request: NextRequest) {
                       items: {
                         type: 'object',
                         additionalProperties: false,
-                        required: ['frameId', 'summary', 'replacements', 'contentHtml'],
+                        required: ['frameId', 'summary', 'replacements', 'contentHtml', 'color'],
                         properties: {
                           frameId: { type: 'string' },
                           summary: { type: 'string' },
@@ -282,6 +285,8 @@ export async function POST(request: NextRequest) {
                             },
                           },
                           contentHtml: { type: 'string' },
+                          // Palette id (blue, green, …) or "" to leave fill/border unchanged
+                          color: { type: 'string' },
                         },
                       },
                     },
@@ -290,12 +295,14 @@ export async function POST(request: NextRequest) {
                       items: {
                         type: 'object',
                         additionalProperties: false,
-                        required: ['tempId', 'title', 'contentMarkdown', 'summary'],
+                        required: ['tempId', 'title', 'contentMarkdown', 'summary', 'color'],
                         properties: {
                           tempId: { type: 'string' },
                           title: { type: 'string' },
                           contentMarkdown: { type: 'string' },
                           summary: { type: 'string' },
+                          // Palette id for idea grouping / design, or "" for transparent default
+                          color: { type: 'string' },
                         },
                       },
                     },
@@ -328,6 +335,7 @@ export async function POST(request: NextRequest) {
               frameId: string
               contentHtml?: string
               summary: string
+              color?: string
               replacements?: Array<{ oldText: string; newText: string }>
             }>
             creates?: Array<{
@@ -335,6 +343,7 @@ export async function POST(request: NextRequest) {
               title: string
               contentMarkdown: string
               summary: string
+              color?: string
             }>
             threads?: Array<{
               sourceTempId: string
@@ -364,12 +373,30 @@ export async function POST(request: NextRequest) {
             for (const e of validEdits) {
               const { data: msg } = await supabase
                 .from('messages')
-                .select('id, content')
+                .select('id, content, metadata')
                 .eq('id', e.frameId)
                 .maybeSingle()
               if (!msg) continue
               const replacements = (e.replacements || []).filter((r) => (r.oldText || '').trim())
               const contentHtml = normalizeEditHtml(e.contentHtml || '')
+              const prevMeta = (msg.metadata || {}) as Record<string, unknown>
+              const resolvedColor = resolveAiFrameColor(e.color)
+              const colorPatch = resolvedColor
+                ? frameColorMetaPatch(resolvedColor.fill, resolvedColor.border)
+                : null
+              // Apply color immediately so the board previews the design before Save
+              if (colorPatch) {
+                await supabase
+                  .from('messages')
+                  .update({
+                    metadata: {
+                      ...prevMeta,
+                      ...colorPatch,
+                      aiPendingEdit: true,
+                    },
+                  })
+                  .eq('id', e.frameId)
+              }
               const { data: action } = await supabase
                 .from('ai_action_log')
                 .insert({
@@ -382,8 +409,26 @@ export async function POST(request: NextRequest) {
                     contentHtml,
                     replacements,
                     summary: e.summary,
+                    ...(resolvedColor
+                      ? {
+                          color: resolvedColor.id,
+                          fillColor: resolvedColor.fill,
+                          borderColor: resolvedColor.border,
+                        }
+                      : {}),
                   },
-                  inverse: { frameId: e.frameId, contentHtml: msg.content },
+                  inverse: {
+                    frameId: e.frameId,
+                    contentHtml: msg.content,
+                    ...(colorPatch
+                      ? {
+                          fillColor:
+                            typeof prevMeta.fillColor === 'string' ? prevMeta.fillColor : '',
+                          borderColor:
+                            typeof prevMeta.borderColor === 'string' ? prevMeta.borderColor : '',
+                        }
+                      : {}),
+                  },
                   status: 'pending',
                 })
                 .select('id')
@@ -396,6 +441,17 @@ export async function POST(request: NextRequest) {
                 actionLogId: action?.id,
                 originalContent: msg.content as string,
                 replacements,
+                ...(resolvedColor
+                  ? {
+                      color: resolvedColor.id,
+                      fillColor: resolvedColor.fill,
+                      borderColor: resolvedColor.border,
+                      originalFillColor:
+                        typeof prevMeta.fillColor === 'string' ? prevMeta.fillColor : '',
+                      originalBorderColor:
+                        typeof prevMeta.borderColor === 'string' ? prevMeta.borderColor : '',
+                    }
+                  : {}),
               })
             }
 
@@ -432,6 +488,10 @@ export async function POST(request: NextRequest) {
                   x: startX + i * CREATE_FRAME_GAP,
                   y: viewportCenter.y,
                 }
+                const resolvedColor = resolveAiFrameColor(c.color)
+                const colorPatch = resolvedColor
+                  ? frameColorMetaPatch(resolvedColor.fill, resolvedColor.border)
+                  : {}
 
                 const { data: msg, error: msgErr } = await supabase
                   .from('messages')
@@ -446,6 +506,7 @@ export async function POST(request: NextRequest) {
                       aiPendingEdit: true,
                       fromAiEdit: true,
                       hasAiOrigin: false,
+                      ...colorPatch,
                     }),
                   })
                   .select('id, content')
@@ -469,6 +530,13 @@ export async function POST(request: NextRequest) {
                       frameId: msg.id,
                       tempId,
                       summary: c.summary,
+                      ...(resolvedColor
+                        ? {
+                            color: resolvedColor.id,
+                            fillColor: resolvedColor.fill,
+                            borderColor: resolvedColor.border,
+                          }
+                        : {}),
                     },
                     inverse: { frameId: msg.id },
                     status: 'pending',
@@ -484,6 +552,13 @@ export async function POST(request: NextRequest) {
                   summary: c.summary || 'Create frame',
                   actionLogId: action?.id,
                   originalContent: '',
+                  ...(resolvedColor
+                    ? {
+                        color: resolvedColor.id,
+                        fillColor: resolvedColor.fill,
+                        borderColor: resolvedColor.border,
+                      }
+                    : {}),
                 })
               }
             }
@@ -576,7 +651,7 @@ export async function POST(request: NextRequest) {
           }
         } else {
           const completion = await openai.chat.completions.create({
-            model: 'gpt-4o-mini',
+            model: openaiModel,
             messages: openaiMessages,
             stream: true,
             temperature: 0.7,

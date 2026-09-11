@@ -192,6 +192,100 @@ export function rotatedFrameAabbSize(
  * CSS `clip-path` so TipTap content stays inside the silhouette.
  * Returns undefined when clipping isn’t needed (default / hard-to-express shapes).
  */
+/** Ray-cast point-in-polygon (unit coords, top-left origin). */
+function pointInPolygon(x: number, y: number, polygon: Array<{ x: number; y: number }>): boolean {
+  let inside = false
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].x
+    const yi = polygon[i].y
+    const xj = polygon[j].x
+    const yj = polygon[j].y
+    const hit = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi
+    if (hit) inside = !inside
+  }
+  return inside
+}
+
+/** True when (x,y) in 0..1 lies inside the silhouette clip (matches frameShapeClipCss). */
+function pointInShapeUnit(x: number, y: number, shape: FrameShapeType): boolean {
+  switch (shape) {
+    case 'rectangle':
+      return x >= 0 && x <= 1 && y >= 0 && y <= 1
+    case 'round-rectangle':
+      // inset(0 round 12px) — conservative inset so text clears rounded corners
+      return x >= 0.06 && x <= 0.94 && y >= 0.06 && y <= 0.94
+    case 'circle':
+      return (x - 0.5) ** 2 + (y - 0.5) ** 2 <= 0.25
+    case 'cylinder':
+      // inset(8% 0 round 40%)
+      return x >= 0 && x <= 1 && y >= 0.08 && y <= 0.92
+    default: {
+      const pts = shapeUnitPoints(shape)
+      return pts ? pointInPolygon(x, y, pts) : x >= 0 && x <= 1 && y >= 0 && y <= 1
+    }
+  }
+}
+
+/** True when a centered contentW×contentH rect fits inside shape boxW×boxH. */
+function contentFitsInShapeBox(
+  boxW: number,
+  boxH: number,
+  contentW: number,
+  contentH: number,
+  shape: FrameShapeType
+): boolean {
+  if (boxW < 1 || boxH < 1) return false
+  const hw = contentW / (2 * boxW)
+  const hh = contentH / (2 * boxH)
+  const cx = 0.5
+  const cy = 0.5
+  const corners = [
+    { x: cx - hw, y: cy - hh },
+    { x: cx + hw, y: cy - hh },
+    { x: cx + hw, y: cy + hh },
+    { x: cx - hw, y: cy + hh },
+  ]
+  return corners.every((p) => pointInShapeUnit(p.x, p.y, shape))
+}
+
+/**
+ * Minimum frame box so centered content fits inside the silhouette (fit-to-text).
+ * Free-resize (unlocked) frames keep the caller’s box — only inflate when hugging.
+ */
+export function inflateBoxForShapeContent(
+  shape: FrameShapeType,
+  contentW: number,
+  contentH: number
+): { width: number; height: number } {
+  const cw = Math.max(1, contentW)
+  const ch = Math.max(1, contentH)
+  if (shape === 'rectangle' || contentFitsInShapeBox(cw, ch, cw, ch, shape)) {
+    return { width: cw, height: ch }
+  }
+  let lo = 1
+  let hi = 16
+  while (hi - lo > 0.005) {
+    const mid = (lo + hi) / 2
+    if (contentFitsInShapeBox(cw * mid, ch * mid, cw, ch, shape)) hi = mid
+    else lo = mid
+  }
+  const k = hi + 0.04 // Pad past the fit threshold so glyphs clear complex silhouettes (plus, diamond, …)
+  return {
+    width: Math.max(FRAME_SHAPE_MIN_SIZE.width, Math.ceil(cw * k)),
+    height: Math.max(FRAME_SHAPE_MIN_SIZE.height, Math.ceil(ch * k)),
+  }
+}
+
+/** Apply silhouette inflation when the frame is locked (fit to text). */
+export function shapeFitContentBox(
+  intrinsic: { width: number; height: number },
+  shape: FrameShapeType | null | undefined,
+  fitToText: boolean
+): { width: number; height: number } {
+  if (!shape || !fitToText) return intrinsic
+  return inflateBoxForShapeContent(shape, intrinsic.width, intrinsic.height)
+}
+
 export function frameShapeClipCss(type: FrameShapeType): string | undefined {
   switch (type) {
     case 'rectangle':
@@ -213,8 +307,8 @@ export function frameShapeClipCss(type: FrameShapeType): string | undefined {
     case 'plus':
       return 'polygon(33% 0%, 67% 0%, 67% 33%, 100% 33%, 100% 67%, 67% 67%, 67% 100%, 33% 100%, 33% 67%, 0% 67%, 0% 33%, 33% 33%)'
     case 'cylinder':
-      // Cylinder arcs don’t map cleanly to CSS polygon — soft clip via rounded inset
-      return 'inset(8% 0 round 40%)'
+      // Match components/shapes/types/cylinder.tsx (bend = 12.5% of height)
+      return 'path("M 0 12.5%, L 0 87.5%, A 50% 12.5% 0 1 0 100% 87.5%, L 100% 12.5%, A 50% 12.5% 0 1 1 0% 12.5%, Z")'
     default:
       return undefined
   }

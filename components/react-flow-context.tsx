@@ -5,6 +5,10 @@ import { createContext, useContext, useState, useRef, useCallback, useEffect, us
 import { ReactFlowInstance } from 'reactflow'
 import { createClient } from '@/lib/supabase/client'
 import { usePathname } from 'next/navigation'
+import { parseBoardFontId, type BoardFontId } from '@/lib/board-font'
+
+import { isPublicBoardId } from '@/lib/public-showcase-boards'
+import { getEphemeralSandbox, isEphemeralSandboxId } from '@/lib/ephemeral-sandbox'
 
 interface ReactFlowContextType {
   reactFlowInstance: ReactFlowInstance | null
@@ -32,6 +36,8 @@ interface ReactFlowContextType {
   setBoardRule: (rule: 'wide' | 'college' | 'narrow') => void // Function to set board rule
   boardStyle: 'none' | 'dotted' | 'lined' | 'grid' // Board style state (background style)
   setBoardStyle: (style: 'none' | 'dotted' | 'lined' | 'grid') => void // Function to set board style
+  boardFont: BoardFontId // Frame text font (Default / Serif / Mono)
+  setBoardFont: (font: BoardFontId) => void // Function to set board font
   fillColor: string // Fill color state (for shapes/components)
   setFillColor: (color: string) => void // Function to set fill color
   borderColor: string // Border color state (for shapes/components)
@@ -48,8 +54,8 @@ interface ReactFlowContextType {
   setSelectedTag: (tagId: string | null) => void // Function to set selected tag (toggles if same tag clicked)
   isDrawing: boolean // Drawing mode state (true = drawing enabled, false = selection mode)
   setIsDrawing: (drawing: boolean) => void // Function to set drawing mode
-  drawTool: 'lasso' | 'pencil' | 'highlighter' | 'eraser' | null // Current drawing tool
-  setDrawTool: (tool: 'lasso' | 'pencil' | 'highlighter' | 'eraser' | null) => void // Function to set drawing tool
+  drawTool: DrawTool | null // Current Draw-bar tool (null = none armed)
+  setDrawTool: (tool: DrawTool | null) => void // Arm / disarm a Draw-bar tool
   drawShape: 'rectangle' | 'circle' | 'line' | 'arrow' | 'round-rectangle' | 'hexagon' | 'diamond' | 'arrow-rectangle' | 'cylinder' | 'triangle' | 'parallelogram' | 'plus' // Current shape
   setDrawShape: (shape: 'rectangle' | 'circle' | 'line' | 'arrow' | 'round-rectangle' | 'hexagon' | 'diamond' | 'arrow-rectangle' | 'cylinder' | 'triangle' | 'parallelogram' | 'plus') => void // Function to set shape
   // Undo/Redo functions for React Flow map actions (registered from BoardFlow where useUndoRedo hook is used)
@@ -67,41 +73,42 @@ interface ReactFlowContextType {
 const ReactFlowContext = createContext<ReactFlowContextType | undefined>(undefined)
 
 /** localStorage — last Actions/Layout/Draw/View so reload keeps that tool set. */
-const TT_PILL_MODE_KEY = 'thinktable-edit-menu-pill-mode'
+const NN_PILL_MODE_KEY = 'nodnotes-edit-menu-pill-mode'
 
 /** localStorage — last armed Draw tool (pencil/lasso/…) so reload keeps it toggled. */
-const TT_DRAW_TOOL_KEY = 'thinktable-draw-tool'
+const NN_DRAW_TOOL_KEY = 'nodnotes-draw-tool'
 
-const PILL_MODES = ['home', 'insert', 'draw', 'view'] as const // Valid pill values (Actions = home)
+const PILL_MODES = ['home', 'insert', 'draw', 'view'] as const // Valid pill values (Actions = home, Layout = insert)
 type EditMenuPillMode = (typeof PILL_MODES)[number] // Matches context editMenuPillMode
-const DRAW_TOOLS = ['lasso', 'pencil', 'highlighter', 'eraser'] as const // Valid Draw tools (null = none)
-type StoredDrawTool = (typeof DRAW_TOOLS)[number] // Armed Draw tool persisted across reload
+const DRAW_TOOLS = ['lasso', 'pencil', 'highlighter', 'eraser', 'insert-v', 'insert-h'] as const // Valid Draw tools (null = none); insert-v/h = insert space
+export type DrawTool = (typeof DRAW_TOOLS)[number] // Armed Draw tool (also the persisted value)
+type StoredDrawTool = DrawTool // Same set is what reload restores
 
 /** Read last pill; SSR-safe → Actions. */
 function getStoredPillMode(): EditMenuPillMode {
   if (typeof window === 'undefined') return 'home' // Server HTML always starts on Actions
-  const saved = localStorage.getItem(TT_PILL_MODE_KEY) // Last mode the user picked
+  const saved = localStorage.getItem(NN_PILL_MODE_KEY) // Last mode the user picked
   return PILL_MODES.includes(saved as EditMenuPillMode) ? (saved as EditMenuPillMode) : 'home' // Ignore junk
 }
 
 /** Remember the pill so the next load shows the same tools. */
 function persistPillMode(mode: EditMenuPillMode) {
   if (typeof window === 'undefined') return // No storage on server
-  localStorage.setItem(TT_PILL_MODE_KEY, mode) // Client restore on remount / reload
+  localStorage.setItem(NN_PILL_MODE_KEY, mode) // Client restore on remount / reload
 }
 
 /** Read last Draw tool; SSR-safe → none. */
 function getStoredDrawTool(): StoredDrawTool | null {
   if (typeof window === 'undefined') return null // Server: nothing armed
-  const saved = localStorage.getItem(TT_DRAW_TOOL_KEY) // Last toggled Draw tool
+  const saved = localStorage.getItem(NN_DRAW_TOOL_KEY) // Last toggled Draw tool
   return DRAW_TOOLS.includes(saved as StoredDrawTool) ? (saved as StoredDrawTool) : null // Ignore junk / empty
 }
 
 /** Remember the armed Draw tool (or clear when deselected). */
 function persistDrawTool(tool: StoredDrawTool | null) {
   if (typeof window === 'undefined') return // No storage on server
-  if (tool) localStorage.setItem(TT_DRAW_TOOL_KEY, tool) // Keep it armed after reload
-  else localStorage.removeItem(TT_DRAW_TOOL_KEY) // Deselect → next load has no Draw tool
+  if (tool) localStorage.setItem(NN_DRAW_TOOL_KEY, tool) // Keep it armed after reload
+  else localStorage.removeItem(NN_DRAW_TOOL_KEY) // Deselect → next load has no Draw tool
 }
 
 export function ReactFlowContextProvider({ children, conversationId, projectId }: { children: ReactNode; conversationId?: string; projectId?: string }) {
@@ -122,6 +129,7 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
   const [viewMode, setViewMode] = useState<'linear' | 'canvas'>('canvas') // View mode state
   const [boardRule, setBoardRule] = useState<'wide' | 'college' | 'narrow'>('college') // Board rule state (default: college)
   const [boardStyle, setBoardStyle] = useState<'none' | 'dotted' | 'lined' | 'grid'>('dotted') // Board style state (default: college dotted)
+  const [boardFont, setBoardFont] = useState<BoardFontId>('default') // Frame text font (More menu)
   const [fillColor, setFillColor] = useState<string>('') // Fill color state (default: transparent)
   const [borderColor, setBorderColor] = useState<string>('') // Border color state (default: transparent)
   const [borderWeight, setBorderWeight] = useState<number>(1) // Border weight state (default: 1px)
@@ -130,7 +138,7 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
   const [flashcardMode, setFlashcardMode] = useState<'flashcard' | 'quiz' | null>(null) // Flashcard study mode (null = off)
   const [selectedTag, setSelectedTag] = useState<string | null>(null) // Selected flashcard tag for filtering navigation
   const [isDrawing, setIsDrawing] = useState<boolean>(false) // Drawing mode state (default: selection mode)
-  const [drawTool, setDrawToolState] = useState<'lasso' | 'pencil' | 'highlighter' | 'eraser' | null>(null) // SSR: none; restore armed tool before paint
+  const [drawTool, setDrawToolState] = useState<DrawTool | null>(null) // SSR: none; restore armed tool before paint
   const [drawShape, setDrawShape] = useState<'rectangle' | 'circle' | 'line' | 'arrow' | 'round-rectangle' | 'hexagon' | 'diamond' | 'arrow-rectangle' | 'cylinder' | 'triangle' | 'parallelogram' | 'plus'>('rectangle') // Current shape (default: rectangle)
   const [snapEnabled, setSnapEnabled] = useState<boolean>(false) // Snap to grid/helper lines enabled state (default: disabled)
   
@@ -188,7 +196,7 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
     if (typeof window === 'undefined') return
 
     // STEP 1: Load from localStorage FIRST (synchronous, instant) - ensures UI shows saved prefs immediately
-    const storageKey = currentConversationId ? `thinktable-prefs-${currentConversationId}` : 'thinktable-prefs-default'
+    const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
     const savedPrefs = localStorage.getItem(storageKey)
     if (savedPrefs) {
       try {
@@ -209,18 +217,20 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
         if (prefs.boardStyle && ['none', 'dotted', 'lined', 'grid'].includes(prefs.boardStyle)) {
           setBoardStyle(prefs.boardStyle)
         }
+        const loadedFont = parseBoardFontId(prefs.boardFont)
+        if (loadedFont) setBoardFont(loadedFont)
       } catch (e) {
         // Fallback to old localStorage keys for backward compatibility
-        const savedLayoutMode = localStorage.getItem('thinktable-layout-mode') as 'auto' | 'tree' | 'cluster' | 'none' | null
+        const savedLayoutMode = localStorage.getItem('nodnotes-layout-mode') as 'auto' | 'tree' | 'cluster' | 'none' | null
         if (savedLayoutMode && ['auto', 'tree', 'cluster', 'none'].includes(savedLayoutMode)) {
           setLayoutMode(savedLayoutMode)
           setIsDeterministicMapping(savedLayoutMode !== 'none')
         }
-        const savedLineStyle = localStorage.getItem('thinktable-line-style') as 'solid' | 'dotted' | null
+        const savedLineStyle = localStorage.getItem('nodnotes-line-style') as 'solid' | 'dotted' | null
         if (savedLineStyle && ['solid', 'dotted'].includes(savedLineStyle)) {
           setLineStyle(savedLineStyle)
         }
-        const savedArrowDirection = localStorage.getItem('thinktable-arrow-direction') as 'down' | 'up' | 'left' | 'right' | null
+        const savedArrowDirection = localStorage.getItem('nodnotes-arrow-direction') as 'down' | 'up' | 'left' | 'right' | null
         if (savedArrowDirection && ['down', 'up', 'left', 'right'].includes(savedArrowDirection)) {
           setArrowDirection(savedArrowDirection)
         }
@@ -231,55 +241,64 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
     const supabase = createClient()
 
     try {
-      // Check if this is the homepage board (public access via API route)
-      let homepageBoardPrefs: any = null
-      try {
-        const homepageResponse = await fetch('/api/homepage-board')
-        if (homepageResponse.ok) {
-          const homepageData = await homepageResponse.json()
-          if (homepageData.conversation?.id === currentConversationId && homepageData.conversation?.metadata) {
-            homepageBoardPrefs = homepageData.conversation.metadata
+      let publicBoardPrefs: any = null
+      // Visitor sandbox — prefs come from the cloned master metadata
+      if (currentConversationId && isEphemeralSandboxId(currentConversationId)) {
+        publicBoardPrefs = getEphemeralSandbox(currentConversationId)?.conversation.metadata || null
+      } else if (currentConversationId && isPublicBoardId(currentConversationId)) {
+        try {
+          const publicResponse = await fetch(`/api/public-board/${currentConversationId}`)
+          if (publicResponse.ok) {
+            const publicData = await publicResponse.json()
+            if (publicData.conversation?.metadata) {
+              publicBoardPrefs = publicData.conversation.metadata
+            }
           }
+        } catch (e) {
+          // API failed — continue to the authenticated fetch below
         }
-      } catch (e) {
-        // Not homepage board or API failed, continue to normal fetch
       }
 
-      // If we got homepage board prefs, use them (works even if unauthenticated)
-      if (homepageBoardPrefs) {
-        if (homepageBoardPrefs.boardRule && ['wide', 'college', 'narrow'].includes(homepageBoardPrefs.boardRule)) {
-          setBoardRule(homepageBoardPrefs.boardRule)
-          const storageKey = currentConversationId ? `thinktable-prefs-${currentConversationId}` : 'thinktable-prefs-default'
+      if (publicBoardPrefs) {
+        if (publicBoardPrefs.boardRule && ['wide', 'college', 'narrow'].includes(publicBoardPrefs.boardRule)) {
+          setBoardRule(publicBoardPrefs.boardRule)
+          const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
           const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
-          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardRule: homepageBoardPrefs.boardRule }))
+          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardRule: publicBoardPrefs.boardRule }))
         }
-        if (homepageBoardPrefs.boardStyle && ['none', 'dotted', 'lined', 'grid'].includes(homepageBoardPrefs.boardStyle)) {
-          setBoardStyle(homepageBoardPrefs.boardStyle)
-          const storageKey = currentConversationId ? `thinktable-prefs-${currentConversationId}` : 'thinktable-prefs-default'
+        if (publicBoardPrefs.boardStyle && ['none', 'dotted', 'lined', 'grid'].includes(publicBoardPrefs.boardStyle)) {
+          setBoardStyle(publicBoardPrefs.boardStyle)
+          const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
           const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
-          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardStyle: homepageBoardPrefs.boardStyle }))
+          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardStyle: publicBoardPrefs.boardStyle }))
         }
-        // Also load other preferences from homepage board if they exist
-        if (homepageBoardPrefs.layoutMode && ['auto', 'tree', 'cluster', 'none'].includes(homepageBoardPrefs.layoutMode)) {
-          setLayoutMode(homepageBoardPrefs.layoutMode)
-          setIsDeterministicMapping(homepageBoardPrefs.layoutMode !== 'none')
-          const storageKey = currentConversationId ? `thinktable-prefs-${currentConversationId}` : 'thinktable-prefs-default'
+        const publicFont = parseBoardFontId(publicBoardPrefs.boardFont)
+        if (publicFont) {
+          setBoardFont(publicFont)
+          const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
           const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
-          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, layoutMode: homepageBoardPrefs.layoutMode }))
+          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardFont: publicFont }))
         }
-        if (homepageBoardPrefs.lineStyle && ['solid', 'dotted'].includes(homepageBoardPrefs.lineStyle)) {
-          setLineStyle(homepageBoardPrefs.lineStyle)
-          const storageKey = currentConversationId ? `thinktable-prefs-${currentConversationId}` : 'thinktable-prefs-default'
+        if (publicBoardPrefs.layoutMode && ['auto', 'tree', 'cluster', 'none'].includes(publicBoardPrefs.layoutMode)) {
+          setLayoutMode(publicBoardPrefs.layoutMode)
+          setIsDeterministicMapping(publicBoardPrefs.layoutMode !== 'none')
+          const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
           const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
-          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, lineStyle: homepageBoardPrefs.lineStyle }))
+          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, layoutMode: publicBoardPrefs.layoutMode }))
         }
-        if (homepageBoardPrefs.arrowDirection && ['down', 'up', 'left', 'right'].includes(homepageBoardPrefs.arrowDirection)) {
-          setArrowDirection(homepageBoardPrefs.arrowDirection)
-          const storageKey = currentConversationId ? `thinktable-prefs-${currentConversationId}` : 'thinktable-prefs-default'
+        if (publicBoardPrefs.lineStyle && ['solid', 'dotted'].includes(publicBoardPrefs.lineStyle)) {
+          setLineStyle(publicBoardPrefs.lineStyle)
+          const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
           const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
-          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, arrowDirection: homepageBoardPrefs.arrowDirection }))
+          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, lineStyle: publicBoardPrefs.lineStyle }))
         }
-        return // Homepage board loaded, skip authenticated fetch
+        if (publicBoardPrefs.arrowDirection && ['down', 'up', 'left', 'right'].includes(publicBoardPrefs.arrowDirection)) {
+          setArrowDirection(publicBoardPrefs.arrowDirection)
+          const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
+          const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
+          localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, arrowDirection: publicBoardPrefs.arrowDirection }))
+        }
+        return
       }
 
       // For non-homepage boards, require authentication
@@ -318,37 +337,45 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
             setLayoutMode(prefs.layoutMode)
             setIsDeterministicMapping(prefs.layoutMode !== 'none')
             // Save to localStorage for instant loading next time
-            const storageKey = currentConversationId ? `thinktable-prefs-${currentConversationId}` : 'thinktable-prefs-default'
+            const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
             const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
             localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, layoutMode: prefs.layoutMode }))
           }
 
           if (prefs.lineStyle && ['solid', 'dotted'].includes(prefs.lineStyle)) {
             setLineStyle(prefs.lineStyle)
-            const storageKey = currentConversationId ? `thinktable-prefs-${currentConversationId}` : 'thinktable-prefs-default'
+            const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
             const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
             localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, lineStyle: prefs.lineStyle }))
           }
 
           if (prefs.arrowDirection && ['down', 'up', 'left', 'right'].includes(prefs.arrowDirection)) {
             setArrowDirection(prefs.arrowDirection)
-            const storageKey = currentConversationId ? `thinktable-prefs-${currentConversationId}` : 'thinktable-prefs-default'
+            const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
             const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
             localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, arrowDirection: prefs.arrowDirection }))
           }
 
           if (prefs.boardRule && ['wide', 'college', 'narrow'].includes(prefs.boardRule)) {
             setBoardRule(prefs.boardRule)
-            const storageKey = currentConversationId ? `thinktable-prefs-${currentConversationId}` : 'thinktable-prefs-default'
+            const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
             const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
             localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardRule: prefs.boardRule }))
           }
 
           if (prefs.boardStyle && ['none', 'dotted', 'lined', 'grid'].includes(prefs.boardStyle)) {
             setBoardStyle(prefs.boardStyle)
-            const storageKey = currentConversationId ? `thinktable-prefs-${currentConversationId}` : 'thinktable-prefs-default'
+            const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
             const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
             localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardStyle: prefs.boardStyle }))
+          }
+
+          const syncedFont = parseBoardFontId((prefs as { boardFont?: unknown }).boardFont)
+          if (syncedFont) {
+            setBoardFont(syncedFont)
+            const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
+            const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
+            localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardFont: syncedFont }))
           }
         }
       }
@@ -364,21 +391,9 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
     conversationIdRef.current = conversationId
   }, [conversationId])
 
-  // Load preferences from Supabase (with localStorage fallback) after hydration
-  // This ensures consistent initial render on server and client, then updates after hydration
-  // Also loads when conversationId changes (navigating between boards)
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-
-    // Set loading flag to prevent saves during navigation/loading
-    isLoadingRef.current = true
-
-    // Load preferences for the current board
-    loadPreferencesFromSupabase(conversationId).finally(() => {
-      // Clear loading flag after load completes (allows saves to proceed)
-      isLoadingRef.current = false
-    })
-  }, [loadPreferencesFromSupabase, conversationId])
+  // Mount / board / pathname loads all live in ONE effect below (`pathname, conversationId`).
+  // Three effects used to call this loader with the same deps, so every mount and every board
+  // switch ran 3× auth.getUser + 3× conversations select before the board could settle.
 
   // Also reload from Supabase when window gains focus (to catch changes made in other tabs/windows)
   useEffect(() => {
@@ -409,12 +424,12 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
     const currentConversationId = conversationIdRef.current
 
     // Save to localStorage immediately (lightweight, instant)
-    const storageKey = currentConversationId ? `thinktable-prefs-${currentConversationId}` : 'thinktable-prefs-default'
+    const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
     const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
     localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, layoutMode }))
 
     // Also save to old key for backward compatibility
-    localStorage.setItem('thinktable-layout-mode', layoutMode)
+    localStorage.setItem('nodnotes-layout-mode', layoutMode)
 
     // Save to Supabase in background (for cross-device sync)
     const saveToSupabase = async () => {
@@ -503,12 +518,12 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
     const currentConversationId = conversationIdRef.current
 
     // Save to localStorage immediately (lightweight, instant)
-    const storageKey = currentConversationId ? `thinktable-prefs-${currentConversationId}` : 'thinktable-prefs-default'
+    const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
     const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
     localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, lineStyle }))
 
     // Also save to old key for backward compatibility
-    localStorage.setItem('thinktable-line-style', lineStyle)
+    localStorage.setItem('nodnotes-line-style', lineStyle)
 
     // Save to Supabase in background (for cross-device sync)
     const saveToSupabase = async () => {
@@ -597,7 +612,7 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
     const currentConversationId = conversationIdRef.current
 
     // Save to localStorage immediately (lightweight, instant)
-    const storageKey = currentConversationId ? `thinktable-prefs-${currentConversationId}` : 'thinktable-prefs-default'
+    const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
     const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
     localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardRule }))
 
@@ -688,7 +703,7 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
     const currentConversationId = conversationIdRef.current
 
     // Save to localStorage immediately (lightweight, instant)
-    const storageKey = currentConversationId ? `thinktable-prefs-${currentConversationId}` : 'thinktable-prefs-default'
+    const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
     const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
     localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardStyle }))
 
@@ -767,6 +782,57 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
     saveToSupabase()
   }, [boardStyle]) // Only run when boardStyle changes, NOT when conversationId changes
 
+  // Save board font to localStorage and Supabase when it changes
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (isLoadingRef.current) return
+
+    const currentConversationId = conversationIdRef.current
+    const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
+    const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
+    localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardFont }))
+
+    const saveToSupabase = async () => {
+      try {
+        const supabase = createClient()
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) return
+
+        if (currentConversationId) {
+          const { data: conversation, error: fetchError } = await supabase
+            .from('conversations')
+            .select('metadata')
+            .eq('id', currentConversationId)
+            .eq('user_id', user.id)
+            .single()
+          if (fetchError) return
+          const existingMetadata = (conversation?.metadata as Record<string, unknown>) || {}
+          await supabase
+            .from('conversations')
+            .update({ metadata: { ...existingMetadata, boardFont } })
+            .eq('id', currentConversationId)
+            .eq('user_id', user.id)
+        } else {
+          const { data: profile, error: fetchError } = await supabase
+            .from('profiles')
+            .select('metadata')
+            .eq('id', user.id)
+            .single()
+          if (fetchError) return
+          const existingMetadata = (profile?.metadata as Record<string, unknown>) || {}
+          await supabase
+            .from('profiles')
+            .update({ metadata: { ...existingMetadata, boardFont } })
+            .eq('id', user.id)
+        }
+      } catch (error) {
+        console.error('Error saving board font to Supabase:', error)
+      }
+    }
+
+    void saveToSupabase()
+  }, [boardFont])
+
   // Save arrow direction to localStorage and Supabase when it changes
   // If conversationId is undefined, saves to profiles.metadata (default board)
   // If conversationId exists, saves to conversations.metadata (specific board)
@@ -779,12 +845,12 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
     const currentConversationId = conversationIdRef.current
 
     // Save to localStorage immediately (lightweight, instant)
-    const storageKey = currentConversationId ? `thinktable-prefs-${currentConversationId}` : 'thinktable-prefs-default'
+    const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
     const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
     localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, arrowDirection }))
 
     // Also save to old key for backward compatibility
-    localStorage.setItem('thinktable-arrow-direction', arrowDirection)
+    localStorage.setItem('nodnotes-arrow-direction', arrowDirection)
 
     // Save to Supabase in background (for cross-device sync)
     const saveToSupabase = async () => {
@@ -931,13 +997,13 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
           }
 
           // Also copy to localStorage for instant loading
-          const defaultStorageKey = 'thinktable-prefs-default'
+          const defaultStorageKey = 'nodnotes-prefs-default'
           const defaultPrefsStr = localStorage.getItem(defaultStorageKey)
           if (defaultPrefsStr) {
-            localStorage.setItem(`thinktable-prefs-${newConversationId}`, defaultPrefsStr)
+            localStorage.setItem(`nodnotes-prefs-${newConversationId}`, defaultPrefsStr)
           } else {
             // If no default prefs in localStorage, save current state
-            localStorage.setItem(`thinktable-prefs-${newConversationId}`, JSON.stringify(currentPrefs))
+            localStorage.setItem(`nodnotes-prefs-${newConversationId}`, JSON.stringify(currentPrefs))
           }
         } catch (error) {
           console.error('Error copying preferences to new board:', error)
@@ -1017,18 +1083,7 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
     })
   }, [pathname, conversationId, loadPreferencesFromSupabase])
 
-  // Also reload preferences when the component mounts (in case it re-mounts on navigation)
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-
-    // Set loading flag to prevent saves during reload
-    isLoadingRef.current = true
-
-    // Load immediately - localStorage is instant, Supabase syncs in background
-    loadPreferencesFromSupabase(conversationId).finally(() => {
-      isLoadingRef.current = false
-    })
-  }, [loadPreferencesFromSupabase, conversationId])
+  // (Mount reload folded into the pathname/conversationId effect above — it fired on the same deps.)
 
   // Sync deterministic mapping state with layoutMode
   // None = no branching (disabled), Auto/Tree/Cluster = branching (enabled)
@@ -1070,7 +1125,7 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
   }, [])
 
   return (
-    <ReactFlowContext.Provider value={{ reactFlowInstance, setReactFlowInstance, getSetNodes, registerSetNodes, isLocked, setIsLocked, layoutMode, setLayoutMode, isDeterministicMapping, setIsDeterministicMapping, panelWidth, setPanelWidth, isPromptBoxCentered, setIsPromptBoxCentered, lineStyle, setLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, setEditMenuPillMode, viewMode, boardRule, setBoardRule, boardStyle, setBoardStyle, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, setClickedEdge, flashcardMode, setFlashcardMode, selectedTag, setSelectedTag: toggleSelectedTag, isDrawing, setIsDrawing, drawTool, setDrawTool, drawShape, setDrawShape, mapUndo, mapRedo, canMapUndo: mapUndoRedoState.canUndo, canMapRedo: mapUndoRedoState.canRedo, registerMapUndoRedo, getMapTakeSnapshot, registerMapTakeSnapshot, snapEnabled, setSnapEnabled }}>
+    <ReactFlowContext.Provider value={{ reactFlowInstance, setReactFlowInstance, getSetNodes, registerSetNodes, isLocked, setIsLocked, layoutMode, setLayoutMode, isDeterministicMapping, setIsDeterministicMapping, panelWidth, setPanelWidth, isPromptBoxCentered, setIsPromptBoxCentered, lineStyle, setLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, setEditMenuPillMode, viewMode, boardRule, setBoardRule, boardStyle, setBoardStyle, boardFont, setBoardFont, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, setClickedEdge, flashcardMode, setFlashcardMode, selectedTag, setSelectedTag: toggleSelectedTag, isDrawing, setIsDrawing, drawTool, setDrawTool, drawShape, setDrawShape, mapUndo, mapRedo, canMapUndo: mapUndoRedoState.canUndo, canMapRedo: mapUndoRedoState.canRedo, registerMapUndoRedo, getMapTakeSnapshot, registerMapTakeSnapshot, snapEnabled, setSnapEnabled }}>
       {children}
     </ReactFlowContext.Provider>
   )
@@ -1080,7 +1135,7 @@ export function useReactFlowContext() {
   const context = useContext(ReactFlowContext)
   if (context === undefined) {
     // Return null values if context is not available (graceful degradation)
-    return { reactFlowInstance: null, setReactFlowInstance: () => { }, getSetNodes: () => undefined, registerSetNodes: () => { }, isLocked: false, setIsLocked: () => { }, layoutMode: 'auto' as const, setLayoutMode: () => { }, isDeterministicMapping: false, setIsDeterministicMapping: () => { }, panelWidth: 768, setPanelWidth: () => { }, isPromptBoxCentered: false, setIsPromptBoxCentered: () => { }, lineStyle: 'solid' as const, setLineStyle: () => { }, arrowDirection: 'down' as const, setArrowDirection: () => { }, editMenuPillMode: 'home' as const, setEditMenuPillMode: () => { }, viewMode: 'canvas' as const, boardRule: 'college' as const, setBoardRule: () => { }, boardStyle: 'dotted' as const, setBoardStyle: () => { }, fillColor: '', setFillColor: () => { }, borderColor: '', setBorderColor: () => { }, borderWeight: 1, setBorderWeight: () => { }, borderStyle: 'solid' as const, setBorderStyle: () => { }, clickedEdge: null, setClickedEdge: () => { }, flashcardMode: null, setFlashcardMode: () => { }, selectedTag: null, setSelectedTag: () => { }, isDrawing: false, setIsDrawing: () => { }, drawTool: null, setDrawTool: () => { }, drawShape: 'rectangle' as const, setDrawShape: () => { }, mapUndo: () => { }, mapRedo: () => { }, canMapUndo: false, canMapRedo: false, registerMapUndoRedo: () => { }, getMapTakeSnapshot: () => undefined, registerMapTakeSnapshot: () => { }, snapEnabled: false, setSnapEnabled: () => { } }
+    return { reactFlowInstance: null, setReactFlowInstance: () => { }, getSetNodes: () => undefined, registerSetNodes: () => { }, isLocked: false, setIsLocked: () => { }, layoutMode: 'auto' as const, setLayoutMode: () => { }, isDeterministicMapping: false, setIsDeterministicMapping: () => { }, panelWidth: 768, setPanelWidth: () => { }, isPromptBoxCentered: false, setIsPromptBoxCentered: () => { }, lineStyle: 'solid' as const, setLineStyle: () => { }, arrowDirection: 'down' as const, setArrowDirection: () => { }, editMenuPillMode: 'home' as const, setEditMenuPillMode: () => { }, viewMode: 'canvas' as const, boardRule: 'college' as const, setBoardRule: () => { }, boardStyle: 'dotted' as const, setBoardStyle: () => { }, boardFont: 'default' as const, setBoardFont: () => { }, fillColor: '', setFillColor: () => { }, borderColor: '', setBorderColor: () => { }, borderWeight: 1, setBorderWeight: () => { }, borderStyle: 'solid' as const, setBorderStyle: () => { }, clickedEdge: null, setClickedEdge: () => { }, flashcardMode: null, setFlashcardMode: () => { }, selectedTag: null, setSelectedTag: () => { }, isDrawing: false, setIsDrawing: () => { }, drawTool: null, setDrawTool: () => { }, drawShape: 'rectangle' as const, setDrawShape: () => { }, mapUndo: () => { }, mapRedo: () => { }, canMapUndo: false, canMapRedo: false, registerMapUndoRedo: () => { }, getMapTakeSnapshot: () => undefined, registerMapTakeSnapshot: () => { }, snapEnabled: false, setSnapEnabled: () => { } }
   }
   return context
 }

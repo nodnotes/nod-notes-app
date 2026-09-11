@@ -4,10 +4,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { importNotionPagesToBoard } from '@/lib/notion/import-to-board'
+import { getNotionConnection } from '@/lib/notion/connection'
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient() // Session
+    const supabase = await createClient()
     const {
       data: { user },
       error: userError,
@@ -18,19 +19,16 @@ export async function POST(request: NextRequest) {
     }
 
     const body = (await request.json().catch(() => ({}))) as {
-      returnTo?: string // Board path preference
-      pageIds?: string[] // Picks from the import modal
-      mode?: 'card' | 'mindmap' // Add as card vs generate mindmap
+      returnTo?: string
+      pageIds?: string[]
+      mode?: 'card' | 'mindmap'
+      workspaceId?: string
     }
 
-    const admin = createAdminClient() // Read stored token
-    const { data: connection, error: connError } = await admin
-      .from('notion_connections')
-      .select('access_token, workspace_name')
-      .eq('user_id', user.id)
-      .maybeSingle()
+    const admin = createAdminClient()
+    const connection = await getNotionConnection(admin, user.id, body.workspaceId)
 
-    if (connError || !connection?.access_token) {
+    if (!connection?.access_token) {
       return NextResponse.json({ error: 'Notion is not connected' }, { status: 400 })
     }
 
@@ -45,10 +43,14 @@ export async function POST(request: NextRequest) {
       workspaceName: connection.workspace_name,
       pageIds: body.pageIds,
       mode: body.mode || 'card',
+      signal: request.signal, // Picker Cancel aborts the client fetch → this signal
     })
 
     return NextResponse.json(imported) // conversationId + counts for client navigation
   } catch (error) {
+    if (request.signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
+      return NextResponse.json({ cancelled: true, error: 'Import cancelled' }, { status: 499 })
+    }
     console.error('Notion import failed:', error)
     return NextResponse.json({ error: 'Failed to import Notion pages' }, { status: 500 })
   }

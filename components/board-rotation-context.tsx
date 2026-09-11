@@ -22,7 +22,13 @@ import {
   twistSnapHeading,
   viewportKeepingPanePoint,
 } from '@/lib/board-rotation'
-import { beginBoardNavigating, endBoardNavigating } from '@/lib/board-navigating'
+import {
+  beginBoardNavigating,
+  endBoardNavigating,
+  syncBoardZoomCss,
+  touchBoardNavigating,
+} from '@/lib/board-navigating'
+import { clampBoardZoom } from '@/lib/board-extent'
 
 const CHROME_SEL =
   '[data-minimap-toggle-context], [data-minimap-context], [data-minimap-pill-context], [data-edit-top-bar]' // Free nav / minimap / top bar — never steal twist from chrome
@@ -224,7 +230,7 @@ export function BoardRotationProvider({ children }: { children: ReactNode }) {
           return
         }
         const vp = instance.getViewport()
-        const nextZoom = Math.min(2, Math.max(0.1, vp.zoom * Math.pow(2, vz * dt)))
+        const nextZoom = clampBoardZoom(vp.zoom * Math.pow(2, vz * dt))
         if (nextZoom === vp.zoom) {
           inertiaRaf = 0
           return
@@ -242,6 +248,7 @@ export function BoardRotationProvider({ children }: { children: ReactNode }) {
       g.stuckAtZero = stuckAtZero
       const next = viewportKeepingPanePoint(paneX, paneY, vp, rotationRef.current, heading, zoom)
       instance.setViewport(next)
+      syncBoardZoomCss(next.zoom, storeApi.getState().domNode) // Screen-constant chrome mid-pinch
       if (heading === rotationRef.current) return // Pan/zoom only — skip a React render every frame
       rotationRef.current = heading
       boardRotationRef.current = heading
@@ -251,6 +258,7 @@ export function BoardRotationProvider({ children }: { children: ReactNode }) {
     // Pinch always zooms. Scroll nav: mid travel pans (+ coast). Zoom nav: mid travel zooms (+ coast) like trackpad.
     const applyTwoFinger = (ax: number, ay: number, bx: number, by: number) => {
       if (!pinch) return
+      touchBoardNavigating(instance.getViewport().zoom) // Heartbeat + live CSS chrome
       const dx = bx - ax
       const dy = by - ay
       const dist = Math.hypot(dx, dy) || 1
@@ -292,7 +300,7 @@ export function BoardRotationProvider({ children }: { children: ReactNode }) {
       const angle = Math.atan2(dy, dx)
       const dDeg = ((angle - pinch.startAngle) * 180) / Math.PI
       const pinchZoom = pinch.startZoom * (dist / pinch.startDist) // Spread/pinch distance
-      const nextZoom = Math.min(2, Math.max(0.1, pinchZoom * Math.pow(2, pinch.swipeLog)))
+      const nextZoom = clampBoardZoom(pinchZoom * Math.pow(2, pinch.swipeLog))
       applyTwist(dDeg, dist / pinch.startDist, paneX, paneY, nextZoom, pinch, panned)
     }
 
@@ -453,7 +461,7 @@ export function BoardRotationProvider({ children }: { children: ReactNode }) {
       const cx = typeof ge.clientX === 'number' && ge.clientX !== 0 ? ge.clientX : lastX
       const cy = typeof ge.clientY === 'number' && ge.clientY !== 0 ? ge.clientY : lastY
       const scale = ge.scale || 1
-      const nextZoom = Math.min(2, Math.max(0.1, safari.startZoom * scale))
+      const nextZoom = clampBoardZoom(safari.startZoom * scale)
       applyTwist(ge.rotation || 0, scale, cx - rect.left, cy - rect.top, nextZoom, safari, vp)
     }
     const onGestureEnd = () => {
@@ -473,14 +481,21 @@ export function BoardRotationProvider({ children }: { children: ReactNode }) {
     if (domNode) gestureHosts.push(domNode) // Events that do target the board still bubble here
 
     const useSafariTrackpad = !isIosTouch() // Chrome never fires these; Safari Mac does
+    // Safari-only GestureEvent IDL slots — absent from TS's DOM lib, so widen before assigning.
+    type SafariGestureHost = HTMLElement & {
+      ongesturestart: unknown
+      ongesturechange: unknown
+      ongestureend: unknown
+    }
     const bindGesture = (t: EventTarget) => {
       t.addEventListener('gesturestart', onGestureStart, gestureBubble)
       t.addEventListener('gesturechange', onGestureChange, gestureBubble)
       t.addEventListener('gestureend', onGestureEnd, gestureBubble)
       if (t instanceof HTMLElement) {
-        t.ongesturestart = onGestureStart as never // IDL path — some Safari builds ignore addEventListener
-        t.ongesturechange = onGestureChange as never
-        t.ongestureend = onGestureEnd as never
+        const host = t as SafariGestureHost
+        host.ongesturestart = onGestureStart // IDL path — some Safari builds ignore addEventListener
+        host.ongesturechange = onGestureChange
+        host.ongestureend = onGestureEnd
       }
     }
     const unbindGesture = (t: EventTarget) => {
@@ -488,9 +503,10 @@ export function BoardRotationProvider({ children }: { children: ReactNode }) {
       t.removeEventListener('gesturechange', onGestureChange, false)
       t.removeEventListener('gestureend', onGestureEnd, false)
       if (t instanceof HTMLElement) {
-        t.ongesturestart = null
-        t.ongesturechange = null
-        t.ongestureend = null
+        const host = t as SafariGestureHost
+        host.ongesturestart = null
+        host.ongesturechange = null
+        host.ongestureend = null
       }
     }
     if (useSafariTrackpad) {

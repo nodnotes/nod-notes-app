@@ -4,13 +4,16 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { DEFAULT_BOARD_TITLE } from '@/lib/board-title' // Nav + / nested mint use the same default as empty `/board`
 import type { User } from '@supabase/supabase-js'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, MoreVertical, MoreHorizontal, Trash2, SquarePen, Pencil, ChevronDown, FolderPlus, File, FileText, Folder, FolderOpen, Loader2, Share2, UserPlus, CornerUpLeft, Sparkles, HelpCircle, LogOut, ChevronRight as ChevronRightIcon, Settings } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Trash2, Pencil, ChevronDown, File, FileText, Folder, FolderOpen, Loader2, Share2, UserPlus, CornerUpLeft, Sparkles, HelpCircle, LogOut, ChevronRight as ChevronRightIcon, Settings } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { SettingsPanel } from '@/components/settings-panel'
 import { UpgradePanel } from '@/components/upgrade-panel'
+import { OpenMojiImg } from '@/components/openmoji-picker'
+import { resolveAvatarColor } from '@/lib/avatar-colors'
 import { cn } from '@/lib/utils'
 import Picker from '@emoji-mart/react'
 import data from '@emoji-mart/data'
@@ -35,7 +38,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { useSidebarContext } from './sidebar-context'
-import { demoteBlockForDeletedBoard, syncBoardRenameToBlock } from '@/lib/blocks' // Keep block cards ↔ pages in sync
+import { useLiveAuthUser, waitForAuthUserId } from '@/lib/use-live-auth-user'
+import { demoteBlockForDeletedBoard, expandBoardsForDelete, syncBoardRenameToBlock } from '@/lib/blocks' // Keep block cards ↔ pages in sync; cascade nested deletes
+import {
+  isPaidSubscriptionTier,
+  subscriptionTierLabel,
+} from '@/lib/subscription-plans'
 import {
   DndContext,
   closestCenter,
@@ -188,12 +196,17 @@ function PageIconButton({
 function SortableBoardItem({
   conversation,
   isActive,
+  isSelected, // Multi-select wash (Shift / ⌘-Ctrl click)
   isDeleting,
   deletingConversationId,
   isRenaming,
   pathname,
   openRenameDialog,
   openDeleteDialog,
+  onShareBoards, // Share this row or all multi-selected
+  onMoveBoardsToProject, // Move this row or all multi-selected into a project
+  onRemoveBoardsFromProject, // Remove this row or all multi-selected from the project
+  onBoardRowClick, // Plain opens; Shift range / ⌘ toggle select
   dragOverId,
   dragOverPosition,
   activeId,
@@ -207,16 +220,24 @@ function SortableBoardItem({
   hasChildren = false, // True when this board has nested sub-pages
   isExpanded = false, // Whether children are visible
   onToggleExpand, // Expand/collapse nested children
+  onCreateSubBoard, // Mint an Untitled child nested under this board
+  isCreatingBoard, // Disable New board while a mint is in flight
+  selectedBoardIds, // Multi-select set — menu bulk actions when this row is in it
   userId, // Owner id for icon updates
 }: {
   conversation: Conversation
   isActive: boolean
+  isSelected?: boolean // True when this row is in the multi-selection
   isDeleting: boolean
   deletingConversationId: string | null
   isRenaming: boolean
   pathname: string
   openRenameDialog: (conv: Conversation) => void
   openDeleteDialog: (conv: Conversation) => void
+  onShareBoards?: (anchor: Conversation) => void // Confirm + copy link(s)
+  onMoveBoardsToProject?: (anchor: Conversation, project: Project) => void // Confirm + assign project_id
+  onRemoveBoardsFromProject?: (anchor: Conversation) => void // Confirm + clear project_id
+  onBoardRowClick?: (e: React.MouseEvent, boardId: string) => boolean // true = handled (no navigate)
   dragOverId: string | null
   dragOverPosition: 'above' | 'below' | 'top' | 'bottom' | 'into' | null
   activeId: string | null
@@ -230,6 +251,9 @@ function SortableBoardItem({
   hasChildren?: boolean
   isExpanded?: boolean
   onToggleExpand?: (id: string) => void
+  onCreateSubBoard?: (parent: Conversation) => void // Nested Untitled board under this row
+  isCreatingBoard?: boolean // True while any board mint is in flight
+  selectedBoardIds?: Set<string> // Boards currently multi-selected
   userId: string // Owner id for icon updates
 }) {
   // Fetch bookmark count for this conversation
@@ -263,6 +287,8 @@ function SortableBoardItem({
     staleTime: 30000, // Cache for 30 seconds
   })
 
+  const router = useRouter()
+  const { closeSidebar } = useSidebarContext() // Dismiss nav when a board is opened
   const {
     attributes,
     listeners,
@@ -271,6 +297,19 @@ function SortableBoardItem({
     transition,
     isDragging,
   } = useSortable({ id: conversation.id })
+
+  const openBoard = () => {
+    if (isDragging) return // Drag in progress — ignore stray click
+    router.push(`/board/${conversation.id}`) // Explicit nav survives popup unmount on phone
+    closeSidebar() // Board select dismisses the nav (same as outside click)
+  }
+
+  // Plain click opens; Shift / ⌘-Ctrl updates multi-select without navigating
+  const handleTitleClick = (e: React.MouseEvent) => {
+    e.preventDefault() // router.push owns navigation (Link unmount from closeSidebar can cancel default)
+    if (onBoardRowClick?.(e, conversation.id)) return // Modifier select handled — stay in the menu
+    openBoard()
+  }
 
   // Don't apply transform during drag - keep all items in place
   // Only show opacity change and cursor for the dragged item
@@ -287,6 +326,12 @@ function SortableBoardItem({
   const showNestHighlight = dragOverId === conversation.id && dragOverPosition === 'into' // Dropping into this page
   const showIndicatorTop = dragOverPosition === 'top' && conversation.id === filteredConversations[0]?.id
   const showIndicatorBottom = dragOverPosition === 'bottom' && conversation.id === filteredConversations[filteredConversations.length - 1]?.id
+  // Menu Share / Move / Delete hit the whole multi-selection when this row is in it
+  const actionTargetCount =
+    selectedBoardIds && selectedBoardIds.size > 1 && selectedBoardIds.has(conversation.id)
+      ? selectedBoardIds.size
+      : 1
+  const isBulkTarget = actionTargetCount > 1 // Rename / Add board inside stay single-board only
 
   return (
     <li ref={setNodeRef} style={style} data-id={conversation.id}>
@@ -304,15 +349,18 @@ function SortableBoardItem({
         {...attributes}
         {...listeners}
         className={cn(
-          'flex items-center gap-1 pr-4 h-8 rounded-lg transition-colors text-sm group cursor-grab active:cursor-grabbing relative',
+          // Always 1px border so select wash doesn’t jump the row; color matches property-cell hover
+          'flex items-center gap-1 pr-4 h-8 rounded-lg border border-transparent transition-colors text-sm group cursor-grab active:cursor-grabbing relative select-none',
           isActive
-            ? 'bg-blue-50 dark:bg-[#2a2a3a]'
-            : 'hover:bg-gray-50 dark:hover:bg-[#1f1f1f]', // CSS hover requires window focus (as intended)
+            ? 'tt-selected' // Open board — grey selected wash
+            // Hover bg only on real hover devices — iOS sticky :hover ate the first board tap
+            : '[@media(hover:hover)]:hover:bg-gray-50 dark:[@media(hover:hover)]:hover:bg-[#1f1f1f]',
+          isSelected && 'border-[#e5e7eb] dark:border-[#374151]', // Same grey as .tt-property-block-cell hover
           isDragging && 'cursor-grabbing opacity-50',
           // Clear nest-into affordance when hovering center of a page
           showNestHighlight && 'bg-blue-100 dark:bg-blue-950/50 ring-2 ring-inset ring-blue-500 dark:ring-blue-400'
         )}
-        style={{ paddingLeft: `${16 + depth * 14}px` }} // Indent nested sub-pages
+        style={{ paddingLeft: `${16 + depth * 14}px`, touchAction: 'manipulation' }} // Indent nested sub-pages; skip double-tap zoom delay
         title={showNestHighlight ? 'Drop to nest inside' : undefined}
       >
         {showNestHighlight && (
@@ -349,12 +397,8 @@ function SortableBoardItem({
         <Link
           href={`/board/${conversation.id}`}
           className="flex items-center gap-2 flex-1 min-w-0 text-gray-700 dark:text-gray-300"
-          onClick={(e) => {
-            // Prevent navigation when dragging
-            if (isDragging) {
-              e.preventDefault()
-            }
-          }}
+          onPointerDown={(e) => e.stopPropagation()} // Don't let dnd-kit swallow the tap before navigation
+          onClick={handleTitleClick}
         >
           <span className="flex items-center gap-1.5 flex-1 min-w-0">
             <span className="truncate">{conversation.title}</span>
@@ -369,15 +413,44 @@ function SortableBoardItem({
           </span>
         </Link>
 
-        {/* Dropdown menu button */}
+        {/* Hover actions: + nests a child board; … opens the rest of the options */}
+        <div
+          className={cn(
+            'flex items-center flex-shrink-0 transition-opacity',
+            // Always visible on touch; fade in on hover-capable pointers only (avoids sticky first-tap)
+            'opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100'
+          )}
+        >
+          <Button
+            variant="ghost"
+            size="icon"
+            className={cn(
+              'h-8 w-6 hover:bg-transparent',
+              isActive
+                ? 'text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-900'
+                : 'text-gray-500 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-200'
+            )}
+            title="Add board inside" // Tooltip for the nested-board mint
+            aria-label="Add board inside"
+            disabled={isCreatingBoard} // One mint at a time
+            onClick={(e) => {
+              e.stopPropagation() // Don't navigate the row
+              e.preventDefault()
+              onCreateSubBoard?.(conversation) // Nest an Untitled board under this one
+            }}
+            onPointerDown={(e) => {
+              e.stopPropagation() // Don't start drag from +
+            }}
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
               size="icon"
               className={cn(
-                'h-8 w-6 transition-opacity hover:bg-transparent',
-                'opacity-0 group-hover:opacity-100', // CSS group-hover requires window focus (as intended)
+                'h-8 w-6 hover:bg-transparent',
                 isActive
                   ? 'text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-900'
                   : 'text-gray-500 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-200'
@@ -397,22 +470,29 @@ function SortableBoardItem({
           <DropdownMenuContent align="end" className="w-48">
             <DropdownMenuItem
               onClick={(e) => {
+                e.stopPropagation() // Don't navigate the row
+                onCreateSubBoard?.(conversation) // Nest an Untitled board under this one
+              }}
+              disabled={isCreatingBoard || isBulkTarget} // Bulk select → no nested mint
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add board inside
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={(e) => {
                 e.stopPropagation()
-                // Share functionality - copy board URL to clipboard
-                const boardUrl = `${window.location.origin}/board/${conversation.id}`
-                navigator.clipboard.writeText(boardUrl)
-                // TODO: Show toast notification
+                onShareBoards?.(conversation) // Confirm then copy link(s)
               }}
             >
               <Share2 className="h-4 w-4 mr-2" />
-              Share
+              {isBulkTarget ? `Share (${actionTargetCount})` : 'Share'}
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={(e) => {
                 e.stopPropagation()
                 openRenameDialog(conversation)
               }}
-              disabled={isRenaming}
+              disabled={isRenaming || isBulkTarget} // Rename one board at a time
             >
               <Pencil className="h-4 w-4 mr-2" />
               Rename
@@ -424,55 +504,19 @@ function SortableBoardItem({
                 }}
               >
                 <Folder className="h-4 w-4 mr-2" />
-                Move to project
+                {isBulkTarget ? `Move to project (${actionTargetCount})` : 'Move to project'}
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent>
                 {projects.length > 0 ? (
-                  projects.map((project) => (
+                  projects.map((proj) => (
                     <DropdownMenuItem
-                      key={project.id}
-                      onClick={async (e) => {
+                      key={proj.id}
+                      onClick={(e) => {
                         e.stopPropagation()
-                        try {
-                          const { data: conversationData, error: fetchError } = await supabase
-                            .from('conversations')
-                            .select('metadata')
-                            .eq('id', conversation.id)
-                            .single()
-
-                          if (fetchError) throw new Error(fetchError.message || 'Failed to fetch conversation')
-
-                          const existingMetadata = (conversationData?.metadata as Record<string, any>) || {}
-                          const updatedMetadata = { ...existingMetadata, project_id: project.id }
-
-                          const { error } = await supabase
-                            .from('conversations')
-                            .update({ metadata: updatedMetadata })
-                            .eq('id', conversation.id)
-
-                          if (error) {
-                            console.error('Error moving board to project:', error)
-                            alert('Failed to move board to project. Please try again.')
-                          } else {
-                            // Optimistic update
-                            queryClient.setQueryData(['conversations'], (oldData: Conversation[] | undefined) => {
-                              if (!oldData) return oldData
-                              return oldData.map((conv) =>
-                                conv.id === conversation.id ? { ...conv, metadata: updatedMetadata } : conv
-                              )
-                            })
-
-                            // Refetch
-                            queryClient.invalidateQueries({ queryKey: ['conversations'] })
-                            refetch()
-                          }
-                        } catch (error: any) {
-                          console.error('Error moving board to project:', error)
-                          alert('Failed to move board to project. Please try again.')
-                        }
+                        onMoveBoardsToProject?.(conversation, proj) // Confirm then assign
                       }}
                     >
-                      {project.name}
+                      {proj.name}
                     </DropdownMenuItem>
                   ))
                 ) : (
@@ -484,67 +528,37 @@ function SortableBoardItem({
             </DropdownMenuSub>
             {project && (
               <DropdownMenuItem
-                onClick={async (e) => {
+                onClick={(e) => {
                   e.stopPropagation()
-                  try {
-                    const { data: conversationData, error: fetchError } = await supabase
-                      .from('conversations')
-                      .select('metadata')
-                      .eq('id', conversation.id)
-                      .single()
-
-                    if (fetchError) throw new Error(fetchError.message || 'Failed to fetch conversation')
-
-                    const existingMetadata = (conversationData?.metadata as Record<string, any>) || {}
-                    const updatedMetadata = { ...existingMetadata }
-                    // Remove project_id from metadata
-                    delete updatedMetadata.project_id
-
-                    const { error } = await supabase
-                      .from('conversations')
-                      .update({ metadata: updatedMetadata })
-                      .eq('id', conversation.id)
-
-                    if (error) {
-                      console.error('Error removing board from project:', error)
-                      alert('Failed to remove board from project. Please try again.')
-                    } else {
-                      // Optimistic update
-                      queryClient.setQueryData(['conversations'], (oldData: Conversation[] | undefined) => {
-                        if (!oldData) return oldData
-                        return oldData.map((conv) =>
-                          conv.id === conversation.id ? { ...conv, metadata: updatedMetadata } : conv
-                        )
-                      })
-
-                      // Refetch
-                      queryClient.invalidateQueries({ queryKey: ['conversations'] })
-                      refetch()
-                    }
-                  } catch (error: any) {
-                    console.error('Error removing board from project:', error)
-                    alert('Failed to remove board from project. Please try again.')
-                  }
+                  onRemoveBoardsFromProject?.(conversation) // Confirm then clear project_id
                 }}
               >
                 <CornerUpLeft className="h-4 w-4 mr-2" />
-                Remove from {project.name}
+                {isBulkTarget
+                  ? `Remove from ${project.name} (${actionTargetCount})`
+                  : `Remove from ${project.name}`}
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator className="mx-2 my-1" />
             <DropdownMenuItem
               onClick={(e) => {
                 e.stopPropagation()
-                openDeleteDialog(conversation)
+                openDeleteDialog(conversation) // Confirm then delete one or all selected
               }}
-              disabled={deletingConversationId === conversation.id}
+              disabled={deletingConversationId !== null}
               className="text-red-600 focus:text-red-600 focus:bg-red-50"
             >
               <Trash2 className="h-4 w-4 mr-2" />
-              {deletingConversationId === conversation.id ? 'Deleting...' : 'Delete'}
+              {deletingConversationId
+                ? 'Deleting...'
+                : isBulkTarget
+                  ? `Delete (${actionTargetCount})`
+                  : 'Delete'}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        </div>
+
       </div>
 
       {/* Drop indicator line below */}
@@ -586,6 +600,13 @@ function DroppableProjectItem({
   queryClient,
   refetch,
   userId,
+  onCreateSubBoard, // Forward nested-board mint to child rows
+  isCreatingBoard, // Disable New board while a mint is in flight
+  selectedBoardIds, // Multi-select set from the boards menu
+  onBoardRowClick, // Shift / ⌘ select handler
+  onShareBoards,
+  onMoveBoardsToProject,
+  onRemoveBoardsFromProject,
 }: {
   project: Project
   isActive: boolean
@@ -611,6 +632,13 @@ function DroppableProjectItem({
   queryClient: ReturnType<typeof useQueryClient>
   refetch: () => void
   userId: string
+  onCreateSubBoard?: (parent: Conversation) => void // Nested Untitled board under a project board
+  isCreatingBoard?: boolean // True while any board mint is in flight
+  selectedBoardIds?: Set<string> // Boards currently multi-selected
+  onBoardRowClick?: (e: React.MouseEvent, boardId: string) => boolean // true = modifier handled
+  onShareBoards?: (anchor: Conversation) => void
+  onMoveBoardsToProject?: (anchor: Conversation, project: Project) => void
+  onRemoveBoardsFromProject?: (anchor: Conversation) => void
 }) {
   const { setNodeRef } = useDroppable({
     id: `project-${project.id}`, // Prefix with 'project-' to identify as project drop target
@@ -647,9 +675,9 @@ function DroppableProjectItem({
         className={cn(
           'flex items-center gap-2 px-4 h-8 rounded-lg transition-colors text-sm border-2 group',
           isActive
-            ? 'bg-blue-50 dark:bg-[#2a2a3a] text-gray-700 dark:text-gray-300 border-transparent'
+            ? 'tt-selected text-gray-700 dark:text-gray-300 border-transparent'
             : isDragOver
-              ? 'bg-blue-50 dark:bg-[#2a2a3a] text-gray-700 dark:text-gray-300 border-blue-500 dark:border-blue-400 border-dashed'
+              ? 'tt-selected text-gray-700 dark:text-gray-300 border-blue-500 dark:border-blue-400 border-dashed'
               : 'hover:bg-gray-50 dark:hover:bg-[#1f1f1f] text-gray-700 dark:text-gray-300 border-transparent'
         )}
       >
@@ -743,6 +771,7 @@ function DroppableProjectItem({
                 key={conversation.id}
                 conversation={conversation}
                 isActive={isActive}
+                isSelected={selectedBoardIds?.has(conversation.id)}
                 isDeleting={isDeleting}
                 deletingConversationId={deletingConversationId}
                 isRenaming={isRenaming}
@@ -759,6 +788,13 @@ function DroppableProjectItem({
                 refetch={refetch}
                 project={project}
                 userId={userId}
+                onCreateSubBoard={onCreateSubBoard} // Same nested-board mint as the Boards list
+                isCreatingBoard={isCreatingBoard} // Disable New board while a mint is in flight
+                selectedBoardIds={selectedBoardIds}
+                onBoardRowClick={onBoardRowClick}
+                onShareBoards={onShareBoards}
+                onMoveBoardsToProject={onMoveBoardsToProject}
+                onRemoveBoardsFromProject={onRemoveBoardsFromProject}
               />
             )
           })}
@@ -897,35 +933,73 @@ function flattenBoardTree(
   return result
 }
 
+/** Contiguous board ids between two visible rows (Shift-click range). */
+function boardIdsBetween(order: string[], fromId: string, toId: string): string[] {
+  const from = order.indexOf(fromId) // Anchor row in the visible list
+  const to = order.indexOf(toId) // Clicked row
+  if (from < 0 || to < 0) return [toId] // Fallback when a row left the visible list
+  const lo = Math.min(from, to) // Inclusive start
+  const hi = Math.max(from, to) // Inclusive end
+  return order.slice(lo, hi + 1) // All boards between (and including) both ends
+}
 
-// Fetch conversations/boards for the user
-async function fetchConversations(): Promise<Conversation[]> {
+// Mint a New board (root from +, nested from a row’s more menu). Client UUID avoids INSERT…RETURNING RLS races.
+async function createUntitledBoard(
+  supabase: ReturnType<typeof createClient>,
+  opts: {
+    userId: string // Owner of the new conversations row
+    parentId?: string // When set, nest under this board via metadata.parent_id
+    projectId?: string // Keep project membership when nesting under a project board
+  }
+): Promise<string | null> {
+  const boardId = crypto.randomUUID() // Client id so INSERT need not RETURNING through SELECT RLS
+  const metadata: Record<string, unknown> = {} // Spatial/nav fields only — empty board has no body yet
+  if (opts.parentId) metadata.parent_id = opts.parentId // Sub-board in the boards list tree
+  else metadata.position = -1 // Root boards pin to the top of the list
+  if (opts.projectId) metadata.project_id = opts.projectId // Stay in the same project as the parent
+  const { error } = await supabase.from('conversations').insert({
+    id: boardId, // Use the client UUID as the primary key
+    user_id: opts.userId, // RLS: owner is the signed-in user
+    title: DEFAULT_BOARD_TITLE, // Same default as empty `/board` until the user renames
+    metadata, // Nesting / project / list position
+  })
+  if (error) {
+    console.error('Failed to create board:', error) // Surface insert failures for debugging
+    return null // Caller shows an alert
+  }
+  return boardId // Navigate + cache-patch with this id
+}
+
+// Fetch conversations/boards for an explicit user id (must match live session)
+async function fetchConversations(userId: string): Promise<Conversation[]> {
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return []
+  // Wait until browser session is this user — never cache [] from a transient mismatch
+  await waitForAuthUserId(userId, { timeoutMs: 8000 })
 
   const { data, error } = await supabase
     .from('conversations')
-    .select('id, title, created_at, updated_at, metadata')
-    .eq('user_id', user.id)
+    .select('id, title, created_at, updated_at, metadata, user_id')
+    .eq('user_id', userId)
     .order('updated_at', { ascending: false })
-    .limit(50)
+    .limit(100)
 
   if (error) {
     console.error('Error fetching conversations:', error)
-    return []
+    throw error // Don't cache a failed/empty read as success
   }
 
   // Map data and include full metadata (for project_id and position)
   // IMPORTANT: Return ALL conversations (including project boards) - filtering happens in component
-  const conversations = (data || []).map((conv: any) => ({
-    id: conv.id,
-    title: conv.title,
-    created_at: conv.created_at,
-    updated_at: conv.updated_at,
-    position: conv.metadata?.position ?? undefined,
-    metadata: conv.metadata || undefined, // Include full metadata object for project_id
-  })) as Conversation[]
+  const conversations = (data || [])
+    .filter((conv: { user_id?: string }) => conv.user_id === userId) // Defense in depth
+    .map((conv: any) => ({
+      id: conv.id,
+      title: conv.title,
+      created_at: conv.created_at,
+      updated_at: conv.updated_at,
+      position: conv.metadata?.position ?? undefined,
+      metadata: conv.metadata || undefined, // Include full metadata object for project_id
+    })) as Conversation[]
 
   // Sort by position if available, otherwise by updated_at
   // Don't filter here - we need all conversations to show project boards under projects
@@ -939,22 +1013,21 @@ async function fetchConversations(): Promise<Conversation[]> {
   })
 }
 
-// Fetch projects for the user
-async function fetchProjects(): Promise<Project[]> {
+// Fetch projects for an explicit user id (must match live session)
+async function fetchProjects(userId: string): Promise<Project[]> {
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return []
+  await waitForAuthUserId(userId, { timeoutMs: 8000 })
 
   const { data, error } = await supabase
     .from('projects')
     .select('id, name, created_at, updated_at, metadata')
-    .eq('user_id', user.id)
+    .eq('user_id', userId)
     .order('updated_at', { ascending: false })
     .limit(50)
 
   if (error) {
     console.error('Error fetching projects:', error)
-    return []
+    throw error
   }
 
   // Map data and extract position from metadata if available
@@ -978,26 +1051,105 @@ async function fetchProjects(): Promise<Project[]> {
 }
 
 const NAV_POPUP_TOP = 52 // Flush under top bar so hover can bridge from the menu icon
-const NAV_POPUP_MAX_CAP = 720 // Don't grow endlessly on tall screens
+const NAV_POPUP_MAX_CAP = 720 // Desktop tall-screen cap when fully avoiding bottom chrome
 const NAV_POPUP_CHROME_GAP = 8 // Air between the popup bottom and Free nav / minimap
 const NAV_POPUP_MIN_H = 160 // Search + a few boards still usable if chrome is tall
+/** Overlap blend: fully over nav/minimap below FULL, hold through HOLD, fade to avoid by NONE. */
+const NAV_POPUP_OVERLAP_VH_FULL = 900
+const NAV_POPUP_OVERLAP_VH_HOLD = 960
+const NAV_POPUP_OVERLAP_VH_NONE = 1080
+const NAV_POPUP_OVERLAP_VW_FULL = 840
+const NAV_POPUP_OVERLAP_VW_HOLD = 920
+const NAV_POPUP_OVERLAP_VW_NONE = 1024
 
-/** Cap the board nav popup so it never covers Free nav or an open minimap. */
-function measureNavPopupMaxHeight(popupTop: number): number {
-  const vh = window.innerHeight // Fallback when map chrome isn't on this page
-  let chromeTop = vh - NAV_POPUP_CHROME_GAP // Default: inset from the window bottom
-  document.querySelectorAll('[data-minimap-toggle-context], [data-minimap-context], [data-minimap-pill-context]').forEach((el) => {
-    const r = (el as HTMLElement).getBoundingClientRect() // Screen box of Free nav / minimap / +/-
-    if (r.height < 1 || r.width < 1) return // Skip clipped (closed) minimap
-    chromeTop = Math.min(chromeTop, r.top) // Highest chrome edge in the bottom-left stack
-  })
-  const available = chromeTop - popupTop - NAV_POPUP_CHROME_GAP // Room between the top bar and that chrome
-  return Math.max(NAV_POPUP_MIN_H, Math.min(NAV_POPUP_MAX_CAP, available)) // Clamp to a usable range
+function smoothstep01(t: number): number {
+  const x = Math.max(0, Math.min(1, t))
+  return x * x * (3 - 2 * x)
 }
 
-export default function AppSidebar({ user }: AppSidebarProps) {
+/** 0 = stop above nav/minimap; 1 = may paint over them — plateau at the crossover avoids a snap. */
+function navPopupOverlapBlend(vh: number, vw: number): number {
+  let heightBlend = 1
+  if (vh >= NAV_POPUP_OVERLAP_VH_NONE) heightBlend = 0
+  else if (vh > NAV_POPUP_OVERLAP_VH_HOLD) {
+    heightBlend = 1 - smoothstep01((vh - NAV_POPUP_OVERLAP_VH_HOLD) / (NAV_POPUP_OVERLAP_VH_NONE - NAV_POPUP_OVERLAP_VH_HOLD))
+  } else if (vh > NAV_POPUP_OVERLAP_VH_FULL) {
+    heightBlend = 1 // Hold overlap height while crossing the old threshold
+  }
+
+  let widthBlend = 1
+  if (vw >= NAV_POPUP_OVERLAP_VW_NONE) widthBlend = 0
+  else if (vw > NAV_POPUP_OVERLAP_VW_HOLD) {
+    widthBlend = 1 - smoothstep01((vw - NAV_POPUP_OVERLAP_VW_HOLD) / (NAV_POPUP_OVERLAP_VW_NONE - NAV_POPUP_OVERLAP_VW_HOLD))
+  } else if (vw > NAV_POPUP_OVERLAP_VW_FULL) {
+    widthBlend = 1
+  }
+
+  return Math.max(heightBlend, widthBlend)
+}
+
+function measureMinimapChromeTop(vh: number): number {
+  let chromeTop = vh - NAV_POPUP_CHROME_GAP
+  document.querySelectorAll('[data-minimap-toggle-context], [data-minimap-context], [data-minimap-pill-context]').forEach((el) => {
+    const r = (el as HTMLElement).getBoundingClientRect()
+    if (r.height < 1 || r.width < 1) return
+    chromeTop = Math.min(chromeTop, r.top)
+  })
+  return chromeTop
+}
+
+/** Bottom edge of the chat prompt card — boards nav may extend down to this line. */
+function measureChatPromptBottom(): number | null {
+  const dock = document.querySelector('[data-chat-map-dock]') as HTMLElement | null
+  if (dock) {
+    const prompt = dock.querySelector('[data-chat-prompt]') as HTMLElement | null
+    if (prompt) {
+      const r = prompt.getBoundingClientRect()
+      if (r.height > 1) return r.bottom
+    }
+  }
+  const sidebar = document.querySelector('[data-chat-sidebar]:not([data-chat-map-dock])') as HTMLElement | null
+  if (sidebar) {
+    const prompt = sidebar.querySelector('[data-chat-prompt]') as HTMLElement | null
+    if (prompt) {
+      const r = prompt.getBoundingClientRect()
+      if (r.width > 1 && r.height > 1) return r.bottom
+    }
+  }
+  return null
+}
+
+/** Cap the board nav popup — blend avoid/overlap heights so resize does not snap above nav. */
+function measureNavPopupMaxHeight(popupTop: number): number {
+  const vh = window.visualViewport?.height ?? window.innerHeight
+  const vw = window.innerWidth
+  const promptBottom = measureChatPromptBottom()
+  const overlapBlend = navPopupOverlapBlend(vh, vw)
+
+  let avoidTop = measureMinimapChromeTop(vh)
+  let overlapTop = vh - NAV_POPUP_CHROME_GAP
+  if (promptBottom != null) {
+    avoidTop = Math.min(avoidTop, promptBottom)
+    overlapTop = Math.min(overlapTop, promptBottom)
+  }
+
+  const bottomGap = promptBottom != null ? 0 : NAV_POPUP_CHROME_GAP
+  const avoidAvailable = avoidTop - popupTop - bottomGap
+  const overlapAvailable = overlapTop - popupTop - bottomGap
+  const available = avoidAvailable + (overlapAvailable - avoidAvailable) * overlapBlend
+
+  const maxCap =
+    overlapBlend > 0 && promptBottom == null
+      ? Math.max(NAV_POPUP_MAX_CAP, overlapAvailable)
+      : NAV_POPUP_MAX_CAP
+  return Math.max(NAV_POPUP_MIN_H, Math.min(maxCap, available))
+}
+
+export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
+  // Live session only — never keep a stale SSR email after account switch
+  const { user, sessionReady } = useLiveAuthUser(initialUser)
   const [isDeleting, setIsDeleting] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -1005,7 +1157,14 @@ export default function AppSidebar({ user }: AppSidebarProps) {
   const [deletingConversationId, setDeletingConversationId] = useState<string | null>(null)
   const [isCollapsed] = useState(false) // Always expanded inside hover popup (kept for legacy branches)
   const [showDeleteBoardDialog, setShowDeleteBoardDialog] = useState(false)
-  const [conversationToDelete, setConversationToDelete] = useState<{ id: string; title: string } | null>(null)
+  const [boardsToDelete, setBoardsToDelete] = useState<{ id: string; title: string }[]>([]) // One or more boards for delete confirm
+  const [bulkConfirm, setBulkConfirm] = useState<null | {
+    kind: 'share' | 'move' | 'removeFromProject' // Confirm before applying to selection
+    boards: { id: string; title: string }[]
+    project?: Project // Target project for move
+    projectName?: string // Display name when removing from a project
+  }>(null)
+  const [bulkBusy, setBulkBusy] = useState(false) // Share / move / remove in flight
   const [showRenameDialog, setShowRenameDialog] = useState(false)
   const [conversationToRename, setConversationToRename] = useState<{ id: string; title: string } | null>(null)
   const [renameInput, setRenameInput] = useState('')
@@ -1018,6 +1177,9 @@ export default function AppSidebar({ user }: AppSidebarProps) {
   const [dragOverPosition, setDragOverPosition] = useState<'above' | 'below' | 'top' | 'bottom' | 'into' | null>(null) // Position indicator (into = nest)
   const [dragOverProjectId, setDragOverProjectId] = useState<string | null>(null) // Project being dragged over (for board-to-project drops)
   const [expandedBoardIds, setExpandedBoardIds] = useState<Set<string>>(new Set()) // Nested sub-page expand state
+  const [selectedBoardIds, setSelectedBoardIds] = useState<Set<string>>(new Set()) // Shift / ⌘ multi-select in the boards menu
+  const [selectionAnchorId, setSelectionAnchorId] = useState<string | null>(null) // Range-select anchor (last plain / ⌘ click)
+  const [isCreatingBoard, setIsCreatingBoard] = useState(false) // True while + or New board mint is in flight
   const [showCreateProjectDialog, setShowCreateProjectDialog] = useState(false) // Create project dialog state
   const [projectName, setProjectName] = useState('') // Project name input
   const [isCreatingProject, setIsCreatingProject] = useState(false) // Creating project state
@@ -1035,8 +1197,15 @@ export default function AppSidebar({ user }: AppSidebarProps) {
   const queryClient = useQueryClient()
   const { isMobileMode, isSidebarOpen, isSidebarPinned, closeSidebar, openSidebar, scheduleCloseSidebar, cancelCloseSidebar, aiMapDockLiftPx } = useSidebarContext()
   const [navPopupMaxHeight, setNavPopupMaxHeight] = useState<number>(() =>
-    typeof window === 'undefined' ? NAV_POPUP_MAX_CAP : measureNavPopupMaxHeight(NAV_POPUP_TOP) // SSR: cap; client: already miss chrome
+    typeof window === 'undefined' ? NAV_POPUP_MAX_CAP : measureNavPopupMaxHeight(NAV_POPUP_TOP)
   )
+
+  // When live user id changes, pull that account's boards (query key already scoped)
+  useEffect(() => {
+    if (!user.id) return
+    void queryClient.invalidateQueries({ queryKey: ['conversations', user.id] })
+    void queryClient.invalidateQueries({ queryKey: ['projects', user.id] })
+  }, [user.id, queryClient])
 
   // Close hover-only nav on route change; click-pinned stays open across page switches
   useEffect(() => {
@@ -1044,13 +1213,16 @@ export default function AppSidebar({ user }: AppSidebarProps) {
     closeSidebar()
   }, [pathname, closeSidebar, isSidebarPinned])
 
-  // Keep the popup above Free nav / open minimap (height tween, phone dock lift, window resize)
+  // Desktop: keep the popup above Free nav / open minimap; phone/short viewports may overlap
   useLayoutEffect(() => {
     if (!isSidebarOpen) return // Closed — nothing to size
-    const update = () => setNavPopupMaxHeight(measureNavPopupMaxHeight(NAV_POPUP_TOP)) // Re-read chrome boxes
+    const update = () => setNavPopupMaxHeight(measureNavPopupMaxHeight(NAV_POPUP_TOP))
     update() // Before paint so the first open frame already misses the stack
     const ro = new ResizeObserver(update) // Minimap clip height 0→120 and Free nav size
     document.querySelectorAll('[data-minimap-toggle-context], [data-minimap-context]').forEach((el) => ro.observe(el))
+    document.querySelectorAll('[data-chat-map-dock], [data-chat-sidebar]:not([data-chat-map-dock]), [data-chat-prompt]').forEach((el) =>
+      ro.observe(el)
+    )
     window.addEventListener('resize', update) // Desktop window / top-bar wrap
     window.visualViewport?.addEventListener('resize', update) // iOS keyboard inset
     return () => {
@@ -1066,7 +1238,7 @@ export default function AppSidebar({ user }: AppSidebarProps) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('profiles')
-        .select('full_name, email, subscription_tier')
+        .select('full_name, email, subscription_tier, metadata')
         .eq('id', user.id)
         .single()
       
@@ -1078,16 +1250,32 @@ export default function AppSidebar({ user }: AppSidebarProps) {
     },
   })
 
-  // Handle logout
+  // OpenMoji avatar from profiles.metadata (set in Edit profile)
+  const profileMeta =
+    profile?.metadata && typeof profile.metadata === 'object'
+      ? (profile.metadata as Record<string, unknown>)
+      : {}
+  const avatarEmoji = typeof profileMeta.avatar_emoji === 'string' ? profileMeta.avatar_emoji : null
+  const avatarUnified = typeof profileMeta.avatar_unified === 'string' ? profileMeta.avatar_unified : null
+  const avatarColor = resolveAvatarColor(
+    typeof profileMeta.avatar_color === 'string' ? profileMeta.avatar_color : null
+  )
+  const profileAvatar = (avatarEmoji || avatarUnified) ? (
+    <OpenMojiImg native={avatarEmoji} unified={avatarUnified} size={28} className="h-7 w-7" alt="" />
+  ) : (
+    <span className="text-white font-semibold text-sm">
+      {user.email?.charAt(0).toUpperCase() || 'U'}
+    </span>
+  )
+
+  // Handle logout — full navigation so SSR + client never keep the prior identity
   const handleLogout = async () => {
     try {
       await supabase.auth.signOut()
-      router.push('/login')
     } catch (error) {
       console.error('Error signing out:', error)
-      // Still redirect even if signOut fails
-      router.push('/login')
     }
+    window.location.assign('/') // Hard clear; soft push left stale account chrome
   }
 
   // Ensure hover works on first load when window is in focus
@@ -1132,6 +1320,7 @@ export default function AppSidebar({ user }: AppSidebarProps) {
   }, [])
 
   // Configure drag sensors
+  // Mouse: small drag distance. Touch: hold ~long-press so a quick tap still opens the board.
   const sensors = useSensors(
     useSensor(MouseSensor, {
       activationConstraint: {
@@ -1140,8 +1329,8 @@ export default function AppSidebar({ user }: AppSidebarProps) {
     }),
     useSensor(TouchSensor, {
       activationConstraint: {
-        delay: 250, // 250ms delay for touch
-        tolerance: 5, // 5px tolerance
+        delay: 450, // Match LONG_PRESS_MS — tap navigates; hold reorders
+        tolerance: 10, // Match LONG_PRESS_MOVE_PX so jitter doesn’t arm drag
       },
     }),
     useSensor(KeyboardSensor, {
@@ -1717,19 +1906,46 @@ export default function AppSidebar({ user }: AppSidebarProps) {
     }
   }
 
-  // Fetch conversations/boards
-  const { data: conversations = [], refetch } = useQuery({
-    queryKey: ['conversations'],
-    queryFn: fetchConversations,
+  // Fetch conversations/boards — wait until browser session is ready (avoids caching [] on first paint)
+  const {
+    data: conversationsData,
+    refetch,
+    isSuccess: conversationsReady,
+  } = useQuery({
+    queryKey: ['conversations', user.id],
+    queryFn: () => fetchConversations(user.id), // Pass key user id — never trust a mismatched session
     refetchOnWindowFocus: true,
+    enabled: sessionReady && Boolean(user.id),
+    retry: (count, err) =>
+      count < 10 &&
+      err instanceof Error &&
+      (err.message === 'AUTH_SESSION_PENDING' || err.message === 'AUTH_SESSION_TIMEOUT'),
+    retryDelay: (n) => Math.min(300 * (n + 1), 2000),
+    gcTime: 0, // Drop list as soon as inactive — never resurrect prior account boards
+    staleTime: 0, // Always re-read after mount / account change
   })
+  // Only render after a successful fetch for *this* user — never flash a prior query's list
+  const conversations = conversationsReady && sessionReady ? conversationsData ?? [] : []
 
   // Fetch projects
-  const { data: projects = [], refetch: refetchProjects } = useQuery({
-    queryKey: ['projects'],
-    queryFn: fetchProjects,
+  const {
+    data: projectsData,
+    refetch: refetchProjects,
+    isSuccess: projectsReady,
+  } = useQuery({
+    queryKey: ['projects', user.id],
+    queryFn: () => fetchProjects(user.id),
     refetchOnWindowFocus: true,
+    enabled: sessionReady && Boolean(user.id),
+    retry: (count, err) =>
+      count < 10 &&
+      err instanceof Error &&
+      (err.message === 'AUTH_SESSION_PENDING' || err.message === 'AUTH_SESSION_TIMEOUT'),
+    retryDelay: (n) => Math.min(300 * (n + 1), 2000),
+    gcTime: 0,
+    staleTime: 0,
   })
+  const projects = projectsReady && sessionReady ? projectsData ?? [] : []
 
 
   // Set up Supabase Realtime subscription for conversation updates (most reliable)
@@ -1943,6 +2159,82 @@ export default function AppSidebar({ user }: AppSidebarProps) {
     return flattenBoardTree(filteredConversations, expanded)
   }, [filteredConversations, expandedBoardIds, searchQuery])
 
+  // Visible board order for Shift-range select (project boards, then nested Boards list)
+  const visibleBoardOrder = useMemo(() => {
+    const ids: string[] = []
+    if (isProjectsExpanded) {
+      for (const project of projects) {
+        if (!expandedProjects.has(project.id)) continue // Collapsed project → not in the list
+        for (const conv of conversationsWithProjects) {
+          if (conv.metadata?.project_id !== project.id) continue
+          if (!conv.title.toLowerCase().includes(searchQuery.toLowerCase())) continue
+          ids.push(conv.id)
+        }
+      }
+    }
+    if (isBoardsExpanded) {
+      for (const row of nestedBoardRows) ids.push(row.conversation.id)
+    }
+    return ids
+  }, [
+    isProjectsExpanded,
+    projects,
+    expandedProjects,
+    conversationsWithProjects,
+    searchQuery,
+    isBoardsExpanded,
+    nestedBoardRows,
+  ])
+
+  // Shift = range from anchor; ⌘/Ctrl = add/toggle; plain returns false so the row opens
+  const handleBoardRowClick = (e: React.MouseEvent, boardId: string): boolean => {
+    if (e.shiftKey) {
+      // First Shift/⌘ select with no anchor → just this board tab
+      if (!selectionAnchorId) {
+        setSelectedBoardIds(new Set([boardId]))
+        setSelectionAnchorId(boardId)
+        return true
+      }
+      // Later Shift → all visible boards between the anchor and this click
+      setSelectedBoardIds(new Set(boardIdsBetween(visibleBoardOrder, selectionAnchorId, boardId)))
+      return true
+    }
+    if (e.metaKey || e.ctrlKey) {
+      // Add this board tab to the selection (or remove if already selected)
+      setSelectedBoardIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(boardId)) next.delete(boardId)
+        else next.add(boardId)
+        return next
+      })
+      setSelectionAnchorId(boardId) // Next Shift ranges from this click
+      return true
+    }
+    // Plain click opens the board — clear multi-select so the next Shift starts on one board
+    setSelectedBoardIds(new Set())
+    setSelectionAnchorId(null)
+    return false
+  }
+
+  // Drop multi-select when the boards menu closes
+  useEffect(() => {
+    if (isSidebarOpen) return
+    setSelectedBoardIds(new Set())
+    setSelectionAnchorId(null)
+  }, [isSidebarOpen])
+
+  // Escape clears multi-select while the menu stays open
+  useEffect(() => {
+    if (!isSidebarOpen || selectedBoardIds.size === 0) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      setSelectedBoardIds(new Set())
+      setSelectionAnchorId(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [isSidebarOpen, selectedBoardIds.size])
+
   // Toggle expand/collapse for a board's nested children
   const toggleBoardExpand = (id: string) => {
     setExpandedBoardIds((prev) => {
@@ -2022,6 +2314,54 @@ export default function AppSidebar({ user }: AppSidebarProps) {
     }
   }, [projectsWithBoardsKey, projects.length])
 
+  // Header + mints a root New board; a row’s Add board inside (+) mints a nested child under that row
+  const handleCreateBoard = async (parent?: Conversation) => {
+    if (isCreatingBoard) return // Ignore double-clicks while the insert is in flight
+    setIsCreatingBoard(true) // Disable + and New board until this mint finishes
+    try {
+      const parentId = parent?.id // Nested when called from a row more menu
+      const rawProjectId = parent?.metadata?.project_id // Inherit project so the child stays in that list
+      const projectId =
+        typeof rawProjectId === 'string' && rawProjectId.trim() !== '' ? rawProjectId : undefined
+      const boardId = await createUntitledBoard(supabase, {
+        userId: user.id, // RLS owner
+        parentId, // undefined → root board from +
+        projectId, // undefined when the parent is not in a project
+      })
+      if (!boardId) {
+        alert('Failed to create board. Please try again.') // Insert failed — stay on this board
+        return
+      }
+      const now = new Date().toISOString() // Optimistic timestamps until refetch
+      const metadata: Conversation['metadata'] = parentId
+        ? { parent_id: parentId, ...(projectId ? { project_id: projectId } : {}) } // Nested nav row
+        : { position: -1 } // Root row pins to the top
+      queryClient.setQueryData(['conversations'], (old: Conversation[] | undefined) => {
+        const row: Conversation = {
+          id: boardId,
+          title: DEFAULT_BOARD_TITLE, // Match the inserted conversations.title so the row doesn’t flash Untitled
+          created_at: now,
+          updated_at: now,
+          ...(parentId ? {} : { position: -1 }), // Match list sort for root boards
+          metadata,
+        }
+        return old ? [row, ...old] : [row] // Show immediately in the boards list
+      })
+      if (parentId) {
+        setExpandedBoardIds((prev) => new Set(prev).add(parentId)) // Reveal the new child under its parent
+      }
+      setIsBoardsExpanded(true) // Ensure the Boards section is open
+      queryClient.invalidateQueries({ queryKey: ['conversations'] }) // Confirm from the server
+      router.push(`/board/${boardId}`) // Open the empty board
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to create board. Please try again.'
+      console.error('Failed to create board:', error)
+      alert(message)
+    } finally {
+      setIsCreatingBoard(false) // Re-enable + / New board
+    }
+  }
+
   // Handle create project
   const handleCreateProject = async () => {
     if (!projectName.trim()) return
@@ -2063,37 +2403,46 @@ export default function AppSidebar({ user }: AppSidebarProps) {
     }
   }
 
-  // Handle delete conversation/board
+  // Handle delete conversation/board (one or multi-selected + nested / linked children)
   const handleDeleteConversation = async () => {
-    if (!conversationToDelete) return
+    if (boardsToDelete.length === 0) return
 
-    setDeletingConversationId(conversationToDelete.id)
+    setDeletingConversationId(boardsToDelete[0].id) // Disable delete buttons while work runs
     setShowDeleteBoardDialog(false)
 
     try {
-      // Before delete: demote any parent-map item that linked to this page (keeps card body, clears title)
-      const parentMapId = await demoteBlockForDeletedBoard(supabase, conversationToDelete.id)
-      if (parentMapId) {
-        await queryClient.invalidateQueries({ queryKey: ['messages-for-panels', parentMapId] })
+      // Nested parent_id boards + boardLink targets on those maps (messages cascade with each row)
+      const expanded = await expandBoardsForDelete(supabase, user.id, boardsToDelete)
+
+      let viewingDeleted = false
+      for (const board of expanded) {
+        // Before delete: demote any parent-map item that linked to this page (keeps card body, clears title)
+        const parentMapId = await demoteBlockForDeletedBoard(supabase, board.id)
+        if (parentMapId) {
+          await queryClient.invalidateQueries({ queryKey: ['messages-for-panels', parentMapId] })
+        }
+
+        // Delete conversation (cascade will delete all messages on this page’s map)
+        const { error } = await supabase
+          .from('conversations')
+          .delete()
+          .eq('id', board.id)
+          .eq('user_id', user.id) // Ensure user owns this conversation
+
+        if (error) {
+          throw new Error(error.message || 'Failed to delete board')
+        }
+
+        await queryClient.invalidateQueries({ queryKey: ['messages-for-panels', board.id] })
+        if (pathname === `/board/${board.id}`) viewingDeleted = true
       }
 
-      // Delete conversation (cascade will delete all messages on this page’s map)
-      const { error } = await supabase
-        .from('conversations')
-        .delete()
-        .eq('id', conversationToDelete.id)
-        .eq('user_id', user.id) // Ensure user owns this conversation
-
-      if (error) {
-        throw new Error(error.message || 'Failed to delete board')
-      }
-
-      // Invalidate queries to refresh the list
       await queryClient.invalidateQueries({ queryKey: ['conversations'] })
-      await queryClient.invalidateQueries({ queryKey: ['messages-for-panels', conversationToDelete.id] })
+      setSelectedBoardIds(new Set())
+      setSelectionAnchorId(null)
 
-      // If we're currently viewing this conversation, redirect to /board
-      if (pathname === `/board/${conversationToDelete.id}`) {
+      // If we're currently viewing a deleted board, redirect to /board
+      if (viewingDeleted) {
         router.push('/board')
       }
     } catch (error: any) {
@@ -2101,14 +2450,119 @@ export default function AppSidebar({ user }: AppSidebarProps) {
       alert(error.message || 'Failed to delete board. Please try again.')
     } finally {
       setDeletingConversationId(null)
-      setConversationToDelete(null)
+      setBoardsToDelete([])
     }
   }
 
-  // Open delete dialog
+  // Boards the row menu should hit: whole multi-selection when the row is in it
+  const resolveActionBoards = (anchor: Conversation): Conversation[] => {
+    if (selectedBoardIds.size > 1 && selectedBoardIds.has(anchor.id)) {
+      return conversations.filter((c) => selectedBoardIds.has(c.id))
+    }
+    return [anchor]
+  }
+
+  const boardsLabel = (boards: { title: string }[] | null | undefined) => {
+    if (!boards || boards.length === 0) return 'these boards'
+    if (boards.length === 1) return boards[0]?.title || 'this board'
+    if (boards.length === 2) return `${boards[0]?.title || 'board'} and ${boards[1]?.title || 'board'}`
+    return `${boards[0]?.title || 'board'} and ${boards.length - 1} others`
+  }
+
+  // Open delete dialog (single or all selected)
   const openDeleteDialog = (conversation: Conversation) => {
-    setConversationToDelete({ id: conversation.id, title: conversation.title })
+    setBoardsToDelete(resolveActionBoards(conversation).map((c) => ({ id: c.id, title: c.title })))
     setShowDeleteBoardDialog(true)
+  }
+
+  // Share → confirm, then copy board URL(s)
+  const requestShareBoards = (anchor: Conversation) => {
+    setBulkConfirm({
+      kind: 'share',
+      boards: resolveActionBoards(anchor).map((c) => ({ id: c.id, title: c.title })),
+    })
+  }
+
+  // Move to project → confirm, then set project_id on each
+  const requestMoveBoardsToProject = (anchor: Conversation, project: Project) => {
+    setBulkConfirm({
+      kind: 'move',
+      boards: resolveActionBoards(anchor).map((c) => ({ id: c.id, title: c.title })),
+      project,
+    })
+  }
+
+  // Remove from project → confirm, then clear project_id on each
+  const requestRemoveBoardsFromProject = (anchor: Conversation) => {
+    const boards = resolveActionBoards(anchor)
+    const projectName =
+      (anchor.metadata?.project_id &&
+        projects.find((p) => p.id === anchor.metadata?.project_id)?.name) ||
+      'project'
+    setBulkConfirm({
+      kind: 'removeFromProject',
+      boards: boards.map((c) => ({ id: c.id, title: c.title })),
+      projectName,
+    })
+  }
+
+  const confirmBulkAction = async () => {
+    if (!bulkConfirm) return
+    setBulkBusy(true)
+    try {
+      if (bulkConfirm.kind === 'share') {
+        const text = bulkConfirm.boards
+          .map((b) => `${window.location.origin}/board/${b.id}`)
+          .join('\n')
+        await navigator.clipboard.writeText(text)
+      } else if (bulkConfirm.kind === 'move' && bulkConfirm.project) {
+        const projectId = bulkConfirm.project.id
+        for (const board of bulkConfirm.boards) {
+          const { data: conversationData, error: fetchError } = await supabase
+            .from('conversations')
+            .select('metadata')
+            .eq('id', board.id)
+            .single()
+          if (fetchError) throw new Error(fetchError.message || 'Failed to fetch conversation')
+          const existingMetadata = (conversationData?.metadata as Record<string, any>) || {}
+          const updatedMetadata = { ...existingMetadata, project_id: projectId }
+          const { error } = await supabase
+            .from('conversations')
+            .update({ metadata: updatedMetadata })
+            .eq('id', board.id)
+          if (error) throw new Error(error.message || 'Failed to move board to project')
+        }
+        await queryClient.invalidateQueries({ queryKey: ['conversations'] })
+        refetch()
+      } else if (bulkConfirm.kind === 'removeFromProject') {
+        for (const board of bulkConfirm.boards) {
+          const { data: conversationData, error: fetchError } = await supabase
+            .from('conversations')
+            .select('metadata')
+            .eq('id', board.id)
+            .single()
+          if (fetchError) throw new Error(fetchError.message || 'Failed to fetch conversation')
+          const existingMetadata = (conversationData?.metadata as Record<string, any>) || {}
+          const updatedMetadata = { ...existingMetadata }
+          delete updatedMetadata.project_id
+          const { error } = await supabase
+            .from('conversations')
+            .update({ metadata: updatedMetadata })
+            .eq('id', board.id)
+          if (error) throw new Error(error.message || 'Failed to remove board from project')
+        }
+        await queryClient.invalidateQueries({ queryKey: ['conversations'] })
+        refetch()
+      }
+      setSelectedBoardIds(new Set())
+      setSelectionAnchorId(null)
+      setBulkConfirm(null)
+    } catch (error: any) {
+      console.error('Bulk board action failed:', error)
+      alert(error.message || 'Something went wrong. Please try again.')
+    } finally {
+      setBulkBusy(false)
+    }
   }
 
   // Open rename dialog
@@ -2265,10 +2719,11 @@ export default function AppSidebar({ user }: AppSidebarProps) {
 
   return (
     <>
-      {/* Scrim when nav is open on compact/mobile — click closes */}
+      {/* Scrim below the top bar so the menu icon stays tappable (toggle close; no click-through reopen) */}
       {isSidebarOpen && isMobileMode && (
         <div
-          className="fixed inset-0 bg-black/20 z-40 transition-opacity"
+          className="fixed inset-x-0 bottom-0 bg-black/20 z-40 transition-opacity"
+          style={{ top: NAV_POPUP_TOP }} // Leave the 52px top bar (hamburger) above the scrim
           onClick={closeSidebar}
         />
       )}
@@ -2285,7 +2740,8 @@ export default function AppSidebar({ user }: AppSidebarProps) {
         style={{
           top: NAV_POPUP_TOP, // Flush under top bar so hover can bridge from logo
           left: '0.5rem',
-          maxHeight: navPopupMaxHeight, // Stops above Free nav / open minimap (measured)
+          maxHeight: navPopupMaxHeight, // Blended avoid/overlap — see navPopupOverlapBlend
+          transition: 'max-height 220ms ease-out',
         }}
         onMouseEnter={() => {
           cancelCloseSidebar() // Keep open while pointer is in menu
@@ -2305,9 +2761,9 @@ export default function AppSidebar({ user }: AppSidebarProps) {
           scheduleCloseSidebar()
         }}
       >
-        {/* Search Bar and New/Add Dropdown */}
+        {/* Search + mint a root Untitled board (no New project / New board dropdown) */}
         {!isCollapsed ? (
-          <div className="px-4 pt-2 pb-4">
+          <div className="px-4 pt-2 pb-2">
             <div className="flex items-center gap-2">
               <div className="relative flex-1">
                 <Search className="absolute left-1 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -2320,74 +2776,47 @@ export default function AppSidebar({ user }: AppSidebarProps) {
                   suppressHydrationWarning
                 />
               </div>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    className="h-8 w-8 rounded-lg bg-transparent border-0 hover:bg-gray-100 dark:hover:bg-gray-800 group"
-                    title="New"
-                  >
-                    <Plus className="h-5 w-5 text-gray-500 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-gray-100 transition-colors" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-40">
-                  <DropdownMenuItem
-                    onClick={() => {
-                      // Create new board - navigate to /board which will create one on first message
-                      router.push('/board')
-                    }}
-                  >
-                    <SquarePen className="h-4 w-4 mr-2" />
-                    New board
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => {
-                      setShowCreateProjectDialog(true)
-                    }}
-                  >
-                    <FolderPlus className="h-4 w-4 mr-2" />
-                    New project
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8 rounded-lg bg-transparent border-0 hover:bg-gray-100 dark:hover:bg-gray-800 group"
+                title="Create board"
+                disabled={isCreatingBoard} // Prevent duplicate mints
+                onClick={() => handleCreateBoard()} // Root Untitled board, then open it
+              >
+                {isCreatingBoard ? (
+                  <Loader2 className="h-5 w-5 text-gray-500 animate-spin" /> // In-flight mint
+                ) : (
+                  <Plus className="h-5 w-5 text-gray-500 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-gray-100 transition-colors" />
+                )}
+              </Button>
             </div>
           </div>
         ) : (
-          // Collapsed: Show centered Plus button - same vertical position as expanded state
+          // Collapsed: same mint, centered to match expanded vertical position
           <div className="px-4 pt-2 pb-4 flex justify-center">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8 rounded-lg bg-transparent border-0 hover:bg-gray-100 group"
-                  title="New"
-                >
-                  <Plus className="h-5 w-5 text-gray-500 group-hover:text-gray-900 transition-colors" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-40">
-                <DropdownMenuItem
-                  onClick={() => {
-                    // Create new board - navigate to /board which will create one on first message
-                    router.push('/board')
-                  }}
-                >
-                  <SquarePen className="h-4 w-4 mr-2" />
-                  New board
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => {
-                    setShowCreateProjectDialog(true)
-                  }}
-                >
-                  <FolderPlus className="h-4 w-4 mr-2" />
-                  New project
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8 rounded-lg bg-transparent border-0 hover:bg-gray-100 group"
+              title="Create board"
+              disabled={isCreatingBoard} // Prevent duplicate mints
+              onClick={() => handleCreateBoard()} // Root Untitled board, then open it
+            >
+              {isCreatingBoard ? (
+                <Loader2 className="h-5 w-5 text-gray-500 animate-spin" /> // In-flight mint
+              ) : (
+                <Plus className="h-5 w-5 text-gray-500 group-hover:text-gray-900 transition-colors" />
+              )}
+            </Button>
           </div>
+        )}
+
+        {!isCollapsed && (
+          <div
+            className="mx-4 h-px flex-shrink-0 bg-gray-200 dark:bg-[#2f2f2f]"
+            aria-hidden
+          />
         )}
 
         {/* Boards/Conversations List - hidden when collapsed */}
@@ -2478,6 +2907,13 @@ export default function AppSidebar({ user }: AppSidebarProps) {
                               queryClient={queryClient}
                               refetch={refetch}
                               userId={user.id}
+                              onCreateSubBoard={handleCreateBoard} // Nested Untitled board under a project board
+                              isCreatingBoard={isCreatingBoard} // Disable New board while a mint is in flight
+                              selectedBoardIds={selectedBoardIds}
+                              onBoardRowClick={handleBoardRowClick}
+                              onShareBoards={requestShareBoards}
+                              onMoveBoardsToProject={requestMoveBoardsToProject}
+                              onRemoveBoardsFromProject={requestRemoveBoardsFromProject}
                             />
                           )
                         })}
@@ -2510,12 +2946,17 @@ export default function AppSidebar({ user }: AppSidebarProps) {
                               key={conversation.id}
                               conversation={conversation}
                               isActive={isActive}
+                              isSelected={selectedBoardIds.has(conversation.id)}
                               isDeleting={isDeleting}
                               deletingConversationId={deletingConversationId}
                               isRenaming={isRenaming}
                               pathname={pathname}
                               openRenameDialog={openRenameDialog}
                               openDeleteDialog={openDeleteDialog}
+                              onBoardRowClick={handleBoardRowClick}
+                              onShareBoards={requestShareBoards}
+                              onMoveBoardsToProject={requestMoveBoardsToProject}
+                              onRemoveBoardsFromProject={requestRemoveBoardsFromProject}
                               dragOverId={dragOverId}
                               dragOverPosition={dragOverPosition}
                               activeId={activeId}
@@ -2528,6 +2969,9 @@ export default function AppSidebar({ user }: AppSidebarProps) {
                               hasChildren={hasChildren}
                               isExpanded={expandedBoardIds.has(conversation.id)}
                               onToggleExpand={toggleBoardExpand}
+                              onCreateSubBoard={handleCreateBoard} // Nested Untitled board under this row
+                              isCreatingBoard={isCreatingBoard} // Disable New board while a mint is in flight
+                              selectedBoardIds={selectedBoardIds}
                               userId={user.id}
                             />
                           )
@@ -2544,7 +2988,7 @@ export default function AppSidebar({ user }: AppSidebarProps) {
 
               <DragOverlay>
                 {activeId ? (
-                  <div className="flex items-center gap-2 px-4 h-8 rounded-lg bg-blue-50 dark:bg-[#2a2a3a] text-sm shadow-lg opacity-90 cursor-grabbing">
+                  <div className="flex items-center gap-2 px-4 h-8 rounded-lg tt-selected text-sm shadow-lg opacity-90 cursor-grabbing">
                     <span className="truncate flex-1 text-gray-700 dark:text-gray-300">
                       {filteredConversations.find((c) => c.id === activeId)?.title || ''}
                     </span>
@@ -2602,12 +3046,6 @@ export default function AppSidebar({ user }: AppSidebarProps) {
 
         {/* Profile Section - fixed at bottom */}
         <div className="relative h-16 flex-shrink-0 mt-auto flex items-center">
-          {/* Divider - same width as divider below logo, fades out on collapse */}
-          <div className={cn(
-            "absolute top-0 left-4 right-4 h-px bg-gray-200 dark:bg-[#2f2f2f] transition-opacity duration-300",
-            isCollapsed ? "opacity-0" : "opacity-100"
-          )} />
-
           {/* Profile content - centered vertically */}
           <div className={cn(
             "w-full",
@@ -2617,12 +3055,11 @@ export default function AppSidebar({ user }: AppSidebarProps) {
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button
-                    className="w-8 h-8 rounded-full bg-blue-100 dark:bg-[#2a2a3a] flex items-center justify-center hover:bg-blue-200 dark:hover:bg-[#353545] transition-colors"
+                    className="w-8 h-8 rounded-full flex items-center justify-center hover:opacity-90 transition-opacity"
+                    style={{ backgroundColor: avatarColor }}
                     title="Profile"
                   >
-                    <span className="text-gray-700 dark:text-gray-300 font-semibold text-sm">
-                      {user.email?.charAt(0).toUpperCase() || 'U'}
-                    </span>
+                    {profileAvatar}
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
@@ -2645,17 +3082,18 @@ export default function AppSidebar({ user }: AppSidebarProps) {
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button className="w-full flex items-center gap-3 pl-1 py-2 rounded-lg hover:bg-gray-50 dark:hover:bg-[#1f1f1f] transition-colors">
-                      <div className="w-8 h-8 bg-blue-100 dark:bg-[#2a2a3a] rounded-full flex items-center justify-center flex-shrink-0">
-                        <span className="text-gray-700 dark:text-gray-300 font-semibold text-sm">
-                          {user.email?.charAt(0).toUpperCase() || 'U'}
-                        </span>
+                      <div
+                        className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                        style={{ backgroundColor: avatarColor }}
+                      >
+                        {profileAvatar}
                       </div>
                       <div className="flex-1 min-w-0 text-left">
                         <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
                           {profile?.full_name || user.email?.split('@')[0] || 'User'}
                         </p>
                         <p className="text-xs text-gray-500 dark:text-gray-400">
-                          {profile?.subscription_tier === 'pro' ? 'Plus' : profile?.subscription_tier === 'enterprise' ? 'Enterprise' : 'Free'}
+                          {subscriptionTierLabel(profile?.subscription_tier)}
                         </p>
                       </div>
                       {/* Spacer for Upgrade / Help button beside profile */}
@@ -2671,10 +3109,11 @@ export default function AppSidebar({ user }: AppSidebarProps) {
                     className="px-2 py-1.5 focus:bg-transparent"
                   >
                     <div className="w-full flex items-center gap-2">
-                      <div className="w-8 h-8 bg-blue-100 dark:bg-[#2a2a3a] rounded-full flex items-center justify-center flex-shrink-0">
-                        <span className="text-gray-700 dark:text-gray-300 font-semibold text-sm">
-                          {user.email?.charAt(0).toUpperCase() || 'U'}
-                        </span>
+                      <div
+                        className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                        style={{ backgroundColor: avatarColor }}
+                      >
+                        {profileAvatar}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
@@ -2687,7 +3126,7 @@ export default function AppSidebar({ user }: AppSidebarProps) {
                     </div>
                   </DropdownMenuItem>
                   <DropdownMenuSeparator className="mx-2" />
-                  {profile?.subscription_tier !== 'pro' && profile?.subscription_tier !== 'enterprise' && (
+                  {!isPaidSubscriptionTier(profile?.subscription_tier) && (
                     <DropdownMenuItem
                       onClick={() => {
                         setUpgradeOpen(true)
@@ -2707,7 +3146,7 @@ export default function AppSidebar({ user }: AppSidebarProps) {
                   </DropdownMenuItem>
                   <DropdownMenuSeparator className="mx-2" />
                   {/* Help lives on the profile button when upgraded; keep it in the menu for free users */}
-                  {profile?.subscription_tier !== 'pro' && profile?.subscription_tier !== 'enterprise' && (
+                  {!isPaidSubscriptionTier(profile?.subscription_tier) && (
                     <DropdownMenuItem>
                       <HelpCircle className="h-4 w-4 mr-2" />
                       Help
@@ -2721,7 +3160,7 @@ export default function AppSidebar({ user }: AppSidebarProps) {
                 </DropdownMenuContent>
                 </DropdownMenu>
                 {/* Free: Upgrade button; upgraded: Help in the same spot */}
-                {profile?.subscription_tier !== 'pro' && profile?.subscription_tier !== 'enterprise' ? (
+                {!isPaidSubscriptionTier(profile?.subscription_tier) ? (
                   <button
                     type="button"
                     className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1.5 h-auto text-xs font-medium bg-white dark:bg-white text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-[#1f1f1f] rounded-md transition-colors flex-shrink-0 z-10"
@@ -2836,15 +3275,26 @@ export default function AppSidebar({ user }: AppSidebarProps) {
         </Dialog>
 
         {/* Delete Board Confirmation Dialog */}
-        <Dialog open={showDeleteBoardDialog} onOpenChange={setShowDeleteBoardDialog}>
+        <Dialog
+          open={showDeleteBoardDialog}
+          onOpenChange={(open) => {
+            setShowDeleteBoardDialog(open)
+            if (!open) setBoardsToDelete([])
+          }}
+        >
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle className="text-lg font-semibold">Delete board?</DialogTitle>
+              <DialogTitle className="text-lg font-semibold">
+                {boardsToDelete.length > 1 ? `Delete ${boardsToDelete.length} boards?` : 'Delete board?'}
+              </DialogTitle>
               <DialogDescription className="text-sm text-gray-600 pt-2">
-                This will delete <span className="font-semibold text-gray-900">{conversationToDelete?.title}</span>.
+                Are you sure you want to delete{' '}
+                <span className="font-semibold text-gray-900">{boardsLabel(boardsToDelete)}</span>?
               </DialogDescription>
               <DialogDescription className="text-sm text-gray-500 pt-1">
-                All messages in this board will be permanently deleted.
+                {boardsToDelete.length > 1
+                  ? 'All messages in these boards will be permanently deleted, including nested boards and their content.'
+                  : 'All messages in this board will be permanently deleted, including nested boards and their content.'}
               </DialogDescription>
             </DialogHeader>
             <DialogFooter className="flex-row justify-end gap-2 pt-4">
@@ -2852,7 +3302,7 @@ export default function AppSidebar({ user }: AppSidebarProps) {
                 variant="outline"
                 onClick={() => {
                   setShowDeleteBoardDialog(false)
-                  setConversationToDelete(null)
+                  setBoardsToDelete([])
                 }}
                 className="px-4 py-2"
               >
@@ -2865,6 +3315,74 @@ export default function AppSidebar({ user }: AppSidebarProps) {
                 className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white"
               >
                 {deletingConversationId ? 'Deleting...' : 'Delete'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Share / Move / Remove confirm (single or multi-selected boards) */}
+        <Dialog
+          open={bulkConfirm !== null}
+          onOpenChange={(open) => {
+            if (!open && !bulkBusy) setBulkConfirm(null)
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="text-lg font-semibold">
+                {bulkConfirm?.kind === 'share'
+                  ? bulkConfirm.boards.length > 1
+                    ? `Share ${bulkConfirm.boards.length} boards?`
+                    : 'Share board?'
+                  : bulkConfirm?.kind === 'move'
+                    ? bulkConfirm.boards.length > 1
+                      ? `Move ${bulkConfirm.boards.length} boards?`
+                      : 'Move board?'
+                    : bulkConfirm && bulkConfirm.boards.length > 1
+                      ? `Remove ${bulkConfirm.boards.length} boards?`
+                      : 'Remove board?'}
+              </DialogTitle>
+              <DialogDescription className="text-sm text-gray-600 pt-2">
+                {bulkConfirm?.kind === 'share' && (
+                  <>
+                    Are you sure you want to copy{' '}
+                    {bulkConfirm.boards.length > 1 ? 'links for ' : 'the link for '}
+                    <span className="font-semibold text-gray-900">{boardsLabel(bulkConfirm.boards)}</span>?
+                  </>
+                )}
+                {bulkConfirm?.kind === 'move' && (
+                  <>
+                    Are you sure you want to move{' '}
+                    <span className="font-semibold text-gray-900">{boardsLabel(bulkConfirm.boards)}</span> to{' '}
+                    <span className="font-semibold text-gray-900">{bulkConfirm.project?.name}</span>?
+                  </>
+                )}
+                {bulkConfirm?.kind === 'removeFromProject' && (
+                  <>
+                    Are you sure you want to remove{' '}
+                    <span className="font-semibold text-gray-900">{boardsLabel(bulkConfirm.boards)}</span> from{' '}
+                    <span className="font-semibold text-gray-900">{bulkConfirm.projectName}</span>?
+                  </>
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="flex-row justify-end gap-2 pt-4">
+              <Button
+                variant="outline"
+                onClick={() => setBulkConfirm(null)}
+                className="px-4 py-2"
+                disabled={bulkBusy}
+              >
+                Cancel
+              </Button>
+              <Button onClick={confirmBulkAction} disabled={bulkBusy} className="px-4 py-2">
+                {bulkBusy
+                  ? 'Working...'
+                  : bulkConfirm?.kind === 'share'
+                    ? 'Share'
+                    : bulkConfirm?.kind === 'move'
+                      ? 'Move'
+                      : 'Remove'}
               </Button>
             </DialogFooter>
           </DialogContent>

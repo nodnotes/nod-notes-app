@@ -1,12 +1,8 @@
 // POST /api/ai/transcribe — STT for AI composer voice memos
 import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
-import OpenAI from 'openai'
 import { toFile } from 'openai/uploads'
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
+import { getOpenAI } from '@/lib/openai'
 
 const MAX_BYTES = 25 * 1024 * 1024
 
@@ -20,6 +16,7 @@ export async function POST(request: NextRequest) {
   if (!process.env.OPENAI_API_KEY) {
     return NextResponse.json({ error: 'OpenAI not configured' }, { status: 500 })
   }
+  const openai = getOpenAI()
 
   let form: FormData
   try {

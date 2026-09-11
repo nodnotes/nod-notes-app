@@ -34,11 +34,27 @@ export const AI_SKILLS: AiSkill[] = [
     enabled: true,
   },
   {
+    id: 'flashcards',
+    name: 'Flashcards',
+    description: 'Generate cards with hideable Q/A sides',
+    systemHint:
+      'The Flashcards skill is attached. Create frames with a clear question block and answer block. Hide one side with [[hide]]…[[/hide]] or haze spans (blur until click). Default: hide the answer. When asked to switch which side is hidden, edit existing cards — do not duplicate frames.',
+    enabled: true,
+  },
+  {
     id: 'learn',
     name: 'Learn',
     description: 'Quiz yourself and explore answers',
     systemHint:
       'The Learn skill is attached. Quiz the user on page content: ask one question at a time, wait for their answer, then explain and continue. Encourage exploring answers, not just scoring.',
+    enabled: true,
+  },
+  {
+    id: 'suggest-edits',
+    name: 'Suggest edits',
+    description: 'Propose inline improvements for selected content',
+    systemHint:
+      'The Suggest edits skill is attached. Review the selected frame, block, or text in context and propose concrete improvements. Prefer Edit-mode surgical replacements (oldText→newText) over duplicating content. Explain briefly what you changed and why.',
     enabled: true,
   },
 ]

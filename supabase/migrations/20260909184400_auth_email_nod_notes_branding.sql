@@ -1,0 +1,4 @@
+-- Auth email branding: Nod Notes sender/templates (remote Auth config).
+-- Early-access allowlist: easayani@nodnotes.com, easayani@goalfish.io, easayani@gmail.com.
+-- Magic-link hash recovery via /auth/auth-code-error; empty-board minimap; brand chat connection cues.
+-- App/docs marker only; no DDL.

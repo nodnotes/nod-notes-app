@@ -1,0 +1,102 @@
+{
+  "name": "nod-notes-desktop",
+  "version": "0.1.2",
+  "private": true,
+  "description": "Nod Notes desktop shell (Electron) — loads the web app",
+  "main": "main.cjs",
+  "author": "Nod Notes",
+  "license": "UNLICENSED",
+  "scripts": {
+    "dev": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  },
+  "build": {
+    "appId": "com.nodnotes.app",
+    "productName": "Nod Notes",
+    "copyright": "Copyright © Nod Notes",
+    "afterPack": "./afterPack.cjs",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "artifactName": "Nod-Notes-${os}.${ext}",
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "updater.cjs",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "main.cjs"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "darkModeSupport": true
+    },
+    "dmg": {
+      "title": "Nod Notes",
+      "contents": [
+        {
+          "x": 130,
+          "y": 200
+        },
+        {
+          "x": 410,
+          "y": 200,
+          "type": "link",
+          "path": "/Applications"
+        },
+        {
+          "x": 270,
+          "y": 380,
+          "type": "file",
+          "path": "build/Install Nod Notes.command"
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Office"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "nodnotes",
+        "repo": "nod-notes-app",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "^37.2.6",
+    "electron-builder": "^26.0.12"
+  }
+}

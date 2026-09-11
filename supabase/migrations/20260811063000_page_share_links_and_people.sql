@@ -1,11 +1,11 @@
--- Thinktable page share: role-bearing copy links + people grants (Notion address book / email)
+-- Nod Notes page share: role-bearing copy links + people grants (Notion address book / email)
 
 -- ---------------------------------------------------------------------------
 -- page_share_links — opaque token URLs that embed view | comment | edit
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS page_share_links (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- Row id
-  page_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE, -- Shared Thinktable page
+  page_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE, -- Shared Nod Notes page
   created_by UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE, -- Owner who minted the link
   role TEXT NOT NULL, -- view | comment | edit (permission attached to the link)
   token TEXT NOT NULL, -- Opaque unguessable token used in ?s=
@@ -61,14 +61,14 @@ CREATE TRIGGER page_share_links_updated_at
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS page_share_people (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- Row id
-  page_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE, -- Shared Thinktable page
+  page_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE, -- Shared Nod Notes page
   created_by UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE, -- Inviter (page owner)
   role TEXT NOT NULL, -- view | comment | edit
   email TEXT, -- Invite target email (Notion or typed)
   notion_user_id TEXT, -- Notion person id when picked from workspace
   display_name TEXT, -- Cached name for UI
   avatar_url TEXT, -- Cached avatar for UI
-  grantee_user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL, -- Linked Thinktable user when known
+  grantee_user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL, -- Linked Nod Notes user when known
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), -- Invite time
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), -- Last role change
   CONSTRAINT page_share_people_role_check CHECK (role IN ('view', 'comment', 'edit')), -- Known roles

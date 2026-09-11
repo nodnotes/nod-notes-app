@@ -17,7 +17,7 @@ The database includes the following tables:
 
 See `migration-list.txt` + `schema-snapshot.md` for the full local/remote snapshot.
 
-Latest on thinkable (DDL):
+Latest on Nod Notes (DDL):
 - `20260811225342_conversations_owner_select_for_insert_returning` (+ local `20260811225322_…`) — conversations SELECT/UPDATE allow owner `user_id` or share rank (INSERT…RETURNING)
 - `rename_page_to_board_share_and_ai` / remote `20260811223628_…` (+ local `20260811220510_…`) — `board_share_*`, `user_board_*` RPCs, `ai_threads.board_id`
 - `20260811103152_page_share_links_and_people` (+ local `20260811063000_…`) — original share tables (renamed above)
@@ -25,6 +25,80 @@ Latest on thinkable (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260911205603_profile_avatar_openmoji_menu_trim` — Profile avatar Edit dialog (OpenMoji + color); remove frame Condense/Expand + block Move to
+- `20260911194959_empty_board_no_init_fit_ibar_grip_center` — Empty-board no init fitView; I-bar ⋮⋮ centered on caret
+- `20260911193105_thread_uniform_frame_size_stroke` — Uniform frame-size thread stroke (no path taper)
+- `20260911184649_frame_adjust_chrome_rotated_hover_stripe` — Frame adjust chrome / rotated hover + Stripe
+- `20260911171538_desktop_mobile_download_shells` — Desktop + iOS download shells
+- `20260911145831_ibar_pane_scale_live_zoom_no_snap` — I-bar pane-scale live zoom (no size snap)
+- `20260911145513_ibar_place_scale_zoom_stable` — I-bar place-scale zoom-stable
+- `20260911101600_frame_resize_chrome_scale_zoom_band` — Frame resize soft floor 40px; fixed-paint chrome dots + scale(ui); board zoom 10%–1000%
+- `20260911093423_frame_chrome_live_zoom_rotate_reset` — Frame chrome live zoom scaling + click rotate resets to 0°
+- `20260911010005_homepage_showcase_claim_on_open` — Signed-in users claim private showcase copies on Open board (not on homepage preview)
+- `20260910005242_homepage_ephemeral_showcase_sandboxes` — Homepage /view ephemeral visitor sandboxes of showcase masters
+- `20260909232719_homepage_showcase_gutters_static_row` — Homepage equal gutters on split sections; AI preview 3× side inset; static small-image row (no carousel)
+- `20260909220031_homepage_footer_get_started` — Homepage Notion-style footer + get-started grey band; showcase media/shadows
+- `20260909184400_auth_email_nod_notes_branding` — Auth mailer Nod Notes branding; allowlist + gmail; magic-link hash recovery; empty-board minimap; brand connection cues
+- `20260909181848_early_access_own_status_not_list` — Early access: deny with own-email status; never return allowlist
+- `20260909181044_coming_soon_access_debrand` — Coming soon + /access: drop Nod Notes wordmark / invite-only blurb; light-gate slate text
+- `20260909174638_early_access_anti_enumeration` — Early-access anti-enumeration (OTP always-OK + session gate)
+- `20260909172436_coming_soon_nodnotes_launch` — Coming-soon gate on nodnotes.com + early-access OTP/password
+- `20260909154044_empty_board_hints_grey_selected` — Empty-board Virgil hints + idle nod; grey selected tab / menu wash
+- `20260909042323_homepage_ai_sidebar_copy_thread_stack` — Showcase AI sidebar, copy reorder, phone threads behind text
+- `20260909031338_homepage_nav_threads_showcase` — Homepage top nav, showcase threads, hero/copy refinements
+- `20260908223635_homepage_hero_icon_size` — Hero brand icon size tune (`0.79cap` left of Nod)
+- `20260908220531_homepage_hero_lockup_thread` — Hero brand lockup refinements, Asap NOTES, decorative thread, Young Serif headline/CTA
+- `20260908172802_homepage_brand_typography` — Homepage hero brand lockup, new icon, Young Serif + Plus Jakarta Sans
+- `20260908080113_homepage_showcase_landing` — Marketing homepage with public showcase board previews
+- `20260908063803_restore_drawn_t_logo` — Restore default hand-drawn T + table-dot brand mark
+- `20260908063357_rebrand_nod_notes` — Rebrand ThinkTable → Nod Notes (product, GitHub org/repos, identifiers)
+- `20260908045105_shaped_frame_fill_border_colors` — Shaped frame SVG fill/border; softer preset borders; fit-to-text inflation; shape select chrome
+- `20260908041754_frame_empty_chrome_drag_fixes` — Empty frame backspace/clear; keep styled empty frames on deselect; single empty border; fill-origin chrome pad; fix select/drag jump
+- `20260906153208_ai_model_picker_chat_import_map_undo` — AI model picker; ChatGPT export import; thread picker panel; map undo/redo Supabase sync
+- `20260905162405_connection_sync_top_bar_indicator` — Top-bar sync icon (pending Notion updates); optimistic query patch
+- `20260905161311_notion_page_body_sync_ai_share_compact` — Notion page body live-sync; remove Manual sync; AI sparkles → More on shareCompact; chat/prompt width fixes
+- `20260904164423_toolbar_pill_chat_resize` — Toolbar → mode pill (shareCompact then phoneTools); chat seam resize + preferred width; chat frames side pad; phone 768
+- `20260904142613_frame_delete_first_select` — Frame Delete on first select; TipTap setContent flushSync defer; select-before-caret
+- `20260904134700_chat_thread_scroll_native_clip` — Chat↔chat threads in transcript scroller (scroll-native); content-window clip; sync board-overlay scroll paint
+- `20260904051948_chat_turn_multiselect_and_chat_to_chat_threads` — Chat turn multi-select + chat↔chat threads; multi-drag; connect auto-pan fix
+- `20260904050604_unify_ai_star_light_blue_lock_frames_icon` — Unify AI sparkle `#b5daf3`; lock-frames toolbar icon 1
+- `20260904045406_ai_chat_fork_and_revert_text` — Thread fork (Copy of …) + chat Revert text silos
+- `20260904043128_chat_link_cue_click_opens_turn` — Board chat-link cue click opens linked turn; drag still starts thread
+- `20260904041502_chat_link_cues_survive_sidebar_close` — Board chat-link cues survive desktop chat close; thread clip under chrome
+- `20260904034627_chat_turn_selection_persist_and_link_cue_scale` — Chat turn selection/scroll persist across remount; smaller chat-link cue line
+- `20260904033309_chat_thread_clip_stubs_under_chrome` — Chat↔board thread clip stubs + under-chrome / map-side seam clip
+- `20260903191644_chat_sidebar_seam_thread_gaps` — Chat sidebar left seam gaps where chat↔board threads cross
+- `20260903190337_ai_chat_turns_frame_like` — AI chat turns as frames (select chrome, TipTap ⋮⋮, board drop, boardLinks)
+- `20260902180605_db_cold_row_hover_handle_insert` — Cold DB row ⋮⋮ + add-row hairlines on hover without click-warm
+- `20260902161220_db_table_rows_setter` — Frame menu Table rows setter (shown/total, Show all, Reset); replaces Preview / Expanded
+- `20260902155842_db_show_more_less_preview_full_width` — `+# rows — show more / show less`; idle preview full width / all view-visible columns
+- `20260902151646_db_row_warm_inline_caret_no_semantic_zoom` — Inline DB row warm + caret at click; switch rows without nav; remove semantic zoom; keep DB TipTap live mid-nav; retain I-bar after warm
+- `20260831173348_notion_db_row_warm_show_more_per_frame` — Notion DB row-click warm + per-frame show-more (50/page); Preview/Expanded; duplicate caps independent
+- `20260829201500_db_table_lazy_layouts_column_windowing_cold_frames` — Lazy layouts + column windowing + cold DOM snapshots; live DB stays mounted on pan
+- `20260829140859_notion_db_focus_gated_static_preview_boards_multi_select` — Notion DB live table only while frame-selected + always-compact static preview + nav-freeze watchdog; boards nav multi-select with bulk share/move/delete
+- `20260827174930_slash_commands_media_board_font_phone_menu` — Slash `/` menu + media blocks + board font; phone keyboard-safe slash menu placement/scroll
+- `20260826170715_brand_mark_board_fill_theme_strokes` — Brand mark board-fill disc + border; theme-aware default strokes (map chat toggle + chat sidebar)
+- `20260826164307_board_infinite_zoom_perf_viewport_mount` — Infinite board soft bounds + 5%–200% zoom; spatial viewport mount; frame-drag perf + semantic zoom; image-block crop
+- `20260824151643_menu_surface_ai_skills_frame_stack_line` — Translucent menu surfaces; menu placement beside host frame; suggest-edits AI skill; frame stack line at connection points
+- `20260824122544_property_value_wrap_and_frame_adjust_box` — Property values wrap/nowrap with the frame (no ellipsis); connections strip inside the fill; upright adjust-box snap/stack geometry
+- `20260824041824_phone_unselected_frame_drag_minimap_pan` — Phone hold-then-drag unselected frames; minimap touch pan
+- `20260824040420_ai_hide_text_and_frame_text_select` — AI hide-text (haze) for flashcards; frame text drag-select fix
+- `20260824033903_on_thread_frame_content_center` — On-thread compact chip layout + centered content; visual-size path projection; blocks import fix
+- `20260824033035_on_thread_side_flip_drag_commit` — On-thread offset drag commit fix; flip side when crossing thread; live drag anchor; skip block-group drag-stop on thread frames
+- `20260824031611_on_thread_perp_drag_toolbar_guard` — On-thread perpendicular drag (offset + dot); live gap during drag; render-storm guard; editor toolbar destroyed-editor undo/redo guard
+- `20260824024921_draw_lasso_insert_space_thread_frames` — Freehand lasso select; Insert space drag-to-gap; Insert frame on thread + thickness; property icons inside fill
+- `20260823234830_frame_fit_free_restore` — Fit→free restores saved free-resize box; lock snapshots before hug; metadata sync guard
+- `20260823233405_property_strip_scroll_db_clip_preview` — Property strip horizontal scroll + …; free-resize DB hover full-table preview; TipTap destroyed-editor guard
+- `20260823223134_notion_db_table_perf_scroll` — Notion DB virtualization + pagination; wheel scroll/zoom over selected DB; property block drag
+- `20260823024219_property_strip_pagination_tooltips` — Property strip caret paging; icon name tooltips
+- `20260821141020_shift_drag_and_cmd_wheel_nav_flip` — Shift+drag pan↔select; Cmd/Ctrl+wheel Scroll↔Zoom; New board title/rename
+- `20260820105819_desktop_frame_select_opens_menu` — Desktop frame select opens frame menu; phone tap-after-selected unchanged
+- `20260820105152_phone_boards_nav_tap_sticky_tunnel` — Phone boards nav tap/hold + sticky Cloudflare tunnel
+- `20260820103736_remove_style_bar_menu_toggle` — Remove Style bar; touch menu no Search autofocus; strip/path tap toggles closed
+- `20260820020104_style_bar_labels_and_menus` — Style bar Block/Frame/Thread menus + labels; Layout Threads
+- `20260820002722_thread_layout_stack_unstack_restore` — Thread layout stack/unstack restore (magnet independent)
+- `20260819233757_thread_layout_snap_pack_stack_line` — Thread layout magnet pack + stack line (no lock)
+- `20260819103921_notion_import_picker_recents_cancel` — Notion Import pages Recents/Shared open; Adding/Generating Cancel
 - `20260818235211_boards_nav_dismiss_on_board_click` — Boards nav hides on board / outside chrome click
 - `20260818013815_card_convert_bring_collapsed_stack` — Card convert bring-along (sub/parent); collapsed stack; peel from table
 - `20260818002748_board_nav_notion_db_widths_subtasks` — Board nav freeze; Notion DB column widths/subtasks; cell ellipsis
@@ -74,7 +148,7 @@ Earlier foundation:
 ## Project Information
 
 - **Project ID**: `yhsyhtnnklpkfcpydbst`
-- **Project Name**: thinkable
+- **Project Name**: Nod Notes
 - **Region**: us-east-2
 - **Database Version**: PostgreSQL 17.6.1
 
@@ -84,6 +158,4 @@ Earlier foundation:
 2. Create a migration using Supabase CLI or MCP tools
 3. Commit migrations to git
 4. Apply migrations to production
-
-
 

@@ -1,0 +1,2 @@
+-- Uniform frame-size thread stroke (no along-path taper) + steeper size contrast.
+-- App/docs marker only; no DDL.

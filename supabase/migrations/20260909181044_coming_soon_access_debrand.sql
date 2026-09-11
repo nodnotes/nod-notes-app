@@ -1,0 +1,2 @@
+-- Coming soon + /access debrand (drop Nod Notes wordmark / invite-only blurb).
+-- No DDL — schema unchanged; remote applied still tops out at 20260811225342.

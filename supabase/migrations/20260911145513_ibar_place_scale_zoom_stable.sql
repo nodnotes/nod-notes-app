@@ -1,0 +1,3 @@
+-- Board place I-bar + typed frames use clamped 1/zoom frameScale so caret and
+-- text stay near 100% screen size across zoom (lib/ibar-place-scale.ts).
+-- App/docs marker only; no DDL.

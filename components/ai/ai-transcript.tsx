@@ -1,145 +1,188 @@
 'use client'
 
-// Transcript of AI turns — each turn drags onto the board as a frame (contents = TipTap blocks)
-import { useState } from 'react' // Local edit state
-import type { AiMessage, AiChatBlockDragPayload } from '@/lib/ai/types' // Types
-import { AI_CHAT_BLOCK_MIME } from '@/lib/ai/types' // MIME
-import { markdownToTipTapHtml } from '@/lib/ai/markdown-to-tiptap' // Lists/paragraphs → TipTap blocks
-import { cn } from '@/lib/utils' // cn
-import { GripVertical, Loader2 } from 'lucide-react' // Icons
+// Transcript of AI turns — each turn is a frame-like box (select → blue adjust + threads)
+
+import { useCallback, useEffect, useMemo } from 'react'
+import type { AiMessage, AiChatBlockDragItem } from '@/lib/ai/types'
+import { markdownToTipTapHtml } from '@/lib/ai/markdown-to-tiptap'
+import type { AiChatBoardLink } from '@/lib/ai/chat-board-links'
+import { isChatToChatLink, readChatBoardLinks } from '@/lib/ai/chat-board-links'
+import {
+  clearChatTurnSelected,
+  pruneChatTurnSelected,
+  selectChatTurn,
+  useChatTurnSelectedIds,
+} from '@/lib/ai/chat-turn-selected'
+import { AiChatTurn } from '@/components/ai/ai-chat-turn'
 
 interface AiTranscriptProps {
   messages: AiMessage[] // Turns
+  threadId?: string | null // Active thread — keys module selection across remounts
   streamingId?: string | null // Assistant id currently streaming
-  onEditUserMessage: (messageId: string, content: string) => Promise<void> // Cursor-style edit
+  conversationId?: string // Board id for ⋮⋮ → frame drops
+  onEditUserMessage: (messageId: string, content: string) => Promise<void> // Resend prompt / edit-and-regen
+  onRegenerateResponse?: (assistantMessageId: string) => Promise<void> // Re-run from preceding prompt
+  onMessagePatch?: (messageId: string, message: AiMessage) => void // Optimistic local merge after soft-save
 }
 
 export function AiTranscript({
   messages,
+  threadId,
   streamingId,
+  conversationId,
   onEditUserMessage,
+  onRegenerateResponse,
+  onMessagePatch,
 }: AiTranscriptProps) {
-  const [editingId, setEditingId] = useState<string | null>(null) // Inline edit target
-  const [draft, setDraft] = useState('') // Edit draft
-  const [busyId, setBusyId] = useState<string | null>(null) // Per-row busy
+  // Module store — phone dock ↔ desktop column remounts keep the same picks
+  const selectedIds = useChatTurnSelectedIds(threadId)
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
 
-  const startEdit = (m: AiMessage) => {
-    if (m.role !== 'user') return // Only user turns
-    setEditingId(m.id) // Enter edit
-    setDraft(m.content) // Seed draft
-  }
-
-  const commitEdit = async () => {
-    if (!editingId) return // Guard
-    const id = editingId // Capture
-    const text = draft.trim() // Normalize
-    if (!text) return // Require content
-    setBusyId(id) // Busy
-    try {
-      await onEditUserMessage(id, text) // Truncate + regenerate
-      setEditingId(null) // Exit
-    } finally {
-      setBusyId(null) // Clear
+  // Inbound chat↔chat links keyed by target turn (sources store the link)
+  const inboundByTarget = useMemo(() => {
+    const map = new Map<string, Array<{ sourceId: string; link: AiChatBoardLink }>>()
+    for (const m of messages) {
+      for (const link of readChatBoardLinks(m.metadata)) {
+        if (!isChatToChatLink(link) || !link.targetTurnId) continue
+        const list = map.get(link.targetTurnId) || []
+        list.push({ sourceId: m.id, link })
+        map.set(link.targetTurnId, list)
+      }
     }
-  }
+    return map
+  }, [messages])
 
-  const onDragStart = (event: React.DragEvent, m: AiMessage) => {
-    const plain = m.content || '' // Plain / markdown body
-    // Prefer stored TipTap HTML; else convert markdown so bullets become listItem blocks
-    const stored = typeof m.metadata?.html === 'string' ? (m.metadata.html as string) : ''
-    const html = stored.trim() ? stored : markdownToTipTapHtml(plain)
-    const payload: AiChatBlockDragPayload = {
-      source: 'ai-chat-block', // Discriminator
-      messageId: m.id, // Origin
-      plain, // Text (for snapshot / composer context)
-      html, // TipTap HTML — frame holds these blocks
-      role: m.role, // Provenance: only assistant text is AI-written
+  // Which turns show the linked brand grip (outbound or inbound)
+  const linkedTurnIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const m of messages) {
+      const links = readChatBoardLinks(m.metadata)
+      if (links.length === 0) continue
+      ids.add(m.id)
+      for (const l of links) {
+        if (l.targetTurnId) ids.add(l.targetTurnId)
+      }
     }
-    event.dataTransfer.setData(AI_CHAT_BLOCK_MIME, JSON.stringify(payload)) // Primary MIME
-    // Intentionally no text/plain — avoids pasting full text into the composer on drop
-    event.dataTransfer.effectAllowed = 'copy' // Copy to page or attach as context
-  }
+    return ids
+  }, [messages])
 
-  if (messages.length === 0) return null // Empty handled by parent
+  // Stale picks (truncate / other chat) → prune so chrome does not orphan
+  useEffect(() => {
+    if (selectedIds.length === 0) return
+    const valid = new Set(messages.map((m) => m.id))
+    if (selectedIds.every((id) => valid.has(id))) return
+    pruneChatTurnSelected(threadId, valid)
+  }, [messages, selectedIds, threadId])
+
+  // Click outside any turn → deselect (board chat-link cues select a turn themselves)
+  useEffect(() => {
+    const onDown = (event: PointerEvent) => {
+      const t = event.target as HTMLElement
+      if (t.closest('[data-ai-turn]')) return
+      if (t.closest('.block-actions-menu')) return
+      if (t.closest('[data-tt-chat-link-cue]')) return // Cue opens/selects — don't clear first
+      clearChatTurnSelected(threadId)
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    return () => document.removeEventListener('pointerdown', onDown, true)
+  }, [threadId])
+
+  const onSelect = useCallback(
+    (id: string, opts?: { additive?: boolean }) => {
+      if (!threadId) return // No thread yet — ignore
+      selectChatTurn(threadId, id, opts)
+    },
+    [threadId]
+  )
+
+  /**
+   * Multi-drag: when the grabbed turn is part of a multi-selection, pack every
+   * selected turn in transcript order (primary uses live editor html/plain).
+   */
+  const buildDragItems = useCallback(
+    (primary: AiChatBlockDragItem): AiChatBlockDragItem[] => {
+      if (selectedIds.length <= 1 || !selectedSet.has(primary.messageId)) {
+        return [primary]
+      }
+      return messages
+        .filter((m) => selectedSet.has(m.id))
+        .map((m) => {
+          if (m.id === primary.messageId) return primary // Prefer live TipTap from grabbed turn
+          const stored =
+            typeof m.metadata?.html === 'string' ? (m.metadata.html as string) : ''
+          return {
+            messageId: m.id,
+            plain: m.content || '',
+            html: stored.trim() ? stored : markdownToTipTapHtml(m.content || ''),
+            role: m.role,
+          }
+        })
+    },
+    [messages, selectedIds.length, selectedSet]
+  )
+
+  const softSave = useCallback(
+    async (
+      messageId: string,
+      patch: { content: string; html: string; metadata?: Record<string, unknown> }
+    ) => {
+      const res = await fetch(`/api/ai/messages/${messageId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...patch, soft: true }),
+      })
+      if (!res.ok) {
+        console.error('Soft-save failed', await res.text())
+        return
+      }
+      const data = await res.json()
+      if (data.message && onMessagePatch) onMessagePatch(messageId, data.message as AiMessage)
+    },
+    [onMessagePatch]
+  )
+
+  const onLinksChange = useCallback(
+    (messageId: string, links: AiChatBoardLink[]) => {
+      const m = messages.find((x) => x.id === messageId)
+      if (!m || !onMessagePatch) return
+      onMessagePatch(messageId, {
+        ...m,
+        metadata: { ...(m.metadata || {}), boardLinks: links },
+      })
+    },
+    [messages, onMessagePatch]
+  )
+
+  if (messages.length === 0) return null
 
   return (
-    <div className="flex flex-col gap-3 w-full max-w-[320px] mx-auto">
-      {messages.map((m) => {
-        const isUser = m.role === 'user' // Role
-        const isStreaming = m.id === streamingId || m.status === 'streaming' // Stream flag
-        return (
-          <div
-            key={m.id}
-            data-ai-turn={m.id} // Prompt-bar jump target
-            className={cn(
-              'group relative rounded-lg border border-transparent px-2 py-2',
-              'hover:border-black/10 dark:hover:border-white/10 hover:bg-black/[0.02] dark:hover:bg-white/[0.03]',
-              isUser ? 'bg-black/[0.03] dark:bg-white/[0.04]' : ''
-            )}
-          >
-            <div className="flex items-start gap-1.5">
-              <button
-                type="button"
-                draggable
-                onDragStart={(e) => onDragStart(e, m)}
-                className="mt-0.5 flex-shrink-0 w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 cursor-grab active:cursor-grabbing"
-                title="Drag onto board as a frame, or onto the input as context"
-                aria-label="Drag chat turn as frame"
-              >
-                <GripVertical className="h-3.5 w-3.5" />
-              </button>
-
-              <div className="min-w-0 flex-1">
-                <div className="text-[10px] uppercase tracking-wide text-gray-400 mb-1">
-                  {isUser ? 'You' : 'Thinktable'}
-                  {isStreaming && (
-                    <Loader2 className="inline ml-1 h-3 w-3 animate-spin" />
-                  )}
-                </div>
-
-                {editingId === m.id ? (
-                  <div className="flex flex-col gap-2">
-                    <textarea
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      className="w-full min-h-[72px] text-sm rounded-md border border-black/10 dark:border-white/10 bg-white dark:bg-[#1a1a1a] px-2 py-1.5 resize-y"
-                      autoFocus
-                    />
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        disabled={busyId === m.id || !draft.trim()}
-                        onClick={() => void commitEdit()}
-                        className="text-xs font-medium px-2 py-1 rounded-md bg-[#2383e2] text-white disabled:opacity-50"
-                      >
-                        Save & regenerate
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingId(null)}
-                        className="text-xs px-2 py-1 rounded-md text-gray-600 dark:text-gray-300 hover:bg-black/[0.04]"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div
-                    className={cn(
-                      'text-sm whitespace-pre-wrap break-words text-gray-900 dark:text-gray-100',
-                      isUser && 'cursor-text'
-                    )}
-                    onDoubleClick={() => startEdit(m)}
-                    title={isUser ? 'Double-click to edit and regenerate' : undefined}
-                  >
-                    {m.content || (isStreaming ? '…' : '')}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )
-      })}
+    <div className="flex flex-col gap-3 w-full">
+      {messages.map((m) => (
+        <AiChatTurn
+          key={m.id}
+          message={m}
+          selected={selectedSet.has(m.id)}
+          selectedCount={selectedIds.length}
+          selectedIds={selectedIds}
+          streaming={m.id === streamingId || m.status === 'streaming'}
+          chatBusy={!!streamingId}
+          conversationId={conversationId}
+          hasThreadLinks={linkedTurnIds.has(m.id)}
+          inboundChatLinks={inboundByTarget.get(m.id) || EMPTY_INBOUND}
+          onSelect={onSelect}
+          buildDragItems={buildDragItems}
+          onSoftSave={softSave}
+          onLinksChange={onLinksChange}
+          onResendPrompt={(id, content) => {
+            void onEditUserMessage(id, content)
+          }}
+          onRegenerateResponse={(id) => {
+            void onRegenerateResponse?.(id)
+          }}
+        />
+      ))}
     </div>
   )
 }
+
+const EMPTY_INBOUND: Array<{ sourceId: string; link: AiChatBoardLink }> = []

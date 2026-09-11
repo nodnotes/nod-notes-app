@@ -80,7 +80,7 @@ function processPoints(
 // conversationId: Conversation/board ID
 function storeFailedSave(node: FreehandNodeType, conversationId: string) {
   try {
-    const key = `thinktable-failed-canvas-saves-${conversationId}`
+    const key = `nodnotes-failed-canvas-saves-${conversationId}`
     const failed = JSON.parse(localStorage.getItem(key) || '[]')
     failed.push({
       node,
@@ -101,7 +101,7 @@ function storeFailedSave(node: FreehandNodeType, conversationId: string) {
 function removeFailedSave(nodeId: string) {
   try {
     // Try to find and remove from any conversation's failed saves
-    const keys = Object.keys(localStorage).filter(key => key.startsWith('thinktable-failed-canvas-saves-'))
+    const keys = Object.keys(localStorage).filter(key => key.startsWith('nodnotes-failed-canvas-saves-'))
     for (const key of keys) {
       const failed = JSON.parse(localStorage.getItem(key) || '[]')
       const filtered = failed.filter((item: any) => item.node.id !== nodeId)
@@ -119,7 +119,7 @@ function removeFailedSave(nodeId: string) {
 // conversationId: Conversation/board ID to retry saves for
 export async function retryFailedSaves(conversationId: string) {
   try {
-    const key = `thinktable-failed-canvas-saves-${conversationId}`
+    const key = `nodnotes-failed-canvas-saves-${conversationId}`
     const failed = JSON.parse(localStorage.getItem(key) || '[]')
     if (failed.length === 0) return
 

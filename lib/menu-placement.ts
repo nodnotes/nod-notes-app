@@ -23,11 +23,34 @@ function box(left: number, top: number, width: number, height: number): MenuRect
   return { left, top, right: left + width, bottom: top + height, width, height } // Derived right/bottom
 }
 
+// Cached safe rect. `DropdownMenuContent` evaluates `getMenuCollisionPadding()` on every render —
+// including while the menu is closed — so four querySelector passes plus getBoundingClientRect /
+// getComputedStyle ran per menu per render: ~150ms of forced layout during a single zoom gesture.
+// The lane only moves when the window resizes, the phone keyboard shifts visualViewport, or a click /
+// keypress toggles chrome (sidebar, dock), so cache between those and keep a TTL as a safety net.
+let safeRectCache: MenuRect | null = null // Last computed lane (null = recompute)
+let safeRectCacheAt = 0 // performance.now() of that computation
+const SAFE_RECT_TTL = 500 // ms — bounds staleness from anything the listeners below miss (CSS transitions)
+
+function invalidateMenuSafeRect(): void {
+  safeRectCache = null // Next read recomputes
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('resize', invalidateMenuSafeRect) // Window / top-bar wrap
+  window.addEventListener('pointerdown', invalidateMenuSafeRect, true) // Capture: fresh lane before a click opens a menu
+  window.addEventListener('keydown', invalidateMenuSafeRect, true) // Keyboard-opened menus + focus-driven chrome
+  window.visualViewport?.addEventListener('resize', invalidateMenuSafeRect) // iOS keyboard inset
+  window.visualViewport?.addEventListener('scroll', invalidateMenuSafeRect) // iOS visualViewport offset
+}
+
 /**
  * Usable screen rectangle for menus.
  * Excludes the top bar (toggle + tools) and the chat dock / sidebar so menus never cover them.
  */
 export function getMenuSafeRect(): MenuRect {
+  const now = typeof performance !== 'undefined' ? performance.now() : Date.now() // Monotonic when available
+  if (safeRectCache && now - safeRectCacheAt < SAFE_RECT_TTL) return safeRectCache // Reuse: no layout reads
   let left = PAD // Start inset from the window
   let top = PAD // Start inset from the window
   let right = window.innerWidth - PAD // Start inset from the window
@@ -37,6 +60,18 @@ export function getMenuSafeRect(): MenuRect {
   if (topBar) {
     const r = topBar.getBoundingClientRect() // Current bar box
     if (r.height > 1) top = Math.max(top, r.bottom + PAD) // Sit fully below the bar (toggle + title + tools)
+  }
+
+  const menuContext = document.querySelector('[data-edit-menu-context]') as HTMLElement | null // Mode pill + Filter/Sort strip
+  if (menuContext) {
+    const r = menuContext.getBoundingClientRect() // Pill (+ criteria when open)
+    if (r.height > 1) top = Math.max(top, r.bottom + PAD) // Clear mode toggle and chips
+  } else {
+    const filterSortBar = document.querySelector('[data-filter-sort-bar]') as HTMLElement | null
+    if (filterSortBar) {
+      const r = filterSortBar.getBoundingClientRect()
+      if (r.height > 1) top = Math.max(top, r.bottom + PAD)
+    }
   }
 
   const dock = document.querySelector('[data-chat-map-dock]') as HTMLElement | null // Phone AI composer stack
@@ -58,9 +93,19 @@ export function getMenuSafeRect(): MenuRect {
     if (r.height > 1 && r.top > window.innerHeight * 0.5) bottom = Math.min(bottom, r.top - PAD) // Stay above the brand when the dock is closed
   }
 
+  const vv = window.visualViewport // Phone keyboard shrinks the visible strip, not layout innerHeight
+  if (vv) {
+    bottom = Math.min(bottom, vv.offsetTop + vv.height - PAD) // Stay above the keyboard
+    top = Math.max(top, vv.offsetTop + PAD) // Don't sit under the URL bar / offset
+    left = Math.max(left, vv.offsetLeft + PAD) // Horizontal inset when zoomed / shifted
+    right = Math.min(right, vv.offsetLeft + vv.width - PAD) // Keep inside the visible width
+  }
+
   if (right < left) right = left // Degenerate: empty width
   if (bottom < top) bottom = top // Degenerate: empty height
-  return { left, top, right, bottom, width: right - left, height: bottom - top } // Usable area
+  safeRectCache = { left, top, right, bottom, width: right - left, height: bottom - top } // Usable area
+  safeRectCacheAt = now // Timestamp for the TTL
+  return safeRectCache
 }
 
 /** Re-place when the window or the phone keyboard (visualViewport) changes the safe rect. */
@@ -100,14 +145,40 @@ export function getMenuCollisionPadding(): { top: number; left: number; right: n
  */
 export function getMenuAvoidRects(exclude?: Element | null): MenuRect[] {
   const out: MenuRect[] = [] // Collected obstacles
+  const seen = new Set<Element>() // Don't add the same node twice (thread + overlap)
   const push = (el: Element) => {
+    if (seen.has(el)) return // Already in the list
     if (exclude && (exclude === el || exclude.contains(el) || el.contains(exclude))) return // Skip the menu itself
     const r = el.getBoundingClientRect() // Screen box
     if (r.width < 1 || r.height < 1) return // Invisible
+    seen.add(el) // Remember
     out.push(boxFromDom(r)) // Keep
   }
   document.querySelectorAll('.tt-block-highlight').forEach(push) // Armed / selected blocks (blue wash)
   if (out.length === 0) document.querySelectorAll('.react-flow__node.selected').forEach(push) // Frame selection when no block is armed
+  // Selected thread curve + the frames it meets — thread click menu must not sit on the arch.
+  const edgeBoxes: MenuRect[] = [] // Thread AABBs used to find attached frames
+  document.querySelectorAll('.react-flow__edge.selected').forEach((el) => {
+    const r = el.getBoundingClientRect() // Path + interaction stroke
+    if (r.width < 0.5 && r.height < 0.5) return // Degenerate
+    const b = boxFromDom(r) // Screen box
+    edgeBoxes.push(b) // For frame overlap
+    if (exclude && (exclude === el || exclude.contains(el) || el.contains(exclude))) return // Skip if somehow inside the menu
+    out.push(b) // Soft-avoid the curve
+  })
+  if (edgeBoxes.length > 0) {
+    document.querySelectorAll('.react-flow__node').forEach((el) => {
+      const r = el.getBoundingClientRect() // Frame box
+      if (r.width < 1 || r.height < 1) return // Hidden
+      const nb = boxFromDom(r) // Screen box
+      for (const eb of edgeBoxes) {
+        if (overlapArea(nb, inflate(eb, GAP)) > 0) {
+          push(el) // Attached / overlapping frame (snapped pair under a top↔top thread)
+          break
+        }
+      }
+    })
+  }
   return out
 }
 
@@ -144,12 +215,81 @@ function inflate(r: MenuRect, pad: number): MenuRect {
 }
 
 const HANDLE_COVER_PENALTY = 1_000_000_000 // Any grip overlap beats every soft preference
+// Cost per px travelled from the click. Soft scores are px², so ~500px of travel costs about as
+// much as covering a 10k px² sliver: the card sticks beside the frame it belongs to instead of
+// taking a clear-but-distant slot (e.g. clamped against the chat column) that also scored 0.
+const DIST_WEIGHT = 20
 
 /** Soft block/frame coverage (px², GAP-padded). */
 function softAvoidScore(placed: MenuRect, avoid: MenuRect[]): number {
   let s = 0 // Accumulator
   for (const a of avoid) s += overlapArea(placed, inflate(a, GAP)) // Prefer missing the wash
   return s
+}
+
+/** Distance from a point to a box (0 when the point is inside). */
+function distToBox(x: number, y: number, b: MenuRect): number {
+  const dx = Math.max(b.left - x, 0, x - b.right) // Horizontal gap
+  const dy = Math.max(b.top - y, 0, y - b.bottom) // Vertical gap
+  return Math.hypot(dx, dy) // Straight-line gap
+}
+
+/** The box the anchor sits in / closest to — the one the menu is actually about. */
+function nearestBox(list: MenuRect[], x: number, y: number): MenuRect | null {
+  let best: MenuRect | null = null // Winner
+  let bestD = Infinity // Its distance
+  for (const b of list) {
+    const d = distToBox(x, y, b) // Gap from the click
+    if (d < bestD) {
+      best = b
+      bestD = d
+    }
+  }
+  return best
+}
+
+// Selection chrome is absolutely positioned and spills OUTSIDE the node's own border box, which
+// `getBoundingClientRect` on the node does not include — measuring the node alone left the card
+// sitting on the blue ring / connection dots.
+const FRAME_CHROME_SEL =
+  '.react-flow__resize-control, [data-frame-chrome], [data-tt-connection-indicator], [data-tt-block-handle]'
+
+/** A frame's real on-screen box: its own rect grown to cover its selection chrome. */
+function visualNodeRect(el: Element): MenuRect {
+  let r = boxFromDom(el.getBoundingClientRect()) // Node border box
+  el.querySelectorAll(FRAME_CHROME_SEL).forEach((c) => {
+    const cr = boxFromDom(c.getBoundingClientRect()) // Ring / dot / ⋮⋮ box
+    if (cr.width < 1 || cr.height < 1) return // Hidden
+    r = unionBox(r, cr) // Grow
+  })
+  return r
+}
+
+/** Smallest frame box that fully contains `inner` — an armed block's host frame. */
+function hostFrameRect(inner: MenuRect): MenuRect | null {
+  let best: Element | null = null // Tightest container so far
+  let bestArea = Infinity // Its area
+  const nodes = document.querySelectorAll('.react-flow__node') // Frames (selected or not)
+  nodes.forEach((el) => {
+    const r = boxFromDom(el.getBoundingClientRect()) // Frame box (chrome measured only for the winner)
+    if (r.width < 1 || r.height < 1) return // Hidden
+    const contains =
+      r.left <= inner.left + 1 && r.right >= inner.right - 1 && r.top <= inner.top + 1 && r.bottom >= inner.bottom - 1
+    if (!contains) return // Not the host
+    const area = r.width * r.height // Prefer the tightest (frame, not a blockGroup wrapper)
+    if (area < bestArea) {
+      best = el
+      bestArea = area
+    }
+  })
+  return best ? visualNodeRect(best) : null
+}
+
+/** Smallest box covering both inputs. */
+function unionBox(a: MenuRect, b: MenuRect): MenuRect {
+  const left = Math.min(a.left, b.left) // Outer edges
+  const top = Math.min(a.top, b.top)
+  return box(left, top, Math.max(a.right, b.right) - left, Math.max(a.bottom, b.bottom) - top) // Cover both
 }
 
 /** Hard grip coverage — must stay 0 whenever a clear placement exists. */
@@ -165,6 +305,36 @@ export type ApplyMenuPlacementOpts = {
   openLeft: boolean // Caller preference: park to the left of the anchor
   preferredFlyoutTop?: number // Viewport Y to align a row flyout (Color / Connections)
   fromExisting?: boolean // Keep CSS first-paint (e.g. above-click) and only clamp / attach flyouts
+  extraHard?: MenuRect[] // Extra never-cover boxes (clicked thread curve + its frames)
+}
+
+/** Screen boxes for a clicked thread — curve + endpoint frames. Menu must not sit on these. */
+export function getThreadCoverRects(edgeId?: string, sourceId?: string, targetId?: string): MenuRect[] {
+  const out: MenuRect[] = [] // Collected never-cover boxes
+  const pushSel = (sel: string) => {
+    document.querySelectorAll(sel).forEach((el) => {
+      const r = el.getBoundingClientRect() // Path / node screen box
+      if (r.width < 0.5 && r.height < 0.5) return // Degenerate
+      out.push(boxFromDom(r)) // Keep
+    })
+  }
+  if (edgeId) {
+    const id = CSS.escape(edgeId) // RF id may contain special chars
+    pushSel(`.react-flow__edge[data-id="${id}"]`) // Wrapper g / div
+    pushSel(`[data-testid="rf__edge-${id}"]`) // RF 11 test id fallback
+  }
+  pushSel('.react-flow__edge.selected') // Any selected thread curve
+  if (sourceId) {
+    const id = CSS.escape(sourceId) // Frame id
+    pushSel(`.react-flow__node[data-id="${id}"]`) // Source frame
+    pushSel(`[data-testid="rf__node-${id}"]`) // RF 11 test id fallback
+  }
+  if (targetId) {
+    const id = CSS.escape(targetId) // Frame id
+    pushSel(`.react-flow__node[data-id="${id}"]`) // Target frame
+    pushSel(`[data-testid="rf__node-${id}"]`) // RF 11 test id fallback
+  }
+  return out
 }
 
 /**
@@ -175,15 +345,32 @@ export type ApplyMenuPlacementOpts = {
  */
 export function applyMenuPlacement(root: HTMLElement, opts: ApplyMenuPlacementOpts): void {
   const safe = getMenuSafeRect() // Chrome-free window
-  const avoid = getMenuAvoidRects(root) // Selected block / frame (soft)
-  const handles = getMenuHandleRects(root) // ⋮⋮ grips (hard — never cover)
+  // Obstacles outside the lane can never be covered, so they only add noise — worse, each one
+  // offers a "beside me" origin, and a grip inside the open chat column pushed the card against
+  // the column edge instead of leaving it beside the frame.
+  const inLane = (b: MenuRect) => overlapArea(b, safe) > 0
+  const avoid = getMenuAvoidRects(root).filter(inLane) // Selected block / frame (soft)
+  const handles = [...getMenuHandleRects(root), ...(opts.extraHard ?? [])].filter(inLane) // ⋮⋮ grips + thread curve (hard — never cover)
   const body = root.querySelector('[data-tt-menu-body]') as HTMLElement | null // Inner scroller (search chrome stays put)
   const flyout = root.querySelector('[data-tt-menu-flyout="main"]') as HTMLElement | null // Turn into / Color / Shape / …
   const nested = root.querySelector('[data-tt-menu-flyout="nested"]') as HTMLElement | null // Board in (off Turn into)
 
   root.style.maxHeight = '' // Measure natural height
   root.style.overflow = 'visible' // Flyouts must not clip during measure
-  if (body) body.style.maxHeight = '' // Natural body
+  root.style.display = '' // Flex column applied after measure
+  root.style.flexDirection = ''
+  root.style.overflowY = ''
+  if (body) {
+    body.style.maxHeight = '' // Natural body
+    body.style.minHeight = ''
+    body.style.flex = ''
+    body.style.overflowY = ''
+  }
+  for (const child of root.children) {
+    const el = child as HTMLElement
+    if (el === body || el.dataset.ttMenuFlyout) continue
+    el.style.flexShrink = '' // Clear chrome clamp from the last pass
+  }
   if (flyout) flyout.style.maxHeight = '' // Natural flyout
   if (nested) nested.style.maxHeight = '' // Natural nested
 
@@ -202,7 +389,14 @@ export function applyMenuPlacement(root: HTMLElement, opts: ApplyMenuPlacementOp
   const existing = opts.fromExisting ? root.getBoundingClientRect() : null // First-paint box (translate already applied)
 
   type Side = 'left' | 'right' // Flyout parks on this side of the menu
-  type Cand = { menuLeft: number; top: number; flyoutSide: Side; nestedSide: Side; score: number } // One layout
+  type Cand = {
+    menuLeft: number
+    top: number
+    flyoutSide: Side
+    nestedSide: Side
+    score: number
+    dist: number // Tiebreak: how far this box sits from the click / current card
+  } // One layout
 
   // Submenus always open to the RIGHT of the parent card (Turn into / Color / Shape / Board in / …).
   const flyoutSide: Side = 'right'
@@ -224,7 +418,15 @@ export function applyMenuPlacement(root: HTMLElement, opts: ApplyMenuPlacementOp
     pushOrigin(opts.anchorX + GAP, opts.anchorY, !opts.openLeft)
   }
   // Soft: clear of the highlighted block / selected frame.
-  for (const a of avoid) {
+  // Only while the card is being placed. Re-offering these once it is up (`existing`) is what
+  // made the card hop to the far side of the frame the moment a flyout opened — the submenu is
+  // allowed to cover the frame instead.
+  // Only the obstacle under (or nearest) the anchor supplies origins: a selected thread pulls
+  // every frame it touches into `avoid`, and offering a slot beside each of those parked the card
+  // against the far window edge while a clear gap sat right beside the clicked frame. The rest of
+  // `avoid` is still scored, so the winner still prefers to miss them.
+  const primaryAvoid = existing ? null : nearestBox(avoid, opts.anchorX, opts.anchorY)
+  for (const a of primaryAvoid ? [primaryAvoid] : []) {
     pushOrigin(a.left - GAP - menuW, existing?.top ?? opts.anchorY, opts.openLeft) // Left of block
     pushOrigin(a.right + GAP, existing?.top ?? opts.anchorY, !opts.openLeft) // Right of block
     pushOrigin(a.left - GAP - menuW, a.top - GAP - menuMaxH, opts.openLeft) // Above-left
@@ -248,6 +450,8 @@ export function applyMenuPlacement(root: HTMLElement, opts: ApplyMenuPlacementOp
   }
 
   const cands: Cand[] = [] // Scored placements
+  const refLeft = existing?.left ?? opts.anchorX // Tiebreak origin: current card, else the click
+  const refTop = existing?.top ?? opts.anchorY
   const seen = new Set<string>() // Skip duplicate left/top after clamp
   for (const pref of originPrefs) {
     let menuLeft = pref.left // Start from the preferred menu origin
@@ -266,25 +470,66 @@ export function applyMenuPlacement(root: HTMLElement, opts: ApplyMenuPlacementOp
     const clusterBox = box(menuLeft, top, Math.min(clusterW, safe.width), clusterH) // Soft-score the strip vs block
     // Covering a grip is forbidden; covering the block is discouraged; soft prefer openLeft / existing.
     const sidePenalty = existing || pref.prefer ? 0 : 1_000
-    const score =
-      hardHandleScore(menuBox, handles) + softAvoidScore(clusterBox, avoid) + sidePenalty
-    cands.push({ menuLeft, top, flyoutSide, nestedSide, score }) // Keep
+    // Once placed, only the card is scored against the frame — scoring the whole strip made an
+    // opening flyout look like new frame overlap and moved the card out from under the pointer.
+    const softBox = existing ? menuBox : clusterBox
+    const score = hardHandleScore(menuBox, handles) + softAvoidScore(softBox, avoid) + sidePenalty
+    // Distance from the click (or the card's current spot) — several origins clear every obstacle
+    // and used to tie at 0, so insertion order decided and the card could land against the far
+    // window edge while a clear gap sat right beside the frame.
+    const dist = Math.abs(menuLeft - refLeft) + Math.abs(top - refTop)
+    cands.push({ menuLeft, top, flyoutSide, nestedSide, score: score + dist * DIST_WEIGHT, dist }) // Keep
   }
 
-  cands.sort((a, b) => a.score - b.score) // Best (clear grips → least block cover → preference) first
-  const best = cands[0] ?? {
+  // Explicit side rule for the card the user just opened: park flush LEFT of the frame / armed
+  // block when the lane has room for it, else flush RIGHT of it. Scoring only gets a say when
+  // neither side fits or both would cover a ⋮⋮ grip.
+  const sideSlot = ((): Cand | null => {
+    if (existing || !primaryAvoid) return null // Locked under the pointer / nothing to sit beside
+    // Sit beside the whole FRAME, not just the armed block: `avoid` reports the block wash when one
+    // is armed, and its right edge sits inside the frame — the card then landed on the frame's own
+    // right edge. Union covers the block-only case (no host found) too.
+    const host = hostFrameRect(primaryAvoid) // Frame that owns the block / the frame itself
+    const beside = host ? unionBox(primaryAvoid, host) : primaryAvoid // Box the card must clear
+    const top = clampStart(opts.anchorY, clusterH, safe.top, safe.bottom) // Same vertical lane as any candidate
+    const slots = [beside.left - GAP - menuW, beside.right + GAP] // Left first, then right
+    for (const menuLeft of slots) {
+      if (menuLeft < safe.left || menuLeft + menuW > safe.right) continue // No room on this side
+      if (hardHandleScore(box(menuLeft, top, menuW, menuMaxH), handles) > 0) continue // Would bury a ⋮⋮
+      return { menuLeft, top, flyoutSide, nestedSide, score: 0, dist: 0 }
+    }
+    return null // Neither side fits — fall back to the scored candidates
+  })()
+
+  // Best (clear grips → least block cover → preference), then the closest such box to the anchor.
+  cands.sort((a, b) => a.score - b.score || a.dist - b.dist)
+  const best = sideSlot ?? cands[0] ?? {
     menuLeft: clampStart(existing?.left ?? opts.anchorX, menuW, safe.left, safe.right),
     top: clampStart(existing?.top ?? opts.anchorY, menuMaxH, safe.top, safe.bottom),
     flyoutSide: 'right' as Side,
     nestedSide: 'right' as Side,
     score: 0,
+    dist: 0,
   } // Fallback
 
   setViewportPos(root, best.menuLeft, best.top) // Park the main card
   const top = best.top // Flyouts share this cluster top when not row-aligned
-  const chrome = body ? Math.max(0, root.getBoundingClientRect().height - body.getBoundingClientRect().height) : 0 // Search + label above the scroller
-  if (body) body.style.maxHeight = `${Math.max(0, menuMaxH - chrome)}px` // Shrink rows; keep search visible
-  else {
+  const chrome = body ? Math.max(0, menuH - Math.ceil(body.getBoundingClientRect().height)) : 0 // Search + label above the scroller
+  const bodyMaxH = Math.max(32, menuMaxH - chrome) // At least one row; clip from the bottom, never squash rows
+  if (body) {
+    root.style.display = 'flex' // Column: fixed chrome on top, scroller eats the rest
+    root.style.flexDirection = 'column'
+    root.style.maxHeight = `${menuMaxH}px` // Card height matches the safe lane
+    for (const child of root.children) {
+      const el = child as HTMLElement
+      if (el === body || el.dataset.ttMenuFlyout) continue // Flyouts stay absolute outside the column
+      el.style.flexShrink = '0' // Search / label never compress
+    }
+    body.style.flex = '1 1 auto' // Take leftover height under chrome
+    body.style.minHeight = '0' // Let overflow-y scroll instead of flex-squashing rows
+    body.style.maxHeight = `${bodyMaxH}px` // Clip from the bottom of the list
+    body.style.overflowY = 'auto' // Scroll hidden rows
+  } else {
     root.style.maxHeight = `${menuMaxH}px` // Slim menus (Notion connection) scroll as a whole
     root.style.overflowY = 'auto' // Enable the shrink
   }
@@ -308,6 +553,88 @@ export function applyMenuPlacement(root: HTMLElement, opts: ApplyMenuPlacementOp
     nested.style.maxHeight = `${nestedMaxH}px` // Shrink if needed
     nested.style.overflowY = 'auto' // Scroll leftover boards
   }
+}
+
+const SLASH_GAP = 4 // Air between caret and menu
+const SLASH_MIN_H = 96 // At least a few rows + footer when the lane is tiny
+const SLASH_HARD_CAP = 280 // Never fill the phone strip even when there is room
+
+type SlashAnchor = { left: number; top: number; right: number; bottom: number }
+
+const slashAnchorByShell = new WeakMap<HTMLElement, SlashAnchor>() // Survive React re-renders / viewport watches
+
+/**
+ * Slash command menu — fixed to the viewport, flipped above the caret when needed, height
+ * clamped into the keyboard-aware safe rect so the list scrolls instead of clipping.
+ */
+export function applySlashMenuPlacement(
+  shell: HTMLElement,
+  opts?: { anchor?: SlashAnchor | null }
+): void {
+  const safe = getMenuSafeRect() // Chrome-free + visualViewport-aware lane
+  const body = shell.querySelector('[data-tt-menu-body]') as HTMLElement | null // Scrollable list
+  const footer = shell.querySelector('[data-tt-slash-footer]') as HTMLElement | null // "Close menu" row
+
+  if (opts?.anchor) slashAnchorByShell.set(shell, opts.anchor) // Remember caret for keyboard resize
+  const stored = slashAnchorByShell.get(shell) // Last caret from TipTap mount
+  const shellBox = shell.getBoundingClientRect() // Fallback when caret is gone mid-frame
+  const anchor: SlashAnchor = stored ?? {
+    left: shellBox.left,
+    top: shellBox.top,
+    right: shellBox.left + 1,
+    bottom: shellBox.top + 1,
+  }
+
+  shell.style.maxHeight = '' // Measure natural height
+  shell.style.height = ''
+  shell.style.display = ''
+  shell.style.flexDirection = ''
+  shell.style.overflowY = ''
+  if (body) {
+    body.style.maxHeight = ''
+    body.style.minHeight = ''
+    body.style.flex = ''
+    body.style.overflowY = ''
+  }
+
+  // Escape React Flow transforms — absolute placement inside the frame was sliding off-screen.
+  shell.style.position = 'fixed'
+  shell.style.visibility = 'visible'
+  shell.style.zIndex = shell.style.zIndex || '1001'
+  shell.style.width = 'max-content'
+
+  const naturalH = Math.max(SLASH_MIN_H, Math.ceil(shell.scrollHeight)) // Full card before clamp
+  const menuW = Math.max(200, Math.ceil(shell.getBoundingClientRect().width) || 300) // Card width
+
+  const spaceBelow = safe.bottom - (anchor.bottom + SLASH_GAP) // Room under the caret
+  const spaceAbove = anchor.top - SLASH_GAP - safe.top // Room above the caret
+  const placeBelow = spaceBelow >= SLASH_MIN_H || spaceBelow >= spaceAbove // Prefer below; flip when cramped
+  const available = Math.max(SLASH_MIN_H, placeBelow ? spaceBelow : spaceAbove) // Directional lane
+  const hardCap = Math.min(SLASH_HARD_CAP, Math.floor(safe.height * 0.55)) // Phone: leave board visible
+  const menuMaxH = clampSize(naturalH, Math.min(available, hardCap)) // Fit lane + hard cap
+
+  const footerH = footer ? Math.ceil(footer.getBoundingClientRect().height) : 0 // Fixed chrome
+  const bodyMaxH = Math.max(48, menuMaxH - footerH) // List eats the rest
+
+  shell.style.display = 'flex' // Column: inner wrapper + flyouts
+  shell.style.flexDirection = 'column'
+  shell.style.maxHeight = `${menuMaxH}px`
+  shell.style.minHeight = '0'
+  shell.style.overflow = 'visible' // Code-language flyout stays absolute outside
+
+  if (body) {
+    body.style.flex = '1 1 auto' // Fill under the footer
+    body.style.minHeight = '0' // Let overflow-y scroll instead of squashing rows
+    body.style.maxHeight = `${bodyMaxH}px`
+    body.style.overflowY = 'auto'
+  }
+
+  const top = placeBelow
+    ? clampStart(anchor.bottom + SLASH_GAP, menuMaxH, safe.top, safe.bottom) // Under caret
+    : clampStart(anchor.top - SLASH_GAP - menuMaxH, menuMaxH, safe.top, safe.bottom) // Above caret
+  const left = clampStart(anchor.left, menuW, safe.left, safe.right) // Stay in the safe strip
+
+  setViewportPos(shell, left, top) // Fixed left/top in viewport space
 }
 
 /** Write viewport left/top onto a fixed or absolute element. */

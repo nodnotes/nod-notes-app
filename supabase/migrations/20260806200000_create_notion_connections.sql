@@ -1,7 +1,7 @@
 -- Store per-user Notion OAuth tokens for bidirectional sync (service-role access only)
 CREATE TABLE IF NOT EXISTS notion_connections (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- Row id
-  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE, -- Thinktable owner
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE, -- Nod Notes owner
   access_token TEXT NOT NULL, -- Notion OAuth access token (secret)
   refresh_token TEXT, -- Notion refresh token when issued
   workspace_id TEXT, -- Notion workspace id from token response
@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS notion_connections (
   CONSTRAINT notion_connections_user_id_unique UNIQUE (user_id) -- One Notion install per user for MVP
 );
 
--- Fast lookup by Thinktable user
+-- Fast lookup by Nod Notes user
 CREATE INDEX IF NOT EXISTS idx_notion_connections_user_id ON notion_connections(user_id);
 
 -- Lock down: enable RLS with no policies so anon/authenticated cannot read tokens

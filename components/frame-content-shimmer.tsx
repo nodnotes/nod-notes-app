@@ -99,7 +99,7 @@ export type FrameLayoutEntry = {
 export type FrameLayoutCache = Record<string, FrameLayoutEntry>
 
 const layoutKey = (conversationId: string) =>
-  `thinktable-canvas-positions-${conversationId}` // Same key as before; values may include size / text flags
+  `nodnotes-canvas-positions-${conversationId}` // Same key as before; values may include size / text flags
 
 /** Read last-visit frame positions (and optional size / text flags). */
 export function readFrameLayoutCache(conversationId: string): FrameLayoutCache {
@@ -157,4 +157,202 @@ export function patchFrameLayoutEntry(
     barCount: patch.barCount ?? prev?.barCount,
   }
   writeFrameLayoutCache(conversationId, layout)
+}
+
+/** Outer RF/panel box used while TipTap is deferred (layout cache → metadata → HTML guess). */
+export type DeferredFrameBox = {
+  width: number
+  height: number
+  hasText: boolean
+  barCount: number
+  kind: 'database' | 'rowCard' | 'boardLink' | 'text' | 'empty'
+}
+
+const DEFER_LINE_H = 14 * 1.25 // Match board `.prose` line box used by shimmer stubs
+const DEFER_PAD_Y = 4 // contentFit T+B (2+2)
+const DEFER_PAD_X = 4 // contentFit L+R (2+2)
+const DEFER_EMPTY_W = 52 // ⋮⋮ + ~3ch floor
+const DEFER_EMPTY_H = 32
+const DEFER_BOARD_LINK_W = 98 // icon + open pill (unselected — no ⋮⋮ gutter in outer box)
+const DEFER_DB_W = 420
+const DEFER_DB_H = 280
+const DEFER_ROW_CARD_W = 340
+const DEFER_ROW_CARD_H = 200
+
+/** Decode attr values written with escapeHtml (&quot; &amp; &lt; &gt;). */
+function decodeHtmlAttr(raw: string): string {
+  return raw
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+}
+
+/** First boardLink/pageLink atom in HTML — title lives in attrs (no visible text nodes). */
+export function parseBoardLinkPreview(
+  html: string | undefined | null
+): { title: string; icon: string | null; variant: 'title' | 'inline' } | null {
+  if (!html) return null
+  const tag = html.match(/<div\b[^>]*data-type=["'](?:boardLink|pageLink)["'][^>]*>/i)?.[0]
+  if (!tag) return null
+  const title = decodeHtmlAttr(tag.match(/data-title=["']([^"']*)["']/i)?.[1] ?? '')
+  const iconRaw = tag.match(/data-icon=["']([^"']*)["']/i)?.[1]
+  const icon = iconRaw ? decodeHtmlAttr(iconRaw) : null
+  const variant = /data-variant=["']title["']/i.test(tag) ? 'title' : 'inline'
+  return { title, icon, variant }
+}
+
+/** First databaseBlock atom — id/title in attrs (sizing estimates / kind sniff). */
+export function parseDatabaseBlockPreview(
+  html: string | undefined | null
+): {
+  notionDatabaseId: string
+  title: string
+  viewSettings: string | null
+  icon: string | null
+} | null {
+  if (!html) return null
+  const tag = html.match(/<div\b[^>]*data-type=["']databaseBlock["'][^>]*>/i)?.[0]
+  if (!tag) return null
+  const id = tag.match(/data-notion-database-id=["']([^"']+)["']/i)?.[1]
+  if (!id) return null
+  const title = decodeHtmlAttr(tag.match(/data-title=["']([^"']*)["']/i)?.[1] ?? '')
+  const viewRaw = tag.match(/data-view-settings=["']([^"']*)["']/i)?.[1]
+  const icon = decodeHtmlAttr(tag.match(/data-icon=["']([^"']*)["']/i)?.[1] ?? '')
+  return {
+    notionDatabaseId: decodeHtmlAttr(id),
+    title: title || 'Untitled database',
+    viewSettings: viewRaw ? decodeHtmlAttr(viewRaw) : null,
+    icon: icon || null, // Emoji when the Notion DB has one; caller falls back to the table glyph
+  }
+}
+
+function deferredContentKind(html: string | undefined | null): DeferredFrameBox['kind'] {
+  const h = html || ''
+  if (/data-type=["']databaseBlock["']/i.test(h)) return 'database'
+  if (/data-type=["']propertyBlock["']/i.test(h)) return 'rowCard'
+  if (/data-type=["']boardLink["']/i.test(h)) return 'boardLink'
+  if (frameHasVisibleText(h)) return 'text'
+  return 'empty'
+}
+
+// Measured off live page-link frames (8 samples, board 3b22e093): the outer box is always the title's
+// text width + 34px of icon column and padding, and the title renders in Inter 600 at 19.6px — not the
+// 14px body size the old flat estimate implied, which is most of why 98px clipped every title.
+const BOARD_LINK_TITLE_FONT = '600 19.6px Inter, -apple-system, BlinkMacSystemFont, sans-serif'
+const BOARD_LINK_INLINE_FONT = '400 15px Inter, -apple-system, BlinkMacSystemFont, sans-serif'
+const BOARD_LINK_CHROME_W = 34 // icon column + L/R padding around the title
+const DEFER_BOARD_LINK_MAX_W = 420 // Long Notion titles wrap in the live frame too — don't outgrow it
+const boardLinkWidthCache = new Map<string, number>() // Same titles recur across frames and re-renders
+let textMetricsCtx: CanvasRenderingContext2D | null = null // One 2D context for all measurements
+
+/**
+ * Width a deferred page-link frame needs for its title.
+ * `DEFER_BOARD_LINK_W` alone is "icon + open pill" and says nothing about the text, so **every** page
+ * link deferred to 98px: at any zoom the title wrapped to one word per line and clipped, which read as
+ * "frames aren't showing when I zoom out". These frames never hug (no `resizeDimensions`) and a board
+ * opened at fit-zoom never mounts one, so the estimate is the only size they will ever get — it has to
+ * be right, not merely stable. Canvas `measureText` keeps it off the DOM (no layout, no reflow).
+ */
+function deferredBoardLinkWidth(title: string, variant: 'title' | 'inline'): number {
+  const key = `${variant}:${title}`
+  const cached = boardLinkWidthCache.get(key)
+  if (cached != null) return cached
+  let text = 0
+  if (typeof document !== 'undefined') {
+    if (!textMetricsCtx) textMetricsCtx = document.createElement('canvas').getContext('2d')
+    if (textMetricsCtx) {
+      textMetricsCtx.font = variant === 'title' ? BOARD_LINK_TITLE_FONT : BOARD_LINK_INLINE_FONT
+      text = textMetricsCtx.measureText(title).width
+    }
+  }
+  // SSR / no canvas: mean advance width per character at each size
+  if (!text) text = title.length * (variant === 'title' ? 10.5 : 8)
+  // Canvas may still be on a fallback face when this runs (Inter is a webfont), and every fallback here
+  // is narrower, so a raw measurement came out ~7% short and clipped the last character of every title.
+  // Erring wide is free — the shell only has to hold the text until the real frame replaces it.
+  const width = Math.min(
+    DEFER_BOARD_LINK_MAX_W,
+    Math.max(DEFER_BOARD_LINK_W, Math.ceil(text * 1.08 + BOARD_LINK_CHROME_W))
+  )
+  boardLinkWidthCache.set(key, width)
+  return width
+}
+
+function estimateDeferredBoxFromHtml(html: string | undefined | null): DeferredFrameBox {
+  const kind = deferredContentKind(html)
+  const hasText = kind === 'text' || kind === 'rowCard'
+  const barCount = hasText ? shimmerBarCountFromHtml(html) : 0
+  if (kind === 'database') {
+    return { width: DEFER_DB_W, height: DEFER_DB_H, hasText: false, barCount: 0, kind }
+  }
+  if (kind === 'rowCard') {
+    const props = (html || '').match(/data-type=["']propertyBlock["']/gi)?.length ?? 2
+    return {
+      width: DEFER_ROW_CARD_W,
+      height: Math.max(DEFER_ROW_CARD_H, DEFER_PAD_Y + props * 28 + 40),
+      hasText: true,
+      barCount: Math.min(Math.max(props, 2), 6),
+      kind,
+    }
+  }
+  if (kind === 'boardLink') {
+    // The title is in the HTML, so measure it instead of assuming one width for every page link.
+    const preview = parseBoardLinkPreview(html)
+    return {
+      width: preview?.title ? deferredBoardLinkWidth(preview.title, preview.variant) : DEFER_BOARD_LINK_W,
+      height: DEFER_EMPTY_H,
+      hasText: false,
+      barCount: 0,
+      kind,
+    }
+  }
+  if (kind === 'text') {
+    const lines = Math.max(barCount, 1)
+    return {
+      width: 280,
+      height: Math.max(DEFER_EMPTY_H, DEFER_PAD_Y + lines * DEFER_LINE_H),
+      hasText: true,
+      barCount: lines,
+      kind,
+    }
+  }
+  return {
+    width: DEFER_EMPTY_W,
+    height: DEFER_EMPTY_H,
+    hasText: false,
+    barCount: 0,
+    kind: 'empty',
+  }
+}
+
+/** Resolve a stable outer box for a deferred frame (cache wins, then saved resize, then HTML). */
+export function resolveDeferredFrameBox(
+  frameId: string,
+  conversationId: string | undefined,
+  html: string | undefined | null,
+  metadata?: Record<string, unknown> | null
+): DeferredFrameBox {
+  const cached = conversationId ? readFrameLayoutCache(conversationId)[frameId] : undefined
+  if (cached?.width && cached?.height && cached.width > 0 && cached.height > 0) {
+    return {
+      width: cached.width,
+      height: cached.height,
+      hasText: cached.hasText ?? frameHasVisibleText(html),
+      barCount: cached.barCount ?? shimmerBarCountFromHtml(html),
+      kind: deferredContentKind(html),
+    }
+  }
+  const dims = metadata?.resizeDimensions as { width?: number; height?: number } | undefined
+  if (dims?.width && dims?.height && dims.width > 0 && dims.height > 0) {
+    const est = estimateDeferredBoxFromHtml(html)
+    return {
+      width: dims.width,
+      height: dims.height,
+      hasText: est.hasText,
+      barCount: est.barCount,
+      kind: est.kind,
+    }
+  }
+  return estimateDeferredBoxFromHtml(html)
 }

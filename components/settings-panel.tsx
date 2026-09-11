@@ -2,7 +2,7 @@
 
 // Settings panel component - slides in from right with semi-transparent backdrop
 import { useState, useEffect } from 'react'
-import { X, Settings, User as UserIcon, Shield, CreditCard, ChevronDown, Camera } from 'lucide-react'
+import { X, Settings, User as UserIcon, Shield, ChevronDown, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -14,7 +14,15 @@ import { useTheme } from '@/components/theme-provider'
 import type { User } from '@supabase/supabase-js'
 import { Input } from '@/components/ui/input'
 import { createClient } from '@/lib/supabase/client'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { openStripePortal } from '@/lib/stripe-client'
+import {
+  isPaidSubscriptionTier,
+  subscriptionTierLabel,
+} from '@/lib/subscription-plans'
+import { OpenMojiImg } from '@/components/openmoji-picker'
+import { EditProfileDialog } from '@/components/edit-profile-dialog'
+import { DEFAULT_AVATAR_COLOR, resolveAvatarColor } from '@/lib/avatar-colors'
 
 interface SettingsPanelProps {
   open: boolean
@@ -38,14 +46,16 @@ export function SettingsPanel({
   const [activeTab, setActiveTab] = useState<'account' | 'general' | 'security'>('account')
   const { theme, setTheme } = useTheme()
   const supabase = createClient()
+  const queryClient = useQueryClient()
+  const [editProfileOpen, setEditProfileOpen] = useState(false) // Standalone Edit profile window
   
-  // Fetch user profile
+  // Fetch user profile (avatar emoji + color live in metadata)
   const { data: profile } = useQuery({
     queryKey: ['user-profile', user.id],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('profiles')
-        .select('full_name, email, subscription_tier')
+        .select('full_name, email, subscription_tier, metadata')
         .eq('id', user.id)
         .single()
       
@@ -58,15 +68,32 @@ export function SettingsPanel({
   })
   
   const [displayName, setDisplayName] = useState(profile?.full_name || '')
-  const [username, setUsername] = useState(user.email?.split('@')[0] || '')
+  const meta = (profile?.metadata && typeof profile.metadata === 'object' ? profile.metadata : {}) as Record<string, unknown>
+  const [avatarEmoji, setAvatarEmoji] = useState<string | null>(
+    typeof meta.avatar_emoji === 'string' ? meta.avatar_emoji : null
+  )
+  const [avatarUnified, setAvatarUnified] = useState<string | null>(
+    typeof meta.avatar_unified === 'string' ? meta.avatar_unified : null
+  )
+  const [avatarColor, setAvatarColor] = useState(
+    resolveAvatarColor(typeof meta.avatar_color === 'string' ? meta.avatar_color : null)
+  )
   
   // Update local state when profile loads
   useEffect(() => {
     if (profile) {
       setDisplayName(profile.full_name || '')
-      setUsername(user.email?.split('@')[0] || '')
+      const m = (profile.metadata && typeof profile.metadata === 'object' ? profile.metadata : {}) as Record<string, unknown>
+      setAvatarEmoji(typeof m.avatar_emoji === 'string' ? m.avatar_emoji : null)
+      setAvatarUnified(typeof m.avatar_unified === 'string' ? m.avatar_unified : null)
+      setAvatarColor(resolveAvatarColor(typeof m.avatar_color === 'string' ? m.avatar_color : null))
     }
   }, [profile, user.email])
+
+  const profileInitials =
+    profile?.full_name?.split(' ').map((n: string) => n[0]).join('').toUpperCase() ||
+    user.email?.charAt(0).toUpperCase() ||
+    'U'
 
   if (!open) return null
 
@@ -136,21 +163,76 @@ export function SettingsPanel({
             {activeTab === 'account' && (
               <div className="space-y-6">
                 <div>
-                  <h3 className="text-lg font-semibold mb-4 dark:text-white">Edit profile</h3>
+                  <h3 className="text-lg font-semibold mb-4 dark:text-white">Profile</h3>
                   
-                  {/* Profile Avatar */}
+                  {/* Avatar preview — pencil opens Edit profile window */}
                   <div className="flex flex-col items-center mb-6">
                     <div className="relative">
-                      <div className="w-20 h-20 bg-green-500 rounded-full flex items-center justify-center">
-                        <span className="text-white font-semibold text-2xl">
-                          {profile?.full_name?.split(' ').map((n: string) => n[0]).join('').toUpperCase() || user.email?.charAt(0).toUpperCase() || 'U'}
-                        </span>
-                      </div>
-                      <button className="absolute bottom-0 right-0 w-6 h-6 bg-gray-700 rounded-full flex items-center justify-center hover:bg-gray-600 transition-colors">
-                        <Camera className="h-3 w-3 text-white" />
+                      <button
+                        type="button"
+                        className="w-20 h-20 rounded-full flex items-center justify-center overflow-hidden ring-offset-2 hover:ring-2 hover:ring-gray-300 dark:hover:ring-gray-600 transition"
+                        style={{ backgroundColor: avatarColor || DEFAULT_AVATAR_COLOR }}
+                        onClick={() => setEditProfileOpen(true)}
+                        aria-label="Edit profile picture"
+                      >
+                        {avatarEmoji || avatarUnified ? (
+                          <OpenMojiImg
+                            native={avatarEmoji}
+                            unified={avatarUnified}
+                            size={72}
+                            className="h-[72px] w-[72px]"
+                            alt="Profile emoji"
+                          />
+                        ) : (
+                          <span className="text-white font-semibold text-2xl">{profileInitials}</span>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        className="absolute bottom-0 right-0 w-6 h-6 bg-gray-700 rounded-full flex items-center justify-center hover:bg-gray-600 transition-colors"
+                        onClick={() => setEditProfileOpen(true)}
+                        aria-label="Edit profile"
+                      >
+                        <Pencil className="h-3 w-3 text-white" />
                       </button>
                     </div>
                   </div>
+
+                  <EditProfileDialog
+                    open={editProfileOpen}
+                    onOpenChange={setEditProfileOpen}
+                    initials={profileInitials}
+                    initial={{
+                      emoji: avatarEmoji,
+                      unified: avatarUnified,
+                      color: avatarColor,
+                    }}
+                    onSave={async (value) => {
+                      setAvatarEmoji(value.emoji)
+                      setAvatarUnified(value.unified)
+                      setAvatarColor(value.color)
+                      const prevMeta =
+                        profile?.metadata && typeof profile.metadata === 'object'
+                          ? (profile.metadata as Record<string, unknown>)
+                          : {}
+                      const { error } = await supabase
+                        .from('profiles')
+                        .update({
+                          metadata: {
+                            ...prevMeta,
+                            avatar_emoji: value.emoji,
+                            avatar_unified: value.unified,
+                            avatar_color: value.color,
+                          },
+                        })
+                        .eq('id', user.id)
+                      if (error) {
+                        console.error('Error updating avatar:', error)
+                        throw error
+                      }
+                      await queryClient.invalidateQueries({ queryKey: ['user-profile', user.id] })
+                    }}
+                  />
                   
                   {/* Display Name Input */}
                   <div className="space-y-2 mb-4">
@@ -163,20 +245,9 @@ export function SettingsPanel({
                     />
                   </div>
                   
-                  {/* Username Input */}
-                  <div className="space-y-2 mb-4">
-                    <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Username</label>
-                    <Input
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      placeholder="Enter your username"
-                      className="dark:bg-gray-800 dark:border-gray-700"
-                    />
-                  </div>
-                  
                   {/* Description */}
                   <p className="text-xs text-gray-500 dark:text-gray-400 mb-6">
-                    Your profile helps people recognize you. Your name and username are also used in the ThinkTable app.
+                    Your profile helps people recognize you. Your display name is used across Nod Notes.
                   </p>
                   
                   {/* Save/Cancel Buttons */}
@@ -189,15 +260,26 @@ export function SettingsPanel({
                     </Button>
                     <Button
                       onClick={async () => {
-                        // Save profile updates
+                        // Name save only — avatar emoji/color already persist from Edit profile window
+                        const prevMeta =
+                          profile?.metadata && typeof profile.metadata === 'object'
+                            ? (profile.metadata as Record<string, unknown>)
+                            : {}
+                        const nextMeta = {
+                          ...prevMeta,
+                          avatar_emoji: avatarEmoji,
+                          avatar_unified: avatarUnified,
+                          avatar_color: avatarColor,
+                        }
                         const { error } = await supabase
                           .from('profiles')
-                          .update({ full_name: displayName })
+                          .update({ full_name: displayName, metadata: nextMeta })
                           .eq('id', user.id)
                         
                         if (error) {
                           console.error('Error updating profile:', error)
                         } else {
+                          await queryClient.invalidateQueries({ queryKey: ['user-profile', user.id] })
                           onClose()
                         }
                       }}
@@ -218,7 +300,7 @@ export function SettingsPanel({
                       <div>
                         <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Plan</label>
                         <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                          {profile?.subscription_tier === 'pro' ? 'Plus' : profile?.subscription_tier === 'enterprise' ? 'Enterprise' : 'Free Plan'}
+                          {subscriptionTierLabel(profile?.subscription_tier)}
                         </p>
                       </div>
                     </div>
@@ -231,8 +313,18 @@ export function SettingsPanel({
                         <h4 className="text-sm font-medium text-gray-900">Payment</h4>
                         <p className="text-sm text-gray-500 mt-1">Manage your subscription</p>
                       </div>
-                      <Button variant="outline" size="sm">
-                        Manage
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (isPaidSubscriptionTier(profile?.subscription_tier)) {
+                            void openStripePortal()
+                          } else {
+                            window.location.href = '/pricing'
+                          }
+                        }}
+                      >
+                        {isPaidSubscriptionTier(profile?.subscription_tier) ? 'Manage' : 'Upgrade'}
                       </Button>
                     </div>
                   </div>

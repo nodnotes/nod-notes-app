@@ -1,0 +1,2 @@
+-- Early access: tell requester if their email isn’t allowlisted (no full list).
+-- App-only; no DDL.
