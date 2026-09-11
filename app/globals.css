@@ -284,14 +284,14 @@
   background-size: 200% 100%;
 }
 
-/* Text-content frames: one stub per TipTap block, same metrics as `.prose p` */
+/* Text-content frames: one stub per TipTap block, same metrics as board `.prose p` */
 .tt-frame-shimmer-lines {
   display: flex;
   flex-direction: column;
   gap: 0; /* Paragraphs have no extra margin — line box is the row */
   width: 100%;
   font-size: 0.875rem; /* Match `.prose` (14px) — not the RF node’s 16px */
-  line-height: 1.75; /* Match `.prose p` */
+  line-height: 1.25; /* Match board `.react-flow .prose p` */
   pointer-events: none;
 }
 
@@ -301,14 +301,14 @@
   }
 }
 
-/* RF shell only — same inset as frame contentFit (padX 6 / padY 4; ⋮⋮ outside fill) */
+/* RF shell only — same inset as frame contentFit (padX 2 / padY 2; ⋮⋮ outside fill) */
 .tt-frame-shimmer-frame-pad {
-  padding: 4px 6px; /* Match chat-panel-node BLOCK_FRAME_PAD_Y / _X */
+  padding: 2px; /* Match chat-panel-node BLOCK_FRAME_PAD_Y / _X */
   box-sizing: border-box;
 }
 
 .tt-frame-shimmer-line {
-  height: 1.75em; /* One `.prose p` line box */
+  height: 1.25em; /* One board `.prose p` line box */
   max-width: 100%;
   flex-shrink: 0;
   display: flex;
@@ -768,7 +768,16 @@ span[data-added="true"] {
   .prose p {
     margin-top: 0;
     margin-bottom: 0;
-    line-height: 1.75;
+    line-height: 1.75; /* Chat / AI responses keep comfortable spacing */
+  }
+
+  /* Board frames: tighter line boxes so blocks hug glyphs (less air above/below text) */
+  .react-flow .prose {
+    line-height: 1.25;
+  }
+  .react-flow .prose p,
+  .react-flow .prose li {
+    line-height: 1.25;
   }
 
   /* Shaped frames: TipTap sits in the silhouette center (not top-left of the hug box) */
@@ -2830,7 +2839,7 @@ span[data-added="true"] {
   /* Turn into — Notion-like block type chrome */
   .ProseMirror .tt-callout {
     border-radius: 0.5rem;
-    padding: 0.75rem 0.9rem;
+    padding: 0.15rem 0.5rem; /* Tight to glyphs — was 0.75rem and floated text in the wash */
     background: #f1f5f9;
     border-left: 3px solid #64748b;
   }

@@ -149,10 +149,10 @@ const isContentEmpty = (content: string | undefined | null) => {
 const BOARD_LINK_ICON_W = 22 // Title emoji / page icon column
 const BOARD_OPEN_MENU_W = 52 // Open-menu pill ≈ preview + open (Notion adds a bit more)
 const BLOCK_THREE_CHARS_W = 28 // ~3ch of body text for plain frames
-const BLOCK_MIN_FRAME_H = 32 // One line (~24) + equal 4px content pads — hug the block, don't float chrome
+const BLOCK_MIN_FRAME_H = 22 // One line (~18 at lh 1.25) + equal 2px content pads — hug the block, don't float chrome
 const ROTATE_CLICK_SLOP_PX = 4 // Rotate button: below this pointer travel → click resets; above → drag rotate
-const BLOCK_FRAME_PAD_Y = 4 // Top/bottom inset inside the fill
-const BLOCK_FRAME_PAD_X = 6 // Slightly more L/R than T/B (property cell ↔ frame edge)
+const BLOCK_FRAME_PAD_Y = 2 // Top/bottom inset inside the fill — tight to glyphs
+const BLOCK_FRAME_PAD_X = 2 // Match T/B so the peach edge sits close to blocks
 const BLOCK_FRAME_PAD = BLOCK_FRAME_PAD_X // Default / band inset = horizontal pad
 /** Property cell radius at scale 1 — fill lives outside CSS scale so multiply by chromeScale; adjust ring stays square */
 const FRAME_CORNER_RADIUS = 6
@@ -540,6 +540,23 @@ function scaledFrameSize(
     width: Math.max(minWidth, Math.ceil(intrinsic.width * safeScale)),
     height: Math.max(FRAME_RESIZE_MIN, Math.ceil(intrinsic.height * safeScale)),
   }
+}
+
+/** Sync first-paint scale from place/persist metadata (async loadResizeState is too late for I-bar type). */
+function initialFrameScaleFromMeta(meta: unknown): number {
+  const fs = (meta as Record<string, unknown> | null | undefined)?.frameScale
+  return typeof fs === 'number' && Number.isFinite(fs) && fs > 0 ? fs : 1
+}
+
+/** Sync first-paint box from place/persist metadata — enables CSS frameScale on mount. */
+function initialResizeDimsFromMeta(meta: unknown): { width: number; height: number } | null {
+  const dims = (meta as Record<string, unknown> | null | undefined)?.resizeDimensions
+  if (!dims || typeof dims !== 'object') return null
+  const d = dims as { width?: number; height?: number }
+  if (typeof d.width === 'number' && typeof d.height === 'number' && d.width > 0 && d.height > 0) {
+    return { width: d.width, height: d.height }
+  }
+  return null
 }
 
 /** Locked hug: scale intrinsic text, inflating first when a silhouette would clip. */
@@ -2843,9 +2860,13 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const hasAutoFocusedRef = useRef(false) // Track if note editor has been auto-focused
   const { resolvedTheme } = useTheme() // Get theme to set transparent background color
   
-  // Resize state for panel scaling
-  const [resizeDimensions, setResizeDimensions] = useState<{ width: number; height: number } | null>(null) // Track resized dimensions
-  const [isUserResized, setIsUserResized] = useState(false) // True only after corner-drag or saved resizeDimensions — not auto line-grow
+  // Resize state for panel scaling — seed from place/persist meta so I-bar type paints scaled on first frame
+  const seedResizeDims = initialResizeDimsFromMeta(promptMessage?.metadata)
+  const seedFrameScale = initialFrameScaleFromMeta(promptMessage?.metadata)
+  const [resizeDimensions, setResizeDimensions] = useState<{ width: number; height: number } | null>(
+    () => seedResizeDims
+  ) // Track resized dimensions
+  const [isUserResized, setIsUserResized] = useState(() => seedResizeDims != null) // True after corner-drag, place seed, or saved resizeDimensions
   const [fontScale, setFontScale] = useState(1) // Legacy editor font-size scale (blocks use frameScale instead)
   const [frameUnlocked, setFrameUnlocked] = useState(false) // Unlocked: free resize; locked: content scales with frame
   const [frameTextWrap, setFrameTextWrap] = useState(false) // Unlocked only: wrap lines in the frame box instead of clipping
@@ -2853,7 +2874,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const [dbAlwaysExpanded, setDbAlwaysExpanded] = useState(false) // Notion DB frames: Expanded vs Preview (frame menu)
   // Per-frame row unlock for Notion DB show-more (12 → 50 → +50). Not shared across duplicate frames.
   const [dbVisibleRowCap, setDbVisibleRowCap] = useState(12)
-  const [frameScale, setFrameScale] = useState(1) // Uniform content scale while frame is locked
+  const [frameScale, setFrameScale] = useState(() => seedFrameScale) // Uniform content scale while frame is locked
   const [unlockedFrameSize, setUnlockedFrameSize] = useState<{ width: number; height: number } | null>(null) // Saved free-resize box — restored on unlock after fit-to-text
   const [unlockedFrameScale, setUnlockedFrameScale] = useState<number | null>(null) // Scale paired with unlockedFrameSize (bookkeeping only)
   const needsCollapsedDbFrameHealRef = useRef(false) // Load skipped corrupt DB clip — persist clear once persistFrameMeta exists
@@ -3620,7 +3641,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // L/R pad visual = live `--tt-adjust-pad-x` (rAF). RF position shift uses pad frozen at
   // select time — never re-glues on zoom settle (that moved the frame after the gesture).
   const chromeScale =
-    isBlock && isUserResized && frameScale !== 1 ? Math.max(FRAME_SCALE_EPSILON, frameScale) : 1
+    isBlock && Math.abs(frameScale - 1) > FRAME_SCALE_EPSILON
+      ? Math.max(FRAME_SCALE_EPSILON, frameScale)
+      : 1 // Place + locked resize — gutters track CSS-scaled fill
   // Cell radius is 6px inside contentFit’s CSS scale; fill + blue ring are outside — keep them matched
   const frameCornerRadius = frameShape ? 0 : FRAME_CORNER_RADIUS * chromeScale
   const screenChromeScale = frameScreenChromeScale(rfZoom || 1) // Handles / dots / rotate only
@@ -5223,7 +5246,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     const dbFrame = isDbFrame
     if (!isBlock || frameUnlocked || pagePreviewOpen || dragging) return
     if (!intrinsicMeasured || isResizingRef.current) return
-    if (!isUserResized && !rowCard && !dbFrame) return // Row/DB cards hug as soon as content is measured
+    if (!isUserResized && !rowCard && !dbFrame && Math.abs(frameScale - 1) <= FRAME_SCALE_EPSILON) {
+      return // Row/DB cards + place-scaled frames hug as soon as content is measured
+    }
     // No boardLink/3ch floor — locked proportional shrink must be able to go below content chrome
     const minW = FRAME_RESIZE_MIN
     const hugSource = shapeFitContentBox(
@@ -5281,7 +5306,10 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       return next
     })
     if (!changed) return
-    if ((rowCard || dbFrame) && !isUserResized) setIsUserResized(true) // RF node sync uses resizeDimensions
+    // RF node sync uses resizeDimensions; place-scaled + row/DB cards need the resized path
+    if (!isUserResized && (rowCard || dbFrame || Math.abs(frameScale - 1) > FRAME_SCALE_EPSILON)) {
+      setIsUserResized(true)
+    }
     if (persistFrameMetaTimerRef.current) clearTimeout(persistFrameMetaTimerRef.current)
     persistFrameMetaTimerRef.current = setTimeout(() => {
       void persistFrameMeta({
@@ -5957,6 +5985,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const growsWithLine =
     usesFitContent &&
     !isUserResized &&
+    Math.abs(frameScale - 1) <= FRAME_SCALE_EPSILON && // Place-scaled frames use explicit box + CSS scale
     !pagePreviewOpen &&
     !isRowCardAtomHtml(promptContent) && // Row cards live-hug — max-content blows out to icon-row width
     !isDbFrame // DB tables live-hug from measureDatabaseBlockExtents — max-content clips the table
@@ -5999,7 +6028,10 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     : null
   const contentVisualW = scaledDbSize?.width ?? huggedSize.width
   const contentVisualH = scaledDbSize?.height ?? huggedSize.height
-  const applyFrameScale = isBlock && isUserResized && frameScale !== 1 // Layout spacer + CSS scale
+  const applyFrameScale =
+    isBlock && Math.abs(frameScale - 1) > FRAME_SCALE_EPSILON // Place + locked resize — CSS scale text/glyphs
+  // Place seeds isUserResized; if only frameScale landed, still treat as resized so hug/box track scale
+  const scaledAsResized = isUserResized || applyFrameScale
   const scaledLayoutW = Math.ceil(contentVisualW) // Visual content width (full table when DB)
   const scaledLayoutH = Math.ceil(contentVisualH) // Visual content height (full table when DB)
   const unlockedResized = wrapUnlocked || clipUnlocked // Free-resized frame (wrap or nowrap-clip)
@@ -7207,6 +7239,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         ? displayBox.width
         : isUserResized && resizeDimensions
           ? resizeDimensions.width
+          : applyFrameScale
+            ? scaledLayoutW // Place scale without dims yet — visual box = scaled content
           : emptyLineHug
             ? frameMinW
             : (isRowCardAtomHtml(promptContent) || isDbFrame) && !intrinsicMeasured
@@ -7294,6 +7328,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             ? `${displayBox.height + adjustChromeYTop + adjustChromeYBottom}px`
             : isUserResized && resizeDimensions
               ? `${resizeDimensions.height + adjustChromeYTop + adjustChromeYBottom}px`
+              : applyFrameScale
+                ? `${scaledLayoutH + adjustChromeYTop + adjustChromeYBottom}px` // Place-scaled text box
               : emptyLineHug
                 ? `${BLOCK_MIN_FRAME_H + adjustChromeYTop + adjustChromeYBottom}px`
                 : growsWithLine
@@ -7986,14 +8022,14 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                 ? undefined
                 : shapeCenterContent
                   ? 'w-max max-w-full'
-                  : !frameUnlocked && isUserResized
+                  : !frameUnlocked && scaledAsResized
                     ? 'w-max'
                     : isRowCardAtomHtml(promptContent) || (isDbFrame && !frameUnlocked)
                       ? 'w-max' // Never stretch the measure box to a stale wide panel / clipped DB table
                       : isUserResized || !growsWithLine || emptyLineHug
                         ? 'w-full' // Fill explicit empty hug / resized box for full-row clicks
                         : 'w-max',
-              // Blocks: padX > padY slightly so L/R of the property cell breathe vs the fill edge
+              // Blocks: tight equal pad so the peach edge sits close to glyphs
               isBlock ? undefined : 'px-3 py-3'
             )}
             style={{
@@ -8009,7 +8045,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                       paddingRight: BLOCK_FRAME_PAD_X,
                     }
                 : {}),
-              lineHeight: '1.7', // Stable typography — height-based line-height broke lock-to-text
+              lineHeight: isBlock ? '1.25' : '1.7', // Blocks hug glyphs; chat panels keep looser rhythm
               ...(wrapContentWidth != null ? { width: wrapContentWidth, maxWidth: wrapContentWidth } : {}), // Soft-wrap inside frame
               ...(applyFrameScale
                 ? {

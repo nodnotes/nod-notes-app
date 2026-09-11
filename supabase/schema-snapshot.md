@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-11T10:16:00Z`
+- Snapped at: `2026-09-11T14:55:13Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (link refreshed; `db dump` / `migration list` blocked on remote login-role alter — marker + version snapshot only)
@@ -9,6 +9,13 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260911145513_ibar_place_scale_zoom_stable.sql`.
+- **I-bar place scale**: `lib/ibar-place-scale.ts` — `frameScale = clamp(1/zoom, 0.4, 4)` so board place caret + typed frames stay near 100% screen size across zoom; sync-init on `ChatPanelNode` + RF box seed so CSS scale applies on first paint.
+- Tighter frame contentFit pad (2px) + shimmer / ⋮⋮ hairline sync.
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: frame resize chrome scale + zoom band
 
 - DDL: none. Marker `20260911101600_frame_resize_chrome_scale_zoom_band.sql`.
 - **Frame resize floor**: corner-drag soft min `FRAME_RESIZE_MIN` = 40px (grow stays unbounded).

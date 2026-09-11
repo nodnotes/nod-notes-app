@@ -214,7 +214,7 @@ const HANDLE_GUTTER = 20 // Fallback ⋮⋮ column when host omits handleGutterF
 const GRIP_H = 16 // ⋮⋮ button height — under a body line at 100% zoom
 const INSERT_HIT = 6 // Add-block hit strip (px) — hairline centered in this band
 const INSERT_GAP = 3 // First/last offset from ⋮⋮ (fill pad); neighbors use the shared mid-gap instead
-const FILL_PAD_Y = 4 // Host contentFit BLOCK_FRAME_PAD_Y — first/last hairline may sit in that pad
+const FILL_PAD_Y = 2 // Host contentFit BLOCK_FRAME_PAD_Y — first/last hairline may sit in that pad
 
 /** Nearest positioned ancestor — absolute ⋮⋮ `top`/`left` are in this box (the pl-6 gutter wrapper). */
 function positionedAncestor(el: HTMLElement): HTMLElement {
@@ -1452,6 +1452,7 @@ export function TipTapBlockHandles({
         if (!anchorRef.current) anchorRef.current = block
         setMenu(null) // Multi-select — dismiss single-block actions menu
         setConnectionsMenu(null)
+        ;(e.currentTarget as HTMLElement).blur() // Drop :focus so no blue grip ring after Shift
         return
       }
       if (e.metaKey || e.ctrlKey) {
@@ -1461,6 +1462,7 @@ export function TipTapBlockHandles({
         anchorRef.current = block
         setMenu(null)
         setConnectionsMenu(null)
+        ;(e.currentTarget as HTMLElement).blur() // Same — ⌘/Ctrl toggle must not leave focus ring
         return
       }
       // Plain click on a block that's part of a multi-selection → group actions menu (keep wash)
@@ -1738,7 +1740,7 @@ export function TipTapBlockHandles({
               data-tt-block-armed={armed ? 'true' : undefined} // Chat HTML5 turn-drag skips only armed grips
               data-ai-pending-handle={aiPending ? 'true' : undefined}
               className={cn(
-                'absolute left-0 z-[2] flex h-4 w-3.5 items-center justify-center rounded',
+                'absolute left-0 z-[2] flex h-4 w-3.5 items-center justify-center rounded outline-none', // No focus ring — Shift multi-select left :focus blue
                 armed ? 'nodrag nopan' : 'nopan',
                 aiPending
                   ? 'tt-ai-pending-handle text-violet-600 dark:text-violet-300'

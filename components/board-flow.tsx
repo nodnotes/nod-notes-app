@@ -157,6 +157,7 @@ import { useFrameNestStackDrag, isStackCollapsedMeta } from './use-frame-nest-st
 import { minStackIndex } from '@/lib/frame-side-stacks' // Per-side stack z-order
 import { FrameNestStackOverlay } from './frame-nest-stack-overlay' // Snap preview line on host edge
 import { IBarFlowAnchor } from './ibar-flow-anchor' // I-bar placement without BoardFlow pan/zoom re-renders
+import { placeFrameScale } from '@/lib/ibar-place-scale' // Zoom-compensated frameScale for board place
 import {
   armMarqueeFrameSelect,
   clearMarqueeFrameSelect,
@@ -283,8 +284,42 @@ const MINIMAP_EXPAND_MS = 220 // Shared open/close/load height tween (expand-up)
 const FREE_NAV_WIDTH = MINIMAP_WIDTH // Same width as the minimap so the column stack lines up
 const BRAND_RIGHT = 12 // Inset from map column right edge
 /** Flow → frame top-left so the caret/⋮⋮ land on the I-bar (block chrome only). */
-const BLOCK_CREATE_OFFSET_X = 6 // contentFit BLOCK_FRAME_PAD_X (⋮⋮ lives outside the fill)
-const BLOCK_CREATE_OFFSET_Y = 4 // contentFit paddingTop only (legacy 20 assumed chat p-1 + extra)
+const BLOCK_CREATE_OFFSET_X = 2 // contentFit BLOCK_FRAME_PAD_X (⋮⋮ lives outside the fill)
+const BLOCK_CREATE_OFFSET_Y = 2 // contentFit paddingTop only (legacy 20 assumed chat p-1 + extra)
+/** Empty hug seed — matches chat-panel BLOCK_LOCKED_MIN_W / BLOCK_MIN_FRAME_H (gutter 20 + ~3ch). */
+const BLOCK_PLACE_MIN_W = 48
+const BLOCK_PLACE_MIN_H = 22
+/** Soft resized floor — same as chat-panel FRAME_RESIZE_MIN so place seeds aren't rejected. */
+const BLOCK_PLACE_RESIZE_MIN = 40
+
+/** Metadata extras so a placed frame paints at ~100% screen size for the current zoom. */
+function placeScaleMetadata(zoom: number): {
+  frameScale?: number
+  resizeDimensions?: { width: number; height: number }
+} {
+  const fs = placeFrameScale(zoom) // Clamped 1/zoom
+  if (Math.abs(fs - 1) < 0.001) return {} // 100% — default hug, no explicit box
+  return {
+    frameScale: fs, // Locked CSS scale (needs resizeDimensions → isUserResized)
+    resizeDimensions: {
+      width: Math.max(BLOCK_PLACE_RESIZE_MIN, Math.round(BLOCK_PLACE_MIN_W * fs)),
+      height: Math.max(BLOCK_PLACE_RESIZE_MIN, Math.round(BLOCK_PLACE_MIN_H * fs)),
+    },
+  }
+}
+
+/** RF node box for place-scaled frames (matches metadata.resizeDimensions). */
+function placeScaleNodeBox(meta: {
+  resizeDimensions?: { width: number; height: number }
+}): { width: number; height: number; style: { width: number; height: number } } | null {
+  const dims = meta.resizeDimensions
+  if (!dims) return null
+  return {
+    width: dims.width,
+    height: dims.height,
+    style: { width: dims.width, height: dims.height },
+  }
+}
 // Stable key-code arrays — new array literals each render make RF's useKeyPress loop (Max update depth).
 const MULTI_SELECT_KEYS = ['Shift', 'Meta', 'Control'] // Shift/Cmd/Ctrl+click adds to selection
 const SELECTION_BOX_KEYS = ['Shift'] // Shift+drag draws a selection box
@@ -7146,9 +7181,11 @@ function BoardFlowInner({
       propertyType?: import('@/lib/blocks/property').PropertyTypeId // Turn into → Property seed
     } // Seed content + Turn into kind (empty text if omitted)
   ): Promise<string | null> => {
-    const cursorOffsetX = BLOCK_CREATE_OFFSET_X // Caret X = I-bar (not legacy p-1+px-3 = 40)
+    const zoom = reactFlowInstance?.getViewport().zoom || 1 // Live board zoom at place
+    const fs = placeFrameScale(zoom) // Match I-bar screen size → persisted frameScale
+    const cursorOffsetX = BLOCK_CREATE_OFFSET_X * fs // Pad is unscaled then CSS-scaled
     // First-line Y; property strip sits above the text so spawn higher by PROPERTY_GROUP_H
-    const cursorOffsetY = BLOCK_CREATE_OFFSET_Y + (opts?.propertyType ? PROPERTY_GROUP_H : 0)
+    const cursorOffsetY = BLOCK_CREATE_OFFSET_Y * fs + (opts?.propertyType ? PROPERTY_GROUP_H : 0)
     const itemPosition = { x: flowX - cursorOffsetX, y: flowY - cursorOffsetY }
     setIBarPosition(null) // Clear pre-create cursor
     iBarPositionRef.current = null // Sync ref now so menu onClose doesn't re-arm capture
@@ -7174,6 +7211,7 @@ function BoardFlowInner({
       metadata: newBlockMetadata({
         position: itemPosition, // Spawn aligned to I-bar
         fadeIn: true, // Autofocus TipTap once the panel mounts
+        ...placeScaleMetadata(zoom), // Zoom-compensated size so place matches across zoom
         ...(opts?.blockType ? { blockType: opts.blockType } : {}),
         ...(opts?.propertyType ? { propertyType: opts.propertyType } : {}),
       }),
@@ -7182,6 +7220,7 @@ function BoardFlowInner({
     const panelId = `panel-${messageId}`
     const liveBoardId = conversationIdRef.current || ''
     originalPositionsRef.current.set(panelId, itemPosition)
+    const placeBox = placeScaleNodeBox(optimisticMessage.metadata as { resizeDimensions?: { width: number; height: number } })
     setNodes((nds) => [
       ...nds.map((n) => ({ ...n, selected: false })),
       {
@@ -7189,6 +7228,7 @@ function BoardFlowInner({
         type: 'chatPanel',
         position: itemPosition,
         selected: true,
+        ...(placeBox || {}), // Explicit box so CSS frameScale has a layout home on first paint
         data: {
           promptMessage: optimisticMessage,
           responseMessage: undefined,
@@ -7263,7 +7303,7 @@ function BoardFlowInner({
       console.error('Error creating block at flow position:', error)
       return messageId
     }
-  }, [queryClient, setNodes])
+  }, [queryClient, setNodes, reactFlowInstance])
 
   // Pre-frame ⋮⋮ menu — Turn into / Duplicate spawn a frame; Delete dismisses the I-bar
   const handleIBarBlockAction = useCallback(
@@ -9349,8 +9389,10 @@ function BoardFlowInner({
         setIBarBlockMenu(null) // Typing spawned a frame — menu is no longer pre-frame
         setIsCreatingInlineNote(true)
 
-        const cursorOffsetX = BLOCK_CREATE_OFFSET_X // Same as createBlockAtFlowPosition — caret on I-bar
-        const cursorOffsetY = BLOCK_CREATE_OFFSET_Y
+        const zoom = reactFlowInstance?.getViewport().zoom || 1 // Live zoom at first keystroke
+        const fs = placeFrameScale(zoom) // Match I-bar screen size on the spawned frame
+        const cursorOffsetX = BLOCK_CREATE_OFFSET_X * fs // Same as createBlockAtFlowPosition — caret on I-bar
+        const cursorOffsetY = BLOCK_CREATE_OFFSET_Y * fs
         const notePosition = {
           x: pos.x - cursorOffsetX,
           y: pos.y - cursorOffsetY,
@@ -9367,6 +9409,7 @@ function BoardFlowInner({
           metadata: newBlockMetadata({
             position: notePosition,
             fadeIn: true,
+            ...placeScaleMetadata(zoom), // Same screen size as the I-bar at this zoom
             ...(isSlashSpawn ? { slashMenuPending: true } : {}),
           }),
         }
@@ -9375,6 +9418,9 @@ function BoardFlowInner({
         const panelId = `panel-${messageId}`
         const liveBoardId = conversationIdRef.current || '' // Ref: capture effect must not rebind on first board create
         originalPositionsRef.current.set(panelId, notePosition)
+        const placeBox = placeScaleNodeBox(
+          optimisticMessage.metadata as { resizeDimensions?: { width: number; height: number } }
+        )
         setNodes((nds) => [
           ...nds.map((n) => ({ ...n, selected: false })),
           {
@@ -9382,6 +9428,7 @@ function BoardFlowInner({
             type: 'chatPanel',
             position: notePosition,
             selected: true,
+            ...(placeBox || {}), // Explicit box so typed glyphs paint at place scale immediately
             data: {
               promptMessage: optimisticMessage,
               responseMessage: undefined,
@@ -9639,7 +9686,7 @@ function BoardFlowInner({
       window.removeEventListener('tt-ibar-request-seed', onRequestSeed)
       iBarApplyTextRef.current = () => {}
     }
-  }, [setNodes, queryClient])
+  }, [setNodes, queryClient, reactFlowInstance])
 
   // Focus the hidden capture field in the same user-gesture turn as the board tap (required for iOS keyboard)
   const focusIBarCapture = useCallback(() => {
@@ -11115,7 +11162,7 @@ function BoardFlowInner({
           >
             <GripVertical style={{ width: `${16 * paneScale}px`, height: `${16 * paneScale}px` }} />
           </button>
-          {/* Blinking vertical line — same comfort scale as TipTap grips */}
+          {/* Blinking caret — place scale keeps screen size near 100% zoom (clamped) */}
           <div
             className="bg-gray-800 dark:bg-gray-100 pointer-events-none"
             style={{

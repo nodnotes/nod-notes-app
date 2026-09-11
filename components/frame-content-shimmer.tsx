@@ -168,9 +168,9 @@ export type DeferredFrameBox = {
   kind: 'database' | 'rowCard' | 'boardLink' | 'text' | 'empty'
 }
 
-const DEFER_LINE_H = 14 * 1.75 // Match `.prose` line box used by shimmer stubs
-const DEFER_PAD_Y = 8 // contentFit T+B (4+4)
-const DEFER_PAD_X = 12 // contentFit L+R (6+6)
+const DEFER_LINE_H = 14 * 1.25 // Match board `.prose` line box used by shimmer stubs
+const DEFER_PAD_Y = 4 // contentFit T+B (2+2)
+const DEFER_PAD_X = 4 // contentFit L+R (2+2)
 const DEFER_EMPTY_W = 52 // ⋮⋮ + ~3ch floor
 const DEFER_EMPTY_H = 32
 const DEFER_BOARD_LINK_W = 98 // icon + open pill (unselected — no ⋮⋮ gutter in outer box)
