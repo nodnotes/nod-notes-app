@@ -345,7 +345,8 @@ export function ConnectionIndicator({
       data-tt-connection-indicator={side}
       className={
         className ??
-        'nodrag nopan absolute z-[30] h-2.5 w-2.5 cursor-crosshair rounded-full border border-white bg-blue-500 shadow-sm hover:bg-blue-600'
+        // No Tailwind border/size — screen-constant via --tt-frame-ui-scale in globals.css
+        'nodrag nopan absolute z-[30] cursor-crosshair rounded-full bg-blue-500 hover:bg-blue-600'
       }
       style={style}
       // Capture so we beat the frame panel’s pressing/unmount path and RF node drag

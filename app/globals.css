@@ -1271,8 +1271,11 @@ span[data-added="true"] {
     --tt-frame-ui-scale: calc(var(--tt-frame-chrome-boost) / var(--tt-board-zoom));
     --tt-frame-line-w: calc(1px * var(--tt-frame-ui-scale));
     --tt-frame-line-hit: calc(5px * var(--tt-frame-ui-scale));
-    --tt-frame-handle: calc(7px * var(--tt-frame-ui-scale));
-    --tt-frame-handle-border: calc(1.5px * var(--tt-frame-ui-scale));
+    /* Dot paint is FIXED local px — screen size via transform scale(ui), not shrinking width */
+    --tt-frame-handle: 10px;
+    --tt-frame-handle-border: 1.5px;
+    --tt-frame-indicator: 10px;
+    --tt-frame-indicator-border: 1.5px;
   }
   /* Phone select: stop the browser from panning the page so the marquee/frame drag can run */
   .react-flow__pane {
@@ -1780,56 +1783,67 @@ span[data-added="true"] {
     background-image: none !important;
   }
 
-  /* Item corner resize handles — circular dots; size from live --tt-frame-handle (boost/zoom) */
+  /* Item corner resize handles — fixed local disc + scale(ui) (keeps ring:fill ratio + roundness) */
   .react-flow__node-chatPanel .react-flow__resize-control.handle {
     border-radius: 50% !important; /* Circles, not RF squares */
     width: var(--tt-frame-handle, 10px) !important;
     height: var(--tt-frame-handle, 10px) !important;
     min-width: var(--tt-frame-handle, 10px) !important;
     min-height: var(--tt-frame-handle, 10px) !important;
+    max-width: var(--tt-frame-handle, 10px) !important; /* Prevent non-square → pill */
+    max-height: var(--tt-frame-handle, 10px) !important;
     background-color: #ffffff !important;
     border: var(--tt-frame-handle-border, 1.5px) solid #9ca3af !important;
     box-sizing: border-box !important;
+    /* RF centers on the corner; scale counters board zoom so the ring never goes subpixel */
+    transform: translate(-50%, -50%) scale(var(--tt-frame-ui-scale, 1.4)) !important;
+    transform-origin: center center !important;
     pointer-events: all !important; /* Must receive drag (nodrag) before node drag */
     z-index: 60 !important;
   }
 
   /*
-   * Connection indicators — screen-constant SIZE + OUTSET from `--tt-frame-ui-scale`
-   * so distance from the adjust box stays fixed while the board zooms.
+   * Connection indicators — fixed local disc + scale(ui); outset still flow-scaled.
+   * Shrinking width/border in flow space made rings eat the fill and go jagged when zoomed in.
    */
   [data-panel-container='true'] > [data-tt-connection-indicator] {
-    width: calc(8px * var(--tt-frame-ui-scale, 1.4)) !important;
-    height: calc(8px * var(--tt-frame-ui-scale, 1.4)) !important;
+    width: var(--tt-frame-indicator, 10px) !important;
+    height: var(--tt-frame-indicator, 10px) !important;
+    border-width: var(--tt-frame-indicator-border, 1.5px) !important;
+    border-style: solid !important;
+    border-color: #ffffff !important;
     box-sizing: border-box !important;
+    border-radius: 50% !important;
+    box-shadow: none !important;
+    transform-origin: center center !important;
   }
   [data-panel-container='true'] > [data-tt-connection-indicator='left'] {
     left: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
     top: 50% !important;
     right: auto !important;
     bottom: auto !important;
-    transform: translate(-50%, -50%) !important;
+    transform: translate(-50%, -50%) scale(var(--tt-frame-ui-scale, 1.4)) !important;
   }
   [data-panel-container='true'] > [data-tt-connection-indicator='right'] {
     right: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
     top: 50% !important;
     left: auto !important;
     bottom: auto !important;
-    transform: translate(50%, -50%) !important;
+    transform: translate(50%, -50%) scale(var(--tt-frame-ui-scale, 1.4)) !important;
   }
   [data-panel-container='true'] > [data-tt-connection-indicator='top'] {
     top: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
     left: 50% !important;
     right: auto !important;
     bottom: auto !important;
-    transform: translate(-50%, -50%) !important;
+    transform: translate(-50%, -50%) scale(var(--tt-frame-ui-scale, 1.4)) !important;
   }
   [data-panel-container='true'] > [data-tt-connection-indicator='bottom'] {
     bottom: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
     left: 50% !important;
     right: auto !important;
     top: auto !important;
-    transform: translate(-50%, 50%) !important;
+    transform: translate(-50%, 50%) scale(var(--tt-frame-ui-scale, 1.4)) !important;
   }
 
   /* Chat-link cue — same screen-constant outset as connection indicators */

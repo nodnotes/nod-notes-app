@@ -4,7 +4,6 @@
 // React Flow board component - displays chat panels behind input
 import ReactFlow, {
   Background,
-  MiniMap,
   useNodesState,
   useEdgesState,
   ReactFlowProvider,
@@ -183,6 +182,7 @@ import { NavRotateControl } from './nav-rotate-control' // Board rotate icon —
 import { BoardRotationProvider, useBoardRotation } from './board-rotation-context' // Two-finger twist + nav camera heading
 import { applyBoardRotationToPositionChanges, boardRotationRef, viewportKeepingPanePoint } from '@/lib/board-rotation' // Camera-aware pane ↔ flow
 import { computeMinimapViewScale, panViewportFromMinimapDrag } from '@/lib/minimap-viewport-pan' // Phone minimap drag (RF only pans on mousemove)
+import { BoardMiniMap } from './board-minimap' // Viewport-follow framing so frames expand on zoom-in
 import { PreviewMinimap } from './preview-minimap' // Host minimap for selected nested preview
 import {
   PREVIEW_MINIMAP_COMMAND_MESSAGE,
@@ -10989,8 +10989,7 @@ function BoardFlowInner({
                   }}
                 />
               ) : !focusedPreviewId ? (
-            <MiniMap
-              position="bottom-left"
+            <BoardMiniMap
               nodeColor={(node) => {
                 return node.selected ? '#9ca3af' : '#e5e7eb'
               }}

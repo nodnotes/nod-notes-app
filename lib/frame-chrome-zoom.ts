@@ -74,10 +74,13 @@ function writeChromeVars(el: HTMLElement, z: number, ui: number): void {
   el.style.setProperty('--tt-board-zoom', String(z))
   el.style.setProperty('--tt-frame-chrome-boost', String(CHROME_BOOST))
   el.style.setProperty('--tt-frame-ui-scale', String(ui))
+  // Line stroke stays flow-scaled (large surface). Dots use fixed local paint + scale(ui).
   el.style.setProperty('--tt-frame-line-w', `${ui}px`)
   el.style.setProperty('--tt-frame-line-hit', `${5 * ui}px`)
-  el.style.setProperty('--tt-frame-handle', `${7 * ui}px`)
-  el.style.setProperty('--tt-frame-handle-border', `${1.5 * ui}px`)
+  el.style.setProperty('--tt-frame-handle', '10px') // Fixed local paint — scale() keeps screen size
+  el.style.setProperty('--tt-frame-handle-border', '1.5px') // Fixed local ring — never subpixel-eaten
+  el.style.setProperty('--tt-frame-indicator', '10px')
+  el.style.setProperty('--tt-frame-indicator-border', '1.5px')
 }
 
 /**
@@ -96,11 +99,13 @@ function stampAdjustGutters(node: HTMLElement, zoom: number): void {
 
 /** Direct paint for resize dots / ring / indicators / rotate·fit·wrap. */
 function stampChromeElements(node: HTMLElement, ui: number, zoom: number): void {
-  const handlePx = `${7 * ui}px`
-  const borderPx = `${Math.max(1, 1.5 * ui)}px`
   const linePx = `${ui}px`
-  const dotPx = `${8 * ui}px` // Dot size stays screen-constant (boost/zoom)
-  // Outset also screen-constant — same distance from the adjust box at every zoom
+  // Fixed local paint sizes — transform scale(ui) counters viewport zoom (crisp borders, round dots)
+  const handlePx = '10px'
+  const borderPx = '1.5px'
+  const dotPx = '10px'
+  const handleScale = `translate(-50%, -50%) scale(${ui})` // RF centers on corner; scale keeps screen size
+  // Outset in flow space so distance from adjust box stays constant on screen
   const out = 14 * ui
 
   node.querySelectorAll('.react-flow__resize-control.handle').forEach((el) => {
@@ -109,7 +114,14 @@ function stampChromeElements(node: HTMLElement, ui: number, zoom: number): void 
     h.style.setProperty('height', handlePx, 'important')
     h.style.setProperty('min-width', handlePx, 'important')
     h.style.setProperty('min-height', handlePx, 'important')
+    h.style.setProperty('max-width', handlePx, 'important') // Kill RF/non-square stretch → pill shapes
+    h.style.setProperty('max-height', handlePx, 'important')
     h.style.setProperty('border-width', borderPx, 'important')
+    h.style.setProperty('border-style', 'solid', 'important')
+    h.style.setProperty('border-radius', '50%', 'important')
+    h.style.setProperty('box-sizing', 'border-box', 'important')
+    h.style.setProperty('transform', handleScale, 'important')
+    h.style.setProperty('transform-origin', 'center', 'important')
   })
 
   node.querySelectorAll('[data-tt-adjust-ring]').forEach((el) => {
@@ -122,23 +134,29 @@ function stampChromeElements(node: HTMLElement, ui: number, zoom: number): void 
     const side = dot.getAttribute('data-tt-connection-indicator')
     dot.style.setProperty('width', dotPx, 'important')
     dot.style.setProperty('height', dotPx, 'important')
+    dot.style.setProperty('border-width', borderPx, 'important')
+    dot.style.setProperty('border-style', 'solid', 'important')
+    dot.style.setProperty('border-radius', '50%', 'important')
+    dot.style.setProperty('box-sizing', 'border-box', 'important')
+    // translate centers on the edge; scale(ui) keeps the disc screen-constant
     if (side === 'left') {
       dot.style.setProperty('left', `${-out}px`, 'important')
       dot.style.setProperty('top', '50%', 'important')
-      dot.style.setProperty('transform', 'translate(-50%, -50%)', 'important')
+      dot.style.setProperty('transform', `translate(-50%, -50%) scale(${ui})`, 'important')
     } else if (side === 'right') {
       dot.style.setProperty('right', `${-out}px`, 'important')
       dot.style.setProperty('top', '50%', 'important')
-      dot.style.setProperty('transform', 'translate(50%, -50%)', 'important')
+      dot.style.setProperty('transform', `translate(50%, -50%) scale(${ui})`, 'important')
     } else if (side === 'top') {
       dot.style.setProperty('top', `${-out}px`, 'important')
       dot.style.setProperty('left', '50%', 'important')
-      dot.style.setProperty('transform', 'translate(-50%, -50%)', 'important')
+      dot.style.setProperty('transform', `translate(-50%, -50%) scale(${ui})`, 'important')
     } else if (side === 'bottom') {
       dot.style.setProperty('bottom', `${-out}px`, 'important')
       dot.style.setProperty('left', '50%', 'important')
-      dot.style.setProperty('transform', 'translate(-50%, 50%)', 'important')
+      dot.style.setProperty('transform', `translate(-50%, 50%) scale(${ui})`, 'important')
     }
+    dot.style.setProperty('transform-origin', 'center', 'important')
   })
 
   panel?.querySelectorAll(':scope > [data-frame-chrome]').forEach((el) => {

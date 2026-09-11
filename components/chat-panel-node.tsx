@@ -156,6 +156,10 @@ const BLOCK_FRAME_PAD_X = 6 // Slightly more L/R than T/B (property cell ↔ fra
 const BLOCK_FRAME_PAD = BLOCK_FRAME_PAD_X // Default / band inset = horizontal pad
 /** Property cell radius at scale 1 — fill lives outside CSS scale so multiply by chromeScale; adjust ring stays square */
 const FRAME_CORNER_RADIUS = 6
+/** Corner-drag floor — small but grab-able; grow stays unbounded (RF max = MAX_VALUE). */
+const FRAME_RESIZE_MIN = 40
+/** Locked scale epsilon — avoid 0; no 0.15 floor (shrink matches grow). */
+const FRAME_SCALE_EPSILON = 0.001
 const DATABASE_BLOCK_HTML_RE = /data-type=["']databaseBlock["']/i // TipTap Notion DB atom in frame HTML
 const FRAME_ATOM_HTML_RE =
   /data-type=["'](?:boardLink|pageLink|captureLink|databaseBlock|imageBlock|videoBlock|audioBlock|fileBlock|bookmarkBlock|propertyBlock)["']/i // Attr-only TipTap atoms
@@ -529,12 +533,12 @@ function clipFadeMaskStyle(
 function scaledFrameSize(
   intrinsic: { width: number; height: number },
   scale: number,
-  minWidth = BLOCK_LOCKED_MIN_W,
+  minWidth = FRAME_RESIZE_MIN, // Resize/hug may go tiny; fit-to-content callers pass BLOCK_* floors when needed
 ) {
-  const safeScale = Math.max(0.15, scale) // Same floor as locked corner-drag
+  const safeScale = Math.max(FRAME_SCALE_EPSILON, scale) // Match locked corner-drag — no 0.15 shrink floor
   return {
     width: Math.max(minWidth, Math.ceil(intrinsic.width * safeScale)),
-    height: Math.max(BLOCK_MIN_FRAME_H, Math.ceil(intrinsic.height * safeScale)),
+    height: Math.max(FRAME_RESIZE_MIN, Math.ceil(intrinsic.height * safeScale)),
   }
 }
 
@@ -3616,7 +3620,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // L/R pad visual = live `--tt-adjust-pad-x` (rAF). RF position shift uses pad frozen at
   // select time — never re-glues on zoom settle (that moved the frame after the gesture).
   const chromeScale =
-    isBlock && isUserResized && frameScale !== 1 ? Math.max(0.15, frameScale) : 1
+    isBlock && isUserResized && frameScale !== 1 ? Math.max(FRAME_SCALE_EPSILON, frameScale) : 1
   // Cell radius is 6px inside contentFit’s CSS scale; fill + blue ring are outside — keep them matched
   const frameCornerRadius = frameShape ? 0 : FRAME_CORNER_RADIUS * chromeScale
   const screenChromeScale = frameScreenChromeScale(rfZoom || 1) // Handles / dots / rotate only
@@ -4740,36 +4744,37 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     setIsUserResized(true) // Persist mode: explicit frame box
     lockedResizeStartRef.current = null // Drop drag baseline
 
-    const minW = blockMinFrameWidth(promptContentRef.current)
     const dims = resizeDimensionsRef.current
     const rot = rotationRef.current
     const unlocked = frameUnlockedRef.current
     const wrapping = frameTextWrapRef.current
     const colW = wrapColWidthRef.current
     const intrinsic = intrinsicSizeRef.current
-    let width = Math.max(params?.width ?? dims?.width ?? 0, minW)
-    let height = Math.max(params?.height ?? dims?.height ?? 0, BLOCK_MIN_FRAME_H)
+    // No content floor — shrink matches grow (RF max is unbounded; min is FRAME_RESIZE_MIN only)
+    let width = Math.max(params?.width ?? dims?.width ?? 0, FRAME_RESIZE_MIN)
+    let height = Math.max(params?.height ?? dims?.height ?? 0, FRAME_RESIZE_MIN)
     // RF end params are AABB when rotated — store unrotated content size
     if (Math.abs(rot) > 0.5 && params?.width && params?.height) {
       const fallback = dims || { width, height }
       const content = contentSizeFromAabb(params.width, params.height, rot, fallback)
-      width = Math.max(content.width, minW)
-      height = Math.max(content.height, BLOCK_MIN_FRAME_H)
+      width = Math.max(content.width, FRAME_RESIZE_MIN)
+      height = Math.max(content.height, FRAME_RESIZE_MIN)
     }
     const finalScale = frameScaleRef.current // Latest scale from the drag (avoid stale closure)
+    const safeScale = Math.max(FRAME_SCALE_EPSILON, finalScale) // Epsilon only — no 0.15 shrink floor
     let colToPersist: number | undefined // New wrap column width to store (unlocked-wrap resize sets the point)
     if (!unlocked && wrapping) {
       // Locked wrap: hug WIDTH to the scaled FIXED columns (no reflow) + HEIGHT to wrapped content.
       // No +2 border — selected adjust chrome uses borderWidth 0 (same as scaledFrameSize).
-      if (colW != null) width = Math.round(colW * Math.max(0.15, finalScale))
-      height = Math.max(BLOCK_MIN_FRAME_H, Math.ceil(intrinsic.height * Math.max(0.15, finalScale)))
+      if (colW != null) width = Math.round(colW * safeScale)
+      height = Math.max(FRAME_RESIZE_MIN, Math.ceil(intrinsic.height * safeScale))
     } else if (!unlocked) {
-      const hugged = hugLockedFrameSize(intrinsic, finalScale, minW, frameShapeRef.current) // Nowrap: snap to scaled text inside silhouette
+      const hugged = hugLockedFrameSize(intrinsic, finalScale, FRAME_RESIZE_MIN, frameShapeRef.current) // Nowrap: snap to scaled text; no boardLink/3ch floor
       width = hugged.width
       height = hugged.height
     } else if (wrapping) {
       // Unlocked wrap: the dragged width IS the new wrap point — remember it (unscaled columns).
-      colToPersist = Math.max(1, Math.floor(width / Math.max(0.15, finalScale)))
+      colToPersist = Math.max(1, Math.floor(width / safeScale))
       setWrapColWidth(colToPersist)
     }
     // Unlocked (wrap or nowrap): keep the user's dragged box — a frame shorter than its
@@ -4798,36 +4803,36 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // When rotated, RF reports AABB size — convert back to unrotated content size.
   const handleResize = useCallback((_event: any, params: { width: number; height: number }) => {
     if (!isResizingRef.current) return // Ignore mount/select noise — only after handleResizeStart
-    const minW = blockMinFrameWidth(promptContentRef.current)
     const fallback = resizeDimensionsRef.current || lockedResizeStartRef.current || {
-      width: minW,
-      height: BLOCK_MIN_FRAME_H,
+      width: FRAME_RESIZE_MIN,
+      height: FRAME_RESIZE_MIN,
     }
-    let width = Math.max(params.width, minW)
-    let height = Math.max(params.height, BLOCK_MIN_FRAME_H)
+    // No content floor — shrink is unbounded like grow (epsilon only so dims stay positive)
+    let width = Math.max(params.width, FRAME_RESIZE_MIN)
+    let height = Math.max(params.height, FRAME_RESIZE_MIN)
     const rot = rotationRef.current
     if (Math.abs(rot) > 0.5) {
       const content = contentSizeFromAabb(width, height, rot, fallback)
-      width = Math.max(content.width, minW)
-      height = Math.max(content.height, BLOCK_MIN_FRAME_H)
+      width = Math.max(content.width, FRAME_RESIZE_MIN)
+      height = Math.max(content.height, FRAME_RESIZE_MIN)
     }
     let nextScale: number | undefined
     if (!frameUnlockedRef.current && lockedResizeStartRef.current) {
       // Locked (wrap OR nowrap): proportional content scale — width/text scale together.
       const start = lockedResizeStartRef.current
       const ratio = width / Math.max(1, start.width) // keepAspectRatio → width tracks height
-      nextScale = Math.max(0.15, start.scale * ratio)
+      nextScale = Math.max(FRAME_SCALE_EPSILON, start.scale * ratio) // No 0.15 floor — match unbounded grow
       const colW = wrapColWidthRef.current
       if (frameTextWrapRef.current && colW != null) {
         // Locked WRAP: derive the box from the FIXED column width × scale so NO character reflows —
         // the wrapped text just scales up/down (columns stay constant; no phantom border).
         width = Math.round(colW * nextScale)
-        height = Math.max(BLOCK_MIN_FRAME_H, Math.round(intrinsicSizeRef.current.height * nextScale))
+        height = Math.max(FRAME_RESIZE_MIN, Math.round(intrinsicSizeRef.current.height * nextScale))
       } else {
         // Locked nowrap: hug the blue box to scaled content during the gesture (same as resize-end).
         // Using RF's raw drag size left a larger empty frame with the block stuck top-left so
         // connection/resize chrome no longer lined up with the ⋮⋮.
-        const hugged = hugLockedFrameSize(intrinsicSizeRef.current, nextScale, minW, frameShapeRef.current)
+        const hugged = hugLockedFrameSize(intrinsicSizeRef.current, nextScale, FRAME_RESIZE_MIN, frameShapeRef.current)
         width = hugged.width
         height = hugged.height
       }
@@ -5044,8 +5049,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       if (frameTextWrap && resizeDimensionsRef.current) {
         const keepW = resizeDimensionsRef.current.width
         const wrapH = Math.max(
-          BLOCK_MIN_FRAME_H,
-          Math.ceil(naturalH * Math.max(0.15, freeSnapshot.scale))
+          FRAME_RESIZE_MIN,
+          Math.ceil(naturalH * Math.max(FRAME_SCALE_EPSILON, freeSnapshot.scale))
         )
         const nextDims = { width: keepW, height: wrapH }
         setResizeDimensions(nextDims)
@@ -5160,7 +5165,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     e.preventDefault()
     // Wrap works locked or unlocked: it wraps at a FIXED column width and keeps it.
     const next = !frameTextWrap
-    const s = Math.max(0.15, frameScale)
+    const s = Math.max(FRAME_SCALE_EPSILON, frameScale)
     // Wrap needs a fixed box to wrap into. A locked frame that was hugging content may not have
     // resizeDimensions yet — snapshot the live box and switch to explicit-box (isUserResized) mode.
     const box = resizeDimensions ?? {
@@ -5219,7 +5224,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     if (!isBlock || frameUnlocked || pagePreviewOpen || dragging) return
     if (!intrinsicMeasured || isResizingRef.current) return
     if (!isUserResized && !rowCard && !dbFrame) return // Row/DB cards hug as soon as content is measured
-    const minW = blockMinFrameWidth(promptContent, false) // Fill hug — no ⋮⋮ column inside the frame
+    // No boardLink/3ch floor — locked proportional shrink must be able to go below content chrome
+    const minW = FRAME_RESIZE_MIN
     const hugSource = shapeFitContentBox(
       dbFrame && databaseExtents ? databaseExtents : intrinsicSize,
       frameShape,
@@ -5248,7 +5254,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       // Nowrap hugs width to content.
       const width =
         frameTextWrap && wrapColWidth != null
-          ? Math.round(wrapColWidth * Math.max(0.15, frameScale))
+          ? Math.round(wrapColWidth * Math.max(FRAME_SCALE_EPSILON, frameScale))
           : frameTextWrap && prev
             ? prev.width
             : natural.width
@@ -5982,13 +5988,13 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const huggedSize = scaledFrameSize(
     shapeFitContentBox(intrinsicSize, frameShape, !frameUnlocked),
     frameScale,
-    frameMinW
+    FRAME_RESIZE_MIN // Match corner-drag — no frameMinW floor fighting tiny locked scale
   ) // Scaled content (no phantom border)
   const scaledDbSize = databaseExtents
     ? scaledFrameSize(
         shapeFitContentBox(databaseExtents, frameShape, !frameUnlocked),
         frameScale,
-        frameMinW
+        FRAME_RESIZE_MIN
       )
     : null
   const contentVisualW = scaledDbSize?.width ?? huggedSize.width
@@ -6051,7 +6057,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     wrapActive && !frameUnlocked && wrapColWidth != null // LOCKED wrap: FIXED columns — no reflow on proportional resize, stable across unwrap/rewrap
       ? wrapColWidth
       : (unlockedResized || wrapActive) && unlockedInnerW != null // UNLOCKED wrap / clip: derive from current width (re-wrap on drag)
-        ? Math.max(1, Math.floor(unlockedInnerW / Math.max(0.15, frameScale)))
+        ? Math.max(1, Math.floor(unlockedInnerW / Math.max(FRAME_SCALE_EPSILON, frameScale)))
         : null
   // Frames start at plain-text hug; chat/flashcards use their fixed starting widths
   const initialWidth = isFlashcard ? 600 : (usesFitContent ? BLOCK_LOCKED_MIN_W : 768)
@@ -7297,8 +7303,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           ? `${layoutBox.width}px`
           : pagePreviewOpen && !showFrameChrome
           ? '520px'
-          : showFrameChrome && fillWidthPx != null
-            ? outerWidthCss
+          : fillWidthPx != null
+            // Explicit fill (incl. tiny free-resize) — don't re-floor to frameMinW after deselect
+            ? showFrameChrome
+              ? outerWidthCss
+              : `${fillWidthPx}px`
             : usesFitContent
               ? `${frameMinW}px`
               : isFlashcard
@@ -7494,8 +7503,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                 'nodrag nopan tt-frame-resize-line', // nodrag: resize must not start frame drag
                 !frameShape && 'tt-frame-resize-line-hit' // Hit only — square ring paints the stroke
               )}
-              minWidth={frameMinW}
-              minHeight={BLOCK_MIN_FRAME_H}
+              minWidth={FRAME_RESIZE_MIN} // Soft shrink floor (40px); grow stays unbounded
+              minHeight={FRAME_RESIZE_MIN}
               keepAspectRatio={!frameUnlocked && hasBlockContent}
               onResizeStart={handleResizeStart}
               onResize={handleResize}
@@ -7508,8 +7517,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               position={position} // RF places the handle on that corner
               className="nodrag nopan" // Resize only — never start RF frame drag / pan
               style={itemCornerResizeStyle} // White circular handle styling
-              minWidth={frameMinW} // boardLink vs plain-text floor
-              minHeight={BLOCK_MIN_FRAME_H} // Keep a usable box; pairs with handleResize clamp
+              minWidth={FRAME_RESIZE_MIN} // Soft shrink floor (40px); grow already has no max
+              minHeight={FRAME_RESIZE_MIN}
               keepAspectRatio={!frameUnlocked && hasBlockContent} // Locked + content: proportional only
               onResizeStart={handleResizeStart} // Arm user-resize mode (line-grow off)
               onResize={handleResize} // Apply explicit width/height while dragging
@@ -7553,12 +7562,13 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                 key={`indicator-${side}`}
                 side={side}
                 className={cn(
-                  'nodrag nopan absolute z-[30] rounded-full border border-white bg-blue-500 shadow-sm',
+                  // No Tailwind border/size — those are flow-px and grow with board zoom
+                  'nodrag nopan absolute z-[30] rounded-full bg-blue-500',
                   isThreadConnecting
                     ? 'pointer-events-none' // Visual snap target only — don't steal hit from edge Handles
                     : 'cursor-crosshair hover:bg-blue-600'
                 )}
-                // Size + outset from live `--tt-frame-ui-scale` CSS (no React zoom re-render)
+                // Size + white ring + outset from live `--tt-frame-ui-scale` CSS (no React zoom re-render)
               />
             )
           })}

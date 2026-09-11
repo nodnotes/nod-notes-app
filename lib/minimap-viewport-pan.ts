@@ -1,25 +1,29 @@
 import { zoomIdentity } from 'd3-zoom'
-import { getBoundsOfRects, getNodesBounds, type ReactFlowState } from '@reactflow/core'
+import { getNodesBounds, type ReactFlowState } from '@reactflow/core'
+import { computeMinimapGeometry } from '@/lib/minimap-geometry'
 
-/** Same viewScale math as @reactflow/minimap (minimap px → viewport transform). */
+/** Viewport AABB in flow coords from the RF transform. */
+function viewportFlowRect(state: ReactFlowState) {
+  const zoom = state.transform[2]
+  return {
+    x: -state.transform[0] / zoom,
+    y: -state.transform[1] / zoom,
+    width: state.width / zoom,
+    height: state.height / zoom,
+  }
+}
+
+/** Same viewScale math as BoardMiniMap (minimap px → viewport transform). */
 export function computeMinimapViewScale(
   state: ReactFlowState,
   elementWidth: number,
   elementHeight: number
 ): number {
   const nodes = state.getNodes()
-  const zoom = state.transform[2]
-  const viewBB = {
-    x: -state.transform[0] / zoom,
-    y: -state.transform[1] / zoom,
-    width: state.width / zoom,
-    height: state.height / zoom,
-  }
-  const boundingRect =
-    nodes.length > 0 ? getBoundsOfRects(getNodesBounds(nodes, state.nodeOrigin), viewBB) : viewBB
-  const scaledWidth = boundingRect.width / elementWidth
-  const scaledHeight = boundingRect.height / elementHeight
-  return Math.max(scaledWidth, scaledHeight)
+  const viewBB = viewportFlowRect(state)
+  const content =
+    nodes.length > 0 ? getNodesBounds(nodes, state.nodeOrigin) : null
+  return computeMinimapGeometry(viewBB, content, elementWidth, elementHeight).viewScale
 }
 
 /** Pan the main viewport from a minimap drag (RF built-in pan only handles mousemove). */

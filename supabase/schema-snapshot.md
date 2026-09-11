@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-11T09:34:23Z`
+- Snapped at: `2026-09-11T10:16:00Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (link refreshed; `db dump` / `migration list` blocked on remote login-role alter — marker + version snapshot only)
@@ -9,6 +9,15 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260911101600_frame_resize_chrome_scale_zoom_band.sql`.
+- **Frame resize floor**: corner-drag soft min `FRAME_RESIZE_MIN` = 40px (grow stays unbounded).
+- **Chrome scale**: connection indicators + corner resize dots paint fixed local 10px / 1.5px ring then `transform: scale(ui)` — avoids subpixel rings eating the fill / pill shapes on zoom-in.
+- **Board zoom**: `BOARD_ZOOM_DEFAULT` / `HARD` **10%–1000%** (`0.1`–`10`); Free-nav presets updated.
+- Minimap geometry helpers (`board-minimap`, `minimap-geometry`) + related pan/preview tweaks.
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: frame chrome live zoom + rotate reset
 
 - DDL: none. Marker `20260911093423_frame_chrome_live_zoom_rotate_reset.sql`.
 - **Frame chrome live zoom**: selected-frame chrome tracks painted viewport zoom (`lib/frame-chrome-zoom`, `useLiveBoardZoom`); TipTap ⋮⋮ / add lines use √ comfort scale; blue L/R gutters freeze pad at select (no post-zoom snap); connection indicators view-constant; rotate/fit/wrap sized like Free-nav pan; **click rotate resets to 0°** (drag still turns).

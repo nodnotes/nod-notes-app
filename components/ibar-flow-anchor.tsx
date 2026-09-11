@@ -6,7 +6,7 @@ import type { ReactNode } from 'react'
 import { useStore } from 'reactflow'
 import { flowToPane } from '@/lib/board-rotation'
 import { navigationZoom } from '@/lib/board-navigating'
-import { blockGripComfortScale } from '@/components/threads/constants'
+import { blockGripChromeScale } from '@/lib/frame-adjust-box' // Same √ curve as TipTap ⋮⋮
 
 export function IBarFlowAnchor({
   flowX,
@@ -30,6 +30,6 @@ export function IBarFlowAnchor({
   )
   const pane = flowToPane(flowX, flowY, { x: viewport.x, y: viewport.y, zoom: viewport.liveZoom }, boardRotation)
   const scaleZoom = navigationZoom(Math.round(viewport.liveZoom * 8) / 8) // Freeze grip scale mid-pinch only
-  const paneScale = scaleZoom * blockGripComfortScale(scaleZoom)
+  const paneScale = scaleZoom * blockGripChromeScale(scaleZoom, 1) // I-bar has no frameScale yet
   return <>{children({ left: pane.x, top: pane.y, paneScale })}</>
 }

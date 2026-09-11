@@ -11,13 +11,13 @@ export type SoftBoardBounds = {
   maxY: number
 }
 
-/** Default zoom floor/ceiling: 5%–200%. */
-export const BOARD_ZOOM_DEFAULT: BoardZoomRange = { minZoom: 0.05, maxZoom: 2 }
+/** Default zoom floor/ceiling: 10%–1000%. */
+export const BOARD_ZOOM_DEFAULT: BoardZoomRange = { minZoom: 0.1, maxZoom: 10 }
 
 /** Absolute clamps — same as default; content-based expand cannot exceed this band. */
-export const BOARD_ZOOM_HARD: BoardZoomRange = { minZoom: 0.05, maxZoom: 2 }
+export const BOARD_ZOOM_HARD: BoardZoomRange = { minZoom: 0.1, maxZoom: 10 }
 
-/** Clamp a zoom value to the board band (5%–200% by default). */
+/** Clamp a zoom value to the board band (10%–1000% by default). */
 export function clampBoardZoom(
   zoom: number,
   hard: BoardZoomRange = BOARD_ZOOM_HARD

@@ -52,8 +52,11 @@ function applyZoomCss(el: HTMLElement, zoom: number): void {
   el.style.setProperty('--tt-frame-ui-scale', String(ui))
   el.style.setProperty('--tt-frame-line-w', `${1 * ui}px`)
   el.style.setProperty('--tt-frame-line-hit', `${5 * ui}px`)
-  el.style.setProperty('--tt-frame-handle', `${7 * ui}px`)
-  el.style.setProperty('--tt-frame-handle-border', `${1.5 * ui}px`)
+  // Dots: fixed local paint + CSS scale(ui) — subpixel width/border was eating the fill on zoom-in
+  el.style.setProperty('--tt-frame-handle', '10px')
+  el.style.setProperty('--tt-frame-handle-border', '1.5px')
+  el.style.setProperty('--tt-frame-indicator', '10px')
+  el.style.setProperty('--tt-frame-indicator-border', '1.5px')
 }
 
 /**

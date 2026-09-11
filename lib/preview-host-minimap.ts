@@ -1,4 +1,4 @@
-import { getBoundsOfRects } from '@reactflow/core'
+import { computeMinimapGeometry } from '@/lib/minimap-geometry'
 
 export const PREVIEW_MINIMAP_STATE_MESSAGE = 'nodnotes-preview-minimap-state'
 export const PREVIEW_MINIMAP_COMMAND_MESSAGE = 'nodnotes-preview-minimap-command'
@@ -65,7 +65,7 @@ function previewNodesBounds(nodes: PreviewMinimapNode[]) {
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
 
-/** Same viewBox math as @reactflow/minimap — host renders preview snapshot in the chrome slot. */
+/** Same viewBox math as BoardMiniMap — host renders preview snapshot in the chrome slot. */
 export function computePreviewMinimapGeometry(
   state: PreviewMinimapState,
   elementWidth: number,
@@ -79,20 +79,8 @@ export function computePreviewMinimapGeometry(
     width: state.width / zoom,
     height: state.height / zoom,
   }
-  const nodeBB = previewNodesBounds(state.nodes)
-  const boundingRect =
-    state.nodes.length > 0 ? getBoundsOfRects(nodeBB, viewBB) : viewBB
-  const scaledWidth = boundingRect.width / elementWidth
-  const scaledHeight = boundingRect.height / elementHeight
-  const viewScale = Math.max(scaledWidth, scaledHeight)
-  const viewWidth = viewScale * elementWidth
-  const viewHeight = viewScale * elementHeight
-  const offset = offsetScale * viewScale
-  const x = boundingRect.x - (viewWidth - boundingRect.width) / 2 - offset
-  const y = boundingRect.y - (viewHeight - boundingRect.height) / 2 - offset
-  const width = viewWidth + offset * 2
-  const height = viewHeight + offset * 2
-  return { viewBB, boundingRect, viewScale, viewBox: `${x} ${y} ${width} ${height}`, offset, x, y, width, height }
+  const content = state.nodes.length > 0 ? previewNodesBounds(state.nodes) : null
+  return computeMinimapGeometry(viewBB, content, elementWidth, elementHeight, offsetScale)
 }
 
 export function computePreviewMinimapViewScale(

@@ -85,7 +85,8 @@ export function ChatLinkConnectionCue({
             side={side}
             onPlainClick={() => requestOpenChatForBoardLink(frameMessageId, side)}
             className={cn(
-              'nodrag nopan absolute inset-0 z-[30] h-2 w-2 rounded-full border border-white bg-blue-500 shadow-sm',
+              // Parent already scales — fixed local border stays screen-constant
+              'nodrag nopan absolute inset-0 z-[30] rounded-full bg-blue-500',
               isThreadConnecting
                 ? 'pointer-events-none'
                 : 'cursor-crosshair hover:bg-blue-600'
@@ -97,6 +98,10 @@ export function ChatLinkConnectionCue({
               bottom: 'auto',
               width: DOT,
               height: DOT,
+              borderWidth: 1.5, // Local px; parent --tt-frame-ui-scale keeps it constant on screen
+              borderStyle: 'solid',
+              borderColor: '#ffffff',
+              boxSizing: 'border-box',
               transform: 'none', // Parent scale already sizes the mark
             }}
           />
