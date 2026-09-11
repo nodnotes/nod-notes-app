@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-10T00:52:42Z`
+- Snapped at: `2026-09-11T01:00:05Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (link refreshed; `db dump` blocked on remote login-role alter — marker + version snapshot only)
@@ -10,9 +10,15 @@
 
 ## This save
 
+- DDL: none. Marker `20260911010005_homepage_showcase_claim_on_open.sql`.
+- **Showcase claim-on-open**: signed-in users clicking **Open board →** (or `/view/{masterId}`) get a private remapped copy (`POST /api/showcase-board/claim`, `metadata.showcase_source_id`); homepage previews stay ephemeral and do not seed the boards list. Owner opens the master. Guests stay on `/view` sandboxes.
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: homepage ephemeral showcase sandboxes
+
 - DDL: none. Marker `20260910005242_homepage_ephemeral_showcase_sandboxes.sql`.
 - **Visitor sandboxes**: homepage + `/view/{masterId}` mint in-memory remapped clones (`lib/ephemeral-sandbox.ts`) so visitors can interact without writing masters; reload remints. Edit masters at `/board/{masterId}`.
-- **Showcase masters** (remote data): Launch Day Deck / Launch Ops Graph / Weekend App Ideas — pastel `fillColor` frames + `boardFont: serif`; env `NEXT_PUBLIC_SHOWCASE_*_BOARD_ID`.
+- **Showcase masters** (remote data): Launch Day Deck / Launch Ops Graph / Weekend App Ideas — owner `easayani@goalfish.io`; pastel `fillColor` frames + `boardFont: serif`; env `NEXT_PUBLIC_SHOWCASE_*_BOARD_ID`.
 - **Marketing images**: real PNGs (were JPEG-mislabeled); Next `Image` uses `unoptimized` for `/home/*`; section-one custom example `home-notes-presentations-example.png`.
 - Schema unchanged; remote applied still tops out at `20260811225342`.
 

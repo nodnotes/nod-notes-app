@@ -14,6 +14,7 @@ import { markHtmlWithAiPending } from '@/lib/ai/wrap-ai-html'
 import { frameContentFromAi, markdownToTipTapHtml } from '@/lib/ai/markdown-to-tiptap'
 import { expandHideMarkersInHtml } from '@/lib/ai/hide-text'
 import type { AiProposedEdit } from '@/lib/ai/types'
+import { frameColorMetaPatch, resolveAiFrameColor } from '@/lib/frame-colors'
 import { NextRequest } from 'next/server'
 import type OpenAI from 'openai'
 import { getOpenAI } from '@/lib/openai'
@@ -267,7 +268,7 @@ export async function POST(request: NextRequest) {
                       items: {
                         type: 'object',
                         additionalProperties: false,
-                        required: ['frameId', 'summary', 'replacements', 'contentHtml'],
+                        required: ['frameId', 'summary', 'replacements', 'contentHtml', 'color'],
                         properties: {
                           frameId: { type: 'string' },
                           summary: { type: 'string' },
@@ -284,6 +285,8 @@ export async function POST(request: NextRequest) {
                             },
                           },
                           contentHtml: { type: 'string' },
+                          // Palette id (blue, green, …) or "" to leave fill/border unchanged
+                          color: { type: 'string' },
                         },
                       },
                     },
@@ -292,12 +295,14 @@ export async function POST(request: NextRequest) {
                       items: {
                         type: 'object',
                         additionalProperties: false,
-                        required: ['tempId', 'title', 'contentMarkdown', 'summary'],
+                        required: ['tempId', 'title', 'contentMarkdown', 'summary', 'color'],
                         properties: {
                           tempId: { type: 'string' },
                           title: { type: 'string' },
                           contentMarkdown: { type: 'string' },
                           summary: { type: 'string' },
+                          // Palette id for idea grouping / design, or "" for transparent default
+                          color: { type: 'string' },
                         },
                       },
                     },
@@ -330,6 +335,7 @@ export async function POST(request: NextRequest) {
               frameId: string
               contentHtml?: string
               summary: string
+              color?: string
               replacements?: Array<{ oldText: string; newText: string }>
             }>
             creates?: Array<{
@@ -337,6 +343,7 @@ export async function POST(request: NextRequest) {
               title: string
               contentMarkdown: string
               summary: string
+              color?: string
             }>
             threads?: Array<{
               sourceTempId: string
@@ -366,12 +373,30 @@ export async function POST(request: NextRequest) {
             for (const e of validEdits) {
               const { data: msg } = await supabase
                 .from('messages')
-                .select('id, content')
+                .select('id, content, metadata')
                 .eq('id', e.frameId)
                 .maybeSingle()
               if (!msg) continue
               const replacements = (e.replacements || []).filter((r) => (r.oldText || '').trim())
               const contentHtml = normalizeEditHtml(e.contentHtml || '')
+              const prevMeta = (msg.metadata || {}) as Record<string, unknown>
+              const resolvedColor = resolveAiFrameColor(e.color)
+              const colorPatch = resolvedColor
+                ? frameColorMetaPatch(resolvedColor.fill, resolvedColor.border)
+                : null
+              // Apply color immediately so the board previews the design before Save
+              if (colorPatch) {
+                await supabase
+                  .from('messages')
+                  .update({
+                    metadata: {
+                      ...prevMeta,
+                      ...colorPatch,
+                      aiPendingEdit: true,
+                    },
+                  })
+                  .eq('id', e.frameId)
+              }
               const { data: action } = await supabase
                 .from('ai_action_log')
                 .insert({
@@ -384,8 +409,26 @@ export async function POST(request: NextRequest) {
                     contentHtml,
                     replacements,
                     summary: e.summary,
+                    ...(resolvedColor
+                      ? {
+                          color: resolvedColor.id,
+                          fillColor: resolvedColor.fill,
+                          borderColor: resolvedColor.border,
+                        }
+                      : {}),
                   },
-                  inverse: { frameId: e.frameId, contentHtml: msg.content },
+                  inverse: {
+                    frameId: e.frameId,
+                    contentHtml: msg.content,
+                    ...(colorPatch
+                      ? {
+                          fillColor:
+                            typeof prevMeta.fillColor === 'string' ? prevMeta.fillColor : '',
+                          borderColor:
+                            typeof prevMeta.borderColor === 'string' ? prevMeta.borderColor : '',
+                        }
+                      : {}),
+                  },
                   status: 'pending',
                 })
                 .select('id')
@@ -398,6 +441,17 @@ export async function POST(request: NextRequest) {
                 actionLogId: action?.id,
                 originalContent: msg.content as string,
                 replacements,
+                ...(resolvedColor
+                  ? {
+                      color: resolvedColor.id,
+                      fillColor: resolvedColor.fill,
+                      borderColor: resolvedColor.border,
+                      originalFillColor:
+                        typeof prevMeta.fillColor === 'string' ? prevMeta.fillColor : '',
+                      originalBorderColor:
+                        typeof prevMeta.borderColor === 'string' ? prevMeta.borderColor : '',
+                    }
+                  : {}),
               })
             }
 
@@ -434,6 +488,10 @@ export async function POST(request: NextRequest) {
                   x: startX + i * CREATE_FRAME_GAP,
                   y: viewportCenter.y,
                 }
+                const resolvedColor = resolveAiFrameColor(c.color)
+                const colorPatch = resolvedColor
+                  ? frameColorMetaPatch(resolvedColor.fill, resolvedColor.border)
+                  : {}
 
                 const { data: msg, error: msgErr } = await supabase
                   .from('messages')
@@ -448,6 +506,7 @@ export async function POST(request: NextRequest) {
                       aiPendingEdit: true,
                       fromAiEdit: true,
                       hasAiOrigin: false,
+                      ...colorPatch,
                     }),
                   })
                   .select('id, content')
@@ -471,6 +530,13 @@ export async function POST(request: NextRequest) {
                       frameId: msg.id,
                       tempId,
                       summary: c.summary,
+                      ...(resolvedColor
+                        ? {
+                            color: resolvedColor.id,
+                            fillColor: resolvedColor.fill,
+                            borderColor: resolvedColor.border,
+                          }
+                        : {}),
                     },
                     inverse: { frameId: msg.id },
                     status: 'pending',
@@ -486,6 +552,13 @@ export async function POST(request: NextRequest) {
                   summary: c.summary || 'Create frame',
                   actionLogId: action?.id,
                   originalContent: '',
+                  ...(resolvedColor
+                    ? {
+                        color: resolvedColor.id,
+                        fillColor: resolvedColor.fill,
+                        borderColor: resolvedColor.border,
+                      }
+                    : {}),
                 })
               }
             }

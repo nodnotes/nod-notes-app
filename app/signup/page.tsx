@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { waitForAuthUserId } from '@/lib/use-live-auth-user'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -40,9 +41,10 @@ export default function SignupPage() {
           type: 'success',
           text: 'Account created! Please check your email to verify your account before signing in.',
         })
-      } else {
-        // If email confirmation is disabled, user is immediately signed in
-        router.push('/board')
+      } else if (data.user?.id) {
+        // Email confirmation disabled — wait for cookies then full-load /board
+        await waitForAuthUserId(data.user.id, { timeoutMs: 8000 })
+        window.location.assign('/board')
       }
     } catch (error: any) {
       setMessage({

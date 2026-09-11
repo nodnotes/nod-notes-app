@@ -18,6 +18,16 @@ const PRODUCT_LINKS = [
   { href: '/#get-started', label: 'Ready to map your ideas?' },
 ] as const
 
+/** Help Center + support — Notion-style Resources column */
+const RESOURCE_LINKS = [
+  { href: '/docs', label: 'Help Center' },
+  { href: '/docs/get-started/what-is-nod-notes', label: 'Getting started' },
+  { href: '/docs/nod-ai/ask-and-edit', label: 'Nod AI' },
+  { href: '/docs/notion-connection/connect-notion', label: 'Notion connection' },
+  { href: '/support', label: 'Support' },
+  { href: '/pricing', label: 'Pricing' },
+] as const
+
 /** Notion-style marketing footer — brand left, section links right, legal bar below */
 export function HomeFooter() {
   const year = new Date().getFullYear()
@@ -42,6 +52,18 @@ export function HomeFooter() {
               <h3 className={COL_HEAD}>Product</h3>
               <ul className="space-y-0.5">
                 {PRODUCT_LINKS.map((link) => (
+                  <li key={link.href}>
+                    <Link href={link.href} className={COL_LINK}>
+                      {link.label}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <h3 className={COL_HEAD}>Resources</h3>
+              <ul className="space-y-0.5">
+                {RESOURCE_LINKS.map((link) => (
                   <li key={link.href}>
                     <Link href={link.href} className={COL_LINK}>
                       {link.label}

@@ -94,6 +94,12 @@ export type AiProposedEdit = {
   actionLogId?: string
   originalContent?: string
   replacements?: Array<{ oldText: string; newText: string }>
+  /** Palette id when AI set frame chrome color. */
+  color?: string
+  fillColor?: string // Proposed fill hex ("" = default/transparent)
+  borderColor?: string // Proposed border hex
+  originalFillColor?: string // Pre-edit fill for discard / eye preview
+  originalBorderColor?: string // Pre-edit border for discard / eye preview
 }
 
 export type AiStreamEvent =

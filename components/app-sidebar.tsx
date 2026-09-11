@@ -36,6 +36,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { useSidebarContext } from './sidebar-context'
+import { useLiveAuthUser, waitForAuthUserId } from '@/lib/use-live-auth-user'
 import { demoteBlockForDeletedBoard, expandBoardsForDelete, syncBoardRenameToBlock } from '@/lib/blocks' // Keep block cards ↔ pages in sync; cascade nested deletes
 import {
   DndContext,
@@ -963,34 +964,36 @@ async function createUntitledBoard(
   return boardId // Navigate + cache-patch with this id
 }
 
-// Fetch conversations/boards for the user
-async function fetchConversations(): Promise<Conversation[]> {
+// Fetch conversations/boards for an explicit user id (must match live session)
+async function fetchConversations(userId: string): Promise<Conversation[]> {
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return []
+  // Wait until browser session is this user — never cache [] from a transient mismatch
+  await waitForAuthUserId(userId, { timeoutMs: 8000 })
 
   const { data, error } = await supabase
     .from('conversations')
-    .select('id, title, created_at, updated_at, metadata')
-    .eq('user_id', user.id)
+    .select('id, title, created_at, updated_at, metadata, user_id')
+    .eq('user_id', userId)
     .order('updated_at', { ascending: false })
-    .limit(50)
+    .limit(100)
 
   if (error) {
     console.error('Error fetching conversations:', error)
-    return []
+    throw error // Don't cache a failed/empty read as success
   }
 
   // Map data and include full metadata (for project_id and position)
   // IMPORTANT: Return ALL conversations (including project boards) - filtering happens in component
-  const conversations = (data || []).map((conv: any) => ({
-    id: conv.id,
-    title: conv.title,
-    created_at: conv.created_at,
-    updated_at: conv.updated_at,
-    position: conv.metadata?.position ?? undefined,
-    metadata: conv.metadata || undefined, // Include full metadata object for project_id
-  })) as Conversation[]
+  const conversations = (data || [])
+    .filter((conv: { user_id?: string }) => conv.user_id === userId) // Defense in depth
+    .map((conv: any) => ({
+      id: conv.id,
+      title: conv.title,
+      created_at: conv.created_at,
+      updated_at: conv.updated_at,
+      position: conv.metadata?.position ?? undefined,
+      metadata: conv.metadata || undefined, // Include full metadata object for project_id
+    })) as Conversation[]
 
   // Sort by position if available, otherwise by updated_at
   // Don't filter here - we need all conversations to show project boards under projects
@@ -1004,22 +1007,21 @@ async function fetchConversations(): Promise<Conversation[]> {
   })
 }
 
-// Fetch projects for the user
-async function fetchProjects(): Promise<Project[]> {
+// Fetch projects for an explicit user id (must match live session)
+async function fetchProjects(userId: string): Promise<Project[]> {
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return []
+  await waitForAuthUserId(userId, { timeoutMs: 8000 })
 
   const { data, error } = await supabase
     .from('projects')
     .select('id, name, created_at, updated_at, metadata')
-    .eq('user_id', user.id)
+    .eq('user_id', userId)
     .order('updated_at', { ascending: false })
     .limit(50)
 
   if (error) {
     console.error('Error fetching projects:', error)
-    return []
+    throw error
   }
 
   // Map data and extract position from metadata if available
@@ -1137,9 +1139,11 @@ function measureNavPopupMaxHeight(popupTop: number): number {
   return Math.max(NAV_POPUP_MIN_H, Math.min(maxCap, available))
 }
 
-export default function AppSidebar({ user }: AppSidebarProps) {
+export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
+  // Live session only — never keep a stale SSR email after account switch
+  const { user, sessionReady } = useLiveAuthUser(initialUser)
   const [isDeleting, setIsDeleting] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -1190,6 +1194,13 @@ export default function AppSidebar({ user }: AppSidebarProps) {
     typeof window === 'undefined' ? NAV_POPUP_MAX_CAP : measureNavPopupMaxHeight(NAV_POPUP_TOP)
   )
 
+  // When live user id changes, pull that account's boards (query key already scoped)
+  useEffect(() => {
+    if (!user.id) return
+    void queryClient.invalidateQueries({ queryKey: ['conversations', user.id] })
+    void queryClient.invalidateQueries({ queryKey: ['projects', user.id] })
+  }, [user.id, queryClient])
+
   // Close hover-only nav on route change; click-pinned stays open across page switches
   useEffect(() => {
     if (isSidebarPinned) return // Keep open across board switches; board click still dismisses
@@ -1233,16 +1244,14 @@ export default function AppSidebar({ user }: AppSidebarProps) {
     },
   })
 
-  // Handle logout
+  // Handle logout — full navigation so SSR + client never keep the prior identity
   const handleLogout = async () => {
     try {
       await supabase.auth.signOut()
-      router.push('/login')
     } catch (error) {
       console.error('Error signing out:', error)
-      // Still redirect even if signOut fails
-      router.push('/login')
     }
+    window.location.assign('/') // Hard clear; soft push left stale account chrome
   }
 
   // Ensure hover works on first load when window is in focus
@@ -1873,19 +1882,46 @@ export default function AppSidebar({ user }: AppSidebarProps) {
     }
   }
 
-  // Fetch conversations/boards
-  const { data: conversations = [], refetch } = useQuery({
-    queryKey: ['conversations'],
-    queryFn: fetchConversations,
+  // Fetch conversations/boards — wait until browser session is ready (avoids caching [] on first paint)
+  const {
+    data: conversationsData,
+    refetch,
+    isSuccess: conversationsReady,
+  } = useQuery({
+    queryKey: ['conversations', user.id],
+    queryFn: () => fetchConversations(user.id), // Pass key user id — never trust a mismatched session
     refetchOnWindowFocus: true,
+    enabled: sessionReady && Boolean(user.id),
+    retry: (count, err) =>
+      count < 10 &&
+      err instanceof Error &&
+      (err.message === 'AUTH_SESSION_PENDING' || err.message === 'AUTH_SESSION_TIMEOUT'),
+    retryDelay: (n) => Math.min(300 * (n + 1), 2000),
+    gcTime: 0, // Drop list as soon as inactive — never resurrect prior account boards
+    staleTime: 0, // Always re-read after mount / account change
   })
+  // Only render after a successful fetch for *this* user — never flash a prior query's list
+  const conversations = conversationsReady && sessionReady ? conversationsData ?? [] : []
 
   // Fetch projects
-  const { data: projects = [], refetch: refetchProjects } = useQuery({
-    queryKey: ['projects'],
-    queryFn: fetchProjects,
+  const {
+    data: projectsData,
+    refetch: refetchProjects,
+    isSuccess: projectsReady,
+  } = useQuery({
+    queryKey: ['projects', user.id],
+    queryFn: () => fetchProjects(user.id),
     refetchOnWindowFocus: true,
+    enabled: sessionReady && Boolean(user.id),
+    retry: (count, err) =>
+      count < 10 &&
+      err instanceof Error &&
+      (err.message === 'AUTH_SESSION_PENDING' || err.message === 'AUTH_SESSION_TIMEOUT'),
+    retryDelay: (n) => Math.min(300 * (n + 1), 2000),
+    gcTime: 0,
+    staleTime: 0,
   })
+  const projects = projectsReady && sessionReady ? projectsData ?? [] : []
 
 
   // Set up Supabase Realtime subscription for conversation updates (most reliable)

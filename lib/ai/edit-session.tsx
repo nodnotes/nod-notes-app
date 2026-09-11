@@ -18,6 +18,7 @@ import {
   type AiTextReplacement,
 } from '@/lib/ai/apply-replacements'
 import { generateUUID } from '@/lib/utils'
+import { frameColorMetaPatch } from '@/lib/frame-colors'
 
 /** Input for queueing a pending edit — proposed HTML is built after re-reading DB original. */
 export type AiPendingEditInput = {
@@ -35,6 +36,13 @@ export type AiPendingEditInput = {
   contentHtml?: string
   replacements?: AiTextReplacement[]
   actionLogId?: string
+  /** When set, frame fill/border were changed (or will be applied client-side). */
+  fillColor?: string
+  borderColor?: string
+  originalFillColor?: string
+  originalBorderColor?: string
+  /** True when this edit includes a color change (including clear → default). */
+  colorChanged?: boolean
 }
 
 export type AiPendingEditKind = 'update_frame' | 'create_frame' | 'create_thread' | 'update_thread'
@@ -52,6 +60,12 @@ export interface AiPendingEdit {
   /** Proposed HTML with ai-pending marks (shown on page until save/discard). */
   proposedContent: string
   actionLogId?: string
+  /** Proposed chrome colors (undefined = this edit did not touch color). */
+  fillColor?: string
+  borderColor?: string
+  originalFillColor?: string
+  originalBorderColor?: string
+  colorChanged?: boolean
 }
 
 interface AiEditSessionValue {
@@ -123,7 +137,7 @@ export function AiEditSessionProvider({
 }) {
   const queryClient = useQueryClient()
   const [pendingEdits, setPendingEdits] = useState<AiPendingEdit[]>([])
-  const [previewOriginal, setPreviewOriginal] = useState(false)
+  const [previewOriginal, setPreviewOriginalState] = useState(false)
   const [focusedEditId, setFocusedEditId] = useState<string | null>(null)
   const [showAiOrigin, setShowAiOriginState] = useState(false)
   const [hasAiContent, setHasAiContent] = useState(false)
@@ -223,6 +237,10 @@ export function AiEditSessionProvider({
     }
   }, [])
 
+  const setPreviewOriginal = useCallback((v: boolean) => {
+    setPreviewOriginalState(v)
+  }, [])
+
   const persistFrameContent = useCallback(async (messageId: string, content: string) => {
     const supabase = createClient()
     const { error } = await supabase.from('messages').update({ content }).eq('id', messageId)
@@ -252,6 +270,29 @@ export function AiEditSessionProvider({
     // Ignore missing row (cascade already removed it with a create_frame discard)
     await supabase.from('panel_edges').delete().eq('id', edgeId)
   }, [])
+
+  // Eye toggle: swap fill/border between proposed and original for color edits
+  useEffect(() => {
+    const colorEdits = pendingEdits.filter(
+      (e) => e.colorChanged && e.kind === 'update_frame' && e.messageId
+    )
+    if (colorEdits.length === 0) return
+    let cancelled = false
+    void (async () => {
+      for (const edit of colorEdits) {
+        if (cancelled || !edit.messageId) continue
+        const fill = previewOriginal ? (edit.originalFillColor ?? '') : (edit.fillColor ?? '')
+        const border = previewOriginal
+          ? (edit.originalBorderColor ?? '')
+          : (edit.borderColor ?? '')
+        await persistFrameMeta(edit.messageId, frameColorMetaPatch(fill, border))
+      }
+      if (!cancelled) bumpMessages()
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [previewOriginal, pendingEdits, persistFrameMeta])
 
   /** Queue proposals in memory only — DB keeps original until Save (creates already inserted). */
   const addPendingEdits = useCallback(
@@ -285,6 +326,9 @@ export function AiEditSessionProvider({
             originalContent: '',
             proposedContent: proposed,
             actionLogId: e.actionLogId,
+            fillColor: e.fillColor,
+            borderColor: e.borderColor,
+            colorChanged: e.colorChanged,
           })
           continue
         }
@@ -299,16 +343,30 @@ export function AiEditSessionProvider({
             .maybeSingle()
           if (typeof msg?.content === 'string') original = msg.content
           // Soft-flag metadata for chrome without mutating content
-          await persistFrameMeta(e.messageId, { aiPendingEdit: true })
+          const metaPatch: Record<string, unknown> = { aiPendingEdit: true }
+          // Server may have already applied color; client re-applies for race safety
+          if (e.colorChanged) {
+            Object.assign(
+              metaPatch,
+              frameColorMetaPatch(e.fillColor ?? '', e.borderColor ?? '')
+            )
+          }
+          await persistFrameMeta(e.messageId, metaPatch)
         }
         // Build proposal against the live original so eye/remove match DB
+        const hasTextChange =
+          Boolean(e.contentHtml?.trim()) ||
+          Boolean(e.replacements?.some((r) => (r.oldText || '').trim()))
         const proposed =
           e.proposedContent ||
-          buildProposedHtml({
-            originalHtml: original,
-            contentHtml: e.contentHtml,
-            replacements: e.replacements,
-          })
+          // Color-only: keep HTML identical (no full-frame pending wrap)
+          (e.colorChanged && !hasTextChange
+            ? original
+            : buildProposedHtml({
+                originalHtml: original,
+                contentHtml: e.contentHtml,
+                replacements: e.replacements,
+              }))
         withIds.push({
           id: generateUUID(),
           kind: e.kind,
@@ -318,6 +376,11 @@ export function AiEditSessionProvider({
           originalContent: original,
           proposedContent: proposed,
           actionLogId: e.actionLogId,
+          fillColor: e.fillColor,
+          borderColor: e.borderColor,
+          originalFillColor: e.originalFillColor,
+          originalBorderColor: e.originalBorderColor,
+          colorChanged: e.colorChanged,
         })
       }
 
@@ -343,12 +406,21 @@ export function AiEditSessionProvider({
   const applySaveOne = useCallback(
     async (edit: AiPendingEdit): Promise<{ messageId?: string; content?: string }> => {
       if (edit.kind === 'update_frame' && edit.messageId) {
-        const finalHtml = promotePendingToOrigin(edit.proposedContent)
+        const textChanged = edit.proposedContent !== edit.originalContent
+        const finalHtml = textChanged
+          ? promotePendingToOrigin(edit.proposedContent)
+          : edit.originalContent
         await persistFrameContent(edit.messageId, finalHtml)
-        await persistFrameMeta(edit.messageId, {
-          aiPendingEdit: false,
-          hasAiOrigin: true,
-        })
+        const metaPatch: Record<string, unknown> = { aiPendingEdit: false }
+        if (textChanged) metaPatch.hasAiOrigin = true
+        // Eye preview may have restored originals — force proposed colors on Save
+        if (edit.colorChanged) {
+          Object.assign(
+            metaPatch,
+            frameColorMetaPatch(edit.fillColor ?? '', edit.borderColor ?? '')
+          )
+        }
+        await persistFrameMeta(edit.messageId, metaPatch)
         await markActionStatus(edit.actionLogId, 'applied')
         return { messageId: edit.messageId, content: finalHtml }
       }
@@ -373,7 +445,14 @@ export function AiEditSessionProvider({
   const applyDiscardOne = useCallback(
     async (edit: AiPendingEdit): Promise<{ messageId?: string; content?: string; deleted?: boolean }> => {
       if (edit.kind === 'update_frame' && edit.messageId) {
-        await persistFrameMeta(edit.messageId, { aiPendingEdit: false })
+        const metaPatch: Record<string, unknown> = { aiPendingEdit: false }
+        if (edit.colorChanged) {
+          Object.assign(
+            metaPatch,
+            frameColorMetaPatch(edit.originalFillColor ?? '', edit.originalBorderColor ?? '')
+          )
+        }
+        await persistFrameMeta(edit.messageId, metaPatch)
         await persistFrameContent(edit.messageId, edit.originalContent)
         await markActionStatus(edit.actionLogId, 'undone')
         return { messageId: edit.messageId, content: edit.originalContent }
@@ -627,6 +706,11 @@ export function buildFramePendingEdit(opts: {
   replacements?: AiTextReplacement[]
   summary: string
   actionLogId?: string
+  fillColor?: string
+  borderColor?: string
+  originalFillColor?: string
+  originalBorderColor?: string
+  colorChanged?: boolean
 }): AiPendingEditInput {
   return {
     kind: 'update_frame',
@@ -637,6 +721,11 @@ export function buildFramePendingEdit(opts: {
     contentHtml: opts.contentHtml,
     replacements: opts.replacements,
     actionLogId: opts.actionLogId,
+    fillColor: opts.fillColor,
+    borderColor: opts.borderColor,
+    originalFillColor: opts.originalFillColor,
+    originalBorderColor: opts.originalBorderColor,
+    colorChanged: opts.colorChanged,
   }
 }
 
@@ -645,6 +734,9 @@ export function buildCreateFramePendingEdit(opts: {
   contentHtml: string
   summary: string
   actionLogId?: string
+  fillColor?: string
+  borderColor?: string
+  colorChanged?: boolean
 }): AiPendingEditInput {
   return {
     kind: 'create_frame',
@@ -654,6 +746,9 @@ export function buildCreateFramePendingEdit(opts: {
     proposedContent: opts.contentHtml,
     contentHtml: opts.contentHtml,
     actionLogId: opts.actionLogId,
+    fillColor: opts.fillColor,
+    borderColor: opts.borderColor,
+    colorChanged: opts.colorChanged,
   }
 }
 

@@ -74,9 +74,11 @@
     overflow: hidden; /* Prevent body scroll on mobile */
   }
 
-  /* Marketing homepage scrolls; board shells keep overflow:hidden above */
+  /* Marketing / docs scroll; board shells keep overflow:hidden above */
   html:has([data-home-page]),
-  html:has([data-home-page]) body {
+  html:has([data-home-page]) body,
+  html:has([data-docs-page]),
+  html:has([data-docs-page]) body {
     height: auto;
     min-height: 100%;
     overflow-x: hidden;
@@ -179,6 +181,58 @@
 .grey-text {
   background-color: #e5e7eb !important; /* grey-200 - light grey background for trashed text */
   color: inherit !important; /* Keep original text color */
+}
+
+/* Landing flashcard demo — board haze blur + hover peek + fleeting edge sparkles */
+.home-flashcard-answer {
+  transition:
+    filter 480ms ease-in-out,
+    opacity 480ms ease-in-out,
+    background 480ms ease-in-out; /* Short fade for mid-viewport peek in/out */
+  border-radius: 2px;
+}
+
+.home-flashcard-answer--hazed {
+  filter: blur(5px); /* Board hide-text blur strength */
+  opacity: 0.85;
+  background: rgba(120, 120, 120, 0.12); /* Soft frost so blur reads as intentional */
+  cursor: pointer;
+}
+
+@keyframes home-fleeting-bright {
+  0%,
+  100% {
+    opacity: 0;
+    transform: scale(0.35);
+  }
+  35%,
+  55% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.home-fleeting-bright {
+  animation: home-fleeting-bright 2.8s ease-in-out infinite; /* Staggered via inline delay */
+}
+
+/* AI interlude: fewer lit at once — longer cycle, brief peak */
+@keyframes home-fleeting-bright-slow {
+  0%,
+  18%,
+  100% {
+    opacity: 0;
+    transform: scale(0.35);
+  }
+  28%,
+  36% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.home-fleeting-bright-slow {
+  animation: home-fleeting-bright-slow 5.6s ease-in-out infinite;
 }
 
 /* Shimmer animation for loading text */

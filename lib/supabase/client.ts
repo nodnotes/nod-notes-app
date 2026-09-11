@@ -69,30 +69,42 @@ export function createClient(): BrowserClient {
   // before its real query — 25 round trips (1.8s) per board load. GoTrue serializes them behind its
   // own lock, so they never overlap and the fetch coalescer above can't see them; memoize here
   // instead. Explicit-JWT calls bypass the cache, and any auth transition clears it.
+  // Generation token: an in-flight getUser from the *previous* session must not re-seed the cache
+  // after sign-in (that made the account menu keep showing the old email).
   type GetUser = typeof client.auth.getUser
   const passthrough = client.auth.getUser.bind(client.auth) as GetUser
   let cached: { at: number; value: Awaited<ReturnType<GetUser>> } | null = null
   let pending: ReturnType<GetUser> | null = null
+  let generation = 0 // Bumped on every auth transition
   client.auth.getUser = ((jwt?: string) => {
     if (jwt) return passthrough(jwt)
     if (cached && Date.now() - cached.at < USER_TTL_MS) return Promise.resolve(cached.value)
     if (pending) return pending
+    const startedAt = generation // Capture — ignore result if auth flipped mid-flight
     pending = passthrough().then(
       (value) => {
+        if (startedAt !== generation) {
+          pending = null // Slot free for the new generation
+          return (client.auth.getUser as GetUser)() // Return current identity, not the stale one
+        }
         cached = { at: Date.now(), value }
         pending = null
         return value
       },
       (error) => {
-        pending = null
+        pending = null // Always clear so a new call can start
+        if (startedAt !== generation) {
+          return (client.auth.getUser as GetUser)() // Auth flipped during failure — try current user
+        }
         throw error
       }
     )
     return pending
   }) as GetUser
   client.auth.onAuthStateChange(() => {
+    generation += 1 // Invalidate in-flight getUser writers
     cached = null // Sign in / out / token refresh — never serve the previous identity
-    pending = null
+    pending = null // Next getUser starts a fresh network call
   })
 
   browserClient = client

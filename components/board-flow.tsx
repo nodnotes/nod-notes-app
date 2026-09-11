@@ -2641,8 +2641,11 @@ function BoardFlowInner({
     refetchOnWindowFocus: !embedded && !isEphemeralSandboxId(conversationId),
     refetchOnMount: !embedded && !isEphemeralSandboxId(conversationId),
     refetchOnReconnect: !embedded && !isEphemeralSandboxId(conversationId),
-    placeholderData: (previousData) => {
-      if (!conversationId) return previousData
+    placeholderData: (previousData, previousQuery) => {
+      if (!conversationId) return undefined // Empty /board — never keep another board's frames
+      // Never show board A's frames while board B loads (incl. after account switch)
+      const prevId = previousQuery?.queryKey?.[1]
+      if (prevId && prevId !== conversationId) return undefined
       // Prefer same-mode cache, then full-board cache (user may have opened the page already)
       const embedCached = queryClient.getQueryData([
         'messages-for-panels',
@@ -2659,7 +2662,7 @@ function BoardFlowInner({
       // Legacy key (pre embed/full split)
       const legacy = queryClient.getQueryData(['messages-for-panels', conversationId])
       if (legacy) return legacy as Message[]
-      return previousData
+      return undefined // Do not fall back to previousData from another query
     },
   })
 

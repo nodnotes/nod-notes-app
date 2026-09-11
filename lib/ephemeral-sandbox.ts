@@ -37,13 +37,42 @@ function mapId(idMap: Map<string, string>, id: string): string {
   return next
 }
 
+export type ClonePublicBoardKind = 'ephemeral' | 'owned' // In-memory playground vs persisted user copy
+
+/** Conversation metadata for a remapped clone (ephemeral visit or owned claim). */
+function cloneConversationMetadata(
+  master: PublicBoardPayload,
+  kind: ClonePublicBoardKind
+): Record<string, unknown> {
+  const base = master.conversation.metadata
+    ? (JSON.parse(JSON.stringify(master.conversation.metadata)) as Record<string, unknown>)
+    : {} // Deep-copy prefs (font, rule, …) without sharing the master object
+  delete base.is_showcase // Copies are private boards, not public masters
+  delete base.is_ephemeral_sandbox // Clear before re-applying for ephemeral
+  delete base.master_board_id // Legacy ephemeral key
+  delete base.showcase_source_id // Re-set below for owned copies
+  if (kind === 'ephemeral') {
+    return {
+      ...base,
+      is_ephemeral_sandbox: true, // Mark clone for prefs / debugging
+      master_board_id: master.conversation.id, // Which master this visit forked from
+    }
+  }
+  return {
+    ...base,
+    showcase_source_id: master.conversation.id, // Idempotent claim lookup
+    position: -1, // Pin near top of the boards list like a new board
+  }
+}
+
 /**
  * Deep-clone a public master payload with new conversation + message + node ids.
  * Edge endpoints follow the message remap so threads still connect.
  */
 export function clonePublicBoardPayload(
   master: PublicBoardPayload,
-  sandboxId: string
+  sandboxId: string,
+  kind: ClonePublicBoardKind = 'ephemeral' // Default keeps homepage /view sandboxes local
 ): PublicBoardPayload {
   const idMap = new Map<string, string>() // Master message/node id → clone id
   const messages = master.messages.map((msg) => {
@@ -71,21 +100,9 @@ export function clonePublicBoardPayload(
   }))
   return {
     conversation: {
-      id: sandboxId, // Sandbox conversation id (not in DB)
+      id: sandboxId, // Clone conversation id (ephemeral or new owned row)
       title: master.conversation.title,
-      metadata: master.conversation.metadata
-        ? ({
-            ...(JSON.parse(JSON.stringify(master.conversation.metadata)) as Record<
-              string,
-              unknown
-            >),
-            is_ephemeral_sandbox: true, // Mark clone for prefs / debugging
-            master_board_id: master.conversation.id, // Which master this was forked from
-          } as Record<string, unknown>)
-        : {
-            is_ephemeral_sandbox: true,
-            master_board_id: master.conversation.id,
-          },
+      metadata: cloneConversationMetadata(master, kind), // Kind-specific provenance flags
     },
     messages,
     edges,

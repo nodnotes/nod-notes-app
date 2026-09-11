@@ -132,6 +132,11 @@ interface AiComposerProps {
       actionLogId?: string
       originalContent?: string
       replacements?: Array<{ oldText: string; newText: string }>
+      color?: string
+      fillColor?: string
+      borderColor?: string
+      originalFillColor?: string
+      originalBorderColor?: string
     }>
   ) => void | Promise<void>
 }

@@ -60,3 +60,44 @@ export function resolveFrameBorderColor(border: string | null | undefined): stri
   if (!b) return undefined
   return LEGACY_FRAME_BORDER_HEX[b.toLowerCase()] ?? b
 }
+
+/** Palette ids the AI may emit (empty string = leave unchanged / omit). */
+export const AI_FRAME_COLOR_IDS = FRAME_COLOR_SWATCHES.map((s) => s.id)
+
+/** Human label for a stored fill hex (for context pack), or null when transparent. */
+export function frameColorNameFromFill(fill: string | null | undefined): string | null {
+  const f = (fill || '').trim().toLowerCase()
+  if (!f) return null
+  const swatch = FRAME_COLOR_SWATCHES.find((s) => s.fill.toLowerCase() === f)
+  return swatch ? swatch.name : 'custom'
+}
+
+/**
+ * Map AI `color` field → fill/border. Empty / unknown → null (no change).
+ * Accepts palette id or display name (case-insensitive).
+ */
+export function resolveAiFrameColor(
+  raw: string | null | undefined
+): { id: string; name: string; fill: string; border: string } | null {
+  const key = (raw || '').trim().toLowerCase()
+  if (!key || key === 'none' || key === 'unchanged' || key === 'keep') return null
+  const swatch = FRAME_COLOR_SWATCHES.find(
+    (s) => s.id === key || s.name.toLowerCase() === key
+  )
+  if (!swatch) return null
+  return { id: swatch.id, name: swatch.name, fill: swatch.fill, border: swatch.border }
+}
+
+/** Metadata patch for fill + matching subtle border (or clear both on default). */
+export function frameColorMetaPatch(fill: string, border: string): Record<string, unknown> {
+  const patch: Record<string, unknown> = {
+    fillColor: fill || null,
+    borderColor: border || null,
+  }
+  if (border) {
+    // Match manual Color menu: show a solid stroke when a border hex is set
+    patch.borderStyle = 'solid'
+    if (patch.borderWeight == null) patch.borderWeight = 1
+  }
+  return patch
+}

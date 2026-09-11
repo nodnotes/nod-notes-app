@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { waitForAuthUserId } from '@/lib/use-live-auth-user'
 
 const GENERIC_FAIL = "Couldn't sign in. Check your email and password."
 
@@ -12,7 +12,6 @@ const GENERIC_FAIL = "Couldn't sign in. Check your email and password."
  * not-on-list is explicit for the submitted email only.
  */
 export default function AccessPage() {
-  const router = useRouter()
   const supabase = createClient()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -22,10 +21,10 @@ export default function AccessPage() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user?.email_confirmed_at) {
-        router.replace('/board')
+        window.location.assign('/board') // Full load when already signed in
       }
     })
-  }, [router, supabase])
+  }, [supabase])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -69,7 +68,8 @@ export default function AccessPage() {
         }
       }
 
-      router.push('/board')
+      await waitForAuthUserId(data.user.id, { timeoutMs: 8000 })
+      window.location.assign('/board')
     } catch (err: unknown) {
       setMessage({
         type: 'error',

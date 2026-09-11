@@ -76,8 +76,8 @@ export async function middleware(request: NextRequest) {
         return NextResponse.redirect(url)
       }
       // Allowlisted + verified → fall through to normal board/profile checks below
-    } else if (user && isEarlyAccessEmail(user.email) && (pathname === '/' || pathname === '/access')) {
-      // Invited users on placeholder → go to the app
+    } else if (user && isEarlyAccessEmail(user.email) && pathname === '/access') {
+      // Invited users on /access → app; keep `/` as the marketing homepage
       if (user.email_confirmed_at) {
         const url = request.nextUrl.clone()
         url.pathname = '/board'

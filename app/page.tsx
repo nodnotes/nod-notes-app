@@ -1,13 +1,16 @@
 import Image from 'next/image'
 import Link from 'next/link'
-import type { ReactNode } from 'react'
 import { ComingSoonPage } from '@/components/coming-soon-page'
 import { HomeBoardPreview } from '@/components/home-board-preview'
 import { HomeHeroIntro } from '@/components/home-hero-intro'
 import { HomeHeroThread } from '@/components/home-hero-thread'
 import { HomeFooter } from '@/components/home-footer'
 import { HomeTopNav } from '@/components/home-top-nav'
-import { isComingSoon } from '@/lib/coming-soon'
+import { HomeAiInterlude } from '@/components/home-ai-interlude'
+import { HomeFlashcardInterlude } from '@/components/home-flashcard-interlude'
+import { isComingSoon, isEarlyAccessEmail } from '@/lib/coming-soon'
+import { createClient } from '@/lib/supabase/server'
+import { OpenShowcaseBoardLink } from '@/components/open-showcase-board-link'
 import {
   getResolvedShowcaseBoards,
   type ResolvedShowcaseBoard,
@@ -41,6 +44,56 @@ function SplitShowcase({
       ? 'min-[900px]:min-h-[min(420px,55vh)]'
       : 'min-[900px]:h-[min(420px,55vh)]'
 
+  const copyBlock = (
+    <div className={hasImage && !imageAbove ? 'shrink-0' : undefined}>
+      <h2 className="mb-3 text-2xl font-semibold tracking-tight min-[900px]:text-3xl">
+        {board.title}
+      </h2>
+      <p className="mb-4 text-muted-foreground">{board.description}</p>
+      <OpenShowcaseBoardLink
+        masterBoardId={board.id}
+        className="text-sm font-medium text-primary transition-opacity hover:opacity-80"
+      >
+        Open board →
+      </OpenShowcaseBoardLink>
+    </div>
+  )
+
+  // Section 1: image + copy stack to the same height as the live preview
+  if (imageAbove) {
+    return (
+      <article
+        id={id}
+        className="grid w-full scroll-mt-20 items-start gap-8 px-8 min-[900px]:grid-cols-2"
+      >
+        <div
+          className="relative z-10 flex min-w-0 flex-col gap-6 bg-background max-[899px]:gap-4 min-[900px]:h-[min(420px,55vh)]"
+          {...(copySlot != null ? { 'data-home-showcase-copy': String(copySlot) } : {})}
+        >
+          {/* Flex-1 image shrinks so image + copy match the right preview height */}
+          <div className="relative min-h-[160px] flex-1 overflow-hidden rounded-xl border-2 border-gray-700 bg-muted/30 shadow-lg max-[899px]:aspect-[4/3] max-[899px]:flex-none">
+            <Image
+              src={imageAbove.src}
+              alt={imageAbove.alt}
+              fill
+              unoptimized // Static public assets — optimizer returns invalid upstream in local/prod edge cases
+              sizes="(min-width: 900px) 40vw, 100vw"
+              className="object-contain p-1"
+            />
+          </div>
+          <div className="shrink-0">{copyBlock}</div>
+        </div>
+        <div className="relative z-10 min-w-0">
+          <HomeBoardPreview
+            boardId={board.id}
+            title={board.title}
+            previewSlot={previewSlot}
+          />
+        </div>
+      </article>
+    )
+  }
+
   // Gutter = side padding so window-edge margins match the gap between panel and copy
   return (
     <article
@@ -55,30 +108,7 @@ function SplitShowcase({
         }
         {...(copySlot != null ? { 'data-home-showcase-copy': String(copySlot) } : {})}
       >
-        {imageAbove ? (
-          <div className="relative min-h-[160px] flex-1 overflow-hidden rounded-xl border-2 border-gray-700 bg-muted/30 shadow-lg max-[899px]:aspect-[4/3] max-[899px]:flex-none">
-            <Image
-              src={imageAbove.src}
-              alt={imageAbove.alt}
-              fill
-              unoptimized // Static public assets — optimizer returns invalid upstream in local/prod edge cases
-              sizes="(min-width: 900px) 40vw, 100vw"
-              className="object-contain p-1"
-            />
-          </div>
-        ) : null}
-        <div className={hasImage ? 'shrink-0' : undefined}>
-          <h2 className="mb-3 text-2xl font-semibold tracking-tight min-[900px]:text-3xl">
-            {board.title}
-          </h2>
-          <p className="mb-4 text-muted-foreground">{board.description}</p>
-          <Link
-            href={`/view/${board.id}`}
-            className="text-sm font-medium text-primary transition-opacity hover:opacity-80"
-          >
-            Open full board →
-          </Link>
-        </div>
+        {copyBlock}
         {imagesRow && imagesRow.length > 0 ? (
           <div className="flex shrink-0 gap-2 overflow-hidden">
             {imagesRow.map((image) => (
@@ -135,25 +165,6 @@ function SplitShowcase({
   )
 }
 
-function ShowcaseInterlude({
-  slot,
-  children,
-}: {
-  slot: 1 | 2
-  children: ReactNode
-}) {
-  return (
-    <div
-      className="relative z-50 bg-background px-8 py-6 text-center"
-      data-home-interlude={String(slot)}
-    >
-      <p className="mx-auto max-w-3xl font-notes-sans text-lg text-gray-600 min-[900px]:text-xl lg:text-2xl">
-        {children}
-      </p>
-    </div>
-  )
-}
-
 function FullWidthShowcase({
   board,
   previewSlot = 2,
@@ -179,12 +190,12 @@ function FullWidthShowcase({
           {board.title}
         </h2>
         <p className="mx-auto mb-2 max-w-2xl text-muted-foreground">{board.description}</p>
-        <Link
-          href={`/view/${board.id}`}
+        <OpenShowcaseBoardLink
+          masterBoardId={board.id}
           className="text-sm font-medium text-primary transition-opacity hover:opacity-80"
         >
-          Open full board →
-        </Link>
+          Open board →
+        </OpenShowcaseBoardLink>
       </div>
       <div className="relative z-10">
         <HomeBoardPreview
@@ -199,10 +210,18 @@ function FullWidthShowcase({
   )
 }
 
-export default function Home() {
-  // Launch gate: public visitors only see the placeholder until COMING_SOON is cleared
+export default async function Home() {
+  // Coming soon: marketing homepage only for signed-in allowlisted users; others see the gate
   if (isComingSoon()) {
-    return <ComingSoonPage />
+    const supabase = await createClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    const mayViewHome =
+      Boolean(user?.email_confirmed_at) && isEarlyAccessEmail(user?.email)
+    if (!mayViewHome) {
+      return <ComingSoonPage />
+    }
   }
 
   const showcaseBoards = getResolvedShowcaseBoards()
@@ -247,9 +266,7 @@ export default function Home() {
                 }}
               />
             ) : null}
-            <ShowcaseInterlude slot={1}>
-              From scattered notes to a board you can present — then connect the frames that matter.
-            </ShowcaseInterlude>
+            <HomeFlashcardInterlude />
             {third ? (
               <SplitShowcase
                 id="connections-and-automations"
@@ -307,9 +324,7 @@ export default function Home() {
                 ]}
               />
             ) : null}
-            <ShowcaseInterlude slot={2}>
-              Prefer to start with a conversation? Let AI grow the board as you brainstorm.
-            </ShowcaseInterlude>
+            <HomeAiInterlude />
             {second ? (
               <FullWidthShowcase
                 id="brainstorm-with-ai"

@@ -12,6 +12,7 @@ import {
   ReactNode,
 } from 'react'
 import { getStoredLogoDrawing, NN_LOGO_DRAWING_STORAGE_KEY } from './personalize-ai-modal'
+import { ACCOUNT_CHANGED_EVENT } from '@/lib/auth-session-isolation'
 
 /** Default / minimum width of the right chat sidebar when open (Notion-like). */
 export const CHAT_SIDEBAR_WIDTH = 360
@@ -203,6 +204,24 @@ export function SidebarContextProvider({
     }
     setLogoDrawingState(getStoredLogoDrawing()) // Custom logo PNG
     setChatChromeReady(true) // Next commit: column is final; top bar may measure
+  }, [previewMode])
+
+  // Account switch wiped localStorage — reset in-memory chrome so the prior user never lingers
+  useEffect(() => {
+    if (previewMode) return
+    const onAccountChanged = () => {
+      setLogoDrawingState(getStoredLogoDrawing()) // Cleared key → null brand mark
+      isChatOpenRef.current = false
+      setIsChatSidebarOpen(false) // Closed until this user opens chat
+      isSidebarPinnedRef.current = false
+      setIsSidebarPinned(false)
+      setIsSidebarOpen(false)
+      preferredChatWidthRef.current = CHAT_SIDEBAR_WIDTH
+      setChatSidebarWidthState(CHAT_SIDEBAR_WIDTH)
+      setAiChatHasTranscript(false)
+    }
+    window.addEventListener(ACCOUNT_CHANGED_EVENT, onAccountChanged)
+    return () => window.removeEventListener(ACCOUNT_CHANGED_EVENT, onAccountChanged)
   }, [previewMode])
 
   // Re-clamp the live column on viewport change — never overwrite the stored preference

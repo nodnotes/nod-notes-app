@@ -995,13 +995,15 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
     refetchOnMount: true, // Refetch when component mounts
     refetchOnReconnect: true, // Refetch when reconnecting
     // Read from cache even when query is initially disabled (for optimistic updates)
-    placeholderData: (previousData) => {
-      // If we have cached data for this studySetId, use it
+    placeholderData: (previousData, previousQuery) => {
+      // Never show another study set's cards while this one loads
+      const prevId = previousQuery?.queryKey?.[1]
+      if (prevId && prevId !== studySetId) return undefined
       if (studySetId) {
         const cached = queryClient.getQueryData(['flashcards-for-study-set', studySetId])
         if (cached) return cached as Message[]
       }
-      return previousData
+      return undefined
     },
   })
 

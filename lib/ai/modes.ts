@@ -18,7 +18,7 @@ export const AI_MODES: AiMode[] = [
   {
     id: 'edit',
     label: 'Edit',
-    description: 'Propose edits and create frames/threads on the board — review with rainbow highlights, then save or remove.',
+    description: 'Propose edits, colors, and create frames/threads on the board — review with rainbow highlights, then save or remove.',
     enabled: true,
   },
 ]

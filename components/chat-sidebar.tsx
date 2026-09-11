@@ -7,6 +7,7 @@ import {
   useSidebarContext,
   NN_CHAT_THREAD_ID_KEY,
 } from './sidebar-context' // Open state + logo + thread persist key + resizable width
+import { ACCOUNT_CHANGED_EVENT } from '@/lib/auth-session-isolation'
 import { NodNotesBrandMark, PersonalizeAiModal } from './personalize-ai-modal' // Brand
 import { AiThreadPicker } from './ai/ai-thread-picker' // History
 import { AiTranscript } from './ai/ai-transcript' // Turns
@@ -512,6 +513,24 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
     persistActiveThreadId(thread?.id ?? null) // Persist select / clear on new
   }, [thread?.id, threadHydrated])
 
+  // Account switch — drop prior user's transcript/thread from memory
+  useEffect(() => {
+    const onAccountChanged = () => {
+      setThread(null)
+      setMessages([])
+      setStreamingId(null)
+      setLoadedThreadId(null)
+      setAttachedSnapshots([])
+      setSavedSnapshots([])
+      setRefreshKey((n) => n + 1)
+      setThreadHydrated(true) // Storage already cleared; don't restore a stale id
+      scrolledOpenThreadRef.current = null
+      scrollAnchorRef.current = null
+    }
+    window.addEventListener(ACCOUNT_CHANGED_EVENT, onAccountChanged)
+    return () => window.removeEventListener(ACCOUNT_CHANGED_EVENT, onAccountChanged)
+  }, [])
+
   /** Brand mark → customize agent panel (not the draw modal). */
   const openCustomize = useCallback(() => {
     setCustomizeOpen(true)
@@ -992,12 +1011,16 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
       onEdits={async (edits) => {
         const mapped = edits
           .map((e) => {
+            const colorChanged = e.fillColor !== undefined
             if (e.kind === 'create_frame' && e.frameId) {
               return buildCreateFramePendingEdit({
                 messageId: e.frameId,
                 contentHtml: e.contentHtml || '',
                 summary: e.summary,
                 actionLogId: e.actionLogId,
+                fillColor: e.fillColor,
+                borderColor: e.borderColor,
+                colorChanged,
               })
             }
             if (e.kind === 'create_thread' && e.edgeId) {
@@ -1017,6 +1040,11 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
               replacements: e.replacements,
               summary: e.summary,
               actionLogId: e.actionLogId,
+              fillColor: e.fillColor,
+              borderColor: e.borderColor,
+              originalFillColor: e.originalFillColor,
+              originalBorderColor: e.originalBorderColor,
+              colorChanged,
             })
           })
           .filter((e): e is NonNullable<typeof e> => e !== null)

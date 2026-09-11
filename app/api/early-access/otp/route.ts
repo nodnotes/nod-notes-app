@@ -6,9 +6,9 @@ const INVALID_EMAIL = { error: 'Enter a valid email address.' }
 const NOT_INVITED = { error: 'That email isn’t on the early access list.' }
 
 /**
- * Early-access gate for magic links. Does not send mail — the browser client
- * calls signInWithOtp so PKCE cookies exist for /auth/callback?code=…
- * Still returns not-invited for the submitted email only (never the full list).
+ * Early-access gate before email OTP. Does not send mail — the browser client
+ * calls signInWithOtp, then verifyOtp with the emailed code on the same page.
+ * Returns not-invited for the submitted email only (never the full list).
  */
 export async function POST(request: Request) {
   try {

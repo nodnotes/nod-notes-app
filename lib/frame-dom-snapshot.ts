@@ -35,6 +35,17 @@ function bumpStoreEpoch() {
   for (const listener of storeListeners) listener()
 }
 
+/** Drop every in-memory board snapshot (call on account switch). */
+export function clearAllFrameDomSnapshots(): void {
+  memory.clear() // Previous user's cold-frame HTML must not survive
+  dirty.clear() // Pending flushes belong to the prior account
+  if (flushHandle) {
+    clearTimeout(flushHandle)
+    flushHandle = null
+  }
+  bumpStoreEpoch() // Notify cold-frame subscribers
+}
+
 /** Subscribe to snapshot store writes — used so `coldReady` flips true right after first idle capture. */
 export function subscribeFrameSnapshots(onStoreChange: () => void): () => void {
   storeListeners.add(onStoreChange)

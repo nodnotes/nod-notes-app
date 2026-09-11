@@ -35,7 +35,7 @@ export function isEarlyAccessEmail(email: string | null | undefined): boolean {
 
 /** Paths anyone may hit without an allowlisted session during coming soon. */
 export function isComingSoonPublicPath(pathname: string): boolean {
-  if (pathname === '/') return true // Placeholder landing
+  if (pathname === '/') return true // Gate (anon) or marketing homepage (signed-in)
   if (pathname === '/access') return true // Early-access sign-in
   if (pathname.startsWith('/auth/')) return true // Supabase callback + verify flows
   if (pathname.startsWith('/api/early-access')) return true // OTP + session gate APIs

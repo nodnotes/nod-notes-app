@@ -18,6 +18,7 @@ import { NotionMarkIcon } from './notion-mark-icon' // Monochrome — matches ot
 import { SyncIcon } from './sync-icon' // Unsynced connection updates (left of Connections)
 import { cn } from '@/lib/utils'
 import { useConnectionSyncPending } from '@/lib/notion/use-connection-sync-pending'
+import { ACCOUNT_CHANGED_EVENT } from '@/lib/auth-session-isolation'
 
 /** localStorage — whether the connected Notion mark stays left of Share. */
 const TOPBAR_PIN_KEY = 'nodnotes-notion-topbar-pinned'
@@ -174,8 +175,18 @@ export function NotionConnectProvider({ children }: { children: React.ReactNode 
       }
     }
     load() // Fetch on mount
+    const onAccountChanged = () => {
+      setStatus(null) // Drop prior account's connected UI
+      setWorkspaces([])
+      setActiveWorkspaceIdState(null)
+      setTopBarPinnedState(readNotionTopBarPinned()) // Cleared → default pin
+      setLoading(true)
+      void load() // Reload for the new user
+    }
+    window.addEventListener(ACCOUNT_CHANGED_EVENT, onAccountChanged)
     return () => {
       cancelled = true // Cleanup
+      window.removeEventListener(ACCOUNT_CHANGED_EVENT, onAccountChanged)
     }
   }, [])
 

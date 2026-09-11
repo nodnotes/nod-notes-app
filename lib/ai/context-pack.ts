@@ -1,11 +1,13 @@
 // Build a structured context pack for Ask mode (page frames + selection + snapshots)
 import type { SupabaseClient } from '@supabase/supabase-js' // Server/browser client
 import { htmlToPlainWithHideAnnotations } from '@/lib/ai/hide-text'
+import { frameColorNameFromFill } from '@/lib/frame-colors'
 
 export interface FrameSummary { // Compact frame for the model
   id: string // messages.id
   title: string | null // metadata.blockTitle when present
   text: string // Truncated plain text from content HTML
+  color: string | null // Palette name or "custom" when fillColor set; null = default/transparent
 }
 
 export interface AiContextPack { // Sent as a system/user context block
@@ -83,10 +85,12 @@ export async function buildContextPack(
         const meta = (m.metadata || {}) as Record<string, unknown> // Metadata bag
         const text = htmlToPlainWithHideAnnotations(m.content).slice(0, MAX_TEXT_CHARS) // [[hide]] marks blurred spans
         if (!text && !meta.blockTitle) continue // Skip empty noise
+        const fill = typeof meta.fillColor === 'string' ? meta.fillColor : null // Stored pastel / hex
         frames.push({
           id: m.id, // Frame message id
           title: typeof meta.blockTitle === 'string' ? meta.blockTitle : null, // Optional title
           text, // Plain excerpt
+          color: frameColorNameFromFill(fill), // So model can match / regroup by color
         })
       }
     }
@@ -132,7 +136,8 @@ export function formatContextPack(pack: AiContextPack): string {
     for (const f of pack.frames) { // Each frame
       const title = f.title ? ` (${f.title})` : '' // Optional title
       const mark = pack.selectedFrameIds.includes(f.id) ? ' [selected]' : '' // Mark
-      lines.push(`- Frame ${f.id}${title}${mark}: ${f.text || '(empty)'}`) // Line
+      const color = f.color ? ` [color:${f.color}]` : '' // Current fill palette
+      lines.push(`- Frame ${f.id}${title}${mark}${color}: ${f.text || '(empty)'}`) // Line
     }
   } else {
     lines.push('(No frames on this board, or page not provided.)') // Empty
@@ -186,7 +191,16 @@ export function editSystemPrompt(extraSkillHints: string[] = []): string {
     '  • Real spreadsheet/data tables → no table extension; closest = checkbox checklist (task list) with "Label — detail" text.',
     '  • Notion database embeds, drawings, shapes, flashcards → say you cannot create those yet.',
     '- Only after the user confirms (e.g. "yes", "do it", "go ahead") may you fill edits/creates/threads with the approximation. Then set capabilityGap to "".',
-    '- Small supported requests (create frames, link them, edit text, bullet/numbered/checklist lists, hide/reveal text) → capabilityGap "" and proceed immediately.',
+    '- Small supported requests (create frames, link them, edit text, bullet/numbered/checklist lists, hide/reveal text, color frames) → capabilityGap "" and proceed immediately.',
+    '',
+    'FRAME COLOR (Notion pastels — fill + subtle border):',
+    '- Each create/edit may set "color" to a palette id: default | gray | brown | orange | yellow | green | blue | purple | pink | red.',
+    '- Empty string "" = leave color unchanged (edits) or transparent default (creates).',
+    '- SMART GROUPING: when creating a brainstorm / idea map / several themed frames, assign one color per theme so related ideas share a fill (different themes → different colors). Prefer distinct hues; reuse a color only for the same idea group.',
+    '- USER DESIGN: when the user asks to color, paint, theme, restyle, or visually group frames → set color on the relevant creates/edits (prefer selected frames when listed).',
+    '- Color-only changes are fine: edits[] with color set, contentHtml "", replacements [].',
+    '- Do not recolor existing frames unless grouping/design is requested or you are building a multi-theme create set that should include coloring those frames.',
+    '- Context pack shows [color:Name] when a frame already has a fill — match that when extending a group.',
     '',
     'HIDE TEXT (blur until click — flashcards, answers, spoilers):',
     '- TipTap haze mark: <span data-haze="true" class="tt-haze">hidden text</span> inside a paragraph.',
@@ -202,12 +216,20 @@ export function editSystemPrompt(extraSkillHints: string[] = []): string {
     '- NEVER create a duplicate frame for content that already exists (e.g. "make ingredients a checklist" → edit the ingredients frame; do not create a second ingredients frame).',
     '- Only use creates[] when the user asks for NEW frames that are not already on the board.',
     '',
+    'CREATE new frames via creates[] only for genuinely new frames:',
+    '- Invent sensible content when the user says to make it up.',
+    '- Each create needs a short tempId (e.g. "a", "b"), title (short label), contentMarkdown (body), summary, color (palette id or "").',
+    '- Put the main text in contentMarkdown. For checklists use "- [ ] item" lines.',
+    '- Do NOT invent real UUID frame ids for creates — only tempIds.',
+    '- For idea clusters, set color per theme (see FRAME COLOR).',
+    '',
     'UPDATE existing frames via edits[]:',
     '- Prefer the SMALLEST possible change: replacements [{ oldText, newText }] with exact substrings from the frame text.',
     '- oldText MUST appear verbatim in the frame text from the context pack.',
     '- Prefer editing selected frames when listed. Do not invent real frame ids.',
     '- Structure/format changes (bullet→checklist, major rewrite) → set contentHtml to the FULL new TipTap HTML and replacements: [].',
     '- Otherwise set contentHtml to "".',
+    '- Optional color (palette id) to restyle the frame chrome; "" leaves fill/border alone.',
     '',
     'TipTap HTML for structured content (use in contentHtml, or as contentMarkdown for creates — server converts markdown):',
     '- Checklist / todo / checkbox: TipTap task list (each item is its own block with a ⋮⋮ handle).',
@@ -217,12 +239,6 @@ export function editSystemPrompt(extraSkillHints: string[] = []): string {
     '- Bullets: - item',
     '- Never emit markdown | pipe | tables as final content; that is a capability gap (offer checklist instead).',
     '- Hide text: [[hide]]answer[[/hide]] or <span data-haze="true" class="tt-haze">answer</span> inside <p>.',
-    '',
-    'CREATE new frames via creates[] only for genuinely new frames:',
-    '- Invent sensible content when the user says to make it up.',
-    '- Each create needs a short tempId (e.g. "a", "b"), title (short label), contentMarkdown (body), summary.',
-    '- Put the main text in contentMarkdown. For checklists use "- [ ] item" lines.',
-    '- Do NOT invent real UUID frame ids for creates — only tempIds.',
     '',
     'LINK frames via threads[]:',
     '- sourceTempId / targetTempId may be a creates[].tempId OR an existing frame UUID from the context pack.',
