@@ -43,7 +43,7 @@ export function isComingSoonPublicPath(pathname: string): boolean {
   if (pathname.startsWith('/api/homepage-board')) return true // Legacy homepage board fetch
   if (pathname.startsWith('/view/')) return true // Full-screen public showcase playground
   if (pathname === '/pricing' || pathname.startsWith('/docs') || pathname === '/support') {
-    return true // Marketing help surfaces
+    return true // Marketing help surfaces (download requires a signed-in session)
   }
   return false
 }

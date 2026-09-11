@@ -1,12 +1,10 @@
-import { getSmoothStepPath, Position, useStore } from 'reactflow' // Sharp preview + live zoom
+import { getSmoothStepPath, Position } from 'reactflow' // Sharp preview path
 import { getSmoothThreadBezier } from './path/bezier' // Same bowed Smooth path as settled threads
 import {
   isSharpThreadAlgorithm,
   threadAlgorithmFromStyle,
   ThreadAlgorithm,
-  threadComfortScale,
-} from './constants' // Toolbar Smooth / Sharp / Linear + zoom comfort
-import { navigationZoom } from '@/lib/board-navigating' // Freeze preview mid-pinch
+} from './constants' // Toolbar Smooth / Sharp / Linear
 
 /** Read board thread style preference for the live connection preview. */
 function preferredAlgorithm() {
@@ -20,6 +18,7 @@ function preferredAlgorithm() {
  * Connection-line preview while creating or reconnecting a thread.
  * Miro-like: side-aware cubic bezier (or sharp/linear) — no stub waypoints / S-curves.
  * Uses RF `toPosition` so a top snap approaches from above.
+ * Stroke thickness is view-relative via CSS `--tt-board-zoom` (not React zoom).
  */
 export function ThreadConnectionLine({
   fromX,
@@ -37,10 +36,6 @@ export function ThreadConnectionLine({
   toPosition?: Position // Target handle side when snapped
 }) {
   const algorithm = preferredAlgorithm()
-  const zoom = useStore((s) =>
-    navigationZoom(Math.round((s.transform[2] || 1) * 8) / 8)
-  ) // Freeze mid-pinch
-  const strokeWidth = 2 * threadComfortScale(zoom) // Match settled thread comfort (thins on zoom-out)
 
   let path: string
   if (isSharpThreadAlgorithm(algorithm)) {
@@ -73,7 +68,7 @@ export function ThreadConnectionLine({
         fill="none"
         className="react-flow__connectionline-path"
         stroke="#6b7280"
-        strokeWidth={strokeWidth} // Comfort curve — same as EditableThread
+        style={{ ['--tt-edge-w' as string]: 2 }} // CSS divides by live board zoom
       />
     </g>
   )

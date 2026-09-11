@@ -52,6 +52,8 @@ import { usePhoneModeMenu } from './phone-mode-menu-context' // shareCompact fro
 import { NotionConnectMenuItems } from './notion-connect-button' // Connections → Notion (provider wraps share cluster)
 import { useAiEditSession } from '@/lib/ai/edit-session' // AI highlight toggle in More when unpinned
 import { type BoardFontId } from '@/lib/board-font'
+import { DesktopUpdateMenuItem } from './desktop-update-menu-item' // Electron: Check for updates / Restart
+import Link from 'next/link' // Download desktop app when not in Electron
 
 type BoardTopBarShareProps = {
   conversationId?: string // Board id; copy/favorite wait until the board is saved
@@ -117,6 +119,11 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
   const { isMobileMode } = useSidebarContext() // Phone chat layout always collapses copy/star
   const { shareCompact } = usePhoneModeMenu() // Toolbar collapses copy/star before tools leave for the pill
   const collapseShare = isMobileMode || shareCompact // Hide copy/star into More ahead of phoneTools
+  const [isDesktopApp, setIsDesktopApp] = useState(false) // Electron shell → hide "Download desktop app"
+
+  useEffect(() => {
+    setIsDesktopApp(!!window.nodnotesDesktop?.isDesktop)
+  }, [])
   const {
     hasAiContent,
     showAiOrigin,
@@ -661,12 +668,15 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
 
               {!q && <DropdownMenuSeparator />}
 
-              {matchesQuery('Open in Mac app', q) && (
-                <DropdownMenuItem>
-                  <AppWindow className="h-4 w-4 mr-2" />
-                  Open in Mac app
+              {matchesQuery('Download desktop app', q) && !isDesktopApp && (
+                <DropdownMenuItem asChild>
+                  <Link href="/download">
+                    <AppWindow className="h-4 w-4 mr-2" />
+                    Download desktop app
+                  </Link>
                 </DropdownMenuItem>
               )}
+              <DesktopUpdateMenuItem filterQuery={q} />
             </div>
 
             {showFooter && (

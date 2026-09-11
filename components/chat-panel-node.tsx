@@ -447,7 +447,38 @@ function measureNaturalContentHeight(
 ): number {
   const dbExtents = measureDatabaseBlockExtents(contentFit, reserveConnectionsStrip)
   if (dbExtents) return dbExtents.height
-  return Math.max(1, Math.ceil(contentFit.scrollHeight || contentFit.offsetHeight))
+  // Hug to the last TipTap block’s bottom + equal pads — NOT contentFit/PM’s border box.
+  // PM can run taller than the highlighted paragraph (trailing widgets / strut); that leftover
+  // was multiplied by frameScale and, with top-left origin, all landed as peach under the wash.
+  const cs = getComputedStyle(contentFit)
+  const padT = parseFloat(cs.paddingTop) || 0 // Equal T pad painted with the fill
+  const padB = parseFloat(cs.paddingBottom) || 0 // Equal B pad — keep symmetric with padT
+  const pm = contentFit.querySelector('.ProseMirror') as HTMLElement | null
+  let body = 0
+  if (pm) {
+    for (const child of Array.from(pm.children) as HTMLElement[]) {
+      // offsetTop+Height is transform-agnostic (unscaled), same space as padT/padB
+      const bottom = child.offsetTop + child.offsetHeight
+      if (bottom > body) body = bottom
+    }
+    if (body <= 0) {
+      // Empty frame: one line box so the I-bar still has a clickable band
+      const lh = parseFloat(getComputedStyle(pm).lineHeight)
+      body = Number.isFinite(lh) && lh > 0 ? lh : BLOCK_MIN_FRAME_H - padT - padB
+    }
+  }
+  // Connections / Notion strip sits under blocks inside contentFit (outside .ProseMirror)
+  const stripEl = contentFit.querySelector(
+    '[data-tt-connections-header], [data-tt-notion-hug]'
+  ) as HTMLElement | null
+  // Only count a mounted strip — don't reserve phantom band on plain text (was db-only before)
+  const stripH = stripEl && stripEl.offsetHeight > 0 ? stripEl.offsetHeight : 0
+  void reserveConnectionsStrip // Kept for call-site parity with db measure path
+  if (body > 0 || stripH > 0) {
+    return Math.max(1, Math.round((padT + body + padB + stripH) * 100) / 100) // 2dp — kill float dust
+  }
+  const fallback = contentFit.offsetHeight || contentFit.scrollHeight || 1 // Detached / display:none
+  return Math.max(1, Math.round(fallback * 100) / 100)
 }
 
 /** h-7 Notion connections band when present (or reserved while Notion-linked). */
@@ -530,15 +561,19 @@ function clipFadeMaskStyle(
 // Visual frame = unscaled content × frameScale. Do NOT add a phantom +2 border — selected
 // frames use borderWidth 0 (blue adjust chrome), so +2 left slack under the content and the
 // left/right connection indicators sat below the ⋮⋮ / text midline.
+// No FRAME_RESIZE_MIN (40) floor here — that left short/scaled text top-left in an empty box.
+// Empty one-line size comes from measured intrinsic (already ~BLOCK_MIN_FRAME_H), not a second floor.
 function scaledFrameSize(
   intrinsic: { width: number; height: number },
   scale: number,
-  minWidth = FRAME_RESIZE_MIN, // Resize/hug may go tiny; fit-to-content callers pass BLOCK_* floors when needed
+  minWidth = 1, // Fit-to-text hugs content; NodeResizeControl still uses FRAME_RESIZE_MIN while dragging
+  minHeight = 1,
 ) {
   const safeScale = Math.max(FRAME_SCALE_EPSILON, scale) // Match locked corner-drag — no 0.15 shrink floor
   return {
-    width: Math.max(minWidth, Math.ceil(intrinsic.width * safeScale)),
-    height: Math.max(FRAME_RESIZE_MIN, Math.ceil(intrinsic.height * safeScale)),
+    width: Math.max(minWidth, Math.ceil(intrinsic.width * safeScale)), // Ceil — never clip glyphs on the right
+    // Keep 2dp on height — integer round left slack that top-left scale dumps under the block
+    height: Math.max(minHeight, Math.round(intrinsic.height * safeScale * 100) / 100),
   }
 }
 
@@ -566,7 +601,8 @@ function hugLockedFrameSize(
   minWidth: number,
   shape: FrameShapeType | null,
 ) {
-  return scaledFrameSize(shapeFitContentBox(intrinsic, shape, true), scale, minWidth)
+  // Height/width floors stay at 1 — intrinsic already includes one-line pads
+  return scaledFrameSize(shapeFitContentBox(intrinsic, shape, true), scale, minWidth, 1)
 }
 
 import { Button } from '@/components/ui/button'
@@ -4201,9 +4237,10 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               (rowCard ? measureRowCardContentWidth(el) : measureNaturalContentWidth(el))
           )
         )
+        // Keep 2dp: rounding here would be re-multiplied by frameScale into visible bottom slack
         const height = Math.max(
           1,
-          Math.round(dbBox?.height ?? measureNaturalContentHeight(el, notionConnected))
+          Math.round((dbBox?.height ?? measureNaturalContentHeight(el, notionConnected)) * 100) / 100
         )
         setDatabaseExtents(dbBox)
         if (
@@ -4231,11 +4268,15 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           return
         }
         setIntrinsicMeasured(true)
-        setIntrinsicSize((prevSize) =>
-          Math.abs(prevSize.width - width) <= 1 && Math.abs(prevSize.height - height) <= 1
-            ? prevSize
-            : { width, height }
-        )
+        setIntrinsicSize((prevSize) => {
+          // Sub-px epsilon on height: the measure is fractional and stable per keystroke now, and
+          // frameScale multiplies any stale fraction into slack under the block — so don't hold a
+          // near-match. Width keeps the 1px epsilon (glyph advance noise, no scale amplification).
+          if (Math.abs(prevSize.width - width) <= 1 && Math.abs(prevSize.height - height) <= 0.02) {
+            return prevSize
+          }
+          return { width, height }
+        })
       })
     }
     measure()
@@ -4459,18 +4500,28 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   resizeDimensionsRef.current = resizeDimensions
   const frameShapeRef = useRef(frameShape)
   frameShapeRef.current = frameShape
+  // Locked fit-to-text: live hug (stamped each render) so RF selection can't stay taller than peach fill
+  const liveLockedContentRef = useRef<{ width: number; height: number } | null>(null)
 
   /** Push host AABB + repark snap/stack mates for `rot` (live rotate + effect). */
   const pushAabbAndSnapMates = useCallback(
     (rot: number, opts?: { forceMates?: boolean }) => {
-      const dims = resizeDimensionsRef.current
+      // Prefer live hug over stale resizeDimensions (place/seed often left height at FRAME_RESIZE_MIN)
+      const dims = liveLockedContentRef.current ?? resizeDimensionsRef.current
       if (!isBlock || !dims) return
-      const aabb =
-        Math.abs(rot) > 0.5
+      // Selected L/R chrome is outside the fill — RF box must include it or handles sit inset of the blue ring
+      const chromeX = (frozenChromePadRef.current ?? 0) * 2
+      // Prefer painted panel box when upright + locked hug — estimates drifted from peach (blue>peach gap)
+      const panel = panelRef.current
+      const usePainted =
+        !!panel && !!liveLockedContentRef.current && Math.abs(rot) <= 0.5 && !opts?.forceMates
+      const aabb = usePainted
+        ? { width: panel.offsetWidth, height: panel.offsetHeight }
+        : Math.abs(rot) > 0.5
           ? rotatedFrameAabbSize(dims.width, dims.height, rot, frameShapeRef.current)
-          : { width: dims.width, height: dims.height }
-      const boxW = Math.ceil(aabb.width)
-      const boxH = Math.ceil(aabb.height)
+          : { width: dims.width + chromeX, height: dims.height }
+      const boxW = Math.round(aabb.width)
+      const boxH = Math.round(aabb.height)
       const prev = lastPushedBoxRef.current
       const sizeSame =
         !!prev && Math.abs(prev.w - boxW) <= 1 && Math.abs(prev.h - boxH) <= 1
@@ -4539,6 +4590,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     isUserResized,
     resizeDimensions?.width,
     resizeDimensions?.height,
+    // Re-push when measure/scale changes even before hug writes resizeDimensions (clears bottom gap)
+    intrinsicSize.width,
+    intrinsicSize.height,
+    frameScale,
+    frameUnlocked,
     rotation,
     frameShape,
     pushAabbAndSnapMates,
@@ -4790,9 +4846,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       // Locked wrap: hug WIDTH to the scaled FIXED columns (no reflow) + HEIGHT to wrapped content.
       // No +2 border — selected adjust chrome uses borderWidth 0 (same as scaledFrameSize).
       if (colW != null) width = Math.round(colW * safeScale)
-      height = Math.max(FRAME_RESIZE_MIN, Math.ceil(intrinsic.height * safeScale))
+      height = Math.max(1, Math.ceil(intrinsic.height * safeScale))
     } else if (!unlocked) {
-      const hugged = hugLockedFrameSize(intrinsic, finalScale, FRAME_RESIZE_MIN, frameShapeRef.current) // Nowrap: snap to scaled text; no boardLink/3ch floor
+      const hugged = hugLockedFrameSize(intrinsic, finalScale, 1, frameShapeRef.current) // Nowrap: snap to scaled text — no 40px empty pad
       width = hugged.width
       height = hugged.height
     } else if (wrapping) {
@@ -4850,12 +4906,12 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         // Locked WRAP: derive the box from the FIXED column width × scale so NO character reflows —
         // the wrapped text just scales up/down (columns stay constant; no phantom border).
         width = Math.round(colW * nextScale)
-        height = Math.max(FRAME_RESIZE_MIN, Math.round(intrinsicSizeRef.current.height * nextScale))
+        height = Math.max(1, Math.round(intrinsicSizeRef.current.height * nextScale))
       } else {
         // Locked nowrap: hug the blue box to scaled content during the gesture (same as resize-end).
         // Using RF's raw drag size left a larger empty frame with the block stuck top-left so
         // connection/resize chrome no longer lined up with the ⋮⋮.
-        const hugged = hugLockedFrameSize(intrinsicSizeRef.current, nextScale, FRAME_RESIZE_MIN, frameShapeRef.current)
+        const hugged = hugLockedFrameSize(intrinsicSizeRef.current, nextScale, 1, frameShapeRef.current)
         width = hugged.width
         height = hugged.height
       }
@@ -5249,14 +5305,14 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     if (!isUserResized && !rowCard && !dbFrame && Math.abs(frameScale - 1) <= FRAME_SCALE_EPSILON) {
       return // Row/DB cards + place-scaled frames hug as soon as content is measured
     }
-    // No boardLink/3ch floor — locked proportional shrink must be able to go below content chrome
-    const minW = FRAME_RESIZE_MIN
+    // No boardLink/3ch / 40px floor — locked hug must match scaled glyphs (else text sits top-left in empty pad)
+    const minW = 1
     const hugSource = shapeFitContentBox(
       dbFrame && databaseExtents ? databaseExtents : intrinsicSize,
       frameShape,
       true
     )
-    const natural = scaledFrameSize(hugSource, frameScale, minW)
+    const natural = scaledFrameSize(hugSource, frameScale, minW, 1)
     // Never hug a databaseBlock frame down to the remount stub — that persists as a permanent clip.
     if (
       hasDatabaseBlockHtml(promptContent) &&
@@ -5283,7 +5339,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           : frameTextWrap && prev
             ? prev.width
             : natural.width
-      // Hug height to content too (was: keep the taller box until a manual resize)
+      // Hug height to content — never keep a ≤1px-taller seed (place min 22×scale); that leftover
+      // is multiplied into peach under the block with top-left scale origin.
       const height = natural.height
       next = { width, height }
       if (
@@ -5298,7 +5355,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       if (
         prev &&
         Math.abs(prev.width - width) <= 1 &&
-        Math.abs(prev.height - height) <= 1
+        Math.abs(prev.height - height) <= 0.02 // Sub-px — 1px epsilon kept place-seed slack under the block
       ) {
         changed = false
         return prev
@@ -6017,13 +6074,122 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const huggedSize = scaledFrameSize(
     shapeFitContentBox(intrinsicSize, frameShape, !frameUnlocked),
     frameScale,
-    FRAME_RESIZE_MIN // Match corner-drag — no frameMinW floor fighting tiny locked scale
+    1, // Fit-to-text: hug glyphs — FRAME_RESIZE_MIN (40) left empty pad with text stuck top-left
+    1
   ) // Scaled content (no phantom border)
+  // Stamp before effects: RF push reads this so blue selection matches peach (not stale tall dims)
+  if (
+    isBlock &&
+    intrinsicMeasured &&
+    !frameUnlocked &&
+    !isDbFrame &&
+    !isRowCardAtomHtml(promptContent) &&
+    !pagePreviewOpen &&
+    !wrapActive &&
+    !isResizingRef.current
+  ) {
+    liveLockedContentRef.current = { width: huggedSize.width, height: huggedSize.height }
+  } else {
+    liveLockedContentRef.current = null
+  }
+  // After paint: RF node box = painted panel box (not an estimated hug). Fixes blue>peach
+  // when place-seed / stale dims left the RF node taller than the fill.
+  useLayoutEffect(() => {
+    if (!isBlock || frameUnlocked || !panelRef.current) return
+    if (!intrinsicMeasured || isDbFrame || isRowCardAtomHtml(promptContent)) return
+    if (pagePreviewOpen || isResizingRef.current || isRotatingRef.current || dragging) return
+    // Need an explicit RF box path (place-scale / resized / live hug)
+    if (!isUserResized && Math.abs(frameScale - 1) <= FRAME_SCALE_EPSILON) return
+
+    const panel = panelRef.current
+    const boxW = Math.round(panel.offsetWidth)
+    const boxH = Math.round(panel.offsetHeight)
+    if (boxW < 1 || boxH < 1) return
+
+    const prev = lastPushedBoxRef.current
+    if (
+      prev &&
+      Math.abs(prev.w - boxW) <= 0.5 &&
+      Math.abs(prev.h - boxH) <= 0.5 &&
+      Math.abs(prev.rot - rotation) < 0.05
+    ) {
+      return
+    }
+    lastPushedBoxRef.current = { w: boxW, h: boxH, rot: rotation }
+
+    // Persist content size (strip L/R select chrome) so AABB math stays on the fill
+    const chromeX = showFrameChrome ? (frozenChromePadRef.current ?? 0) * 2 : 0
+    const contentW = Math.max(1, boxW - chromeX)
+    const contentH = boxH
+    liveLockedContentRef.current = { width: contentW, height: contentH }
+    setResizeDimensions((prevDims) => {
+      if (
+        prevDims &&
+        Math.abs(prevDims.width - contentW) <= 0.5 &&
+        Math.abs(prevDims.height - contentH) <= 0.5
+      ) {
+        return prevDims
+      }
+      return { width: contentW, height: contentH }
+    })
+    if (!isUserResized) setIsUserResized(true)
+
+    const setNodesFunc = getSetNodes()
+    if (!setNodesFunc) return
+    setNodesFunc((nodes: any[]) => {
+      let changed = false
+      const next = nodes.map((node: any) => {
+        if (node.id !== id) return node
+        const styleW =
+          typeof node.style?.width === 'number' ? node.style.width : parseFloat(node.style?.width)
+        const styleH =
+          typeof node.style?.height === 'number'
+            ? node.style.height
+            : parseFloat(node.style?.height)
+        if (
+          Number.isFinite(styleW) &&
+          Number.isFinite(styleH) &&
+          Math.abs(styleW - boxW) <= 0.5 &&
+          Math.abs(styleH - boxH) <= 0.5
+        ) {
+          return node
+        }
+        changed = true
+        return {
+          ...node,
+          width: boxW,
+          height: boxH,
+          style: { ...node.style, width: boxW, height: boxH },
+        }
+      })
+      return changed ? next : nodes
+    })
+    updateNodeInternals(id)
+  }, [
+    isBlock,
+    frameUnlocked,
+    intrinsicMeasured,
+    isDbFrame,
+    promptContent,
+    pagePreviewOpen,
+    dragging,
+    isUserResized,
+    frameScale,
+    huggedSize.width,
+    huggedSize.height,
+    showFrameChrome,
+    selected,
+    rotation,
+    id,
+    getSetNodes,
+    updateNodeInternals,
+  ])
   const scaledDbSize = databaseExtents
     ? scaledFrameSize(
         shapeFitContentBox(databaseExtents, frameShape, !frameUnlocked),
         frameScale,
-        FRAME_RESIZE_MIN
+        1,
+        1
       )
     : null
   const contentVisualW = scaledDbSize?.width ?? huggedSize.width
@@ -6033,7 +6199,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // Place seeds isUserResized; if only frameScale landed, still treat as resized so hug/box track scale
   const scaledAsResized = isUserResized || applyFrameScale
   const scaledLayoutW = Math.ceil(contentVisualW) // Visual content width (full table when DB)
-  const scaledLayoutH = Math.ceil(contentVisualH) // Visual content height (full table when DB)
+  // Exact scaled height — Math.round left ≤0.5px that top-left scale dumped under the block
+  const scaledLayoutH = contentVisualH
   const unlockedResized = wrapUnlocked || clipUnlocked // Free-resized frame (wrap or nowrap-clip)
   // Rounded custom borders paint on the fill shell — not the square outer panel
   const paintBorderOnFillShell = Boolean(
@@ -7144,13 +7311,24 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const rowCardLockedHug =
     isBlock && isRowCardAtomHtml(promptContent) && intrinsicMeasured && !frameUnlocked
   const dbLockedHug = isDbFrame && intrinsicMeasured && !frameUnlocked
+  // Fit-to-text nowrap: live-hug from measure (stale resizeDimensions left a big peach box + top-left text)
+  const textLockedHug =
+    isBlock &&
+    intrinsicMeasured &&
+    !frameUnlocked &&
+    !isDbFrame &&
+    !isRowCardAtomHtml(promptContent) &&
+    !pagePreviewOpen &&
+    !wrapActive
   const lockedDbSize = scaledDbSize ?? huggedSize
   const contentBoxW =
     (rowCardLockedHug
       ? huggedSize.width
       : dbLockedHug
         ? lockedDbSize.width
-        : isUserResized && resizeDimensions?.width) ||
+        : textLockedHug
+          ? huggedSize.width
+          : isUserResized && resizeDimensions?.width) ||
     (Math.abs(rotation) > 0.5
       ? Math.max(intrinsicSize.width + 8, BLOCK_MIN_FRAME_W) // +pad; outer RO is AABB — don't use it
       : itemBoxSize.width) ||
@@ -7160,7 +7338,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       ? huggedSize.height
       : dbLockedHug
         ? lockedDbSize.height
-        : isUserResized && resizeDimensions?.height) ||
+        : textLockedHug
+          ? huggedSize.height
+          : isUserResized && resizeDimensions?.height) ||
     (Math.abs(rotation) > 0.5
       ? Math.max(intrinsicSize.height + 8, BLOCK_MIN_FRAME_H)
       : itemBoxSize.height) ||
@@ -7195,6 +7375,13 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           height: lockedDbSize.height + adjustChromeYTop + adjustChromeYBottom,
         }
       : null
+  const textLockedLiveBox =
+    textLockedHug && !layoutBoxFreeze
+      ? {
+          width: huggedSize.width + adjustChromeX * 2,
+          height: huggedSize.height + adjustChromeYTop + adjustChromeYBottom,
+        }
+      : null
   const atomExplicitBox =
     isBlock &&
     isRowCardAtomHtml(promptContent) &&
@@ -7210,6 +7397,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     layoutBoxFreeze ||
     rowCardLiveBox ||
     dbLiveBox ||
+    textLockedLiveBox ||
     atomExplicitBox ||
     (contentDeferred && !intrinsicMeasured && deferredLayoutBox ? deferredLayoutBox : null)
   const shapeBoxW = contentBoxW
@@ -7320,7 +7508,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           : pagePreviewOpen && !showFrameChrome
           ? '520px'
           : outerWidthCss,
-        height: layoutBox
+        height: textLockedHug
+          ? `${huggedSize.height}px` // Exact scaled hug — fit-content could include PM strut under the wash
+          : layoutBox
           ? `${layoutBox.height}px`
           : pagePreviewOpen
           ? '420px'
@@ -7349,7 +7539,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               : isFlashcard
                 ? '300px'
                 : '200px',
-        minHeight: layoutBox
+        minHeight: textLockedHug
+          ? `${huggedSize.height}px` // Lock to scaled hug — don't grow from PM strut
+          : layoutBox
           ? `${layoutBox.height}px`
           : pagePreviewOpen
             ? '420px'
@@ -7359,7 +7551,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           : isContentRotated && fillWidthPx != null
           ? outerWidthCss
           : undefined,
-        maxHeight: layoutBox
+        maxHeight: textLockedHug
+          ? `${huggedSize.height}px`
+          : layoutBox
           ? `${layoutBox.height}px`
           : isContentRotated
           ? `${displayBox.height + adjustChromeYTop + adjustChromeYBottom}px`
@@ -7539,8 +7733,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                 'nodrag nopan tt-frame-resize-line', // nodrag: resize must not start frame drag
                 !frameShape && 'tt-frame-resize-line-hit' // Hit only — square ring paints the stroke
               )}
-              minWidth={FRAME_RESIZE_MIN} // Soft shrink floor (40px); grow stays unbounded
-              minHeight={FRAME_RESIZE_MIN}
+              minWidth={frameUnlocked ? FRAME_RESIZE_MIN : 1} // Locked fit-to-text may be <40px; unlocked keeps soft floor
+              minHeight={frameUnlocked ? FRAME_RESIZE_MIN : 1}
               keepAspectRatio={!frameUnlocked && hasBlockContent}
               onResizeStart={handleResizeStart}
               onResize={handleResize}
@@ -7553,8 +7747,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               position={position} // RF places the handle on that corner
               className="nodrag nopan" // Resize only — never start RF frame drag / pan
               style={itemCornerResizeStyle} // White circular handle styling
-              minWidth={FRAME_RESIZE_MIN} // Soft shrink floor (40px); grow already has no max
-              minHeight={FRAME_RESIZE_MIN}
+              minWidth={frameUnlocked ? FRAME_RESIZE_MIN : 1} // Locked may hug below 40 — don't clamp RF node
+              minHeight={frameUnlocked ? FRAME_RESIZE_MIN : 1}
               keepAspectRatio={!frameUnlocked && hasBlockContent} // Locked + content: proportional only
               onResizeStart={handleResizeStart} // Arm user-resize mode (line-grow off)
               onResize={handleResize} // Apply explicit width/height while dragging
@@ -7884,7 +8078,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       <div
         className={cn(
           'relative z-[1] w-full', // Above shape backdrop; fills the padded content box
-          isOnThreadFrame ? 'h-auto flex items-center' : 'h-full',
+          // Always fill the panel for blocks — h-auto on-thread left peach shorter than the blue ring
+          isBlock || !(isOnThreadFrame && !layoutBox) ? 'h-full' : 'h-auto flex items-center',
           shapeCenterContent &&
             (pinConnectionsToFrame
               ? 'flex flex-col items-center justify-center'
@@ -8050,7 +8245,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               ...(applyFrameScale
                 ? {
                     transform: `scale(${frameScale})`,
-                    transformOrigin: shapeCenterContent ? 'center center' : 'top left',
+                    transformOrigin: shapeCenterContent ? 'center center' : 'top left', // Top-left — hug height must be exact (no bottom slack)
                   }
                 : {}),
             }}

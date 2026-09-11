@@ -53,9 +53,14 @@ export function AiThreadPicker({
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const lastPointerRef = useRef({ x: 0, y: 0 })
-  const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number } | null>(
-    null
-  )
+  // Phone dock: bottom anchors grow upward above the mid-chrome / composer; desktop uses top
+  const [panelPos, setPanelPos] = useState<{
+    top?: number
+    bottom?: number
+    left: number
+    width: number
+    maxHeight?: number // Cap upward open so the list stays below the board top bar
+  } | null>(null)
 
   const updatePanelPos = useCallback(() => {
     const el = triggerRef.current
@@ -65,9 +70,23 @@ export function AiThreadPicker({
     // Sidebar sits at the right edge, so a trigger-left panel overflows the window and
     // clips the row actions. Clamp into view (8px gutter) like a menu's collision handling.
     const maxLeft = window.innerWidth - width - 8
+    const left = Math.max(8, Math.min(rect.left, maxLeft))
+    // Phone map dock: mid chrome sits on the composer — open the list above that chat row
+    const openAbove = !!el.closest('[data-chat-map-dock]')
+    if (openAbove) {
+      const gap = 4 // Match the desktop drop gap
+      const spaceAbove = Math.max(0, rect.top - gap - 8) // Leave 8px under the top chrome
+      setPanelPos({
+        bottom: window.innerHeight - rect.top + gap, // Grow upward above the New AI chat trigger
+        left,
+        width,
+        maxHeight: Math.min(24 * 16, spaceAbove), // 24rem cap, or whatever fits above
+      })
+      return
+    }
     setPanelPos({
       top: rect.bottom + 4,
-      left: Math.max(8, Math.min(rect.left, maxLeft)),
+      left,
       width,
     })
   }, [])
@@ -209,9 +228,11 @@ export function AiThreadPicker({
             data-chat-thread-picker-popup
             style={{
               position: 'fixed',
-              top: panelPos.top,
+              top: panelPos.top, // Desktop sidebar — drop below the header trigger
+              bottom: panelPos.bottom, // Phone dock — grow upward above the chat chrome
               left: panelPos.left,
               width: panelPos.width,
+              maxHeight: panelPos.maxHeight, // Phone: fit in the space above the trigger
               zIndex: 10000, // Above board drag overlays so pointermove can hit rows
               pointerEvents: 'auto',
             }}

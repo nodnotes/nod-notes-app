@@ -64,6 +64,11 @@ export function HomeTopNav() {
             <Link href="/pricing" className={NAV_LINK_CLASS}>
               Pricing
             </Link>
+            {signedIn ? (
+              <Link href="/download" className={NAV_LINK_CLASS}>
+                Download
+              </Link>
+            ) : null}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
@@ -112,6 +117,11 @@ export function HomeTopNav() {
               <DropdownMenuItem asChild>
                 <Link href="/pricing">Pricing</Link>
               </DropdownMenuItem>
+              {signedIn ? (
+                <DropdownMenuItem asChild>
+                  <Link href="/download">Download</Link>
+                </DropdownMenuItem>
+              ) : null}
               {HELP_LINKS.map((link) => (
                 <DropdownMenuItem key={link.href} asChild>
                   <Link href={link.href}>{link.label}</Link>

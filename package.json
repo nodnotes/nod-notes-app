@@ -6,7 +6,19 @@
     "dev": "next dev -p 3031",
     "build": "next build",
     "start": "next start -p 3031",
-    "lint": "next lint"
+    "lint": "next lint",
+    "desktop": "NODNOTES_APP_URL=http://localhost:3031 npm --prefix desktop run dev",
+    "desktop:prod": "npm --prefix desktop run dev",
+    "desktop:install": "npm --prefix desktop install",
+    "desktop:pack": "CSC_IDENTITY_AUTO_DISCOVERY=false npm --prefix desktop run pack",
+    "desktop:dist": "CSC_IDENTITY_AUTO_DISCOVERY=false npm --prefix desktop run dist",
+    "desktop:dist:mac": "CSC_IDENTITY_AUTO_DISCOVERY=false npm --prefix desktop run dist:mac",
+    "desktop:dist:win": "CSC_IDENTITY_AUTO_DISCOVERY=false npm --prefix desktop run dist:win",
+    "mobile:install": "npm --prefix mobile install",
+    "mobile:sync": "npm --prefix mobile run sync",
+    "mobile:open": "npm --prefix mobile run open",
+    "mobile:ios": "NODNOTES_APP_URL=http://localhost:3031 npm --prefix mobile run sync && NODNOTES_APP_URL=http://localhost:3031 npm --prefix mobile run ios",
+    "mobile:ios:prod": "NODNOTES_APP_URL=https://nodnotes.com npm --prefix mobile run sync && npm --prefix mobile run ios:prod"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

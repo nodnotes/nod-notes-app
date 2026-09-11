@@ -72,6 +72,7 @@ export function readViewportZoom(root?: HTMLElement | null): number {
 
 function writeChromeVars(el: HTMLElement, z: number, ui: number): void {
   el.style.setProperty('--tt-board-zoom', String(z))
+  el.style.setProperty('--tt-thread-inv-zoom', String(1 / Math.max(0.01, z))) // Thread strokes stay screen-constant
   el.style.setProperty('--tt-frame-chrome-boost', String(CHROME_BOOST))
   el.style.setProperty('--tt-frame-ui-scale', String(ui))
   // Line stroke stays flow-scaled (large surface). Dots use fixed local paint + scale(ui).

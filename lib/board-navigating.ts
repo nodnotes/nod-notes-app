@@ -46,8 +46,10 @@ function applyZoomCss(el: HTMLElement, zoom: number): void {
   if (next === lastZoomCss && el.style.getPropertyValue('--tt-board-zoom') === next) return
   lastZoomCss = next
   const ui = CHROME_BOOST / z // Same as frameScreenChromeScale
+  const inv = 1 / z // Concrete inverse zoom for thread strokes (avoid calc lag)
   // Concrete values — avoid relying on stylesheet calc() recalculating during compositor zoom
   el.style.setProperty('--tt-board-zoom', next)
+  el.style.setProperty('--tt-thread-inv-zoom', String(inv)) // Thread stroke: width * inv → screen-constant
   el.style.setProperty('--tt-frame-chrome-boost', String(CHROME_BOOST))
   el.style.setProperty('--tt-frame-ui-scale', String(ui))
   el.style.setProperty('--tt-frame-line-w', `${1 * ui}px`)

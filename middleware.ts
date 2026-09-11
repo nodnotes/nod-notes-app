@@ -134,6 +134,24 @@ export async function middleware(request: NextRequest) {
     }
   }
 
+  // Desktop download — signed-in (+ verified) only; not a public marketing page
+  if (request.nextUrl.pathname === '/download' || request.nextUrl.pathname.startsWith('/download/')) {
+    if (!user) {
+      const url = request.nextUrl.clone()
+      url.pathname = comingSoon ? '/access' : '/login'
+      url.searchParams.set('redirectTo', '/download')
+      return NextResponse.redirect(url)
+    }
+    if (!user.email_confirmed_at) {
+      const url = request.nextUrl.clone()
+      url.pathname = comingSoon ? '/access' : '/login'
+      url.searchParams.set('error', 'email_not_verified')
+      await supabase.auth.signOut()
+      return NextResponse.redirect(url)
+    }
+    // Coming soon: non-allowlisted sessions already redirected above
+  }
+
   // Redirect authenticated users away from auth pages
   if (request.nextUrl.pathname.startsWith('/login') || request.nextUrl.pathname.startsWith('/signup')) {
     if (user) {

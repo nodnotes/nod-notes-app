@@ -20,9 +20,7 @@ import {
   THREAD_DEFAULT_STROKE_WIDTH,
   THREAD_SELECTED_COLOR,
   ThreadAlgorithm,
-  threadComfortScale,
-} from './constants' // Stroke + algorithm defaults + zoom comfort
-import { navigationZoom } from '@/lib/board-navigating' // Freeze stroke mid-pinch
+} from './constants' // Stroke + algorithm defaults
 import { normalizeHandleId } from './handle-ids' // Strip -indicator from stored handle ids
 import {
   connectionPointOnNode,
@@ -138,11 +136,6 @@ export function EditableThread({
   })
 
   const isConnecting = useStore((s) => !!s.connectionNodeId)
-  const zoom = useStore((s) =>
-    navigationZoom(Math.round((s.transform[2] || 1) * 8) / 8)
-  ) // Freeze mid-pinch — avoid edge re-renders every tick
-  const comfort = threadComfortScale(zoom) // Thins on zoom-out; soft counter-scale on zoom-in
-  const invZoom = 1 / Math.max(0.01, zoom) // Hit band stays ~screen-constant so thin threads remain clickable
 
   const setControlPoints = useCallback(
     (update: (pts: ControlPointData[]) => ControlPointData[]) => {
@@ -266,13 +259,20 @@ export function EditableThread({
       ? THREAD_SELECTED_COLOR // Selection always reads Miro blue
       : data?.strokeColor || (style?.stroke as string) || THREAD_DEFAULT_COLOR // Custom → style → gray
   const baseWidth = selected ? Math.max(strokeWidth, strokeWidth + 0.5) : strokeWidth // Selected reads slightly heavier
-  const dash = 5 * comfort // Dash/gap tracks stroke comfort (thins when zoomed out)
 
+  // Screen size comes from CSS `--tt-board-zoom` (live); do not put strokeWidth inline.
+  const { strokeWidth: _ignoredStrokeWidth, ...restStyle } = (style ?? {}) as Record<
+    string,
+    unknown
+  >
   const edgeStyle = {
-    ...style,
-    strokeWidth: baseWidth * comfort, // Comfort curve — not full 1/zoom (that looked fat zoomed out)
+    ...restStyle,
     stroke,
-    strokeDasharray: dotted ? `${dash},${dash}` : undefined,
+    ['--tt-edge-w' as string]: baseWidth, // Menu thickness; CSS divides by live board zoom
+    // Unitless flow units ÷ live zoom → constant screen dash (BaseEdge has no className prop)
+    strokeDasharray: dotted
+      ? `calc(5 / var(--tt-board-zoom, 1)), calc(5 / var(--tt-board-zoom, 1))`
+      : undefined,
   }
 
   return (
@@ -284,7 +284,7 @@ export function EditableThread({
           path={strokePath}
           markerStart={i === 0 ? markerStart : undefined}
           markerEnd={i === strokePaths.length - 1 ? markerEnd : undefined}
-          interactionWidth={20 * invZoom} // Hit band stays ~20px on screen at any zoom
+          interactionWidth={20} // Overridden by CSS `.react-flow__edge-interaction` (view-relative)
           style={edgeStyle}
         />
       ))}
@@ -292,9 +292,10 @@ export function EditableThread({
       {threadDots.map((pt, i) => (
         <circle
           key={`${id}-on-thread-dot-${i}`}
+          className="tt-thread-on-path-dot"
           cx={pt.x}
           cy={pt.y}
-          r={ON_THREAD_DOT_R * comfort}
+          r={ON_THREAD_DOT_R} // Local radius; CSS scale(1/zoom) keeps screen size constant
           fill={stroke}
           pointerEvents="none"
         />

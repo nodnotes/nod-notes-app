@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-11T14:58:31Z`
+- Snapped at: `2026-09-11T17:15:38Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (link refreshed; `db dump` / `migration list` blocked on remote login-role alter — marker + version snapshot only)
@@ -9,6 +9,15 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260911171538_desktop_mobile_download_shells.sql`.
+- **Desktop shell**: Electron app under `desktop/` (pack/dist scripts; auto-updater hook; signed-in `/download` page + hero).
+- **Mobile shell**: Capacitor iOS under `mobile/` (sync/open/ios scripts; safe-area / viewport chrome).
+- **Threads**: view-stroke CSS + connection-point / editable-thread polish for phone.
+- **Gate**: `/download` requires verified signed-in session (coming-soon allowlist still applies).
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: I-bar no post-zoom snap
 
 - DDL: none. Marker `20260911145831_ibar_pane_scale_live_zoom_no_snap.sql`.
 - **I-bar no post-zoom snap**: `IBarFlowAnchor` uses live zoom for `paneScale` (dropped `navigationZoom` freeze + `/8` quantize); `ibarPaneScale` returns exact `1` in the unclamped band.

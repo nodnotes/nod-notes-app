@@ -15,6 +15,19 @@
 # production
 /build
 
+# Electron desktop shell
+/desktop/node_modules
+/desktop/release
+/desktop/dist
+
+# Capacitor mobile shell
+/mobile/node_modules
+/mobile/ios/App/Pods
+/mobile/ios/DerivedData
+/mobile/ios/App/App/public
+/mobile/build/sim-*.png
+/mobile/build/*.log
+
 # misc
 .DS_Store
 *.pem

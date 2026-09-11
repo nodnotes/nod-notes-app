@@ -33,7 +33,6 @@ import {
   normalizeHandleId,
   type ThreadEdgeData,
 } from '@/components/threads' // Miro-style editable threads + connection preview
-import { threadComfortScale } from '@/components/threads/constants' // Same ⋮⋮ comfort curve for pre-frame I-bar grip
 import { useIsThreadConnecting } from '@/components/threads/use-is-thread-connecting' // Pane class while connecting
 import {
   BlockActionsMenu,
@@ -289,8 +288,7 @@ const BLOCK_CREATE_OFFSET_Y = 2 // contentFit paddingTop only (legacy 20 assumed
 /** Empty hug seed — matches chat-panel BLOCK_LOCKED_MIN_W / BLOCK_MIN_FRAME_H (gutter 20 + ~3ch). */
 const BLOCK_PLACE_MIN_W = 48
 const BLOCK_PLACE_MIN_H = 22
-/** Soft resized floor — same as chat-panel FRAME_RESIZE_MIN so place seeds aren't rejected. */
-const BLOCK_PLACE_RESIZE_MIN = 40
+/** Place seeds must match one-line hug — do NOT floor at FRAME_RESIZE_MIN (40) or the blue box stays taller than the peach fill. */
 
 /** Metadata extras so a placed frame paints at ~100% screen size for the current zoom. */
 function placeScaleMetadata(zoom: number): {
@@ -302,8 +300,8 @@ function placeScaleMetadata(zoom: number): {
   return {
     frameScale: fs, // Locked CSS scale (needs resizeDimensions → isUserResized)
     resizeDimensions: {
-      width: Math.max(BLOCK_PLACE_RESIZE_MIN, Math.round(BLOCK_PLACE_MIN_W * fs)),
-      height: Math.max(BLOCK_PLACE_RESIZE_MIN, Math.round(BLOCK_PLACE_MIN_H * fs)),
+      width: Math.max(1, Math.round(BLOCK_PLACE_MIN_W * fs)), // Fit-to-text seed — no 40px empty pad
+      height: Math.max(1, Math.round(BLOCK_PLACE_MIN_H * fs)),
     },
   }
 }
@@ -10815,6 +10813,7 @@ function BoardFlowInner({
        <>
        <div
          className="fixed z-20 flex flex-col items-stretch"
+         data-nn-safe-bottom // Capacitor: lift above home indicator via globals.css
          style={{
            bottom: `${
              // Tighter to the AI dock when phone chat is open; keep default inset otherwise
@@ -11074,6 +11073,7 @@ function BoardFlowInner({
         <button
           type="button"
           data-chat-sidebar-toggle
+          data-nn-safe-bottom // Capacitor: lift above home indicator via globals.css
           onClick={() => toggleChatSidebar()}
           className={cn(
             'z-40 flex items-center justify-center bg-transparent opacity-80 hover:opacity-100 transition-opacity p-0 border-0 overflow-visible',

@@ -70,13 +70,13 @@ export function isSharpThreadAlgorithm(
 }
 
 /**
- * Flow-space multiplier for stroke / knobs (same comfort as ⋮⋮ grips).
- * Zoomed out → 1 (rides with content, thins on screen). Zoomed in → 1/√zoom
- * (screen size grows only ∝ √zoom). Avoids fat threads when the page is zoomed out.
+ * Flow-space multiplier for callers that still need a JS zoom factor.
+ * Prefer CSS `--tt-board-zoom` for thread stroke (live, no React freeze).
+ * Pure 1/zoom so thickness stays constant on screen when applied.
  */
 export function threadComfortScale(zoom: number): number {
   const z = Math.max(0.01, zoom) // Guard against 0 / negative store values
-  return 1 / Math.max(1, Math.sqrt(z)) // max(1,√z) → no counter-scale below 100%
+  return 1 / z // Screen px ≈ menu stroke width at every zoom
 }
 
 /** Base boost so frame chrome (handles / ⋮⋮ gutter / rotate) reads at a usable screen size. */

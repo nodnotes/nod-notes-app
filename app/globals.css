@@ -1286,6 +1286,27 @@ span[data-added="true"] {
     --tt-frame-indicator: 10px;
     --tt-frame-indicator-border: 1.5px;
   }
+  /*
+   * Threads: stroke / dash / knobs / hit band are view-relative via `--tt-board-zoom`.
+   * Do not set inline stroke-width from React — navigationZoom freezes mid-pinch and
+   * does not re-render on settle, so JS 1/zoom left strokes riding the viewport scale.
+   */
+  .react-flow__edge-path {
+    stroke-width: calc(var(--tt-edge-w, 2) * 1px / var(--tt-board-zoom, 1));
+  }
+  .react-flow__edge-path.tt-thread-dotted {
+    stroke-dasharray: calc(5px / var(--tt-board-zoom, 1)), calc(5px / var(--tt-board-zoom, 1));
+  }
+  .react-flow__edge-interaction {
+    stroke-width: calc(20px / var(--tt-board-zoom, 1)) !important; /* ~20px screen hit band */
+  }
+  .react-flow__edges circle.tt-thread-knob {
+    r: calc(var(--tt-knob-r, 4) * 1px / var(--tt-board-zoom, 1));
+    stroke-width: calc(1.5px / var(--tt-board-zoom, 1));
+  }
+  .react-flow__edges circle.tt-thread-on-path-dot {
+    r: calc(var(--tt-dot-r, 3) * 1px / var(--tt-board-zoom, 1));
+  }
   /* Phone select: stop the browser from panning the page so the marquee/frame drag can run */
   .react-flow__pane {
     touch-action: none;
@@ -1379,7 +1400,7 @@ span[data-added="true"] {
 
   .react-flow__connectionline-path {
     stroke: #b1b1b7 !important;
-    stroke-width: 2 !important;
+    /* Width from `--tt-edge-w` / `--tt-board-zoom` (see thread block above) — not fixed 2 */
     opacity: 1 !important;
   }
 
@@ -2958,3 +2979,81 @@ span[data-added="true"] {
   border-color: #60a5fa; /* blue-400 */
   background-color: rgba(37, 99, 235, 0.22);
 }
+
+/*
+ * Electron desktop shell (Notion-style frameless window).
+ * `html.nn-desktop*` is set by desktop/preload.cjs + ViewportHeightFix.
+ */
+html.nn-desktop [data-edit-top-bar],
+html.nn-desktop [data-home-page] nav,
+html.nn-desktop [data-docs-page] nav {
+  -webkit-app-region: drag; /* Drag the window from the web top bar */
+}
+
+/* Clicks must reach controls — not start a window drag */
+html.nn-desktop [data-edit-top-bar] a,
+html.nn-desktop [data-edit-top-bar] button,
+html.nn-desktop [data-edit-top-bar] input,
+html.nn-desktop [data-edit-top-bar] textarea,
+html.nn-desktop [data-edit-top-bar] select,
+html.nn-desktop [data-edit-top-bar] [role='button'],
+html.nn-desktop [data-edit-top-bar] [role='combobox'],
+html.nn-desktop [data-edit-top-bar] [data-radix-collection-item],
+html.nn-desktop [data-home-page] nav a,
+html.nn-desktop [data-home-page] nav button,
+html.nn-desktop [data-docs-page] nav a,
+html.nn-desktop [data-docs-page] nav button {
+  -webkit-app-region: no-drag;
+}
+
+/* macOS traffic lights overlay the left of the board / marketing top bar */
+html.nn-desktop-darwin [data-edit-top-bar] {
+  padding-left: 78px !important; /* Clear red/yellow/green; matches trafficLightPosition */
+}
+html.nn-desktop-darwin [data-home-page] nav,
+html.nn-desktop-darwin [data-docs-page] nav {
+  padding-left: 4.5rem; /* Same clearance on marketing chrome */
+}
+
+/* Windows caption buttons sit on the right via titleBarOverlay */
+html.nn-desktop-win32 [data-edit-top-bar] {
+  padding-right: 140px !important;
+}
+html.nn-desktop-win32 [data-home-page] nav,
+html.nn-desktop-win32 [data-docs-page] nav {
+  padding-right: 8.75rem;
+}
+
+/*
+ * Capacitor iOS shell — notch / Dynamic Island / home indicator.
+ * `html.nn-capacitor*` is set by ViewportHeightFix when window.Capacitor is native.
+ * contentInset is `never` so we own insets via CSS (not a double-padded WKWebView).
+ */
+html.nn-capacitor {
+  --nn-safe-top: env(safe-area-inset-top, 0px);
+  --nn-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --nn-safe-left: env(safe-area-inset-left, 0px);
+  --nn-safe-right: env(safe-area-inset-right, 0px);
+}
+
+/* Push the whole top chrome (bar) below the status bar / Dynamic Island */
+html.nn-capacitor [data-edit-panel-root] {
+  padding-top: var(--nn-safe-top);
+}
+
+/* Marketing / docs nav — same clearance when opened in the shell */
+html.nn-capacitor [data-home-page] nav,
+html.nn-capacitor [data-docs-page] nav {
+  padding-top: var(--nn-safe-top);
+}
+
+/*
+ * Lift Free nav / minimap / brand above the home indicator.
+ * Inline `bottom` stays as-is; translate avoids fighting React style props.
+ */
+html.nn-capacitor [data-nn-safe-bottom] {
+  transform: translateY(calc(-1 * var(--nn-safe-bottom)));
+}
+
+
+

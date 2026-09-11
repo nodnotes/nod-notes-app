@@ -351,7 +351,8 @@ export function InputAreaWithStickyPrompt({ conversationId, projectId }: { conve
         )}
         aria-hidden={phoneDockTight}
         style={{
-          top: '56px', // Just below the 52px top bar
+          // 52px top bar + 4px gap; env() is 0 in browsers without a notch
+          top: 'calc(56px + env(safe-area-inset-top, 0px))',
         }}
       >
         <PillSelect
