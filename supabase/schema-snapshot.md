@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-11T14:55:13Z`
+- Snapped at: `2026-09-11T14:58:31Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (link refreshed; `db dump` / `migration list` blocked on remote login-role alter — marker + version snapshot only)
@@ -9,6 +9,12 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260911145831_ibar_pane_scale_live_zoom_no_snap.sql`.
+- **I-bar no post-zoom snap**: `IBarFlowAnchor` uses live zoom for `paneScale` (dropped `navigationZoom` freeze + `/8` quantize); `ibarPaneScale` returns exact `1` in the unclamped band.
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: I-bar place scale zoom-stable
 
 - DDL: none. Marker `20260911145513_ibar_place_scale_zoom_stable.sql`.
 - **I-bar place scale**: `lib/ibar-place-scale.ts` — `frameScale = clamp(1/zoom, 0.4, 4)` so board place caret + typed frames stay near 100% screen size across zoom; sync-init on `ChatPanelNode` + RF box seed so CSS scale applies on first paint.

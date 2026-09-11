@@ -200,3 +200,4 @@
 20260911093423_frame_chrome_live_zoom_rotate_reset.sql
 20260911101600_frame_resize_chrome_scale_zoom_band.sql
 20260911145513_ibar_place_scale_zoom_stable.sql
+20260911145831_ibar_pane_scale_live_zoom_no_snap.sql

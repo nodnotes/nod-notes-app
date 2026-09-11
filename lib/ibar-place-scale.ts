@@ -17,9 +17,11 @@ export function placeFrameScale(zoom: number): number {
 
 /**
  * Pane-space multiplier for pre-frame I-bar chrome (outside RF viewport transform).
- * Unclamped → ~1 (screen-constant caret); clamped extremes still ride zoom a bit.
+ * Unclamped band → exactly 1 (no float wobble / post-zoom snap). Clamped extremes ride zoom.
  */
 export function ibarPaneScale(zoom: number): number {
   const z = Math.max(0.01, zoom)
-  return z * placeFrameScale(z)
+  const ideal = 1 / z
+  if (ideal >= IBAR_PLACE_SCALE_MIN && ideal <= IBAR_PLACE_SCALE_MAX) return 1 // Exact screen-constant
+  return z * placeFrameScale(z) // Only at zoom extremes
 }
