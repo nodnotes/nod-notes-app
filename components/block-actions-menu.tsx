@@ -6,9 +6,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react' // Search, submenu, focus
 import {
   Check,
-  ChevronDown,
   ChevronRight,
-  ChevronUp,
   Columns2,
   Columns3,
   Columns4,
@@ -158,14 +156,12 @@ export type BlockActionId =
   | 'duplicate'
   | 'delete'
   | 'addChild'
-  | 'condense'
   | 'copyLink'
   | 'group'
   | 'ungroup'
   | 'turnInto'
   | 'color'
   | 'listFormat'
-  | 'moveTo'
   | 'comment'
   | 'presentFromHere'
   | 'askAI'
@@ -221,7 +217,6 @@ export type BlockActionsMenuProps = {
   x: number // Screen x relative to React Flow pane
   y: number // Screen y relative to React Flow pane
   zoom?: number // Optional scale with viewport
-  isCollapsed?: boolean // Condense toggle label state
   selectedCount?: number // Enables Group when ≥2
   canUngroup?: boolean // True when focus frame is inside the legacy dashed wrapper
   showAddChild?: boolean // Study-set may omit Add child
@@ -476,7 +471,6 @@ export function BlockActionsMenu({
   x,
   y,
   zoom = 1,
-  isCollapsed = false,
   selectedCount = 1,
   canUngroup = false,
   showAddChild = true,
@@ -667,13 +661,6 @@ export function BlockActionsMenu({
       },
       {
         kind: 'action',
-        id: 'moveTo',
-        label: 'Move to',
-        shortcut: '⌘⇧P',
-        icon: <FolderInput className="h-4 w-4" />,
-      },
-      {
-        kind: 'action',
         id: 'delete',
         label: 'Delete',
         shortcut: 'Del',
@@ -711,13 +698,6 @@ export function BlockActionsMenu({
         label: 'Add child',
         icon: <Plus className="h-4 w-4" />,
         hidden: !showAddChild || (notionConnected && !showFrameShape), // Notion block ⋮⋮ skips Add child
-      },
-      {
-        kind: 'action',
-        id: 'condense',
-        label: isCollapsed ? 'Expand' : 'Condense',
-        icon: isCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />,
-        hidden: notionConnected && !showFrameShape, // Notion block ⋮⋮ skips Condense
       },
       {
         kind: 'action',
@@ -831,7 +811,7 @@ export function BlockActionsMenu({
                 .includes(q)
             )))
     )
-  }, [query, isCollapsed, selectedCount, canUngroup, showAddChild, currentBlockType, showFrameShape, boardLocked, framesLockedTogether, canLockFramesTogether, notionConnected, convertLayoutMode, dbRowSetter, showOpen, showRevertText, canRevertText, showResendPrompt, showRegenerateResponse, chatRegenBusy])
+  }, [query, selectedCount, canUngroup, showAddChild, currentBlockType, showFrameShape, boardLocked, framesLockedTogether, canLockFramesTogether, notionConnected, convertLayoutMode, dbRowSetter, showOpen, showRevertText, canRevertText, showResendPrompt, showRegenerateResponse, chatRegenBusy])
 
   // When searching, also surface matching Turn into types as flat picks
   const turnIntoMatches = useMemo(() => {

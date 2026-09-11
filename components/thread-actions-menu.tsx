@@ -4,9 +4,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react' // Escape close + arrange flyout + in-window place
 import {
-  ChevronDown,
   ChevronRight,
-  ChevronUp,
   Copy,
   Info,
   Link2,
@@ -35,7 +33,6 @@ export type ThreadActionId =
   | 'insertBetween'
   | 'saveAsTemplate'
   | 'info'
-  | 'collapse'
   | 'toggleDotted'
   | 'styleSmooth'
   | 'styleSharp'
@@ -49,7 +46,6 @@ export type ThreadActionsMenuProps = {
   x: number // Pane-relative screen x (click point)
   y: number // Pane-relative screen y (click point)
   isDotted?: boolean // Current dash state for Solid/Dotted label
-  isCollapsedLabel?: 'Collapse' | 'Expand' // Connected-frames collapse toggle
   canPasteStyle?: boolean // Enables Paste style when a style was copied
   currentStyle?: 'smooth' | 'sharp' | 'linear' // Checkmark in Style → path style
   currentStrokeWidth?: number // Checkmark in Thickness flyout (1–4)
@@ -80,7 +76,6 @@ export function ThreadActionsMenu({
   x,
   y,
   isDotted = false,
-  isCollapsedLabel = 'Collapse',
   canPasteStyle = false,
   currentStyle = 'smooth',
   currentStrokeWidth = 2,
@@ -195,17 +190,6 @@ export function ThreadActionsMenu({
       id: 'toggleDotted',
       label: isDotted ? 'Solid' : 'Dotted',
       icon: <PaintRoller className="h-4 w-4" />,
-    },
-    {
-      kind: 'action',
-      id: 'collapse',
-      label: isCollapsedLabel,
-      icon:
-        isCollapsedLabel === 'Collapse' ? (
-          <ChevronUp className="h-4 w-4" />
-        ) : (
-          <ChevronDown className="h-4 w-4" />
-        ),
     },
     { kind: 'separator' },
     {

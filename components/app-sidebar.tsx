@@ -12,6 +12,8 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { SettingsPanel } from '@/components/settings-panel'
 import { UpgradePanel } from '@/components/upgrade-panel'
+import { OpenMojiImg } from '@/components/openmoji-picker'
+import { resolveAvatarColor } from '@/lib/avatar-colors'
 import { cn } from '@/lib/utils'
 import Picker from '@emoji-mart/react'
 import data from '@emoji-mart/data'
@@ -1236,7 +1238,7 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('profiles')
-        .select('full_name, email, subscription_tier')
+        .select('full_name, email, subscription_tier, metadata')
         .eq('id', user.id)
         .single()
       
@@ -1247,6 +1249,24 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
       return data
     },
   })
+
+  // OpenMoji avatar from profiles.metadata (set in Edit profile)
+  const profileMeta =
+    profile?.metadata && typeof profile.metadata === 'object'
+      ? (profile.metadata as Record<string, unknown>)
+      : {}
+  const avatarEmoji = typeof profileMeta.avatar_emoji === 'string' ? profileMeta.avatar_emoji : null
+  const avatarUnified = typeof profileMeta.avatar_unified === 'string' ? profileMeta.avatar_unified : null
+  const avatarColor = resolveAvatarColor(
+    typeof profileMeta.avatar_color === 'string' ? profileMeta.avatar_color : null
+  )
+  const profileAvatar = (avatarEmoji || avatarUnified) ? (
+    <OpenMojiImg native={avatarEmoji} unified={avatarUnified} size={28} className="h-7 w-7" alt="" />
+  ) : (
+    <span className="text-white font-semibold text-sm">
+      {user.email?.charAt(0).toUpperCase() || 'U'}
+    </span>
+  )
 
   // Handle logout — full navigation so SSR + client never keep the prior identity
   const handleLogout = async () => {
@@ -3035,12 +3055,11 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button
-                    className="w-8 h-8 rounded-full bg-blue-100 dark:bg-[#2a2a3a] flex items-center justify-center hover:bg-blue-200 dark:hover:bg-[#353545] transition-colors"
+                    className="w-8 h-8 rounded-full flex items-center justify-center hover:opacity-90 transition-opacity"
+                    style={{ backgroundColor: avatarColor }}
                     title="Profile"
                   >
-                    <span className="text-gray-700 dark:text-gray-300 font-semibold text-sm">
-                      {user.email?.charAt(0).toUpperCase() || 'U'}
-                    </span>
+                    {profileAvatar}
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
@@ -3063,10 +3082,11 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button className="w-full flex items-center gap-3 pl-1 py-2 rounded-lg hover:bg-gray-50 dark:hover:bg-[#1f1f1f] transition-colors">
-                      <div className="w-8 h-8 bg-blue-100 dark:bg-[#2a2a3a] rounded-full flex items-center justify-center flex-shrink-0">
-                        <span className="text-gray-700 dark:text-gray-300 font-semibold text-sm">
-                          {user.email?.charAt(0).toUpperCase() || 'U'}
-                        </span>
+                      <div
+                        className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                        style={{ backgroundColor: avatarColor }}
+                      >
+                        {profileAvatar}
                       </div>
                       <div className="flex-1 min-w-0 text-left">
                         <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
@@ -3089,10 +3109,11 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
                     className="px-2 py-1.5 focus:bg-transparent"
                   >
                     <div className="w-full flex items-center gap-2">
-                      <div className="w-8 h-8 bg-blue-100 dark:bg-[#2a2a3a] rounded-full flex items-center justify-center flex-shrink-0">
-                        <span className="text-gray-700 dark:text-gray-300 font-semibold text-sm">
-                          {user.email?.charAt(0).toUpperCase() || 'U'}
-                        </span>
+                      <div
+                        className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                        style={{ backgroundColor: avatarColor }}
+                      >
+                        {profileAvatar}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">

@@ -7667,47 +7667,6 @@ function BoardFlowInner({
     return () => document.removeEventListener('keydown', onKeyDown, true)
   }, [canEdit, handleNodesChange])
 
-  // Handle condense node/panel (collapse response) - condense ALL selected panels
-  const handleCondenseNode = useCallback(() => {
-    if (!rightClickedNode) return
-
-    // Get all selected nodes (not just the right-clicked one)
-    const selectedNodes = nodes.filter((n) => n.selected)
-    if (selectedNodes.length === 0) return
-
-    // Determine if we should collapse or expand based on the right-clicked node's state
-    // If the right-clicked node is collapsed, we'll expand all selected; otherwise collapse all
-    const rightClickedNodeState = rightClickedNode.data.isResponseCollapsed || false
-    const shouldCollapse = !rightClickedNodeState // Toggle: if expanded, collapse; if collapsed, expand
-
-    // Update all selected nodes
-    const selectedNodeIds = new Set(selectedNodes.map((n) => n.id))
-    setNodes((nds) =>
-      nds.map((n) =>
-        selectedNodeIds.has(n.id)
-          ? {
-            ...n,
-            data: {
-              ...n.data,
-              isResponseCollapsed: shouldCollapse,
-            },
-          }
-          : n
-      )
-    )
-
-    // Update rightClickedNode to reflect the change
-    setRightClickedNode({
-      ...rightClickedNode,
-      data: {
-        ...rightClickedNode.data,
-        isResponseCollapsed: shouldCollapse,
-      },
-    })
-
-    // Don't close popup - allow user to toggle again if needed
-  }, [rightClickedNode, nodes, setNodes])
-
   // Duplicate selected chatPanel blocks (offset position; strip page link)
   const handleDuplicateBlocks = useCallback(async () => {
     if (!conversationId) return
@@ -8482,9 +8441,6 @@ function BoardFlowInner({
             setRightClickedNode(null)
           }
           break
-        case 'condense':
-          handleCondenseNode()
-          break
         case 'copyLink':
           void handleCopyLinkToBlock()
           break
@@ -8593,7 +8549,6 @@ function BoardFlowInner({
         // Baseline stubs — menu entries present; behavior later
         case 'color':
         case 'listFormat':
-        case 'moveTo':
         case 'comment':
         case 'presentFromHere':
         case 'askAI':
@@ -8605,7 +8560,6 @@ function BoardFlowInner({
     [
       handleDuplicateBlocks,
       handleDeleteNode,
-      handleCondenseNode,
       handleCopyLinkToBlock,
       handleGroupBlocks,
       handleUngroupBlocks,
@@ -8834,87 +8788,6 @@ function BoardFlowInner({
     setClickedEdge(edge)
   }, [isMobileMode, reactFlowInstance])
 
-  // Handle collapse/expand all panels connected to the edge
-  const handleCollapseTarget = useCallback(() => {
-    if (!clickedEdge) return
-
-    // Find all nodes in the connected component (all nodes reachable from source and target)
-    const connectedNodeIds = new Set<string>()
-    const visited = new Set<string>()
-
-    // Start with source and target nodes of the clicked edge
-    const startNodes = [clickedEdge.source, clickedEdge.target]
-    const queue = [...startNodes]
-
-    // BFS to find all connected nodes
-    while (queue.length > 0) {
-      const currentNodeId = queue.shift()!
-      if (visited.has(currentNodeId)) continue
-
-      visited.add(currentNodeId)
-      connectedNodeIds.add(currentNodeId)
-
-      // Find all edges connected to this node
-      edges.forEach(edge => {
-        if (edge.source === currentNodeId && !visited.has(edge.target)) {
-          queue.push(edge.target)
-        }
-        if (edge.target === currentNodeId && !visited.has(edge.source)) {
-          queue.push(edge.source)
-        }
-      })
-    }
-
-    // Get all connected nodes
-    const connectedNodes = nodes.filter(n => connectedNodeIds.has(n.id))
-    if (connectedNodes.length === 0) return
-
-    // Check collapse states
-    const allCollapsed = connectedNodes.every(n => n.data.isResponseCollapsed || false)
-    const allExpanded = connectedNodes.every(n => !(n.data.isResponseCollapsed || false))
-    const someCollapsed = connectedNodes.some(n => n.data.isResponseCollapsed || false)
-
-    // Determine action:
-    // - If all are collapsed: expand all
-    // - If all are expanded: collapse all
-    // - If some are collapsed and some expanded: only expand the collapsed ones (don't collapse expanded ones)
-    const shouldCollapse = allExpanded // Only collapse if all are expanded
-    const shouldExpand = allCollapsed || someCollapsed // Expand if all are collapsed OR if some are collapsed
-
-    // Update nodes: expand collapsed ones, or collapse all if all are expanded
-    setNodes((nds) =>
-      nds.map((n) => {
-        if (connectedNodeIds.has(n.id)) {
-          const isCurrentlyCollapsed = n.data.isResponseCollapsed || false
-
-          if (shouldCollapse && allExpanded) {
-            // All are expanded, so collapse all
-            return {
-              ...n,
-              data: {
-                ...n.data,
-                isResponseCollapsed: true,
-              },
-            }
-          } else if (shouldExpand && isCurrentlyCollapsed) {
-            // Some are collapsed, so expand only the collapsed ones
-            return {
-              ...n,
-              data: {
-                ...n.data,
-                isResponseCollapsed: false,
-              },
-            }
-          }
-          // Otherwise, keep current state
-          return n
-        }
-        return n
-      })
-    )
-    setClickedEdge(null) // Close popup
-  }, [clickedEdge, nodes, edges, setNodes])
-
   // Handle delete edge - delete from both React Flow state and database
   const handleDeleteEdge = useCallback(async () => {
     console.log('🗑️ handleDeleteEdge called', { clickedEdge, conversationId, nodesLength: nodes?.length })
@@ -9085,9 +8958,6 @@ function BoardFlowInner({
           void insertFrameOnThread(clickedEdge.id)
           setClickedEdge(null)
           return
-        case 'collapse':
-          handleCollapseTarget()
-          return
         case 'toggleDotted':
           handleToggleEdgeStyle()
           return
@@ -9145,7 +9015,6 @@ function BoardFlowInner({
       clickedEdge,
       handleDeleteEdge,
       insertFrameOnThread,
-      handleCollapseTarget,
       handleToggleEdgeStyle,
       patchClickedThreadData,
       isLocked,
@@ -11313,7 +11182,6 @@ function BoardFlowInner({
           x={nodePopupPosition.x}
           y={nodePopupPosition.y}
           zoom={reactFlowInstance.getViewport().zoom}
-          isCollapsed={!!rightClickedNode.data?.isResponseCollapsed}
           selectedCount={nodes.filter((n) => n.selected && n.type === 'chatPanel').length}
           canUngroup={
             !!rightClickedNode.parentId ||
@@ -11469,31 +11337,6 @@ function BoardFlowInner({
             (clickedEdge.data as ThreadEdgeData | undefined)?.dotted === true ||
             clickedEdge.type === 'animatedDotted'
           }
-          isCollapsedLabel={(() => {
-            // Collapse when every connected frame is expanded; else Expand
-            const connectedNodeIds = new Set<string>()
-            const visited = new Set<string>()
-            const queue = [clickedEdge.source, clickedEdge.target]
-            while (queue.length > 0) {
-              const currentNodeId = queue.shift()!
-              if (visited.has(currentNodeId)) continue
-              visited.add(currentNodeId)
-              connectedNodeIds.add(currentNodeId)
-              edges.forEach((edge) => {
-                if (edge.source === currentNodeId && !visited.has(edge.target)) {
-                  queue.push(edge.target)
-                }
-                if (edge.target === currentNodeId && !visited.has(edge.source)) {
-                  queue.push(edge.source)
-                }
-              })
-            }
-            const connectedNodes = nodes.filter((n) => connectedNodeIds.has(n.id))
-            const allExpanded =
-              connectedNodes.length > 0 &&
-              connectedNodes.every((n) => !(n.data.isResponseCollapsed || false))
-            return allExpanded ? 'Collapse' : 'Expand'
-          })()}
           canPasteStyle={hasThreadStyleClipboard}
           currentStyle={threadStyleFromAlgorithm(
             (clickedEdge.data as ThreadEdgeData | undefined)?.algorithm

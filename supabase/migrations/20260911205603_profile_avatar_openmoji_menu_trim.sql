@@ -1,0 +1,2 @@
+-- Profile avatar Edit dialog (OpenMoji + color); remove frame Condense/Expand and block Move to.
+-- App/docs marker only; no DDL.

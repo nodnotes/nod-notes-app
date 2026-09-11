@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-11T19:49:59Z`
+- Snapped at: `2026-09-11T20:56:03Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (link refreshed; `db dump` / `migration list` blocked on remote login-role alter — marker + version snapshot only)
@@ -9,6 +9,13 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260911205603_profile_avatar_openmoji_menu_trim.sql`.
+- **Profile avatar**: Settings Account pencil opens Edit profile dialog — OpenMoji grid + background color swatches; persists `profiles.metadata.avatar_emoji` / `avatar_unified` / `avatar_color`; sidebar discs match.
+- **Frame / block menus**: remove Condense/Expand (frame + thread menus) and Move to (block menu).
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: empty-board no init fit + I-bar grip center
 
 - DDL: none. Marker `20260911194959_empty_board_no_init_fit_ibar_grip_center.sql`.
 - **Empty board create**: RF `fitView` is init-only and retries until a node exists — mark `fitViewOnInitDone` + keep `fitView` off on empty `/board` so the first frame does not steal the camera.

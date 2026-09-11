@@ -44,7 +44,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { ChevronDown, ArrowDown, ChevronUp, Trash2 } from 'lucide-react'
+import { ChevronDown, ArrowDown, Trash2 } from 'lucide-react'
 import { useReactFlowContext } from './react-flow-context'
 import { useSidebarContext, PHONE_LAYOUT_MAX_WIDTH } from './sidebar-context'
 import { useChatSidebarViewportAdjust } from '@/lib/hooks/use-chat-sidebar-viewport'
@@ -4039,56 +4039,11 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
     await deleteNodesByIds([...ids])
   }, [rightClickedNode, studySetId, nodes, deleteNodesByIds])
 
-  // Handle condense node/panel (collapse response) - condense ALL selected panels
-  const handleCondenseNode = useCallback(() => {
-    if (!rightClickedNode) return
-
-    // Get all selected nodes (not just the right-clicked one)
-    const selectedNodes = nodes.filter((n) => n.selected)
-    if (selectedNodes.length === 0) return
-
-    // Determine if we should collapse or expand based on the right-clicked node's state
-    // If the right-clicked node is collapsed, we'll expand all selected; otherwise collapse all
-    const rightClickedNodeState = rightClickedNode.data.isResponseCollapsed || false
-    const shouldCollapse = !rightClickedNodeState // Toggle: if expanded, collapse; if collapsed, expand
-
-    // Update all selected nodes
-    const selectedNodeIds = new Set(selectedNodes.map((n) => n.id))
-    setNodes((nds) =>
-      nds.map((n) =>
-        selectedNodeIds.has(n.id)
-          ? {
-            ...n,
-            data: {
-              ...n.data,
-              isResponseCollapsed: shouldCollapse,
-            },
-          }
-          : n
-      )
-    )
-
-    // Update rightClickedNode to reflect the change
-    setRightClickedNode({
-      ...rightClickedNode,
-      data: {
-        ...rightClickedNode.data,
-        isResponseCollapsed: shouldCollapse,
-      },
-    })
-
-    // Don't close popup - allow user to toggle again if needed
-  }, [rightClickedNode, nodes, setNodes])
-
   // Study-set block actions (wired subset + baseline stubs)
   const handleBlockAction = useCallback(
     (action: BlockActionId, _payload?: BlockActionPayload) => {
       if (action === 'delete') {
         void handleDeleteNode()
-        return
-      }
-      if (action === 'condense') {
-        handleCondenseNode()
         return
       }
       if (action === 'copyLink' && rightClickedNode && studySetId) {
@@ -4103,7 +4058,7 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
       // Baseline stubs close the menu
       setRightClickedNode(null)
     },
-    [handleDeleteNode, handleCondenseNode, rightClickedNode, studySetId]
+    [handleDeleteNode, rightClickedNode, studySetId]
   )
 
   // Open block actions from the ⋮⋮ handle
@@ -4288,87 +4243,6 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
 
     setClickedEdge(edge)
   }, [clickedEdge, reactFlowInstance])
-
-  // Handle collapse/expand all panels connected to the edge
-  const handleCollapseTarget = useCallback(() => {
-    if (!clickedEdge) return
-
-    // Find all nodes in the connected component (all nodes reachable from source and target)
-    const connectedNodeIds = new Set<string>()
-    const visited = new Set<string>()
-
-    // Start with source and target nodes of the clicked edge
-    const startNodes = [clickedEdge.source, clickedEdge.target]
-    const queue = [...startNodes]
-
-    // BFS to find all connected nodes
-    while (queue.length > 0) {
-      const currentNodeId = queue.shift()!
-      if (visited.has(currentNodeId)) continue
-
-      visited.add(currentNodeId)
-      connectedNodeIds.add(currentNodeId)
-
-      // Find all edges connected to this node
-      edges.forEach(edge => {
-        if (edge.source === currentNodeId && !visited.has(edge.target)) {
-          queue.push(edge.target)
-        }
-        if (edge.target === currentNodeId && !visited.has(edge.source)) {
-          queue.push(edge.source)
-        }
-      })
-    }
-
-    // Get all connected nodes
-    const connectedNodes = nodes.filter(n => connectedNodeIds.has(n.id))
-    if (connectedNodes.length === 0) return
-
-    // Check collapse states
-    const allCollapsed = connectedNodes.every(n => n.data.isResponseCollapsed || false)
-    const allExpanded = connectedNodes.every(n => !(n.data.isResponseCollapsed || false))
-    const someCollapsed = connectedNodes.some(n => n.data.isResponseCollapsed || false)
-
-    // Determine action:
-    // - If all are collapsed: expand all
-    // - If all are expanded: collapse all
-    // - If some are collapsed and some expanded: only expand the collapsed ones (don't collapse expanded ones)
-    const shouldCollapse = allExpanded // Only collapse if all are expanded
-    const shouldExpand = allCollapsed || someCollapsed // Expand if all are collapsed OR if some are collapsed
-
-    // Update nodes: expand collapsed ones, or collapse all if all are expanded
-    setNodes((nds) =>
-      nds.map((n) => {
-        if (connectedNodeIds.has(n.id)) {
-          const isCurrentlyCollapsed = n.data.isResponseCollapsed || false
-
-          if (shouldCollapse && allExpanded) {
-            // All are expanded, so collapse all
-            return {
-              ...n,
-              data: {
-                ...n.data,
-                isResponseCollapsed: true,
-              },
-            }
-          } else if (shouldExpand && isCurrentlyCollapsed) {
-            // Some are collapsed, so expand only the collapsed ones
-            return {
-              ...n,
-              data: {
-                ...n.data,
-                isResponseCollapsed: false,
-              },
-            }
-          }
-          // Otherwise, keep current state
-          return n
-        }
-        return n
-      })
-    )
-    setClickedEdge(null) // Close popup
-  }, [clickedEdge, nodes, edges, setNodes])
 
   // Handle delete edge - delete from both React Flow state and database
   const handleDeleteEdge = useCallback(async () => {
@@ -5137,7 +5011,6 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
           x={nodePopupPosition.x}
           y={nodePopupPosition.y}
           zoom={reactFlowInstance.getViewport().zoom}
-          isCollapsed={!!rightClickedNode.data?.isResponseCollapsed}
           selectedCount={nodes.filter((n) => n.selected).length}
           showAddChild={false}
           canUngroup={false}
@@ -5153,7 +5026,7 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
         />
       )}
 
-      {/* Edge popup - shows collapse and delete options */}
+      {/* Edge popup - style + delete options */}
       {clickedEdge && reactFlowInstance && (
         <div
           className="edge-popup absolute z-[1000] bg-white dark:bg-[#1f1f1f] rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-2"
@@ -5174,57 +5047,6 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
           }}
         >
           <div className="flex flex-col gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleCollapseTarget}
-              className="justify-start text-sm"
-            >
-              {(() => {
-                // Find all connected nodes to determine button label
-                const connectedNodeIds = new Set<string>()
-                const visited = new Set<string>()
-                const startNodes = [clickedEdge.source, clickedEdge.target]
-                const queue = [...startNodes]
-
-                while (queue.length > 0) {
-                  const currentNodeId = queue.shift()!
-                  if (visited.has(currentNodeId)) continue
-                  visited.add(currentNodeId)
-                  connectedNodeIds.add(currentNodeId)
-
-                  edges.forEach(edge => {
-                    if (edge.source === currentNodeId && !visited.has(edge.target)) {
-                      queue.push(edge.target)
-                    }
-                    if (edge.target === currentNodeId && !visited.has(edge.source)) {
-                      queue.push(edge.source)
-                    }
-                  })
-                }
-
-                const connectedNodes = nodes.filter(n => connectedNodeIds.has(n.id))
-                const allExpanded = connectedNodes.length > 0 && connectedNodes.every(n => !(n.data.isResponseCollapsed || false))
-                const someCollapsed = connectedNodes.some(n => n.data.isResponseCollapsed || false)
-
-                // Show "Collapse" only if all are expanded, otherwise show "Expand"
-                if (allExpanded) {
-                  return (
-                    <>
-                      <ChevronUp className="h-4 w-4 mr-2" />
-                      Collapse
-                    </>
-                  )
-                } else {
-                  return (
-                    <>
-                      <ChevronDown className="h-4 w-4 mr-2" />
-                      Expand
-                    </>
-                  )
-                }
-              })()}
-            </Button>
             <Button
               variant="ghost"
               size="sm"

@@ -25,6 +25,13 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260911205603_profile_avatar_openmoji_menu_trim` — Profile avatar Edit dialog (OpenMoji + color); remove frame Condense/Expand + block Move to
+- `20260911194959_empty_board_no_init_fit_ibar_grip_center` — Empty-board no init fitView; I-bar ⋮⋮ centered on caret
+- `20260911193105_thread_uniform_frame_size_stroke` — Uniform frame-size thread stroke (no path taper)
+- `20260911184649_frame_adjust_chrome_rotated_hover_stripe` — Frame adjust chrome / rotated hover + Stripe
+- `20260911171538_desktop_mobile_download_shells` — Desktop + iOS download shells
+- `20260911145831_ibar_pane_scale_live_zoom_no_snap` — I-bar pane-scale live zoom (no size snap)
+- `20260911145513_ibar_place_scale_zoom_stable` — I-bar place-scale zoom-stable
 - `20260911101600_frame_resize_chrome_scale_zoom_band` — Frame resize soft floor 40px; fixed-paint chrome dots + scale(ui); board zoom 10%–1000%
 - `20260911093423_frame_chrome_live_zoom_rotate_reset` — Frame chrome live zoom scaling + click rotate resets to 0°
 - `20260911010005_homepage_showcase_claim_on_open` — Signed-in users claim private showcase copies on Open board (not on homepage preview)
