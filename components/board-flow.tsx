@@ -2771,6 +2771,19 @@ function BoardFlowInner({
     }
   }, [conversationId, isMessagesPending, messages.length, boardLoadPhase])
 
+  // RF `fitView` is fitViewOnInit: it retries until a node exists. On empty `/board` or a
+  // settled empty board that leaves fitViewOnInitDone=false, the first user-created frame
+  // would zoom the camera — mark init-fit done and skip the prop so create keeps viewport.
+  useEffect(() => {
+    if (embedded) return // Embeds one-shot fit in onInit / host commands only
+    const emptySettled =
+      !conversationId || (!isMessagesPending && messages.length === 0) // No row yet, or loaded empty
+    if (!emptySettled) return
+    if (!rfStore.getState().fitViewOnInitDone) {
+      rfStore.setState({ fitViewOnInitDone: true }) // Claim init so the next node add does not fit
+    }
+  }, [embedded, conversationId, isMessagesPending, messages.length, rfStore])
+
   useEffect(() => {
     if (boardLoadPhase !== 'reveal') return // Only after panels have mounted under the shells
     const t = window.setTimeout(() => {
@@ -10557,8 +10570,13 @@ function BoardFlowInner({
           focusIBarCapture() // Must focus editable in this tap turn or iPhone keyboard never opens
         }}
         defaultViewport={{ x: 0, y: 0, zoom: embedded ? 0.8 : 0.6 }}
-        // Embedded previews: no continuous fitView (fights pan/zoom); host keeps canvas fitView
-        fitView={!embedded && viewMode === 'canvas'}
+        // Init-fit only while a contentful board is loading — empty / new-board create must not zoom
+        fitView={
+          !embedded &&
+          viewMode === 'canvas' &&
+          !!conversationId &&
+          (isMessagesPending || messages.length > 0)
+        }
         fitViewOptions={{
           padding: 0.2,
           minZoom: zoomRange.minZoom,
@@ -11108,7 +11126,14 @@ function BoardFlowInner({
           flowY={iBarPosition.y}
           boardRotation={boardRotation}
         >
-          {({ left, top, paneScale }) => (
+          {({ left, top, paneScale }) => {
+          // Match frame ⋮⋮ (GRIP_H 16 / icon 14) and center on the caret — items-start left the 24×16
+          // button top-aligned so the dots sat high relative to the 18px I-bar.
+          const caretH = 18 * paneScale
+          const gripW = 14 * paneScale // Frame handle w-3.5
+          const gripH = 16 * paneScale // Frame GRIP_H
+          const gripGap = 4 * paneScale
+          return (
         <div
           data-tt-ibar-chrome
           className="absolute flex items-start"
@@ -11117,16 +11142,18 @@ function BoardFlowInner({
             left: `${left}px`,
             top: `${top}px`,
             zIndex: 1000,
-            transform: `translateX(-${24 * paneScale}px)`, // Grip (20) + gap (4) → caret sits on the flow click
-            gap: `${4 * paneScale}px`,
+            transform: `translateX(-${gripW + gripGap}px)`, // Grip + gap → caret sits on the flow click
+            gap: `${gripGap}px`,
           }}
         >
           <button
             type="button"
             className="nodrag nopan flex items-center justify-center rounded text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-black/5 dark:hover:bg-white/10 pointer-events-auto cursor-pointer"
             style={{
-              width: `${20 * paneScale}px`,
-              height: `${24 * paneScale}px`,
+              width: `${gripW}px`,
+              height: `${gripH}px`,
+              // Caret top stays on the click; nudge ⋮⋮ so its center matches the caret center
+              marginTop: `${(caretH - gripH) / 2}px`,
             }}
             title="Block actions"
             data-tt-ibar-grip
@@ -11161,19 +11188,20 @@ function BoardFlowInner({
               })
             }}
           >
-            <GripVertical style={{ width: `${16 * paneScale}px`, height: `${16 * paneScale}px` }} />
+            <GripVertical style={{ width: `${14 * paneScale}px`, height: `${14 * paneScale}px` }} />
           </button>
           {/* Blinking caret — place scale keeps screen size near 100% zoom (clamped) */}
           <div
             className="bg-gray-800 dark:bg-gray-100 pointer-events-none"
             style={{
               width: `${1 * paneScale}px`,
-              height: `${18 * paneScale}px`,
+              height: `${caretH}px`,
               animation: 'blink 1s step-end infinite',
             }}
           />
         </div>
-          )}
+          )
+          }}
         </IBarFlowAnchor>
       )}
 
