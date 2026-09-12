@@ -1655,7 +1655,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                 frameLockUi.locked ? 'Unlock frames' : 'Lock frames'
               }
             >
-              <LegoBrickIcon className="h-4 w-4 flex-shrink-0" /> {/* Frame-group lock: stacked bricks */}
+              <LegoBrickIcon className="h-4 w-4 flex-shrink-0" filled={frameLockUi.locked} /> {/* Outline default; filled when locked */}
               <ToolbarTitle show={!compactLabels}>Lock frames</ToolbarTitle>
             </Button>
           </div>
@@ -2852,7 +2852,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                       onClick={handleToggleFrameLock}
                       disabled={!frameLockUi.hasMulti}
                     >
-                      <LegoBrickIcon className="h-4 w-4 mr-2" /> {/* Overflow: same brick as Layout bar */}
+                      <LegoBrickIcon className="h-4 w-4 mr-2" filled={frameLockUi.locked} /> {/* Outline default; filled when locked */}
                       Lock frames
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />

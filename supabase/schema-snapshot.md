@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-11T20:56:03Z`
+- Snapped at: `2026-09-12T00:30:36Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (link refreshed; `db dump` / `migration list` blocked on remote login-role alter — marker + version snapshot only)
@@ -9,6 +9,14 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260912003036_frame_shape_grip_clip_border.sql`.
+- **Shape ⋮⋮ clip**: skip fill-shell silhouette `clip-path` while the frame is selected so block grips / add lines in the L chrome are not cut off.
+- **Shape border**: silhouette stroke defaults on (theme gray); Color → Default border sets `borderStyle: 'none'` to hide; re-applying a shape restores the outline.
+- **Lock-frames icon**: outline by default, filled when frames are locked together.
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: profile avatar OpenMoji + menu trim
 
 - DDL: none. Marker `20260911205603_profile_avatar_openmoji_menu_trim.sql`.
 - **Profile avatar**: Settings Account pencil opens Edit profile dialog — OpenMoji grid + background color swatches; persists `profiles.metadata.avatar_emoji` / `avatar_unified` / `avatar_color`; sidebar discs match.

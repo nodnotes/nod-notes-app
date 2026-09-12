@@ -734,7 +734,7 @@ export function BlockActionsMenu({
         kind: 'action',
         id: 'lockFramesTogether',
         label: framesLockedTogether ? 'Unlock frames from each other' : 'Lock frames to each other',
-        icon: <LegoBrickIcon className="h-4 w-4" />, // Same brick as Actions-bar frame lock
+        icon: <LegoBrickIcon className="h-4 w-4" filled={framesLockedTogether} />, // Outline default; filled when locked
         hidden: !showFrameShape || !canLockFramesTogether, // Needs ≥2 selected frames
       },
       {

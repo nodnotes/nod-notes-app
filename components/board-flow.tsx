@@ -7978,6 +7978,8 @@ function BoardFlowInner({
         nextMeta.frameUnlocked = true
         nextMeta.resizeDimensions = { width: nextW, height: nextH }
         nextMeta.unlockedFrameSize = { width: nextW, height: nextH }
+        // Silhouettes outline by default — undo Color → Default border hide
+        if (nextMeta.borderStyle === 'none') nextMeta.borderStyle = 'solid'
       }
 
       const supabase = createClient()
@@ -7998,6 +8000,10 @@ function BoardFlowInner({
             data: {
               ...n.data,
               frameShape: shape ?? undefined,
+              // Keep RF borderStyle in sync when re-applying a silhouette restores the outline
+              ...(shape && nextMeta.borderStyle === 'solid'
+                ? { borderStyle: 'solid' as string }
+                : {}),
               promptMessage: { ...pm, metadata: { ...pm.metadata, ...nextMeta } },
             },
           }
@@ -8025,13 +8031,16 @@ function BoardFlowInner({
       if (targets.length === 0) return
       takeSnapshot?.()
       const ids = new Set(targets.map((n) => n.id))
-      // Border color needs a visible style; clearing color leaves style alone
+      // Border color needs a visible style; Default on a silhouette hides the stroke via borderStyle none
       const patchMeta = (meta: Record<string, unknown>) => {
         const out: Record<string, unknown> = { ...meta, [kind]: value || null }
         if (kind === 'borderColor') {
           if (value) {
             if (!out.borderStyle || out.borderStyle === 'none') out.borderStyle = 'solid'
             if (out.borderWeight == null) out.borderWeight = 1
+          } else if (parseFrameShape(out.frameShape)) {
+            // Default border on a silhouette → hide stroke (empty color alone still paints theme gray)
+            out.borderStyle = 'none'
           }
         }
         return out
@@ -8040,7 +8049,15 @@ function BoardFlowInner({
       // that no longer matches ChatPanelNodeData at the setRightClickedNode call below.
       const patchData = (data: ChatPanelNodeData): ChatPanelNodeData => {
         const pm = data?.promptMessage
-        const meta = patchMeta({ ...((pm?.metadata as Record<string, unknown>) || {}) })
+        // Prefer live RF shape; fall back to persisted metadata (menu target may lag)
+        const shaped = Boolean(
+          parseFrameShape(data.frameShape) ||
+            parseFrameShape((pm?.metadata as Record<string, unknown> | undefined)?.frameShape)
+        )
+        const meta = patchMeta({
+          ...((pm?.metadata as Record<string, unknown>) || {}),
+          ...(data.frameShape ? { frameShape: data.frameShape } : {}),
+        })
         return {
           ...data,
           [kind]: value,
@@ -8051,7 +8068,9 @@ function BoardFlowInner({
                   : 'solid') as string,
                 borderWeight: data.borderWeight ?? 1,
               }
-            : {}),
+            : kind === 'borderColor' && !value && shaped
+              ? { borderStyle: 'none' } // Hide silhouette stroke with Color → Default border
+              : {}),
           promptMessage: pm ? { ...pm, metadata: meta } : pm,
         }
       }

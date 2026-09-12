@@ -7435,14 +7435,19 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const shapeBoxW = contentBoxW
   const shapeBoxH = contentBoxH
   const shapeClip = frameShape ? frameShapeClipCss(frameShape) : undefined
-  const shapeStroke =
-    resolvedBorderColor && resolvedBorderColor !== ''
+  // Silhouette outline: theme gray by default; Color → Default border sets borderStyle none to hide
+  const shapeBorderHidden = data.borderStyle === 'none'
+  const shapeStroke = shapeBorderHidden
+    ? 'transparent'
+    : resolvedBorderColor && resolvedBorderColor !== ''
       ? resolvedBorderColor
       : resolvedTheme === 'dark'
         ? '#9ca3af'
         : '#6b7280'
   const shapeFill = isFillTransparent ? 'transparent' : data.fillColor!
-  const shapeStrokeW = Math.max(1, parseFloat(String(data.borderWeight || '2')) || 2)
+  const shapeStrokeW = shapeBorderHidden
+    ? 0
+    : Math.max(1, parseFloat(String(data.borderWeight || '2')) || 2)
   // Silhouette paints on the content box — not the blue L/R gutters when selected
   const shapeAreaStyle: React.CSSProperties = {
     left: adjustPadCss || 0,
@@ -8139,9 +8144,15 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           borderRadius: frameCornerRadius || undefined,
           // Empty / selected custom borders paint here — panel border is off while adjust chrome is on
           boxShadow: fillShellBorderShadow,
-          // Polygon clips work in CSS; cylinder/ellipse use SVG fill instead (path clip is unreliable)
+          // Polygon clips work in CSS; cylinder/ellipse use SVG fill instead (path clip is unreliable).
+          // Skip while selected: ⋮⋮ + add lines live in the L chrome (negative left) and must not be
+          // cut by the silhouette — grips only mount when selected anyway.
           clipPath:
-            frameShape && !showClipPreview && frameShape !== 'cylinder' && frameShape !== 'circle'
+            frameShape &&
+            !selected &&
+            !showClipPreview &&
+            frameShape !== 'cylinder' &&
+            frameShape !== 'circle'
               ? shapeClip
               : undefined,
           ...(isContentRotated
