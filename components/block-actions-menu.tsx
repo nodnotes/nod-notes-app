@@ -1286,7 +1286,7 @@ export function BlockActionsMenu({
 
           {turnIntoPane === 'format' ? (
             /* Format: shrink-wrap type list */
-            <div className="flex w-max min-w-max flex-col gap-1 overflow-y-auto p-1">
+            <div data-tt-menu-scroll className="flex w-max min-w-max flex-col gap-1 overflow-y-auto p-1">
               {filteredTurnInto.map((t) => (
                 <Button
                   key={t.id}
@@ -1323,7 +1323,7 @@ export function BlockActionsMenu({
             </div>
           ) : (
             /* Property: AI Autofill + type grids + connectors */
-            <div className="max-h-[min(70vh,420px)] overflow-y-auto p-1.5">
+            <div data-tt-menu-scroll className="max-h-[min(70vh,420px)] overflow-y-auto p-1.5">
               {showPropertySearch && (
                 <input
                   ref={propertySearchRef}
@@ -1408,9 +1408,10 @@ export function BlockActionsMenu({
           {openSubmenu === 'boardIn' && turnIntoPane === 'format' && (
             <div
               data-tt-menu-flyout="nested"
-              className="absolute z-[1002] min-w-[200px] overflow-y-auto tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1"
+              className="absolute z-[1002] min-w-[200px] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f]"
               onMouseEnter={() => setOpenSubmenu('boardIn')}
             >
+              <div data-tt-menu-scroll className="overflow-y-auto p-1">
               <div className="px-2 py-1.5 text-[11px] text-gray-400">Nest board under…</div>
               {(boardInTargets.length > 0 ? boardInTargets : [{ id: '', title: 'Current board' }]).map(
                 (target) => (
@@ -1434,6 +1435,7 @@ export function BlockActionsMenu({
                   </Button>
                 )
               )}
+              </div>
             </div>
           )}
         </div>
@@ -1646,9 +1648,12 @@ export function BlockActionsMenu({
       {openSubmenu === 'frameColor' && (
         <div
           data-tt-menu-flyout="main"
-          className="absolute z-[1001] w-[240px] overflow-y-auto tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] py-1.5"
+          data-tt-menu-max-h="420"
+          className="absolute z-[1001] w-[240px] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f]"
           onMouseEnter={() => setOpenSubmenu('frameColor')}
         >
+          {/* Inner scroller — keep overflow off .tt-menu-surface so ::before blur covers the full card */}
+          <div data-tt-menu-scroll className="overflow-y-auto py-1.5">
           {/* Last used */}
           <div className="px-3 pt-1 pb-1 text-[11px] font-medium text-gray-400">Last used</div>
           {lastFrameColor ? (
@@ -1772,6 +1777,7 @@ export function BlockActionsMenu({
               />
             )
           })()}
+          </div>
         </div>
       )}
 

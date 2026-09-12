@@ -9,6 +9,13 @@ import { parseBoardFontId, type BoardFontId } from '@/lib/board-font'
 
 import { isPublicBoardId } from '@/lib/public-showcase-boards'
 import { getEphemeralSandbox, isEphemeralSandboxId } from '@/lib/ephemeral-sandbox'
+import type { DrawInkId } from '@/components/freehand/ink' // Pencil / highlighter swatch ids
+import {
+  DEFAULT_DRAW_TIP_DIAMETER_PX,
+  DEFAULT_ERASER_TIP_DIAMETER_PX,
+  MAX_TIP_DIAMETER_PX,
+  MIN_TIP_DIAMETER_PX,
+} from '@/components/freehand/path' // Tip thickness bar range + defaults
 
 interface ReactFlowContextType {
   reactFlowInstance: ReactFlowInstance | null
@@ -56,6 +63,16 @@ interface ReactFlowContextType {
   setIsDrawing: (drawing: boolean) => void // Function to set drawing mode
   drawTool: DrawTool | null // Current Draw-bar tool (null = none armed)
   setDrawTool: (tool: DrawTool | null) => void // Arm / disarm a Draw-bar tool
+  eraserMode: EraserMode // Stroke = whole ink; spot = carve under the brush
+  setEraserMode: (mode: EraserMode) => void // Remember last eraser flavor
+  drawTipSize: number // Pencil/highlighter tip diameter (screen px)
+  setDrawTipSize: (size: number) => void // Persist draw tip for the thickness bar
+  eraserTipSize: number // Eraser tip diameter (screen px)
+  setEraserTipSize: (size: number) => void // Persist eraser tip for the thickness bar
+  pencilColor: DrawInkId // Freehand pencil swatch (independent of highlighter)
+  setPencilColor: (color: DrawInkId) => void // Remember pencil ink for new strokes
+  highlighterColor: DrawInkId // Highlighter swatch (independent of pencil)
+  setHighlighterColor: (color: DrawInkId) => void // Remember highlighter ink for new strokes
   drawShape: 'rectangle' | 'circle' | 'line' | 'arrow' | 'round-rectangle' | 'hexagon' | 'diamond' | 'arrow-rectangle' | 'cylinder' | 'triangle' | 'parallelogram' | 'plus' // Current shape
   setDrawShape: (shape: 'rectangle' | 'circle' | 'line' | 'arrow' | 'round-rectangle' | 'hexagon' | 'diamond' | 'arrow-rectangle' | 'cylinder' | 'triangle' | 'parallelogram' | 'plus') => void // Function to set shape
   // Undo/Redo functions for React Flow map actions (registered from BoardFlow where useUndoRedo hook is used)
@@ -77,12 +94,25 @@ const NN_PILL_MODE_KEY = 'nodnotes-edit-menu-pill-mode'
 
 /** localStorage — last armed Draw tool (pencil/lasso/…) so reload keeps it toggled. */
 const NN_DRAW_TOOL_KEY = 'nodnotes-draw-tool'
+/** localStorage — stroke vs spot eraser flavor. */
+const NN_ERASER_MODE_KEY = 'nodnotes-eraser-mode'
+/** localStorage — pencil/highlighter tip diameter (screen px). */
+const NN_DRAW_TIP_SIZE_KEY = 'nodnotes-draw-tip-size'
+/** localStorage — eraser tip diameter (screen px). */
+const NN_ERASER_TIP_SIZE_KEY = 'nodnotes-eraser-tip-size'
+/** localStorage — last pencil ink swatch. */
+const NN_PENCIL_COLOR_KEY = 'nodnotes-pencil-color'
+/** localStorage — last highlighter ink swatch. */
+const NN_HIGHLIGHTER_COLOR_KEY = 'nodnotes-highlighter-color'
 
 const PILL_MODES = ['home', 'insert', 'draw', 'view'] as const // Valid pill values (Actions = home, Layout = insert)
 type EditMenuPillMode = (typeof PILL_MODES)[number] // Matches context editMenuPillMode
 const DRAW_TOOLS = ['lasso', 'pencil', 'highlighter', 'eraser', 'insert-v', 'insert-h'] as const // Valid Draw tools (null = none); insert-v/h = insert space
 export type DrawTool = (typeof DRAW_TOOLS)[number] // Armed Draw tool (also the persisted value)
 type StoredDrawTool = DrawTool // Same set is what reload restores
+const ERASER_MODES = ['stroke', 'spot'] as const // Whole-stroke delete vs brush carve
+export type EraserMode = (typeof ERASER_MODES)[number]
+const DRAW_INK_IDS = ['black', 'blue', 'green', 'red'] as const // Same swatches as the Draw dropdowns
 
 /** Read last pill; SSR-safe → Actions. */
 function getStoredPillMode(): EditMenuPillMode {
@@ -109,6 +139,48 @@ function persistDrawTool(tool: StoredDrawTool | null) {
   if (typeof window === 'undefined') return // No storage on server
   if (tool) localStorage.setItem(NN_DRAW_TOOL_KEY, tool) // Keep it armed after reload
   else localStorage.removeItem(NN_DRAW_TOOL_KEY) // Deselect → next load has no Draw tool
+}
+
+/** Read last eraser flavor; SSR-safe → stroke. */
+function getStoredEraserMode(): EraserMode {
+  if (typeof window === 'undefined') return 'stroke'
+  const saved = localStorage.getItem(NN_ERASER_MODE_KEY)
+  return ERASER_MODES.includes(saved as EraserMode) ? (saved as EraserMode) : 'stroke'
+}
+
+function persistEraserMode(mode: EraserMode) {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(NN_ERASER_MODE_KEY, mode)
+}
+
+/** Clamp tip diameter into the Draw/Eraser thickness bar range. */
+function clampTipDiameter(n: number, fallback: number) {
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(MAX_TIP_DIAMETER_PX, Math.max(MIN_TIP_DIAMETER_PX, Math.round(n)))
+}
+
+function getStoredTipDiameter(key: string, fallback: number): number {
+  if (typeof window === 'undefined') return fallback
+  const saved = localStorage.getItem(key)
+  if (saved == null) return fallback
+  return clampTipDiameter(Number(saved), fallback)
+}
+
+function persistTipDiameter(key: string, size: number, fallback: number) {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(key, String(clampTipDiameter(size, fallback)))
+}
+
+/** Read last ink swatch; SSR-safe → black. */
+function getStoredDrawInk(key: string): DrawInkId {
+  if (typeof window === 'undefined') return 'black'
+  const saved = localStorage.getItem(key)
+  return DRAW_INK_IDS.includes(saved as DrawInkId) ? (saved as DrawInkId) : 'black'
+}
+
+function persistDrawInk(key: string, color: DrawInkId) {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(key, color)
 }
 
 export function ReactFlowContextProvider({ children, conversationId, projectId }: { children: ReactNode; conversationId?: string; projectId?: string }) {
@@ -139,6 +211,11 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
   const [selectedTag, setSelectedTag] = useState<string | null>(null) // Selected flashcard tag for filtering navigation
   const [isDrawing, setIsDrawing] = useState<boolean>(false) // Drawing mode state (default: selection mode)
   const [drawTool, setDrawToolState] = useState<DrawTool | null>(null) // SSR: none; restore armed tool before paint
+  const [eraserMode, setEraserModeState] = useState<EraserMode>('stroke') // SSR default; hydrate from storage before paint
+  const [drawTipSize, setDrawTipSizeState] = useState<number>(DEFAULT_DRAW_TIP_DIAMETER_PX) // Pencil tip; hydrate before paint
+  const [eraserTipSize, setEraserTipSizeState] = useState<number>(DEFAULT_ERASER_TIP_DIAMETER_PX) // Eraser tip; hydrate before paint
+  const [pencilColor, setPencilColorState] = useState<DrawInkId>('black') // SSR default; hydrate pencil swatch before paint
+  const [highlighterColor, setHighlighterColorState] = useState<DrawInkId>('black') // SSR default; hydrate highlighter swatch before paint
   const [drawShape, setDrawShape] = useState<'rectangle' | 'circle' | 'line' | 'arrow' | 'round-rectangle' | 'hexagon' | 'diamond' | 'arrow-rectangle' | 'cylinder' | 'triangle' | 'parallelogram' | 'plus'>('rectangle') // Current shape (default: rectangle)
   const [snapEnabled, setSnapEnabled] = useState<boolean>(false) // Snap to grid/helper lines enabled state (default: disabled)
   
@@ -163,24 +240,62 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
   const setEditMenuPillMode = useCallback((mode: EditMenuPillMode) => {
     persistPillMode(mode) // Remember before the next load
     setEditMenuPillModeState(mode) // Swap the tool set immediately
+    if (mode !== 'draw') {
+      // Leaving Draw: turn off pencil/eraser/lasso/insert-space so other bars can't ink or erase
+      persistDrawTool(null) // Clear last armed tool — toggles stay off until Draw re-arms one
+      setDrawToolState(null) // Drop Freehand / eraser / lasso overlays immediately
+      setIsDrawing(false) // Pencil/highlighter freehand capture must not outlive the Draw bar
+    }
   }, [])
 
-  // Persist the armed Draw tool; pencil is the only tool that enables freehand
+  // Persist the armed Draw tool; pencil/highlighter set isDrawing (freehand overlay); eraser mounts separately
   const setDrawTool = useCallback((tool: StoredDrawTool | null) => {
     persistDrawTool(tool) // Remember (or clear) for reload
     setDrawToolState(tool) // Arm / disarm on the bar
   }, [])
 
+  const setEraserMode = useCallback((mode: EraserMode) => {
+    persistEraserMode(mode) // Keep stroke vs spot across reload
+    setEraserModeState(mode)
+  }, [])
+
+  const setDrawTipSize = useCallback((size: number) => {
+    const next = clampTipDiameter(size, DEFAULT_DRAW_TIP_DIAMETER_PX)
+    persistTipDiameter(NN_DRAW_TIP_SIZE_KEY, next, DEFAULT_DRAW_TIP_DIAMETER_PX)
+    setDrawTipSizeState(next)
+  }, [])
+
+  const setEraserTipSize = useCallback((size: number) => {
+    const next = clampTipDiameter(size, DEFAULT_ERASER_TIP_DIAMETER_PX)
+    persistTipDiameter(NN_ERASER_TIP_SIZE_KEY, next, DEFAULT_ERASER_TIP_DIAMETER_PX)
+    setEraserTipSizeState(next)
+  }, [])
+
+  const setPencilColor = useCallback((color: DrawInkId) => {
+    persistDrawInk(NN_PENCIL_COLOR_KEY, color) // Remember pencil swatch across reload
+    setPencilColorState(color) // Freehand pencil strokes use this fill
+  }, [])
+
+  const setHighlighterColor = useCallback((color: DrawInkId) => {
+    persistDrawInk(NN_HIGHLIGHTER_COLOR_KEY, color) // Remember highlighter swatch across reload
+    setHighlighterColorState(color) // Freehand highlighter strokes use this fill
+  }, [])
+
   // Restore pill + Draw tool before first paint (skip embed — no toolbar, must not arm Freehand)
   useLayoutEffect(() => {
     if (pathname?.startsWith('/embed/')) return // Nested preview iframe stays selection-only
+    setEraserModeState(getStoredEraserMode()) // Stroke / spot from last session
+    setDrawTipSizeState(getStoredTipDiameter(NN_DRAW_TIP_SIZE_KEY, DEFAULT_DRAW_TIP_DIAMETER_PX))
+    setEraserTipSizeState(getStoredTipDiameter(NN_ERASER_TIP_SIZE_KEY, DEFAULT_ERASER_TIP_DIAMETER_PX))
+    setPencilColorState(getStoredDrawInk(NN_PENCIL_COLOR_KEY)) // Pencil swatch from last session
+    setHighlighterColorState(getStoredDrawInk(NN_HIGHLIGHTER_COLOR_KEY)) // Highlighter swatch from last session
     const mode = getStoredPillMode() // Last Actions / Layout / Draw / View
     setEditMenuPillModeState(mode) // Same tool set as last session
     if (mode !== 'draw') return // Other modes: don’t arm a Draw tool or capture the board
     const tool = getStoredDrawTool() // Last toggled Draw tool, if any
     if (!tool) return // Draw bar with nothing selected
     setDrawToolState(tool) // Re-toggle that tool on the Draw bar
-    setIsDrawing(tool === 'pencil') // Only freehand captures the board
+    setIsDrawing(tool === 'pencil' || tool === 'highlighter') // Pencil + highlighter → freehand overlay
   }, [pathname])
 
   // Refs to track conversationId and loading state without triggering save effects
@@ -1125,7 +1240,7 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
   }, [])
 
   return (
-    <ReactFlowContext.Provider value={{ reactFlowInstance, setReactFlowInstance, getSetNodes, registerSetNodes, isLocked, setIsLocked, layoutMode, setLayoutMode, isDeterministicMapping, setIsDeterministicMapping, panelWidth, setPanelWidth, isPromptBoxCentered, setIsPromptBoxCentered, lineStyle, setLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, setEditMenuPillMode, viewMode, boardRule, setBoardRule, boardStyle, setBoardStyle, boardFont, setBoardFont, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, setClickedEdge, flashcardMode, setFlashcardMode, selectedTag, setSelectedTag: toggleSelectedTag, isDrawing, setIsDrawing, drawTool, setDrawTool, drawShape, setDrawShape, mapUndo, mapRedo, canMapUndo: mapUndoRedoState.canUndo, canMapRedo: mapUndoRedoState.canRedo, registerMapUndoRedo, getMapTakeSnapshot, registerMapTakeSnapshot, snapEnabled, setSnapEnabled }}>
+    <ReactFlowContext.Provider value={{ reactFlowInstance, setReactFlowInstance, getSetNodes, registerSetNodes, isLocked, setIsLocked, layoutMode, setLayoutMode, isDeterministicMapping, setIsDeterministicMapping, panelWidth, setPanelWidth, isPromptBoxCentered, setIsPromptBoxCentered, lineStyle, setLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, setEditMenuPillMode, viewMode, boardRule, setBoardRule, boardStyle, setBoardStyle, boardFont, setBoardFont, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, setClickedEdge, flashcardMode, setFlashcardMode, selectedTag, setSelectedTag: toggleSelectedTag, isDrawing, setIsDrawing, drawTool, setDrawTool, eraserMode, setEraserMode, drawTipSize, setDrawTipSize, eraserTipSize, setEraserTipSize, pencilColor, setPencilColor, highlighterColor, setHighlighterColor, drawShape, setDrawShape, mapUndo, mapRedo, canMapUndo: mapUndoRedoState.canUndo, canMapRedo: mapUndoRedoState.canRedo, registerMapUndoRedo, getMapTakeSnapshot, registerMapTakeSnapshot, snapEnabled, setSnapEnabled }}>
       {children}
     </ReactFlowContext.Provider>
   )
@@ -1135,7 +1250,7 @@ export function useReactFlowContext() {
   const context = useContext(ReactFlowContext)
   if (context === undefined) {
     // Return null values if context is not available (graceful degradation)
-    return { reactFlowInstance: null, setReactFlowInstance: () => { }, getSetNodes: () => undefined, registerSetNodes: () => { }, isLocked: false, setIsLocked: () => { }, layoutMode: 'auto' as const, setLayoutMode: () => { }, isDeterministicMapping: false, setIsDeterministicMapping: () => { }, panelWidth: 768, setPanelWidth: () => { }, isPromptBoxCentered: false, setIsPromptBoxCentered: () => { }, lineStyle: 'solid' as const, setLineStyle: () => { }, arrowDirection: 'down' as const, setArrowDirection: () => { }, editMenuPillMode: 'home' as const, setEditMenuPillMode: () => { }, viewMode: 'canvas' as const, boardRule: 'college' as const, setBoardRule: () => { }, boardStyle: 'dotted' as const, setBoardStyle: () => { }, boardFont: 'default' as const, setBoardFont: () => { }, fillColor: '', setFillColor: () => { }, borderColor: '', setBorderColor: () => { }, borderWeight: 1, setBorderWeight: () => { }, borderStyle: 'solid' as const, setBorderStyle: () => { }, clickedEdge: null, setClickedEdge: () => { }, flashcardMode: null, setFlashcardMode: () => { }, selectedTag: null, setSelectedTag: () => { }, isDrawing: false, setIsDrawing: () => { }, drawTool: null, setDrawTool: () => { }, drawShape: 'rectangle' as const, setDrawShape: () => { }, mapUndo: () => { }, mapRedo: () => { }, canMapUndo: false, canMapRedo: false, registerMapUndoRedo: () => { }, getMapTakeSnapshot: () => undefined, registerMapTakeSnapshot: () => { }, snapEnabled: false, setSnapEnabled: () => { } }
+    return { reactFlowInstance: null, setReactFlowInstance: () => { }, getSetNodes: () => undefined, registerSetNodes: () => { }, isLocked: false, setIsLocked: () => { }, layoutMode: 'auto' as const, setLayoutMode: () => { }, isDeterministicMapping: false, setIsDeterministicMapping: () => { }, panelWidth: 768, setPanelWidth: () => { }, isPromptBoxCentered: false, setIsPromptBoxCentered: () => { }, lineStyle: 'solid' as const, setLineStyle: () => { }, arrowDirection: 'down' as const, setArrowDirection: () => { }, editMenuPillMode: 'home' as const, setEditMenuPillMode: () => { }, viewMode: 'canvas' as const, boardRule: 'college' as const, setBoardRule: () => { }, boardStyle: 'dotted' as const, setBoardStyle: () => { }, boardFont: 'default' as const, setBoardFont: () => { }, fillColor: '', setFillColor: () => { }, borderColor: '', setBorderColor: () => { }, borderWeight: 1, setBorderWeight: () => { }, borderStyle: 'solid' as const, setBorderStyle: () => { }, clickedEdge: null, setClickedEdge: () => { }, flashcardMode: null, setFlashcardMode: () => { }, selectedTag: null, setSelectedTag: () => { }, isDrawing: false, setIsDrawing: () => { }, drawTool: null, setDrawTool: () => { }, eraserMode: 'stroke' as const, setEraserMode: () => { }, drawTipSize: 12, setDrawTipSize: () => { }, eraserTipSize: 28, setEraserTipSize: () => { }, pencilColor: 'black' as const, setPencilColor: () => { }, highlighterColor: 'black' as const, setHighlighterColor: () => { }, drawShape: 'rectangle' as const, setDrawShape: () => { }, mapUndo: () => { }, mapRedo: () => { }, canMapUndo: false, canMapRedo: false, registerMapUndoRedo: () => { }, getMapTakeSnapshot: () => undefined, registerMapTakeSnapshot: () => { }, snapEnabled: false, setSnapEnabled: () => { } }
   }
   return context
 }

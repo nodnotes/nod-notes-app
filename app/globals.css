@@ -1537,9 +1537,9 @@ span[data-added="true"] {
     pointer-events: none !important;
   }
 
-  /* Show selection border (blue box) when freehand node is selected */
+  /* Selection chrome is adjust ring + circular corner dots (no CSS border) */
   .react-flow__node-freehand.selected {
-    border: 2px solid #3b82f6 !important; /* Blue border like example */
+    border: none !important;
     box-shadow: none !important;
   }
 
@@ -1564,23 +1564,26 @@ span[data-added="true"] {
     pointer-events: auto;
   }
 
+  /* Draw-bar eraser: same capture layer as pencil, cell cursor reads as “remove” */
+  .freehand-eraser-overlay {
+    cursor: cell;
+  }
+
   .freehand-overlay svg {
     width: 100%;
     height: 100%;
   }
 
-  /* Freehand drawing path - black in light mode */
+  /* Freehand drawing path - black in light mode (class only — do not target chrome Lucide svgs) */
   .freehand-path,
-  .freehand-overlay svg path,
-  .react-flow__node-freehand svg path {
+  .freehand-overlay svg path {
     fill: #000000;
     stroke: none;
   }
 
   /* Freehand drawing path - white in dark mode for visibility */
   .dark .freehand-path,
-  .dark .freehand-overlay svg path,
-  .dark .react-flow__node-freehand svg path {
+  .dark .freehand-overlay svg path {
     fill: #ffffff;
   }
 
@@ -1592,38 +1595,6 @@ span[data-added="true"] {
   .react-flow__resize-control {
     pointer-events: all;
     touch-action: none; /* Phone: don't let Safari steal corner-drag for pan/pinch */
-  }
-
-  /* Hide midpoint resize handles - only show corner handles (4 total) for freehand nodes */
-  /* React Flow creates 8 handles: 4 corners + 4 midpoints. Hide midpoints (handles 5-8). */
-  /* Show only the first 4 handles which are the corner handles */
-  .react-flow__node-freehand .react-flow__node-resizer .react-flow__resize-control:nth-child(n+5) {
-    display: none !important;
-  }
-
-  /* Make resize control handles bigger for freehand nodes - corner handles only */
-  /* Use very specific selectors to override React Flow's inline styles */
-  .react-flow__node-freehand.selected .react-flow__node-resizer .react-flow__resize-control,
-  .react-flow__node-freehand .react-flow__node-resizer .react-flow__resize-control {
-    width: 12px !important;
-    height: 12px !important;
-    min-width: 12px !important;
-    min-height: 12px !important;
-    max-width: 12px !important;
-    max-height: 12px !important;
-    background-color: #ffffff !important;
-    border: 2px solid #9e86ed !important;
-    border-radius: 2px !important;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1) !important;
-    /* Override any inline styles React Flow might apply */
-    box-sizing: border-box !important;
-  }
-
-  /* Dark mode resize handles for freehand nodes */
-  .dark .react-flow__node-freehand.selected .react-flow__node-resizer .react-flow__resize-control,
-  .dark .react-flow__node-freehand .react-flow__node-resizer .react-flow__resize-control {
-    background-color: #1a1a1a !important;
-    border-color: #9e86ed !important;
   }
 
   /* Shape node label styling - matches shapes-pro-example */
@@ -1748,9 +1719,12 @@ span[data-added="true"] {
   /* Connected selection rectangle — RF line controls meet the corner dots.
      Hit box stays centered on the edge (RF translate ±50%); the blue STROKE is painted at
      the hit-box center so it stays on the frame edge when --tt-frame-line-hit grows.
-     (border-top/left on a tall hit box sat at the outer rim and floated past the corner dots.) */
+     (border-top/left on a tall hit box sat at the outer rim and floated past the corner dots.)
+     Frames + drawings share this chrome. */
   .react-flow__node-chatPanel .react-flow__resize-control.line,
-  .react-flow__node-chatPanel .tt-frame-resize-line {
+  .react-flow__node-freehand .react-flow__resize-control.line,
+  .react-flow__node-chatPanel .tt-frame-resize-line,
+  .react-flow__node-freehand .tt-frame-resize-line {
     border: none !important;
     background-color: transparent !important;
     background-repeat: no-repeat !important;
@@ -1759,65 +1733,97 @@ span[data-added="true"] {
     z-index: 55 !important;
   }
   .react-flow__node-chatPanel .react-flow__resize-control.line.top,
-  .react-flow__node-chatPanel .tt-frame-resize-line.top {
+  .react-flow__node-freehand .react-flow__resize-control.line.top,
+  .react-flow__node-chatPanel .tt-frame-resize-line.top,
+  .react-flow__node-freehand .tt-frame-resize-line.top {
     height: var(--tt-frame-line-hit, 6px) !important;
     background-image: linear-gradient(#3b82f6, #3b82f6) !important;
     background-size: 100% var(--tt-frame-line-w, 1.5px) !important;
   }
   .react-flow__node-chatPanel .react-flow__resize-control.line.bottom,
-  .react-flow__node-chatPanel .tt-frame-resize-line.bottom {
+  .react-flow__node-freehand .react-flow__resize-control.line.bottom,
+  .react-flow__node-chatPanel .tt-frame-resize-line.bottom,
+  .react-flow__node-freehand .tt-frame-resize-line.bottom {
     height: var(--tt-frame-line-hit, 6px) !important;
     background-image: linear-gradient(#3b82f6, #3b82f6) !important;
     background-size: 100% var(--tt-frame-line-w, 1.5px) !important;
   }
   .react-flow__node-chatPanel .react-flow__resize-control.line.left,
-  .react-flow__node-chatPanel .tt-frame-resize-line.left {
+  .react-flow__node-freehand .react-flow__resize-control.line.left,
+  .react-flow__node-chatPanel .tt-frame-resize-line.left,
+  .react-flow__node-freehand .tt-frame-resize-line.left {
     width: var(--tt-frame-line-hit, 6px) !important;
     background-image: linear-gradient(#3b82f6, #3b82f6) !important;
     background-size: var(--tt-frame-line-w, 1.5px) 100% !important;
   }
   .react-flow__node-chatPanel .react-flow__resize-control.line.right,
-  .react-flow__node-chatPanel .tt-frame-resize-line.right {
+  .react-flow__node-freehand .react-flow__resize-control.line.right,
+  .react-flow__node-chatPanel .tt-frame-resize-line.right,
+  .react-flow__node-freehand .tt-frame-resize-line.right {
     width: var(--tt-frame-line-hit, 6px) !important;
     background-image: linear-gradient(#3b82f6, #3b82f6) !important;
     background-size: var(--tt-frame-line-w, 1.5px) 100% !important;
   }
   /* Square adjust ring paints the stroke — keep line controls as invisible hit targets only.
-     Must beat `.react-flow__resize-control.line.{side}` (4 classes) or the blue line stroke
-     still paints → double border (outer RF lines + inner fill boxShadow). */
+     Must beat side line rules (4 classes) or the blue line stroke still paints → double border. */
   .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.top,
+  .react-flow__node-freehand .react-flow__resize-control.line.tt-frame-resize-line-hit.top,
   .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.bottom,
+  .react-flow__node-freehand .react-flow__resize-control.line.tt-frame-resize-line-hit.bottom,
   .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.left,
+  .react-flow__node-freehand .react-flow__resize-control.line.tt-frame-resize-line-hit.left,
   .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.right,
+  .react-flow__node-freehand .react-flow__resize-control.line.tt-frame-resize-line-hit.right,
   .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.top,
+  .react-flow__node-freehand .tt-frame-resize-line.tt-frame-resize-line-hit.top,
   .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.bottom,
+  .react-flow__node-freehand .tt-frame-resize-line.tt-frame-resize-line-hit.bottom,
   .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.left,
-  .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.right {
+  .react-flow__node-freehand .tt-frame-resize-line.tt-frame-resize-line-hit.left,
+  .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.right,
+  .react-flow__node-freehand .tt-frame-resize-line.tt-frame-resize-line-hit.right {
     background-image: none !important;
   }
   .dark .react-flow__node-chatPanel .react-flow__resize-control.line.top,
+  .dark .react-flow__node-freehand .react-flow__resize-control.line.top,
   .dark .react-flow__node-chatPanel .tt-frame-resize-line.top,
+  .dark .react-flow__node-freehand .tt-frame-resize-line.top,
   .dark .react-flow__node-chatPanel .react-flow__resize-control.line.bottom,
+  .dark .react-flow__node-freehand .react-flow__resize-control.line.bottom,
   .dark .react-flow__node-chatPanel .tt-frame-resize-line.bottom,
+  .dark .react-flow__node-freehand .tt-frame-resize-line.bottom,
   .dark .react-flow__node-chatPanel .react-flow__resize-control.line.left,
+  .dark .react-flow__node-freehand .react-flow__resize-control.line.left,
   .dark .react-flow__node-chatPanel .tt-frame-resize-line.left,
+  .dark .react-flow__node-freehand .tt-frame-resize-line.left,
   .dark .react-flow__node-chatPanel .react-flow__resize-control.line.right,
-  .dark .react-flow__node-chatPanel .tt-frame-resize-line.right {
+  .dark .react-flow__node-freehand .react-flow__resize-control.line.right,
+  .dark .react-flow__node-chatPanel .tt-frame-resize-line.right,
+  .dark .react-flow__node-freehand .tt-frame-resize-line.right {
     background-image: linear-gradient(#60a5fa, #60a5fa) !important;
   }
   .dark .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.top,
+  .dark .react-flow__node-freehand .react-flow__resize-control.line.tt-frame-resize-line-hit.top,
   .dark .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.bottom,
+  .dark .react-flow__node-freehand .react-flow__resize-control.line.tt-frame-resize-line-hit.bottom,
   .dark .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.left,
+  .dark .react-flow__node-freehand .react-flow__resize-control.line.tt-frame-resize-line-hit.left,
   .dark .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.right,
+  .dark .react-flow__node-freehand .react-flow__resize-control.line.tt-frame-resize-line-hit.right,
   .dark .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.top,
+  .dark .react-flow__node-freehand .tt-frame-resize-line.tt-frame-resize-line-hit.top,
   .dark .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.bottom,
+  .dark .react-flow__node-freehand .tt-frame-resize-line.tt-frame-resize-line-hit.bottom,
   .dark .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.left,
-  .dark .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.right {
+  .dark .react-flow__node-freehand .tt-frame-resize-line.tt-frame-resize-line-hit.left,
+  .dark .react-flow__node-chatPanel .tt-frame-resize-line.tt-frame-resize-line-hit.right,
+  .dark .react-flow__node-freehand .tt-frame-resize-line.tt-frame-resize-line-hit.right {
     background-image: none !important;
   }
 
-  /* Item corner resize handles — fixed local disc + scale(ui) (keeps ring:fill ratio + roundness) */
-  .react-flow__node-chatPanel .react-flow__resize-control.handle {
+  /* Corner resize handles — fixed local disc + scale(ui) (frames + drawings) */
+  .react-flow__node-chatPanel .react-flow__resize-control.handle,
+  .react-flow__node-freehand .react-flow__resize-control.handle {
     border-radius: 50% !important; /* Circles, not RF squares */
     width: var(--tt-frame-handle, 10px) !important;
     height: var(--tt-frame-handle, 10px) !important;
@@ -2115,12 +2121,14 @@ span[data-added="true"] {
   .tt-menu-surface {
     /* Alpha is the knob: lower = more board shows through. Blur stays light — a heavy blur
        smears the backdrop into a flat wash, which reads as opaque even at low alpha.
-       The wash stays on the element (a background never scrolls). Blur rides ::below on a
+       The wash stays on the element (a background never scrolls). Blur rides ::before on a
        non-scrolling shell — put overflow-y on [data-tt-menu-body] / [data-tt-menu-scroll],
        never on .tt-menu-surface itself, or the ::before pane scrolls away and board content
-       punches through at the bottom of a long Color / Turn into list. */
-    position: relative; /* Containing block for ::before blur pane */
+       punches through at the bottom of a long Color / Turn into list.
+       Do NOT set position here — shells already use fixed/absolute/relative. A relative
+       override beat Tailwind `fixed` and stretched portaled menus to the viewport width. */
     background-color: rgba(255, 255, 255, 0.6);
+    box-sizing: border-box;
   }
   /* Frame / block / thread menus: shrink height from the bottom and scroll — never squash row height. */
   [data-tt-menu-body],
@@ -3090,4 +3098,43 @@ html.nn-capacitor [data-nn-safe-bottom] {
   top: -1.4em;
   user-select: none;
   white-space: nowrap;
+}
+
+/* UNLAYERED menu shell locks — outside @layer so utilities cannot stretch them. */
+.block-actions-menu,
+.board-actions-menu,
+.thread-actions-menu {
+  width: 220px !important;
+  max-width: min(220px, calc(100vw - 24px)) !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+  right: auto !important; /* Never stretch via left+right */
+}
+.block-actions-menu.fixed,
+.board-actions-menu.fixed,
+.thread-actions-menu.fixed {
+  position: fixed !important; /* Beat any leftover relative on the surface */
+}
+.block-actions-menu.absolute,
+.board-actions-menu.absolute,
+.thread-actions-menu.absolute {
+  position: absolute !important;
+}
+.tt-menu-surface[data-tt-menu-width="168"] {
+  width: 168px !important;
+  max-width: min(168px, calc(100vw - 24px)) !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+}
+.tt-menu-surface[data-tt-menu-width="180"] {
+  width: 180px !important;
+  max-width: min(180px, calc(100vw - 24px)) !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+}
+.tt-menu-surface[data-tt-menu-width="200"] {
+  width: 200px !important;
+  max-width: min(200px, calc(100vw - 24px)) !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
 }

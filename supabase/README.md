@@ -25,6 +25,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260912180012_freehand_spot_erase_holes_tip_chrome` — Freehand tip bars + tip-diameter paint; spot erase circular holes (SVG mask)
 - `20260912031705_board_collab_hocuspocus_early_access` — Hocuspocus/Yjs board collab; shared boards in nav; early-access allowlist +meghanapandit18@gmail.com
 - `20260912003036_frame_shape_grip_clip_border` — Shape ⋮⋮ clip while selected; silhouette border default on / Default hides; lock-frames icon outline↔filled
 - `20260911205603_profile_avatar_openmoji_menu_trim` — Profile avatar Edit dialog (OpenMoji + color); remove frame Condense/Expand + block Move to

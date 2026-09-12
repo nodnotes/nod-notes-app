@@ -98,39 +98,12 @@ function stampAdjustGutters(node: HTMLElement, _zoom: number): void {
   panel.style.setProperty('--tt-adjust-pad-x', `${live}px`)
 }
 
-/** Direct paint for resize dots / ring / indicators / rotate·fit·wrap. */
-function stampChromeElements(node: HTMLElement, ui: number, zoom: number): void {
-  const linePx = `${ui}px`
-  // Fixed local paint sizes — transform scale(ui) counters viewport zoom (crisp borders, round dots)
-  const handlePx = '10px'
-  const borderPx = '1.5px'
-  const dotPx = '10px'
-  const handleScale = `translate(-50%, -50%) scale(${ui})` // RF centers on corner; scale keeps screen size
-  // Outset in flow space so distance from adjust box stays constant on screen
-  const out = 14 * ui
-
-  node.querySelectorAll('.react-flow__resize-control.handle').forEach((el) => {
-    const h = el as HTMLElement
-    h.style.setProperty('width', handlePx, 'important')
-    h.style.setProperty('height', handlePx, 'important')
-    h.style.setProperty('min-width', handlePx, 'important')
-    h.style.setProperty('min-height', handlePx, 'important')
-    h.style.setProperty('max-width', handlePx, 'important') // Kill RF/non-square stretch → pill shapes
-    h.style.setProperty('max-height', handlePx, 'important')
-    h.style.setProperty('border-width', borderPx, 'important')
-    h.style.setProperty('border-style', 'solid', 'important')
-    h.style.setProperty('border-radius', '50%', 'important')
-    h.style.setProperty('box-sizing', 'border-box', 'important')
-    h.style.setProperty('transform', handleScale, 'important')
-    h.style.setProperty('transform-origin', 'center', 'important')
-  })
-
-  node.querySelectorAll('[data-tt-adjust-ring]').forEach((el) => {
-    ;(el as HTMLElement).style.boxShadow = `inset 0 0 0 ${linePx} #3b82f6`
-  })
-
-  const panel = node.querySelector('[data-panel-container="true"]') as HTMLElement | null
-  panel?.querySelectorAll(':scope > [data-tt-connection-indicator]').forEach((el) => {
+/** Outset + screen-constant size for simulated connection-point dots (frames + drawings). */
+function stampConnectionIndicators(panel: HTMLElement, ui: number): void {
+  const borderPx = '1.5px' // Same ring as CSS --tt-frame-indicator-border
+  const dotPx = '10px' // Fixed local paint — scale(ui) keeps screen size
+  const out = 14 * ui // INDICATOR_OUTSET in flow space so distance stays constant on screen
+  panel.querySelectorAll(':scope > [data-tt-connection-indicator]').forEach((el) => {
     const dot = el as HTMLElement
     const side = dot.getAttribute('data-tt-connection-indicator')
     dot.style.setProperty('width', dotPx, 'important')
@@ -159,8 +132,61 @@ function stampChromeElements(node: HTMLElement, ui: number, zoom: number): void 
     }
     dot.style.setProperty('transform-origin', 'center', 'important')
   })
+}
 
-  panel?.querySelectorAll(':scope > [data-frame-chrome]').forEach((el) => {
+/** Circular corner adjust dots — same screen-constant stamp as frames. */
+function stampResizeHandles(node: HTMLElement, ui: number): void {
+  const handlePx = '10px' // Fixed local paint — scale(ui) counters board zoom
+  const borderPx = '1.5px'
+  const handleScale = `translate(-50%, -50%) scale(${ui})` // RF centers on corner
+  node.querySelectorAll('.react-flow__resize-control.handle').forEach((el) => {
+    const h = el as HTMLElement
+    h.style.setProperty('width', handlePx, 'important')
+    h.style.setProperty('height', handlePx, 'important')
+    h.style.setProperty('min-width', handlePx, 'important')
+    h.style.setProperty('min-height', handlePx, 'important')
+    h.style.setProperty('max-width', handlePx, 'important') // Kill RF/non-square stretch → pill shapes
+    h.style.setProperty('max-height', handlePx, 'important')
+    h.style.setProperty('border-width', borderPx, 'important')
+    h.style.setProperty('border-style', 'solid', 'important')
+    h.style.setProperty('border-radius', '50%', 'important')
+    h.style.setProperty('box-sizing', 'border-box', 'important')
+    h.style.setProperty('transform', handleScale, 'important')
+    h.style.setProperty('transform-origin', 'center', 'important')
+  })
+}
+
+/** Blue adjust ring stroke width — screen-constant via --tt-frame-line-w. */
+function stampAdjustRing(node: HTMLElement, ui: number): void {
+  const linePx = `${ui}px`
+  node.querySelectorAll('[data-tt-adjust-ring]').forEach((el) => {
+    ;(el as HTMLElement).style.boxShadow = `inset 0 0 0 ${linePx} #3b82f6`
+  })
+}
+
+/** Drawing selection chrome: ring + circular dots + indicators + rotate (no frame gutters). */
+function stampFreehandChrome(node: HTMLElement, ui: number): void {
+  stampResizeHandles(node, ui)
+  stampAdjustRing(node, ui)
+  const panel = node.querySelector('[data-panel-container="true"]') as HTMLElement | null
+  if (panel) stampConnectionIndicators(panel, ui)
+  node.querySelectorAll('[data-frame-chrome]').forEach((el) => {
+    const chrome = el as HTMLElement
+    chrome.style.setProperty('transform', `scale(${ui})`, 'important')
+    chrome.style.setProperty('transform-origin', 'top left', 'important')
+  })
+}
+
+/** Direct paint for resize dots / ring / indicators / rotate·fit·wrap. */
+function stampChromeElements(node: HTMLElement, ui: number, _zoom: number): void {
+  const out = 14 * ui // INDICATOR_OUTSET in flow space
+  stampResizeHandles(node, ui)
+  stampAdjustRing(node, ui)
+
+  const panel = node.querySelector('[data-panel-container="true"]') as HTMLElement | null
+  if (panel) stampConnectionIndicators(panel, ui)
+
+  panel?.querySelectorAll('[data-frame-chrome]').forEach((el) => {
     const chrome = el as HTMLElement
     chrome.style.setProperty('transform', `scale(${ui})`, 'important')
     chrome.style.setProperty('transform-origin', 'top left', 'important')
@@ -194,7 +220,7 @@ export function applyFrameChromeZoom(zoom: number, root?: HTMLElement | null): v
   if (!flow) return
 
   const selected = flow.querySelectorAll(
-    '.react-flow__node-chatPanel.selected'
+    '.react-flow__node-chatPanel.selected, .react-flow__node-freehand.selected'
   ) as NodeListOf<HTMLElement>
 
   const zoomChanged = zoomKey !== lastZoomKey
@@ -208,8 +234,14 @@ export function applyFrameChromeZoom(zoom: number, root?: HTMLElement | null): v
     if (zoomChanged || node.style.getPropertyValue('--tt-board-zoom') !== zStr) {
       writeChromeVars(node, z, ui)
     }
-    stampChromeElements(node, ui, z)
-    stampAdjustGutters(node, z)
+    // Frames get full chrome stamp. Drawings share ring + circular dots + indicators —
+    // do not run stampChromeElements (it also stamps chat-link cues / frame chrome margins).
+    if (node.classList.contains('react-flow__node-chatPanel')) {
+      stampChromeElements(node, ui, z)
+      stampAdjustGutters(node, z)
+    } else if (node.classList.contains('react-flow__node-freehand')) {
+      stampFreehandChrome(node, ui) // Ring + circular dots + indicators + rotate
+    }
   })
 }
 
@@ -225,7 +257,9 @@ function tick(): void {
   const flow =
     root ||
     (document.querySelector('[data-board-root] .react-flow') as HTMLElement | null)
-  const hasSelected = !!flow?.querySelector('.react-flow__node-chatPanel.selected')
+  const hasSelected = !!flow?.querySelector(
+    '.react-flow__node-chatPanel.selected, .react-flow__node-freehand.selected'
+  )
   if (hasSelected) {
     raf = requestAnimationFrame(tick)
   } else {

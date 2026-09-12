@@ -56,6 +56,7 @@ import {
   GripVertical,
   GripHorizontal,
   Circle,
+  Check,
   Grid3x3,
   Presentation, // View presentation mode
   Scan, // View capture — 4 disconnected rounded corners
@@ -114,6 +115,10 @@ import {
   readToolbarBlockType,
 } from '@/components/turn-into-menu' // Actions-bar Turn into (Format / Property)
 import type { BlockTypeId, BoardInTarget } from '@/components/block-actions-menu'
+import {
+  MIN_TIP_DIAMETER_PX,
+  MAX_TIP_DIAMETER_PX,
+} from '@/components/freehand/path' // Tip thickness bar range
 
 interface EditorToolbarProps {
   editor: Editor | null
@@ -128,6 +133,76 @@ const DRAW_INK: { id: DrawInk; label: string; swatch: string }[] = [ // Swatch c
   { id: 'green', label: 'Green', swatch: 'fill-green-600 text-green-600' },
   { id: 'red', label: 'Red', swatch: 'fill-red-600 text-red-600' },
 ]
+
+/** Vertical tip-size scrub for Draw pencil / eraser menus (top = thick, bottom = thin). */
+function TipThicknessBar({
+  value,
+  onChange,
+  label = 'Tip size',
+}: {
+  value: number // Current tip diameter (screen px)
+  onChange: (size: number) => void // Live scrub
+  label?: string // aria / title
+}) {
+  const trackRef = useRef<HTMLDivElement>(null) // Bar geometry for click-to-place
+
+  const sizeFromClientY = (clientY: number) => {
+    const track = trackRef.current
+    if (!track) return value
+    const r = track.getBoundingClientRect()
+    const t = Math.min(1, Math.max(0, (clientY - r.top) / Math.max(1, r.height))) // 0 at top
+    const raw = MAX_TIP_DIAMETER_PX - t * (MAX_TIP_DIAMETER_PX - MIN_TIP_DIAMETER_PX) // Up = thicker
+    return Math.round(raw)
+  }
+
+  const handleTrackPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault() // Don’t start a text-select on the bar
+    e.stopPropagation() // Keep the dropdown open while scrubbing
+    onChange(sizeFromClientY(e.clientY)) // Jump thumb to press
+    e.currentTarget.setPointerCapture(e.pointerId) // Drag off the thumb still updates
+  }
+
+  const handleTrackPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+    onChange(sizeFromClientY(e.clientY))
+  }
+
+  const thumbPct =
+    ((MAX_TIP_DIAMETER_PX - value) / (MAX_TIP_DIAMETER_PX - MIN_TIP_DIAMETER_PX)) * 100 // 0% = thick top
+
+  return (
+    <div
+      ref={trackRef}
+      className="relative h-[8.5rem] w-6 shrink-0 cursor-pointer select-none"
+      onPointerDown={handleTrackPointerDown}
+      onPointerMove={handleTrackPointerMove}
+      onPointerUp={(e) => {
+        if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+          e.currentTarget.releasePointerCapture(e.pointerId)
+        }
+      }}
+      title={`${label} ${value}px`}
+      aria-label={label}
+      role="slider"
+      aria-valuemin={MIN_TIP_DIAMETER_PX}
+      aria-valuemax={MAX_TIP_DIAMETER_PX}
+      aria-valuenow={value}
+      aria-orientation="vertical"
+    >
+      {/* Tapered wedge — thick at top, thin at bottom */}
+      <div
+        className="absolute inset-x-1.5 inset-y-1 bg-gray-400 dark:bg-gray-500"
+        style={{ clipPath: 'polygon(0% 0%, 100% 0%, 55% 100%, 45% 100%)' }}
+        aria-hidden
+      />
+      <div
+        className="pointer-events-none absolute left-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-gray-700 bg-white dark:border-gray-200 dark:bg-gray-900"
+        style={{ top: `${thumbPct}%` }}
+        aria-hidden
+      />
+    </div>
+  )
+}
 
 // Insert-space icons are <img> SVGs, so their "ink" is a CSS filter instead of currentColor
 const SPACE_ICON_FILTER_ON = 'brightness(0) saturate(100%) invert(0%) sepia(0%) saturate(0%) hue-rotate(0deg) brightness(0%) contrast(100%)' // Armed / hovered
@@ -193,7 +268,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
   const { isChatSidebarOpen, chatChromeReady, isMobileMode } = useSidebarContext() // Measure after chat restore; phone layout forces pill
   const { toolsHost, undoHost, phoneTools, setPhoneTools, setShareCompact } = usePhoneModeMenu() // Pill + share/AI→More before tools leave
   const { hasAiContent, aiTopBarPinned } = useAiEditSession() // Pinned sparkles fold with shareCompact
-  const { reactFlowInstance, isLocked, lineStyle: verticalLineStyle, setLineStyle: setVerticalLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, boardRule: hostBoardRule, setBoardRule: setHostBoardRule, boardStyle: hostBoardStyle, setBoardStyle: setHostBoardStyle, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, isDrawing, setIsDrawing, drawTool: contextDrawTool, setDrawTool: setContextDrawTool, mapUndo, mapRedo, canMapUndo, canMapRedo, getMapTakeSnapshot, getSetNodes } = useReactFlowContext()
+  const { reactFlowInstance, isLocked, lineStyle: verticalLineStyle, setLineStyle: setVerticalLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, boardRule: hostBoardRule, setBoardRule: setHostBoardRule, boardStyle: hostBoardStyle, setBoardStyle: setHostBoardStyle, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, isDrawing, setIsDrawing, drawTool: contextDrawTool, setDrawTool: setContextDrawTool, eraserMode, setEraserMode, drawTipSize, setDrawTipSize, eraserTipSize, setEraserTipSize, pencilColor, setPencilColor, highlighterColor, setHighlighterColor, mapUndo, mapRedo, canMapUndo, canMapRedo, getMapTakeSnapshot, getSetNodes } = useReactFlowContext()
   const queryClientForAi = useQueryClient() // Turn into board list + conversations invalidate
   const previewFocus = usePreviewFocus() // When a nested preview chrome is selected, View styles target that page
   // Route Board Style controls to the focused preview page (else the host map)
@@ -413,8 +488,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     paintSpaceIcon(insertVerticalSpaceIconRef.current, drawTool === 'insert-v') // Vertical space ink follows its armed state
     paintSpaceIcon(insertHorizontalSpaceIconRef.current, drawTool === 'insert-h') // Horizontal space ink follows its armed state
   }, [drawTool])
-  const [pencilColor, setPencilColor] = useState<DrawInk>('black') // Freehand ink — remembered per tool, not shared with highlighter
-  const [highlighterColor, setHighlighterColor] = useState<DrawInk>('black') // Highlighter ink — independent of freehand so each dropdown keeps its last pick
+
   const [hiddenItems, setHiddenItems] = useState<Set<string>>(new Set())
   const [hideUndoMoreSlash, setHideUndoMoreSlash] = useState(false) // True when tools left for the pill — drop orphan undo|/| on the bar
   const [compactEarlyLabels, setCompactEarlyLabels] = useState(false) // Filter/sort/automations/eraser cluster — collapses first
@@ -1731,33 +1805,70 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
               <>
                 <div className="flex items-center gap-1 px-2 flex-shrink-0">
                   {!isItemHidden('drawGroup2') && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={(e) => {
-                        // Toggle eraser tool - if already selected, deselect it
-                        if (drawTool === 'eraser') {
-                          setDrawTool(null)
-                          setIsDrawing(false) // Disable drawing mode
-                        } else {
+                    <DropdownMenu
+                      open={openDropdown === 'eraserOptions'}
+                      onOpenChange={(open) => {
+                        if (open && drawTool !== 'eraser') {
+                          // Inactive → arm eraser, keep the menu closed (same as pencil)
                           setDrawTool('eraser')
-                          setIsDrawing(false) // Disable drawing mode when using eraser (if implemented)
+                          setIsDrawing(false)
+                          return
                         }
-                        // Blur the button to remove focus state
-                        e.currentTarget.blur()
+                        handleDropdownOpenChange('eraserOptions', open) // Active → stroke/spot menu
                       }}
-                      className={cn(
-                        'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center',
-                        'transition-[padding,gap] duration-200 ease-out', compactEarlyLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Ink cluster collapses first
-                        drawTool === 'eraser'
-                          ? 'bg-gray-100 dark:bg-gray-800'
-                          : 'hover:bg-gray-100 dark:hover:bg-gray-800'
-                      )}
-                      title={drawTool === 'eraser' ? 'Eraser Active (Click to deselect)' : 'Eraser (Not yet implemented)'}
                     >
-                      <Eraser className="h-4 w-4 flex-shrink-0" />
-                      <ToolbarTitle show={!compactEarlyLabels}>Eraser</ToolbarTitle>
-                    </Button>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={cn(
+                            'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center',
+                            'transition-[padding,gap] duration-200 ease-out', compactEarlyLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5',
+                            drawTool === 'eraser'
+                              ? 'bg-gray-100 dark:bg-gray-800'
+                              : 'hover:bg-gray-100 dark:hover:bg-gray-800'
+                          )}
+                          title={drawTool === 'eraser' ? 'Eraser options' : 'Eraser'}
+                        >
+                          <Eraser className="h-4 w-4 flex-shrink-0" />
+                          <ToolbarTitle show={!compactEarlyLabels}>Eraser</ToolbarTitle>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        {...TOOLBAR_MENU_PLACEMENT}
+                        className="min-w-0 w-fit p-1"
+                        onCloseAutoFocus={(e) => e.preventDefault()}
+                      >
+                        <div className="flex items-stretch gap-1">
+                          <div className="flex flex-col gap-0.5">
+                            <DropdownMenuItem
+                              onClick={() => setEraserMode('stroke')}
+                              className={cn('gap-2', eraserMode === 'stroke' && 'bg-gray-100 dark:bg-gray-800')}
+                            >
+                              <Check className={cn('h-4 w-4', eraserMode === 'stroke' ? 'opacity-100' : 'opacity-0')} />
+                              Stroke eraser
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => setEraserMode('spot')}
+                              className={cn('gap-2', eraserMode === 'spot' && 'bg-gray-100 dark:bg-gray-800')}
+                            >
+                              <Check className={cn('h-4 w-4', eraserMode === 'spot' ? 'opacity-100' : 'opacity-0')} />
+                              Spot eraser
+                            </DropdownMenuItem>
+                          </div>
+                          <div
+                            className="flex items-center border-l border-gray-200 dark:border-gray-700 pl-1"
+                            onPointerDown={(e) => e.preventDefault()}
+                          >
+                            <TipThicknessBar
+                              value={eraserTipSize}
+                              onChange={setEraserTipSize}
+                              label="Eraser tip size"
+                            />
+                          </div>
+                        </div>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   )}
                   {!isItemHidden('drawGroup3') && (
                     <>
@@ -1765,8 +1876,16 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                       <DropdownMenu
                         open={openDropdown === 'pencilColor'}
                         onOpenChange={(open) => {
-                          if (open && drawTool !== 'pencil') { // Inactive → arm freehand, keep the menu closed
-                            setDrawTool('pencil')
+                          if (open && drawTool !== 'pencil') {
+                            // Selected drawing → open color menu without arming the ink overlay
+                            const hasSelectedFreehand = (reactFlowInstance?.getNodes?.() ?? []).some(
+                              (n) => n.selected && n.type === 'freehand',
+                            )
+                            if (hasSelectedFreehand) {
+                              handleDropdownOpenChange('pencilColor', true)
+                              return
+                            }
+                            setDrawTool('pencil') // Inactive → arm freehand, keep the menu closed
                             setIsDrawing(true) // Pencil is the drawing tool
                             return
                           }
@@ -1790,16 +1909,34 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                             <ToolbarTitle show={!compactEarlyLabels}>Pencil</ToolbarTitle>
                           </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent {...TOOLBAR_MENU_PLACEMENT} className="min-w-0 w-fit p-1">
-                          {DRAW_INK.map((ink) => (
-                            <DropdownMenuItem
-                              key={ink.id}
-                              onClick={() => setPencilColor(ink.id)} // Pick this tool’s ink; menu closes via Radix
-                              className={pencilColor === ink.id ? 'bg-gray-100 dark:bg-gray-800' : ''}
+                        <DropdownMenuContent
+                          {...TOOLBAR_MENU_PLACEMENT}
+                          className="min-w-0 w-fit p-1"
+                          onCloseAutoFocus={(e) => e.preventDefault()}
+                        >
+                          <div className="flex items-stretch gap-1">
+                            <div className="flex flex-col gap-0.5">
+                              {DRAW_INK.map((ink) => (
+                                <DropdownMenuItem
+                                  key={ink.id}
+                                  onClick={() => setPencilColor(ink.id)} // Pick this tool’s ink; menu closes via Radix
+                                  className={pencilColor === ink.id ? 'bg-gray-100 dark:bg-gray-800' : ''}
+                                >
+                                  <Circle className={cn('h-4 w-4', ink.swatch)} />
+                                </DropdownMenuItem>
+                              ))}
+                            </div>
+                            <div
+                              className="flex items-center border-l border-gray-200 dark:border-gray-700 pl-1"
+                              onPointerDown={(e) => e.preventDefault()}
                             >
-                              <Circle className={cn('h-4 w-4', ink.swatch)} />
-                            </DropdownMenuItem>
-                          ))}
+                              <TipThicknessBar
+                                value={drawTipSize}
+                                onChange={setDrawTipSize}
+                                label="Drawing tip size"
+                              />
+                            </div>
+                          </div>
                         </DropdownMenuContent>
                       </DropdownMenu>
                       {/* Highlighter: same toggle-then-dropdown pattern as freehand */}
@@ -1808,7 +1945,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                         onOpenChange={(open) => {
                           if (open && drawTool !== 'highlighter') { // Inactive → arm highlighter, keep the menu closed
                             setDrawTool('highlighter')
-                            setIsDrawing(false) // Highlighter is not freehand drawing (not yet implemented)
+                            setIsDrawing(true) // Highlighter uses the same freehand capture overlay as pencil
                             return
                           }
                           handleDropdownOpenChange('highlighterColor', open) // Active → color dropdown
@@ -2926,18 +3063,62 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                 {/* Group 2: Eraser — same cluster as pencil (no separator) */}
                 {isItemHidden('drawGroup2') && (
                   <>
-                    <DropdownMenuItem onClick={() => {
-                      if (drawTool === 'eraser') {
-                        setDrawTool(null)
-                        setIsDrawing(false)
-                      } else {
-                        setDrawTool('eraser')
-                        setIsDrawing(false)
-                      }
-                    }}>
-                      <Eraser className="h-4 w-4 mr-2" />
-                      Eraser
-                    </DropdownMenuItem>
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger>
+                        <Eraser className="h-4 w-4 mr-2" />
+                        Eraser
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent className="min-w-0 w-fit p-1">
+                        <DropdownMenuItem onClick={() => {
+                          if (drawTool === 'eraser') {
+                            setDrawTool(null)
+                            setIsDrawing(false)
+                          } else {
+                            setDrawTool('eraser')
+                            setIsDrawing(false)
+                          }
+                        }}>
+                          {drawTool === 'eraser' ? 'Deselect' : 'Select'}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <div className="flex items-stretch gap-1">
+                          <div className="flex flex-col gap-0.5">
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setEraserMode('stroke')
+                                setDrawTool('eraser')
+                                setIsDrawing(false)
+                              }}
+                              className={cn('gap-2', eraserMode === 'stroke' && 'bg-gray-100 dark:bg-gray-800')}
+                            >
+                              <Check className={cn('h-4 w-4', eraserMode === 'stroke' ? 'opacity-100' : 'opacity-0')} />
+                              Stroke eraser
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setEraserMode('spot')
+                                setDrawTool('eraser')
+                                setIsDrawing(false)
+                              }}
+                              className={cn('gap-2', eraserMode === 'spot' && 'bg-gray-100 dark:bg-gray-800')}
+                            >
+                              <Check className={cn('h-4 w-4', eraserMode === 'spot' ? 'opacity-100' : 'opacity-0')} />
+                              Spot eraser
+                            </DropdownMenuItem>
+                          </div>
+                          <div
+                            className="flex items-center border-l border-gray-200 dark:border-gray-700 pl-1"
+                            onPointerDown={(e) => e.preventDefault()}
+                          >
+                            <TipThicknessBar
+                              value={eraserTipSize}
+                              onChange={setEraserTipSize}
+                              label="Eraser tip size"
+                            />
+                          </div>
+                        </div>
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
                   </>
                 )}
                 {/* Group 3: Pencil, Highlighter — overflow keeps toggle + ink submenu */}
@@ -2961,20 +3142,34 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                           {drawTool === 'pencil' ? 'Deselect' : 'Select'}
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        {DRAW_INK.map((ink) => (
-                          <DropdownMenuItem
-                            key={ink.id}
-                            onClick={() => { // Picking ink also arms freehand
-                              setPencilColor(ink.id)
-                              setDrawTool('pencil')
-                              setIsDrawing(true)
-                            }}
-                            className={pencilColor === ink.id ? 'bg-gray-100 dark:bg-gray-800' : ''}
+                        <div className="flex items-stretch gap-1">
+                          <div className="flex flex-col gap-0.5">
+                            {DRAW_INK.map((ink) => (
+                              <DropdownMenuItem
+                                key={ink.id}
+                                onClick={() => { // Picking ink also arms freehand
+                                  setPencilColor(ink.id)
+                                  setDrawTool('pencil')
+                                  setIsDrawing(true)
+                                }}
+                                className={pencilColor === ink.id ? 'bg-gray-100 dark:bg-gray-800' : ''}
+                              >
+                                <Circle className={cn('h-4 w-4 mr-2', ink.swatch)} />
+                                {ink.label}
+                              </DropdownMenuItem>
+                            ))}
+                          </div>
+                          <div
+                            className="flex items-center border-l border-gray-200 dark:border-gray-700 pl-1"
+                            onPointerDown={(e) => e.preventDefault()}
                           >
-                            <Circle className={cn('h-4 w-4 mr-2', ink.swatch)} />
-                            {ink.label}
-                          </DropdownMenuItem>
-                        ))}
+                            <TipThicknessBar
+                              value={drawTipSize}
+                              onChange={setDrawTipSize}
+                              label="Drawing tip size"
+                            />
+                          </div>
+                        </div>
                       </DropdownMenuSubContent>
                     </DropdownMenuSub>
                     <DropdownMenuSub>
@@ -2989,7 +3184,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                             setIsDrawing(false)
                           } else {
                             setDrawTool('highlighter')
-                            setIsDrawing(false)
+                            setIsDrawing(true) // Overflow select arms freehand capture for highlighter
                           }
                         }}>
                           {drawTool === 'highlighter' ? 'Deselect' : 'Select'}
@@ -3001,7 +3196,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                             onClick={() => { // Picking ink also arms highlighter
                               setHighlighterColor(ink.id)
                               setDrawTool('highlighter')
-                              setIsDrawing(false)
+                              setIsDrawing(true) // Color pick arms highlighter ink capture
                             }}
                             className={highlighterColor === ink.id ? 'bg-gray-100 dark:bg-gray-800' : ''}
                           >

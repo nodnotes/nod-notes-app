@@ -1,14 +1,23 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-12T03:17:05Z`
+- Snapped at: `2026-09-12T18:00:12Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
-- CLI: `supabase` `2.90.0` (link refreshed; `db dump` / `migration list` blocked on remote login-role alter — marker + version snapshot only)
+- CLI: `supabase` `2.90.0` (link refreshed; `db dump` / `migration list` blocked on remote login — marker + version snapshot only; cli-latest reports `v2.117.0`)
 - Remote applied tops out at `20260811225342_conversations_owner_select_for_insert_returning`
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260912180012_freehand_spot_erase_holes_tip_chrome.sql`.
+- **Freehand tip chrome**: pencil + eraser vertical tip-size bars; tip circle tracks bar; flow thickness = tip ÷ zoom.
+- **Paint stamp**: `thinning: 0` so tip diameter fills the circle (not a pressure ribbon); densified samples on fast moves.
+- **Spot erase**: punches tip-sized circular holes (`data.eraseHoles` + SVG mask) instead of centerline split / V-notch; drag densifies overlapping disks; fully covered strokes delete.
+- **Selection / resize**: frame-like freehand chrome; aspect-locked resize scales ink + thickness from live RF box.
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: board collab Hocuspocus + early-access invite
 
 - DDL: none. Marker `20260912031705_board_collab_hocuspocus_early_access.sql`.
 - **Multiplayer**: Hocuspocus/Yjs board collab (`collab/server.mjs`, `lib/collab/*`, TipTap Collaboration); presence avatars + peer cursors; roster sync for frame create/delete.

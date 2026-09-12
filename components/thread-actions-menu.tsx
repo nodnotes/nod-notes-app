@@ -214,8 +214,7 @@ export function ThreadActionsMenu({
       ref={rootRef}
       tabIndex={-1}
       className={cn(
-        // Same shell as BlockActionsMenu — white card, soft shadow, constant screen size
-        'thread-actions-menu edge-popup node-popup z-[1000] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1 min-w-[240px] outline-none',
+        'thread-actions-menu edge-popup node-popup z-[1000] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1 outline-none',
         'absolute',
         className
       )}
@@ -288,21 +287,21 @@ export function ThreadActionsMenu({
                 onAction(row.id)
               }}
               className={cn(
-                'h-8 shrink-0 justify-start px-2 text-sm font-normal',
+                'h-8 w-full min-w-0 shrink-0 justify-start px-2 text-sm font-normal',
                 row.danger && 'text-red-600 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950',
                 row.disabled && 'opacity-40 pointer-events-none',
                 (isArrangeOpen || isInfoOpen || isThicknessOpen) && 'bg-gray-100 dark:bg-[#2a2a2a]'
               )}
             >
-              <span className="mr-2 text-gray-500 dark:text-gray-400">{row.icon}</span>
-              <span className="flex-1 text-left">{row.label}</span>
+              <span className="mr-2 shrink-0 text-gray-500 dark:text-gray-400">{row.icon}</span>
+              <span className="min-w-0 flex-1 truncate text-left">{row.label}</span>
               {row.trailingIcon && !hasSub && (
-                <span className="ml-2">{row.trailingIcon}</span>
+                <span className="ml-2 shrink-0">{row.trailingIcon}</span>
               )}
               {row.shortcut && !hasSub && (
-                <span className="ml-3 text-[11px] text-gray-400 tabular-nums">{row.shortcut}</span>
+                <span className="ml-2 shrink-0 text-[11px] text-gray-400 tabular-nums">{row.shortcut}</span>
               )}
-              {hasSub && <ChevronRight className="h-3.5 w-3.5 ml-1 text-gray-400" />}
+              {hasSub && <ChevronRight className="h-3.5 w-3.5 ml-1 shrink-0 text-gray-400" />}
             </Button>
           )
         })}

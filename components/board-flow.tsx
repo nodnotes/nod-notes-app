@@ -212,6 +212,7 @@ import { propertyStripConsumeWheelScroll } from '@/lib/blocks/property-strip-scr
 import { LeftVerticalMenu } from './left-vertical-menu'
 import { FreehandNode } from './freehand/FreehandNode' // Freehand drawing node component
 import { Freehand, retryFailedSaves } from './freehand/Freehand' // Freehand drawing overlay component and retry function
+import { FreehandEraser } from './freehand/FreehandEraser' // Draw-bar eraser — drag removes freehand strokes
 import { ShapeNode } from './shapes/ShapeNode' // Shape node component
 import { useUndoRedo } from './use-undo-redo' // Undo/redo hook for map actions
 import {
@@ -2009,6 +2010,8 @@ function BoardFlowInner({
       : 'bg-gray-50 dark:bg-[#0f0f0f]'
   // Draw bar Lasso: freehand trail owns left-drag (`lib/freehand-lasso-select`), not RF's rect marquee
   const lassoArmed = drawTool === 'lasso' && !isDrawing
+  // Draw bar Eraser: overlay owns left-drag to remove freehand strokes under the brush
+  const eraserArmed = drawTool === 'eraser'
   // Draw bar insert-space: armed tool turns plain left-drag into "open a gap"
   const insertSpaceAxis: InsertSpaceAxis | null =
     drawTool === 'insert-v'
@@ -2018,11 +2021,11 @@ function BoardFlowInner({
         : null
   const insertSpaceArmed = insertSpaceAxis !== null // Suppresses pan / marquee / node drag / I-bar for the gesture
   // RF rect marquee — sticky Select tool only; Lasso replaces it while armed
-  const marqueeArmed = !isDrawing && !lassoArmed && !insertSpaceArmed && navPointerTool === 'select'
+  const marqueeArmed = !isDrawing && !lassoArmed && !insertSpaceArmed && !eraserArmed && navPointerTool === 'select'
   // Who owns plain left-drag; Shift flips to pan for one gesture in both select flavors
   const panOnDragSetting: boolean | number[] =
-    insertSpaceArmed || isDrawing
-      ? false // Insert-space gap drag / freehand-ink strokes own left-drag
+    insertSpaceArmed || isDrawing || eraserArmed
+      ? false // Insert-space / freehand ink / eraser brush own left-drag
       : lassoArmed
         ? isMobileMode
           ? false // Phone: RF [1,2] only filters mousedown — touchstart still pans
@@ -6093,7 +6096,9 @@ function BoardFlowInner({
   useEffect(() => {
     // In Linear mode, enable chronological panel navigation
     // In Canvas mode, own Scroll pan + Zoom alternate-pan (plain Zoom wheel stays with RF)
-    if (!(viewMode === 'linear' || viewMode === 'canvas') || isDrawing) return
+    // Pencil/eraser overlays sit above ZoomPane — still own wheel here so the board zooms, not the window
+    if (!(viewMode === 'linear' || viewMode === 'canvas')) return
+    const inkOverlay = isDrawing || eraserArmed // Freehand / eraser capture layer blocks RF ZoomPane
 
     // Wheel bursts have no gesture end, so begin+debounced-end runs per tick: `begin` no-ops while
     // already navigating (and cancels the pending release), so the freeze holds for the burst and
@@ -6264,8 +6269,45 @@ function BoardFlowInner({
 
       // Canvas — Zoom sticky: only own Cmd/Ctrl→pan; pinch + plain wheel stay with RF / other handlers
       if (!navScrollMode) {
-        if (isMacTrackpadPinch(e)) return // Pinch always zooms (RF zoomOnPinch / ctrl+wheel)
-        if (!isWheelAlternateMod(e)) return // Plain wheel → RF zoomOnScroll
+        const pinch = isMacTrackpadPinch(e)
+        const alternate = isWheelAlternateMod(e)
+        // Ink overlay covers ZoomPane — own pinch/plain zoom here (else browser window zooms)
+        if (inkOverlay && (pinch || !alternate)) {
+          if (
+            pinch &&
+            typeof window !== 'undefined' &&
+            'GestureEvent' in window &&
+            !/iPhone|iPad|iPod/.test(navigator.userAgent)
+          ) {
+            return // Safari Mac pinch is GestureEvent (board-rotation)
+          }
+          e.preventDefault()
+          e.stopPropagation()
+          if (!reactFlowInstance) return
+          const viewport = reactFlowInstance.getViewport()
+          const rect = (reactFlowElement as HTMLElement).getBoundingClientRect()
+          const isMac = /Mac|iPhone|iPod|iPad/i.test(navigator.platform)
+          const factor = e.ctrlKey && isMac ? 10 : 1
+          const pinchDelta =
+            -e.deltaY * (e.deltaMode === 1 ? 0.05 : e.deltaMode ? 1 : 0.002) * factor
+          const nextZoom = clampBoardZoom(viewport.zoom * Math.pow(2, pinchDelta))
+          if (nextZoom === viewport.zoom) return
+          reactFlowInstance.setViewport(
+            viewportKeepingPanePoint(
+              e.clientX - rect.left,
+              e.clientY - rect.top,
+              viewport,
+              boardRotation,
+              boardRotation,
+              nextZoom
+            )
+          )
+          markWheelNavigating(nextZoom)
+          prevZoomRef.current = nextZoom
+          return
+        }
+        if (pinch) return // Pinch always zooms (RF zoomOnPinch / ctrl+wheel)
+        if (!alternate) return // Plain wheel → RF zoomOnScroll
         e.preventDefault()
         e.stopPropagation()
         if (!reactFlowInstance) return
@@ -6330,7 +6372,7 @@ function BoardFlowInner({
       document.removeEventListener('wheel', handleWheel, { capture: true })
       if (settleTimer) clearTimeout(settleTimer) // Don't settle into an unmounted board
     }
-  }, [navScrollMode, viewMode, reactFlowInstance, getBottomScrollLimit, checkIfAtBottom, chronologicalPanels, focusedPanelIndex, centerPanelAbovePrompt, boardRotation, isDrawing, embedded, hideMapChrome, rfStore])
+  }, [navScrollMode, viewMode, reactFlowInstance, getBottomScrollLimit, checkIfAtBottom, chronologicalPanels, focusedPanelIndex, centerPanelAbovePrompt, boardRotation, isDrawing, eraserArmed, embedded, hideMapChrome, rfStore])
 
   // Check if at bottom when viewport changes in linear mode
   // Don't run when nodes change due to selection - only run when nodes are added/removed or viewMode changes
@@ -9848,7 +9890,7 @@ function BoardFlowInner({
     // Selected DB is interactive (overflow-auto); own wheel so the table doesn’t eat Zoom-nav
     const DB_ZOOM_SEL = '.tt-notion-db'
     // Zoom nav: regular wheel should zoom over the table too (Scroll nav has its own capture)
-    const zoomNav = !navScrollMode && !isDrawing
+    const zoomNav = !navScrollMode
 
     const onWheel = (e: WheelEvent) => {
       const target = e.target as Element | null
@@ -9914,7 +9956,7 @@ function BoardFlowInner({
 
     root.addEventListener('wheel', onWheel, { passive: false, capture: true })
     return () => root.removeEventListener('wheel', onWheel, { capture: true })
-  }, [reactFlowInstance, embedded, boardRotation, navScrollMode, isDrawing, zoomRange, hideMapChrome])
+  }, [reactFlowInstance, embedded, boardRotation, navScrollMode, zoomRange, hideMapChrome])
 
   return (
     <PhoneFrameDragProvider manualDragNodeId={phoneManualDragNodeId}>
@@ -10511,25 +10553,25 @@ function BoardFlowInner({
         selectionOnDrag={
           previewLive && !embedded && marqueeArmed && !shiftHeld // Shift held → pan, not marquee
         }
-        zoomOnScroll={previewLive && !navScrollMode && !isDrawing && !hideMapChrome}
-        zoomOnPinch={previewLive && !isDrawing} // Homepage still pinches; plain wheel scrolls the page
+        zoomOnScroll={previewLive && !navScrollMode && !isDrawing && !eraserArmed && !hideMapChrome}
+        zoomOnPinch={previewLive && !isDrawing && !eraserArmed} // Homepage still pinches; plain wheel scrolls the page
         zoomOnDoubleClick={false}
         minZoom={embedded ? Math.max(0.05, zoomRange.minZoom) : zoomRange.minZoom}
         maxZoom={embedded ? Math.min(2.5, zoomRange.maxZoom) : zoomRange.maxZoom}
         preventScrolling={!hideMapChrome} // Homepage previews let the marketing page scroll under the wheel
         autoPanOnNodeDrag={false}
         onlyRenderVisibleElements // Bound DOM + composited layers to frames currently in/near the pane
-        selectNodesOnDrag={previewLive && !isDrawing}
+        selectNodesOnDrag={previewLive && !isDrawing && !eraserArmed}
         multiSelectionKeyCode={MULTI_SELECT_KEYS}
         selectionKeyCode={
-          isDrawing || lassoArmed || marqueeArmed
-            ? null // Select tool / Lasso: plain drag selects; Shift flips to pan above
+          isDrawing || eraserArmed || lassoArmed || marqueeArmed
+            ? null // Select / Lasso / ink / eraser: plain drag is not a selection box
             : SELECTION_BOX_KEYS // Pan tool: Shift+drag draws a selection box
         }
         // Backspace/Delete remove selected frames/threads. TipTap editors use class `nokey` so RF
         // skips delete while typing (isInputDOMNode misses <p>/<br> without contenteditable).
         deleteKeyCode={canEdit ? DELETE_KEYS : null}
-        nodesDraggable={canEdit && !insertSpaceArmed} // Armed insert-space: pressing a frame opens a gap, not a move
+        nodesDraggable={canEdit && !insertSpaceArmed && !eraserArmed} // Eraser/insert-space own press — not frame move
         nodesConnectable={canEdit}
         onMoveStart={(_event, viewport) => {
           // One-finger pan wasn’t covered by pinch-only freeze — fast pan over DB OOMed Safari
@@ -10718,9 +10760,63 @@ function BoardFlowInner({
           />
         )}
 
-        {/* Freehand drawing overlay - only shown when drawing mode is active and drawTool is pencil */}
-        {previewLive && isDrawing && drawTool === 'pencil' && <Freehand conversationId={conversationId} onBeforeCreate={takeSnapshot} />}
-        
+        {/* Freehand drawing overlay — pencil + highlighter both capture strokes */}
+        {previewLive && isDrawing && (drawTool === 'pencil' || drawTool === 'highlighter') && (
+          <Freehand conversationId={conversationId} onBeforeCreate={takeSnapshot} />
+        )}
+        {/* Eraser overlay — stroke deletes whole ink; spot carves under the brush */}
+        {previewLive && eraserArmed && (
+          <FreehandEraser
+            onBeforeErase={takeSnapshot}
+            onEraseNodes={(ids) => {
+              if (ids.length === 0) return
+              if (conversationId) {
+                void deleteNodesByIds(ids) // RF + canvas_nodes
+                return
+              }
+              const idSet = new Set(ids) // Empty /board: ink is local-only until a conversation exists
+              setNodes((nds) => nds.filter((n) => !idSet.has(n.id)))
+            }}
+            onSpotMutate={({ removeIds, upsertNodes }) => {
+              // RF already updated in FreehandEraser; persist canvas_nodes only
+              if (!conversationId) return
+              void (async () => {
+                try {
+                  const supabase = createClient()
+                  const { data: { user } } = await supabase.auth.getUser()
+                  if (!user) return
+                  if (removeIds.length > 0) {
+                    const { error } = await supabase
+                      .from('canvas_nodes')
+                      .delete()
+                      .in('id', removeIds)
+                      .eq('conversation_id', conversationId)
+                      .eq('user_id', user.id)
+                    if (error) console.error('🎨 Spot erase delete failed:', error)
+                  }
+                  for (const node of upsertNodes) {
+                    const row = {
+                      id: node.id,
+                      conversation_id: conversationId,
+                      user_id: user.id,
+                      node_type: 'freehand' as const,
+                      position_x: node.position.x,
+                      position_y: node.position.y,
+                      width: node.width,
+                      height: node.height,
+                      data: node.data,
+                    }
+                    const { error } = await supabase.from('canvas_nodes').upsert(row, { onConflict: 'id' })
+                    if (error) console.error('🎨 Spot erase upsert failed:', error, node.id)
+                  }
+                } catch (err) {
+                  console.error('🎨 Spot erase persist failed:', err)
+                }
+              })()
+            }}
+          />
+        )}
+
         {/* Helper lines for snap-to-grid functionality */}
         <HelperLines />
 
