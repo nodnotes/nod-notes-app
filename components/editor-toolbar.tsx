@@ -50,12 +50,12 @@ import {
   Redo2,
   Paintbrush,
   Lock,
+  Unlock,
   PaintBucket,
   LassoSelect,
   Eraser,
   GripVertical,
   GripHorizontal,
-  Circle,
   Check,
   Grid3x3,
   Presentation, // View presentation mode
@@ -119,38 +119,37 @@ import {
   MIN_TIP_DIAMETER_PX,
   MAX_TIP_DIAMETER_PX,
 } from '@/components/freehand/path' // Tip thickness bar range
+import { PenColorColumn } from '@/components/freehand/pen-color-column' // Editable ink row + frame-style picker
 
 interface EditorToolbarProps {
   editor: Editor | null
   conversationId?: string
 }
 
-type DrawInk = 'black' | 'blue' | 'green' | 'red' // Freehand / highlighter ink ids (same four swatches as the old color row)
-
-const DRAW_INK: { id: DrawInk; label: string; swatch: string }[] = [ // Swatch class paints the Circle in each tool’s color dropdown
-  { id: 'black', label: 'Black', swatch: 'fill-black text-black' },
-  { id: 'blue', label: 'Blue', swatch: 'fill-blue-600 text-blue-600' },
-  { id: 'green', label: 'Green', swatch: 'fill-green-600 text-green-600' },
-  { id: 'red', label: 'Red', swatch: 'fill-red-600 text-red-600' },
-]
+/** Thumb diameter (h-3/w-3) — travel pads by half so the dot stays inside the track. */
+const TIP_THUMB_PX = 12
 
 /** Vertical tip-size scrub for Draw pencil / eraser menus (top = thick, bottom = thin). */
 function TipThicknessBar({
   value,
   onChange,
   label = 'Tip size',
+  fill = false,
 }: {
-  value: number // Current tip diameter (screen px)
+  value: number // Current tip diameter (screen px when locked; flow when unlocked)
   onChange: (size: number) => void // Live scrub
   label?: string // aria / title
+  fill?: boolean // Take height from the flex row (menu sized by the ink columns) instead of a fixed bar
 }) {
   const trackRef = useRef<HTMLDivElement>(null) // Bar geometry for click-to-place
+  const thumbR = TIP_THUMB_PX / 2 // Half-thumb pad so min/max sit fully inside the track
 
   const sizeFromClientY = (clientY: number) => {
     const track = trackRef.current
     if (!track) return value
     const r = track.getBoundingClientRect()
-    const t = Math.min(1, Math.max(0, (clientY - r.top) / Math.max(1, r.height))) // 0 at top
+    const usable = Math.max(1, r.height - TIP_THUMB_PX) // Match thumb travel (not full track height)
+    const t = Math.min(1, Math.max(0, (clientY - (r.top + thumbR)) / usable)) // 0 at top pad
     const raw = MAX_TIP_DIAMETER_PX - t * (MAX_TIP_DIAMETER_PX - MIN_TIP_DIAMETER_PX) // Up = thicker
     return Math.round(raw)
   }
@@ -167,13 +166,16 @@ function TipThicknessBar({
     onChange(sizeFromClientY(e.clientY))
   }
 
-  const thumbPct =
-    ((MAX_TIP_DIAMETER_PX - value) / (MAX_TIP_DIAMETER_PX - MIN_TIP_DIAMETER_PX)) * 100 // 0% = thick top
+  const thumbT =
+    (MAX_TIP_DIAMETER_PX - value) / (MAX_TIP_DIAMETER_PX - MIN_TIP_DIAMETER_PX) // 0 = thick top, 1 = thin bottom
 
   return (
     <div
       ref={trackRef}
-      className="relative h-[8.5rem] w-6 shrink-0 cursor-pointer select-none"
+      className={cn(
+        'relative w-6 shrink-0 cursor-pointer select-none',
+        fill ? 'min-h-0 flex-1 overflow-hidden' : 'h-[8.5rem]', // fill → remaining space above lock; clip wedge so it can’t cover the lock
+      )}
       onPointerDown={handleTrackPointerDown}
       onPointerMove={handleTrackPointerMove}
       onPointerUp={(e) => {
@@ -189,17 +191,73 @@ function TipThicknessBar({
       aria-valuenow={value}
       aria-orientation="vertical"
     >
-      {/* Tapered wedge — thick at top, thin at bottom */}
-      <div
-        className="absolute inset-x-1.5 inset-y-1 bg-gray-400 dark:bg-gray-500"
-        style={{ clipPath: 'polygon(0% 0%, 100% 0%, 55% 100%, 45% 100%)' }}
+      {/* Rounded taper — thick top / thin bottom (SVG so ends aren’t flat clip-path corners) */}
+      <svg
+        className="pointer-events-none absolute inset-x-1.5 inset-y-1 text-gray-400 dark:text-gray-500"
+        viewBox="0 0 12 100"
+        preserveAspectRatio="none"
         aria-hidden
-      />
+      >
+        <path
+          fill="currentColor"
+          d="M1.8 3.2C1.8 1.4 3.5.4 6 .4s4.2 1 4.2 2.8L7.1 96.5c0 1.5-.5 2.7-1.1 2.7s-1.1-1.2-1.1-2.7Z"
+        />
+      </svg>
       <div
         className="pointer-events-none absolute left-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-gray-700 bg-white dark:border-gray-200 dark:bg-gray-900"
-        style={{ top: `${thumbPct}%` }}
+        style={{ top: `calc(${thumbR}px + (100% - ${TIP_THUMB_PX}px) * ${thumbT})` }} // Center stays inside the track
         aria-hidden
       />
+    </div>
+  )
+}
+
+/** Tip bar + lock under it — locked = fixed screen tip; unlocked = circle scales with zoom. */
+function TipThicknessColumn({
+  value,
+  onChange,
+  zoomLocked,
+  onZoomLockedChange,
+  label,
+  fill = false,
+}: {
+  value: number
+  onChange: (size: number) => void
+  zoomLocked: boolean
+  onZoomLockedChange: (locked: boolean) => void
+  label: string
+  fill?: boolean // Stretch to the sibling ink columns so the menu is no taller than the swatches
+}) {
+  return (
+    <div
+      className={cn(
+        'flex flex-col items-center gap-1.5',
+        fill && 'h-full min-h-0 self-stretch', // Match ink-column height; min-h-0 lets the bar shrink above the lock
+      )}
+    >
+      <TipThicknessBar value={value} onChange={onChange} label={label} fill={fill} />
+      <button
+        type="button"
+        className={cn(
+          'relative z-[1] flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800',
+          zoomLocked && 'bg-gray-100 dark:bg-gray-800',
+        )}
+        title={
+          zoomLocked
+            ? 'Unlock tip — keep size relative to zoom'
+            : 'Lock tip — keep screen size fixed'
+        }
+        aria-label={zoomLocked ? 'Unlock tip size from zoom' : 'Lock tip size to screen'}
+        aria-pressed={zoomLocked}
+        onPointerDown={(e) => e.preventDefault()} // Keep dropdown open on press
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          onZoomLockedChange(!zoomLocked)
+        }}
+      >
+        {zoomLocked ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
+      </button>
     </div>
   )
 }
@@ -268,7 +326,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
   const { isChatSidebarOpen, chatChromeReady, isMobileMode } = useSidebarContext() // Measure after chat restore; phone layout forces pill
   const { toolsHost, undoHost, phoneTools, setPhoneTools, setShareCompact } = usePhoneModeMenu() // Pill + share/AI→More before tools leave
   const { hasAiContent, aiTopBarPinned } = useAiEditSession() // Pinned sparkles fold with shareCompact
-  const { reactFlowInstance, isLocked, lineStyle: verticalLineStyle, setLineStyle: setVerticalLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, boardRule: hostBoardRule, setBoardRule: setHostBoardRule, boardStyle: hostBoardStyle, setBoardStyle: setHostBoardStyle, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, isDrawing, setIsDrawing, drawTool: contextDrawTool, setDrawTool: setContextDrawTool, eraserMode, setEraserMode, drawTipSize, setDrawTipSize, eraserTipSize, setEraserTipSize, pencilColor, setPencilColor, highlighterColor, setHighlighterColor, mapUndo, mapRedo, canMapUndo, canMapRedo, getMapTakeSnapshot, getSetNodes } = useReactFlowContext()
+  const { reactFlowInstance, isLocked, lineStyle: verticalLineStyle, setLineStyle: setVerticalLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, boardRule: hostBoardRule, setBoardRule: setHostBoardRule, boardStyle: hostBoardStyle, setBoardStyle: setHostBoardStyle, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, isDrawing, setIsDrawing, drawTool: contextDrawTool, setDrawTool: setContextDrawTool, eraserMode, setEraserMode, drawTipSize, setDrawTipSize, drawTipZoomLocked, setDrawTipZoomLocked, eraserTipSize, setEraserTipSize, eraserTipZoomLocked, setEraserTipZoomLocked, pencilPalette, pencilColorIndex, setPencilColorIndex, setPencilColorAt, addPencilColor, removePencilColor, mapUndo, mapRedo, canMapUndo, canMapRedo, getMapTakeSnapshot, getSetNodes } = useReactFlowContext()
   const queryClientForAi = useQueryClient() // Turn into board list + conversations invalidate
   const previewFocus = usePreviewFocus() // When a nested preview chrome is selected, View styles target that page
   // Route Board Style controls to the focused preview page (else the host map)
@@ -1252,7 +1310,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
           : editMenuPillMode === 'draw'
             ? [
               { id: 'drawGroup1', width: 108 }, // Lasso + insert-space — rightmost, hide first
-              { id: 'drawGroup3', width: 76 }, // Pencil, Highlighter icons
+              { id: 'drawGroup3', width: 28 }, // Pen icon only (highlighter icon)
               { id: 'drawGroup2', width: 28 + 4 + 5 }, // Eraser icon + slash after ink cluster
               { id: 'undoRedo', width: 70 },
             ]
@@ -1281,7 +1339,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
           : editMenuPillMode === 'draw'
             ? [
               { id: 'drawGroup1', width: titledToolWidth('Lasso') + 4 + titledToolWidth('V-space') + 4 + titledToolWidth('H-space') + 16 }, // Rightmost
-              { id: 'drawGroup3', width: 76 }, // Ink titles already collapsed
+              { id: 'drawGroup3', width: 28 }, // Pen title already collapsed
               { id: 'drawGroup2', width: 28 + 4 + 5 }, // Eraser + slash after ink cluster
               { id: 'undoRedo', width: 70 },
             ]
@@ -1300,7 +1358,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
           : editMenuPillMode === 'draw'
             ? [
               { id: 'drawGroup1', width: titledToolWidth('Lasso') + 4 + titledToolWidth('V-space') + 4 + titledToolWidth('H-space') + 16 }, // Rightmost
-              { id: 'drawGroup3', width: titledToolWidth('Pencil') + 4 + titledToolWidth('Highlighter') + 16 }, // Ink titles
+              { id: 'drawGroup3', width: titledToolWidth('Pen') }, // Pen only (uses highlighter icon)
               { id: 'drawGroup2', width: titledToolWidth('Eraser') + 4 + 5 }, // Eraser + slash after ink cluster
               { id: 'undoRedo', width: 70 },
             ]
@@ -1797,10 +1855,10 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
           <span className="flex h-7 items-center text-2xl font-thin text-gray-300 dark:text-gray-500 mx-1 flex-shrink-0 select-none leading-none" aria-hidden>/</span>
         )}
 
-        {/* Draw Mode Buttons - Eraser, Pencil, Highlighter, Lasso, Insert Spaces (ink dropdowns on the tools) */}
+        {/* Draw Mode Buttons - Eraser, Pen, Lasso, Insert Spaces (ink dropdown on Pen) */}
         {editMenuPillMode === 'draw' && (
           <>
-            {/* Eraser + Pencil + Highlighter — one cluster, no slash between eraser and pencil */}
+            {/* Eraser + Pen — one cluster, no slash between eraser and pen */}
             {(!isItemHidden('drawGroup2') || !isItemHidden('drawGroup3')) && (
               <>
                 <div className="flex items-center gap-1 px-2 flex-shrink-0">
@@ -1860,9 +1918,13 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                             className="flex items-center border-l border-gray-200 dark:border-gray-700 pl-1"
                             onPointerDown={(e) => e.preventDefault()}
                           >
-                            <TipThicknessBar
+                            <TipThicknessColumn
                               value={eraserTipSize}
                               onChange={setEraserTipSize}
+                              zoomLocked={eraserTipZoomLocked}
+                              onZoomLockedChange={(locked) =>
+                                setEraserTipZoomLocked(locked, reactFlowInstance?.getViewport?.()?.zoom ?? 1)
+                              }
                               label="Eraser tip size"
                             />
                           </div>
@@ -1871,116 +1933,84 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                     </DropdownMenu>
                   )}
                   {!isItemHidden('drawGroup3') && (
-                    <>
-                      {/* Freehand: first click toggles on; click again while active opens ink dropdown */}
-                      <DropdownMenu
-                        open={openDropdown === 'pencilColor'}
-                        onOpenChange={(open) => {
-                          if (open && drawTool !== 'pencil') {
-                            // Selected drawing → open color menu without arming the ink overlay
-                            const hasSelectedFreehand = (reactFlowInstance?.getNodes?.() ?? []).some(
-                              (n) => n.selected && n.type === 'freehand',
-                            )
-                            if (hasSelectedFreehand) {
-                              handleDropdownOpenChange('pencilColor', true)
-                              return
-                            }
-                            setDrawTool('pencil') // Inactive → arm freehand, keep the menu closed
-                            setIsDrawing(true) // Pencil is the drawing tool
+                    /* Freehand: first click arms draw; click again opens ink menu; click while open closes */
+                    <DropdownMenu
+                      modal={false}
+                      open={openDropdown === 'pencilColor'}
+                      onOpenChange={(open) => {
+                        if (open && drawTool !== 'pencil') {
+                          // Selected drawing → open color menu without arming the ink overlay
+                          const hasSelectedFreehand = (reactFlowInstance?.getNodes?.() ?? []).some(
+                            (n) => n.selected && n.type === 'freehand',
+                          )
+                          if (hasSelectedFreehand) {
+                            handleDropdownOpenChange('pencilColor', true)
                             return
                           }
-                          handleDropdownOpenChange('pencilColor', open) // Active → color dropdown; outside click closes
-                        }}
-                      >
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className={cn(
-                              'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center',
-                              'transition-[padding,gap] duration-200 ease-out', compactEarlyLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Ink cluster collapses first
-                              drawTool === 'pencil'
-                                ? 'bg-gray-100 dark:bg-gray-800'
-                                : 'hover:bg-gray-100 dark:hover:bg-gray-800'
-                            )}
-                            title={drawTool === 'pencil' ? 'Freehand color' : 'Freehand Drawing'}
-                          >
-                            <Pencil className="h-4 w-4 flex-shrink-0" />
-                            <ToolbarTitle show={!compactEarlyLabels}>Pencil</ToolbarTitle>
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent
-                          {...TOOLBAR_MENU_PLACEMENT}
-                          className="min-w-0 w-fit p-1"
-                          onCloseAutoFocus={(e) => e.preventDefault()}
+                          // Inactive → arm freehand for drawing; keep the menu closed
+                          setDrawTool('pencil')
+                          handleDropdownOpenChange('pencilColor', false) // Explicit closed (controlled)
+                          return
+                        }
+                        if (open && drawTool === 'pencil') {
+                          // Already armed → open ink / tip menu
+                          handleDropdownOpenChange('pencilColor', true)
+                          return
+                        }
+                        // Closing the menu (trigger re-click or outside) — stay armed so drawing works
+                        handleDropdownOpenChange('pencilColor', false)
+                      }}
+                    >
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={cn(
+                            'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center',
+                            'transition-[padding,gap] duration-200 ease-out', compactEarlyLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Ink cluster collapses first
+                            drawTool === 'pencil'
+                              ? 'bg-gray-100 dark:bg-gray-800'
+                              : 'hover:bg-gray-100 dark:hover:bg-gray-800'
+                          )}
+                          title={drawTool === 'pencil' ? 'Freehand color' : 'Freehand Drawing'}
                         >
-                          <div className="flex items-stretch gap-1">
-                            <div className="flex flex-col gap-0.5">
-                              {DRAW_INK.map((ink) => (
-                                <DropdownMenuItem
-                                  key={ink.id}
-                                  onClick={() => setPencilColor(ink.id)} // Pick this tool’s ink; menu closes via Radix
-                                  className={pencilColor === ink.id ? 'bg-gray-100 dark:bg-gray-800' : ''}
-                                >
-                                  <Circle className={cn('h-4 w-4', ink.swatch)} />
-                                </DropdownMenuItem>
-                              ))}
-                            </div>
-                            <div
-                              className="flex items-center border-l border-gray-200 dark:border-gray-700 pl-1"
-                              onPointerDown={(e) => e.preventDefault()}
-                            >
-                              <TipThicknessBar
-                                value={drawTipSize}
-                                onChange={setDrawTipSize}
-                                label="Drawing tip size"
-                              />
-                            </div>
-                          </div>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                      {/* Highlighter: same toggle-then-dropdown pattern as freehand */}
-                      <DropdownMenu
-                        open={openDropdown === 'highlighterColor'}
-                        onOpenChange={(open) => {
-                          if (open && drawTool !== 'highlighter') { // Inactive → arm highlighter, keep the menu closed
-                            setDrawTool('highlighter')
-                            setIsDrawing(true) // Highlighter uses the same freehand capture overlay as pencil
-                            return
-                          }
-                          handleDropdownOpenChange('highlighterColor', open) // Active → color dropdown
-                        }}
+                          <Highlighter className="h-4 w-4 flex-shrink-0" />
+                          <ToolbarTitle show={!compactEarlyLabels}>Pen</ToolbarTitle>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        {...TOOLBAR_MENU_PLACEMENT}
+                        className="min-w-0 w-fit overflow-visible p-1"
+                        onCloseAutoFocus={(e) => e.preventDefault()}
                       >
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className={cn(
-                              'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center',
-                              'transition-[padding,gap] duration-200 ease-out', compactEarlyLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Ink cluster collapses first
-                              drawTool === 'highlighter'
-                                ? 'bg-gray-100 dark:bg-gray-800'
-                                : 'hover:bg-gray-100 dark:hover:bg-gray-800'
-                            )}
-                            title={drawTool === 'highlighter' ? 'Highlighter color' : 'Highlighter'}
+                        <div className="flex items-stretch gap-1">
+                          <PenColorColumn
+                            palette={pencilPalette}
+                            selectedIndex={pencilColorIndex}
+                            onSelectIndex={setPencilColorIndex}
+                            onChangeAt={setPencilColorAt}
+                            onAdd={addPencilColor}
+                            onRemove={removePencilColor}
+                            active={openDropdown === 'pencilColor'}
+                          />
+                          <div
+                            className="flex items-stretch border-l border-gray-200 dark:border-gray-700 pl-1"
+                            onPointerDown={(e) => e.preventDefault()}
                           >
-                            <Highlighter className="h-4 w-4 flex-shrink-0" />
-                            <ToolbarTitle show={!compactEarlyLabels}>Highlighter</ToolbarTitle>
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent {...TOOLBAR_MENU_PLACEMENT} className="min-w-0 w-fit p-1">
-                          {DRAW_INK.map((ink) => (
-                            <DropdownMenuItem
-                              key={ink.id}
-                              onClick={() => setHighlighterColor(ink.id)} // Pick highlighter ink independently of freehand
-                              className={highlighterColor === ink.id ? 'bg-gray-100 dark:bg-gray-800' : ''}
-                            >
-                              <Circle className={cn('h-4 w-4', ink.swatch)} />
-                            </DropdownMenuItem>
-                          ))}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </>
+                            <TipThicknessColumn
+                              value={drawTipSize}
+                              onChange={setDrawTipSize}
+                              zoomLocked={drawTipZoomLocked}
+                              onZoomLockedChange={(locked) =>
+                                setDrawTipZoomLocked(locked, reactFlowInstance?.getViewport?.()?.zoom ?? 1)
+                              }
+                              label="Drawing tip size"
+                              fill
+                            />
+                          </div>
+                        </div>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   )}
                 </div>
                 <span className="flex h-7 items-center text-2xl font-thin text-gray-300 dark:text-gray-500 mx-1 flex-shrink-0 select-none leading-none" aria-hidden>/</span>
@@ -3110,9 +3140,13 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                             className="flex items-center border-l border-gray-200 dark:border-gray-700 pl-1"
                             onPointerDown={(e) => e.preventDefault()}
                           >
-                            <TipThicknessBar
+                            <TipThicknessColumn
                               value={eraserTipSize}
                               onChange={setEraserTipSize}
+                              zoomLocked={eraserTipZoomLocked}
+                              onZoomLockedChange={(locked) =>
+                                setEraserTipZoomLocked(locked, reactFlowInstance?.getViewport?.()?.zoom ?? 1)
+                              }
                               label="Eraser tip size"
                             />
                           </div>
@@ -3121,15 +3155,15 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                     </DropdownMenuSub>
                   </>
                 )}
-                {/* Group 3: Pencil, Highlighter — overflow keeps toggle + ink submenu */}
+                {/* Group 3: Pen — overflow keeps toggle + ink submenu */}
                 {isItemHidden('drawGroup3') && (
                   <>
                     <DropdownMenuSub>
                       <DropdownMenuSubTrigger>
-                        <Pencil className="h-4 w-4 mr-2" />
-                        Pencil
+                        <Highlighter className="h-4 w-4 mr-2" />
+                        Pen
                       </DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent className="min-w-0 w-fit p-1">
+                      <DropdownMenuSubContent className="min-w-0 w-fit overflow-visible p-1">
                         <DropdownMenuItem onClick={() => { // Overflow click still toggles freehand on/off
                           if (drawTool === 'pencil') {
                             setDrawTool(null)
@@ -3143,67 +3177,39 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <div className="flex items-stretch gap-1">
-                          <div className="flex flex-col gap-0.5">
-                            {DRAW_INK.map((ink) => (
-                              <DropdownMenuItem
-                                key={ink.id}
-                                onClick={() => { // Picking ink also arms freehand
-                                  setPencilColor(ink.id)
-                                  setDrawTool('pencil')
-                                  setIsDrawing(true)
-                                }}
-                                className={pencilColor === ink.id ? 'bg-gray-100 dark:bg-gray-800' : ''}
-                              >
-                                <Circle className={cn('h-4 w-4 mr-2', ink.swatch)} />
-                                {ink.label}
-                              </DropdownMenuItem>
-                            ))}
-                          </div>
+                          <PenColorColumn
+                            palette={pencilPalette}
+                            selectedIndex={pencilColorIndex}
+                            onSelectIndex={(index) => {
+                              setPencilColorIndex(index)
+                              setDrawTool('pencil')
+                              setIsDrawing(true)
+                            }}
+                            onChangeAt={setPencilColorAt}
+                            onAdd={(hex) => {
+                              addPencilColor(hex)
+                              setDrawTool('pencil')
+                              setIsDrawing(true)
+                            }}
+                            onRemove={removePencilColor}
+                            showLabels
+                          />
                           <div
-                            className="flex items-center border-l border-gray-200 dark:border-gray-700 pl-1"
+                            className="flex items-stretch border-l border-gray-200 dark:border-gray-700 pl-1"
                             onPointerDown={(e) => e.preventDefault()}
                           >
-                            <TipThicknessBar
+                            <TipThicknessColumn
                               value={drawTipSize}
                               onChange={setDrawTipSize}
+                              zoomLocked={drawTipZoomLocked}
+                              onZoomLockedChange={(locked) =>
+                                setDrawTipZoomLocked(locked, reactFlowInstance?.getViewport?.()?.zoom ?? 1)
+                              }
                               label="Drawing tip size"
+                              fill
                             />
                           </div>
                         </div>
-                      </DropdownMenuSubContent>
-                    </DropdownMenuSub>
-                    <DropdownMenuSub>
-                      <DropdownMenuSubTrigger>
-                        <Highlighter className="h-4 w-4 mr-2" />
-                        Highlighter
-                      </DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent className="min-w-0 w-fit p-1">
-                        <DropdownMenuItem onClick={() => { // Overflow click still toggles highlighter on/off
-                          if (drawTool === 'highlighter') {
-                            setDrawTool(null)
-                            setIsDrawing(false)
-                          } else {
-                            setDrawTool('highlighter')
-                            setIsDrawing(true) // Overflow select arms freehand capture for highlighter
-                          }
-                        }}>
-                          {drawTool === 'highlighter' ? 'Deselect' : 'Select'}
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        {DRAW_INK.map((ink) => (
-                          <DropdownMenuItem
-                            key={ink.id}
-                            onClick={() => { // Picking ink also arms highlighter
-                              setHighlighterColor(ink.id)
-                              setDrawTool('highlighter')
-                              setIsDrawing(true) // Color pick arms highlighter ink capture
-                            }}
-                            className={highlighterColor === ink.id ? 'bg-gray-100 dark:bg-gray-800' : ''}
-                          >
-                            <Circle className={cn('h-4 w-4 mr-2', ink.swatch)} />
-                            {ink.label}
-                          </DropdownMenuItem>
-                        ))}
                       </DropdownMenuSubContent>
                     </DropdownMenuSub>
                     <DropdownMenuSeparator />

@@ -9,7 +9,15 @@ import { parseBoardFontId, type BoardFontId } from '@/lib/board-font'
 
 import { isPublicBoardId } from '@/lib/public-showcase-boards'
 import { getEphemeralSandbox, isEphemeralSandboxId } from '@/lib/ephemeral-sandbox'
-import type { DrawInkId } from '@/components/freehand/ink' // Pencil / highlighter swatch ids
+import {
+  DEFAULT_HIGHLIGHTER_PALETTE,
+  DEFAULT_PENCIL_PALETTE,
+  DRAW_INK_HEX,
+  HIGHLIGHTER_INK_HEX,
+  MAX_DRAW_PALETTE_LEN,
+  normalizeInkHex,
+  type DrawInkId,
+} from '@/components/freehand/ink' // Pencil / highlighter palettes + legacy id migrate
 import {
   DEFAULT_DRAW_TIP_DIAMETER_PX,
   DEFAULT_ERASER_TIP_DIAMETER_PX,
@@ -65,14 +73,29 @@ interface ReactFlowContextType {
   setDrawTool: (tool: DrawTool | null) => void // Arm / disarm a Draw-bar tool
   eraserMode: EraserMode // Stroke = whole ink; spot = carve under the brush
   setEraserMode: (mode: EraserMode) => void // Remember last eraser flavor
-  drawTipSize: number // Pencil/highlighter tip diameter (screen px)
+  drawTipSize: number // Pencil/highlighter tip diameter (screen px when locked; flow when unlocked)
   setDrawTipSize: (size: number) => void // Persist draw tip for the thickness bar
-  eraserTipSize: number // Eraser tip diameter (screen px)
+  drawTipZoomLocked: boolean // true = fixed screen tip; false = tip scales with zoom
+  setDrawTipZoomLocked: (locked: boolean, zoom?: number) => void // Toggle + remap tip for continuity
+  eraserTipSize: number // Eraser tip diameter (screen px when locked; flow when unlocked)
   setEraserTipSize: (size: number) => void // Persist eraser tip for the thickness bar
-  pencilColor: DrawInkId // Freehand pencil swatch (independent of highlighter)
-  setPencilColor: (color: DrawInkId) => void // Remember pencil ink for new strokes
-  highlighterColor: DrawInkId // Highlighter swatch (independent of pencil)
-  setHighlighterColor: (color: DrawInkId) => void // Remember highlighter ink for new strokes
+  eraserTipZoomLocked: boolean // true = fixed screen tip; false = tip scales with zoom
+  setEraserTipZoomLocked: (locked: boolean, zoom?: number) => void // Toggle + remap tip for continuity
+  pencilPalette: string[] // Pencil row hexes (editable; + adds slots)
+  pencilColorIndex: number // Selected pencil swatch index
+  setPencilColorIndex: (index: number) => void // Select a pencil swatch without rewriting it
+  setPencilColorAt: (index: number, hex: string) => void // Edit one pencil slot (selected re-click picker)
+  addPencilColor: (hex: string) => void // Append a pencil swatch and select it
+  removePencilColor: (index: number) => void // Drop a pencil swatch (keeps ≥1); adjusts selection
+  highlighterPalette: string[] // Highlighter row hexes (editable; + adds slots)
+  highlighterColorIndex: number // Selected highlighter swatch index
+  setHighlighterColorIndex: (index: number) => void // Select a highlighter swatch without rewriting it
+  setHighlighterColorAt: (index: number, hex: string) => void // Edit one highlighter slot
+  addHighlighterColor: (hex: string) => void // Append a highlighter swatch and select it
+  removeHighlighterColor: (index: number) => void // Drop a highlighter swatch (keeps ≥1); adjusts selection
+  /** @deprecated Prefer palette index — kept as resolved hex for Freehand stroke paint */
+  pencilColor: string
+  highlighterColor: string
   drawShape: 'rectangle' | 'circle' | 'line' | 'arrow' | 'round-rectangle' | 'hexagon' | 'diamond' | 'arrow-rectangle' | 'cylinder' | 'triangle' | 'parallelogram' | 'plus' // Current shape
   setDrawShape: (shape: 'rectangle' | 'circle' | 'line' | 'arrow' | 'round-rectangle' | 'hexagon' | 'diamond' | 'arrow-rectangle' | 'cylinder' | 'triangle' | 'parallelogram' | 'plus') => void // Function to set shape
   // Undo/Redo functions for React Flow map actions (registered from BoardFlow where useUndoRedo hook is used)
@@ -100,10 +123,18 @@ const NN_ERASER_MODE_KEY = 'nodnotes-eraser-mode'
 const NN_DRAW_TIP_SIZE_KEY = 'nodnotes-draw-tip-size'
 /** localStorage — eraser tip diameter (screen px). */
 const NN_ERASER_TIP_SIZE_KEY = 'nodnotes-eraser-tip-size'
-/** localStorage — last pencil ink swatch. */
+/** localStorage — draw tip locked to screen (vs scales with zoom). */
+const NN_DRAW_TIP_ZOOM_LOCK_KEY = 'nodnotes-draw-tip-zoom-lock'
+/** localStorage — eraser tip locked to screen (vs scales with zoom). */
+const NN_ERASER_TIP_ZOOM_LOCK_KEY = 'nodnotes-eraser-tip-zoom-lock'
+/** localStorage — selected pencil swatch index (or legacy id/hex). */
 const NN_PENCIL_COLOR_KEY = 'nodnotes-pencil-color'
-/** localStorage — last highlighter ink swatch. */
+/** localStorage — selected highlighter swatch index (or legacy id/hex). */
 const NN_HIGHLIGHTER_COLOR_KEY = 'nodnotes-highlighter-color'
+/** localStorage — pencil row hex list JSON. */
+const NN_PENCIL_PALETTE_KEY = 'nodnotes-pencil-palette'
+/** localStorage — highlighter row hex list JSON. */
+const NN_HIGHLIGHTER_PALETTE_KEY = 'nodnotes-highlighter-palette'
 
 const PILL_MODES = ['home', 'insert', 'draw', 'view'] as const // Valid pill values (Actions = home, Layout = insert)
 type EditMenuPillMode = (typeof PILL_MODES)[number] // Matches context editMenuPillMode
@@ -112,7 +143,70 @@ export type DrawTool = (typeof DRAW_TOOLS)[number] // Armed Draw tool (also the 
 type StoredDrawTool = DrawTool // Same set is what reload restores
 const ERASER_MODES = ['stroke', 'spot'] as const // Whole-stroke delete vs brush carve
 export type EraserMode = (typeof ERASER_MODES)[number]
-const DRAW_INK_IDS = ['black', 'blue', 'green', 'red'] as const // Same swatches as the Draw dropdowns
+const DRAW_INK_IDS = ['black', 'blue', 'green', 'red'] as const // Legacy Draw dropdown ids
+
+/** Persist a Draw ink palette (hex row) for reload. */
+function persistDrawPalette(key: string, palette: string[]) {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(key, JSON.stringify(palette))
+}
+
+/** Read a Draw ink palette; SSR-safe → defaults. Migrates missing key to the four stock colors. */
+function getStoredDrawPalette(key: string, fallback: string[]): string[] {
+  if (typeof window === 'undefined') return fallback
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return fallback
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed) || parsed.length === 0) return fallback
+    const hexes = parsed
+      .filter((v): v is string => typeof v === 'string')
+      .map((v) => (!(v || '').trim() ? '' : normalizeInkHex(v, fallback[0])))
+      .slice(0, MAX_DRAW_PALETTE_LEN)
+    return hexes.length > 0 ? hexes : fallback
+  } catch {
+    return fallback
+  }
+}
+
+/** Clamp an index into a palette (empty → 0). */
+function clampPaletteIndex(index: number, len: number): number {
+  if (len <= 0) return 0
+  if (!Number.isFinite(index)) return 0
+  return Math.min(len - 1, Math.max(0, Math.round(index)))
+}
+
+/**
+ * Resolve stored selection: numeric index, legacy id, or hex → index into palette.
+ * Legacy id maps through the kind’s stock hex so old localStorage keeps working.
+ */
+function getStoredDrawInkIndex(
+  key: string,
+  palette: string[],
+  kind: 'pencil' | 'highlighter'
+): number {
+  if (typeof window === 'undefined') return 0
+  const saved = localStorage.getItem(key)
+  if (saved == null || saved === '') return 0
+  const asNum = Number(saved)
+  if (Number.isInteger(asNum) && asNum >= 0) return clampPaletteIndex(asNum, palette.length)
+  if (DRAW_INK_IDS.includes(saved as DrawInkId)) {
+    const hex =
+      kind === 'highlighter'
+        ? HIGHLIGHTER_INK_HEX[saved as DrawInkId]
+        : DRAW_INK_HEX[saved as DrawInkId]
+    const idx = palette.findIndex((h) => h.toLowerCase() === hex.toLowerCase())
+    return idx >= 0 ? idx : 0
+  }
+  const hex = normalizeInkHex(saved, palette[0] || '#111827')
+  const idx = palette.findIndex((h) => h.toLowerCase() === hex.toLowerCase())
+  return idx >= 0 ? idx : 0
+}
+
+function persistDrawInkIndex(key: string, index: number) {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(key, String(index))
+}
 
 /** Read last pill; SSR-safe → Actions. */
 function getStoredPillMode(): EditMenuPillMode {
@@ -171,16 +265,34 @@ function persistTipDiameter(key: string, size: number, fallback: number) {
   localStorage.setItem(key, String(clampTipDiameter(size, fallback)))
 }
 
-/** Read last ink swatch; SSR-safe → black. */
-function getStoredDrawInk(key: string): DrawInkId {
-  if (typeof window === 'undefined') return 'black'
+/** Tip zoom-lock defaults on (current fixed-screen behavior). Missing key = locked. */
+function getStoredTipZoomLocked(key: string): boolean {
+  if (typeof window === 'undefined') return true
   const saved = localStorage.getItem(key)
-  return DRAW_INK_IDS.includes(saved as DrawInkId) ? (saved as DrawInkId) : 'black'
+  if (saved == null) return true
+  return saved !== '0' && saved !== 'false'
 }
 
-function persistDrawInk(key: string, color: DrawInkId) {
+function persistTipZoomLocked(key: string, locked: boolean) {
   if (typeof window === 'undefined') return
-  localStorage.setItem(key, color)
+  localStorage.setItem(key, locked ? '1' : '0')
+}
+
+/**
+ * Remap tip when flipping lock so the on-screen circle stays the same at current zoom.
+ * Locked tip = screen px; unlocked tip = flow px.
+ */
+function remapTipForZoomLockToggle(
+  tip: number,
+  wasLocked: boolean,
+  nextLocked: boolean,
+  zoom: number,
+  fallback: number,
+): number {
+  if (wasLocked === nextLocked) return tip
+  const z = Math.max(0.01, zoom)
+  if (nextLocked) return clampTipDiameter(tip * z, fallback) // Flow → screen
+  return clampTipDiameter(tip / z, fallback) // Screen → flow
 }
 
 export function ReactFlowContextProvider({ children, conversationId, projectId }: { children: ReactNode; conversationId?: string; projectId?: string }) {
@@ -214,8 +326,12 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
   const [eraserMode, setEraserModeState] = useState<EraserMode>('stroke') // SSR default; hydrate from storage before paint
   const [drawTipSize, setDrawTipSizeState] = useState<number>(DEFAULT_DRAW_TIP_DIAMETER_PX) // Pencil tip; hydrate before paint
   const [eraserTipSize, setEraserTipSizeState] = useState<number>(DEFAULT_ERASER_TIP_DIAMETER_PX) // Eraser tip; hydrate before paint
-  const [pencilColor, setPencilColorState] = useState<DrawInkId>('black') // SSR default; hydrate pencil swatch before paint
-  const [highlighterColor, setHighlighterColorState] = useState<DrawInkId>('black') // SSR default; hydrate highlighter swatch before paint
+  const [drawTipZoomLocked, setDrawTipZoomLockedState] = useState(true) // Default locked = fixed screen tip
+  const [eraserTipZoomLocked, setEraserTipZoomLockedState] = useState(true) // Default locked = fixed screen tip
+  const [pencilPalette, setPencilPaletteState] = useState<string[]>(DEFAULT_PENCIL_PALETTE) // SSR default; hydrate before paint
+  const [pencilColorIndex, setPencilColorIndexState] = useState(0) // Selected pencil slot
+  const [highlighterPalette, setHighlighterPaletteState] = useState<string[]>(DEFAULT_HIGHLIGHTER_PALETTE)
+  const [highlighterColorIndex, setHighlighterColorIndexState] = useState(0) // Selected highlighter slot
   const [drawShape, setDrawShape] = useState<'rectangle' | 'circle' | 'line' | 'arrow' | 'round-rectangle' | 'hexagon' | 'diamond' | 'arrow-rectangle' | 'cylinder' | 'triangle' | 'parallelogram' | 'plus'>('rectangle') // Current shape (default: rectangle)
   const [snapEnabled, setSnapEnabled] = useState<boolean>(false) // Snap to grid/helper lines enabled state (default: disabled)
   
@@ -248,10 +364,11 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
     }
   }, [])
 
-  // Persist the armed Draw tool; pencil/highlighter set isDrawing (freehand overlay); eraser mounts separately
+  // Persist the armed Draw tool; pencil/highlighter always enable freehand capture
   const setDrawTool = useCallback((tool: StoredDrawTool | null) => {
     persistDrawTool(tool) // Remember (or clear) for reload
     setDrawToolState(tool) // Arm / disarm on the bar
+    setIsDrawing(tool === 'pencil' || tool === 'highlighter') // Ink tools → overlay; eraser/lasso/etc off
   }, [])
 
   const setEraserMode = useCallback((mode: EraserMode) => {
@@ -271,15 +388,142 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
     setEraserTipSizeState(next)
   }, [])
 
-  const setPencilColor = useCallback((color: DrawInkId) => {
-    persistDrawInk(NN_PENCIL_COLOR_KEY, color) // Remember pencil swatch across reload
-    setPencilColorState(color) // Freehand pencil strokes use this fill
+  const setDrawTipZoomLocked = useCallback((locked: boolean, zoom = 1) => {
+    setDrawTipZoomLockedState((wasLocked) => {
+      if (wasLocked === locked) return wasLocked
+      setDrawTipSizeState((tip) => {
+        const next = remapTipForZoomLockToggle(tip, wasLocked, locked, zoom, DEFAULT_DRAW_TIP_DIAMETER_PX)
+        persistTipDiameter(NN_DRAW_TIP_SIZE_KEY, next, DEFAULT_DRAW_TIP_DIAMETER_PX)
+        return next
+      })
+      persistTipZoomLocked(NN_DRAW_TIP_ZOOM_LOCK_KEY, locked)
+      return locked
+    })
   }, [])
 
-  const setHighlighterColor = useCallback((color: DrawInkId) => {
-    persistDrawInk(NN_HIGHLIGHTER_COLOR_KEY, color) // Remember highlighter swatch across reload
-    setHighlighterColorState(color) // Freehand highlighter strokes use this fill
+  const setEraserTipZoomLocked = useCallback((locked: boolean, zoom = 1) => {
+    setEraserTipZoomLockedState((wasLocked) => {
+      if (wasLocked === locked) return wasLocked
+      setEraserTipSizeState((tip) => {
+        const next = remapTipForZoomLockToggle(tip, wasLocked, locked, zoom, DEFAULT_ERASER_TIP_DIAMETER_PX)
+        persistTipDiameter(NN_ERASER_TIP_SIZE_KEY, next, DEFAULT_ERASER_TIP_DIAMETER_PX)
+        return next
+      })
+      persistTipZoomLocked(NN_ERASER_TIP_ZOOM_LOCK_KEY, locked)
+      return locked
+    })
   }, [])
+
+  // Select / edit / add pencil swatches (persist palette + index)
+  const setPencilColorIndex = useCallback(
+    (index: number) => {
+      const next = clampPaletteIndex(index, pencilPalette.length)
+      persistDrawInkIndex(NN_PENCIL_COLOR_KEY, next)
+      setPencilColorIndexState(next)
+    },
+    [pencilPalette.length]
+  )
+
+  const setPencilColorAt = useCallback((index: number, hex: string) => {
+    setPencilPaletteState((palette) => {
+      if (index < 0 || index >= palette.length) return palette
+      // Empty string = Transparent; otherwise normalize to #rrggbb
+      const nextHex = !(hex || '').trim()
+        ? ''
+        : normalizeInkHex(hex, palette[index] || DEFAULT_PENCIL_PALETTE[0])
+      const next = palette.map((h, i) => (i === index ? nextHex : h))
+      persistDrawPalette(NN_PENCIL_PALETTE_KEY, next)
+      return next
+    })
+    persistDrawInkIndex(NN_PENCIL_COLOR_KEY, index)
+    setPencilColorIndexState(index)
+  }, [])
+
+  const addPencilColor = useCallback((hex: string) => {
+    setPencilPaletteState((palette) => {
+      if (palette.length >= MAX_DRAW_PALETTE_LEN) return palette
+      const nextHex = normalizeInkHex(hex, DEFAULT_PENCIL_PALETTE[0])
+      const next = [...palette, nextHex]
+      const nextIndex = next.length - 1
+      persistDrawPalette(NN_PENCIL_PALETTE_KEY, next)
+      persistDrawInkIndex(NN_PENCIL_COLOR_KEY, nextIndex)
+      setPencilColorIndexState(nextIndex)
+      return next
+    })
+  }, [])
+
+  const removePencilColor = useCallback((index: number) => {
+    setPencilPaletteState((palette) => {
+      if (palette.length <= 1 || index < 0 || index >= palette.length) return palette // Keep ≥1 swatch
+      const next = palette.filter((_, i) => i !== index)
+      setPencilColorIndexState((prev) => {
+        // Removed selected → neighbor; later slots shift left
+        const nextIndex = clampPaletteIndex(prev === index ? Math.max(0, index - 1) : prev > index ? prev - 1 : prev, next.length)
+        persistDrawInkIndex(NN_PENCIL_COLOR_KEY, nextIndex)
+        return nextIndex
+      })
+      persistDrawPalette(NN_PENCIL_PALETTE_KEY, next)
+      return next
+    })
+  }, [])
+
+  const setHighlighterColorIndex = useCallback(
+    (index: number) => {
+      const next = clampPaletteIndex(index, highlighterPalette.length)
+      persistDrawInkIndex(NN_HIGHLIGHTER_COLOR_KEY, next)
+      setHighlighterColorIndexState(next)
+    },
+    [highlighterPalette.length]
+  )
+
+  const setHighlighterColorAt = useCallback((index: number, hex: string) => {
+    setHighlighterPaletteState((palette) => {
+      if (index < 0 || index >= palette.length) return palette
+      // Empty string = Transparent; otherwise normalize to #rrggbb
+      const nextHex = !(hex || '').trim()
+        ? ''
+        : normalizeInkHex(hex, palette[index] || DEFAULT_HIGHLIGHTER_PALETTE[0])
+      const next = palette.map((h, i) => (i === index ? nextHex : h))
+      persistDrawPalette(NN_HIGHLIGHTER_PALETTE_KEY, next)
+      return next
+    })
+    persistDrawInkIndex(NN_HIGHLIGHTER_COLOR_KEY, index)
+    setHighlighterColorIndexState(index)
+  }, [])
+
+  const addHighlighterColor = useCallback((hex: string) => {
+    setHighlighterPaletteState((palette) => {
+      if (palette.length >= MAX_DRAW_PALETTE_LEN) return palette
+      const nextHex = normalizeInkHex(hex, DEFAULT_HIGHLIGHTER_PALETTE[0])
+      const next = [...palette, nextHex]
+      const nextIndex = next.length - 1
+      persistDrawPalette(NN_HIGHLIGHTER_PALETTE_KEY, next)
+      persistDrawInkIndex(NN_HIGHLIGHTER_COLOR_KEY, nextIndex)
+      setHighlighterColorIndexState(nextIndex)
+      return next
+    })
+  }, [])
+
+  const removeHighlighterColor = useCallback((index: number) => {
+    setHighlighterPaletteState((palette) => {
+      if (palette.length <= 1 || index < 0 || index >= palette.length) return palette // Keep ≥1 swatch
+      const next = palette.filter((_, i) => i !== index)
+      setHighlighterColorIndexState((prev) => {
+        // Removed selected → neighbor; later slots shift left
+        const nextIndex = clampPaletteIndex(prev === index ? Math.max(0, index - 1) : prev > index ? prev - 1 : prev, next.length)
+        persistDrawInkIndex(NN_HIGHLIGHTER_COLOR_KEY, nextIndex)
+        return nextIndex
+      })
+      persistDrawPalette(NN_HIGHLIGHTER_PALETTE_KEY, next)
+      return next
+    })
+  }, [])
+
+  const pencilColor =
+    pencilPalette[clampPaletteIndex(pencilColorIndex, pencilPalette.length)] || DEFAULT_PENCIL_PALETTE[0]
+  const highlighterColor =
+    highlighterPalette[clampPaletteIndex(highlighterColorIndex, highlighterPalette.length)] ||
+    DEFAULT_HIGHLIGHTER_PALETTE[0]
 
   // Restore pill + Draw tool before first paint (skip embed — no toolbar, must not arm Freehand)
   useLayoutEffect(() => {
@@ -287,15 +531,24 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
     setEraserModeState(getStoredEraserMode()) // Stroke / spot from last session
     setDrawTipSizeState(getStoredTipDiameter(NN_DRAW_TIP_SIZE_KEY, DEFAULT_DRAW_TIP_DIAMETER_PX))
     setEraserTipSizeState(getStoredTipDiameter(NN_ERASER_TIP_SIZE_KEY, DEFAULT_ERASER_TIP_DIAMETER_PX))
-    setPencilColorState(getStoredDrawInk(NN_PENCIL_COLOR_KEY)) // Pencil swatch from last session
-    setHighlighterColorState(getStoredDrawInk(NN_HIGHLIGHTER_COLOR_KEY)) // Highlighter swatch from last session
+    setDrawTipZoomLockedState(getStoredTipZoomLocked(NN_DRAW_TIP_ZOOM_LOCK_KEY))
+    setEraserTipZoomLockedState(getStoredTipZoomLocked(NN_ERASER_TIP_ZOOM_LOCK_KEY))
+    const pencilPal = getStoredDrawPalette(NN_PENCIL_PALETTE_KEY, DEFAULT_PENCIL_PALETTE)
+    const highlighterPal = getStoredDrawPalette(NN_HIGHLIGHTER_PALETTE_KEY, DEFAULT_HIGHLIGHTER_PALETTE)
+    setPencilPaletteState(pencilPal)
+    setHighlighterPaletteState(highlighterPal)
+    setPencilColorIndexState(getStoredDrawInkIndex(NN_PENCIL_COLOR_KEY, pencilPal, 'pencil'))
+    setHighlighterColorIndexState(getStoredDrawInkIndex(NN_HIGHLIGHTER_COLOR_KEY, highlighterPal, 'highlighter'))
     const mode = getStoredPillMode() // Last Actions / Layout / Draw / View
     setEditMenuPillModeState(mode) // Same tool set as last session
     if (mode !== 'draw') return // Other modes: don’t arm a Draw tool or capture the board
-    const tool = getStoredDrawTool() // Last toggled Draw tool, if any
+    const rawTool = getStoredDrawTool() // Last toggled Draw tool, if any
+    // Highlighter removed from Draw toolbar — map legacy armed tool to pen
+    const tool = rawTool === 'highlighter' ? 'pencil' : rawTool
     if (!tool) return // Draw bar with nothing selected
+    if (rawTool === 'highlighter') persistDrawTool('pencil') // Rewrite storage so reload stays on pen
     setDrawToolState(tool) // Re-toggle that tool on the Draw bar
-    setIsDrawing(tool === 'pencil' || tool === 'highlighter') // Pencil + highlighter → freehand overlay
+    setIsDrawing(tool === 'pencil') // Pen → freehand overlay
   }, [pathname])
 
   // Refs to track conversationId and loading state without triggering save effects
@@ -1240,7 +1493,7 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
   }, [])
 
   return (
-    <ReactFlowContext.Provider value={{ reactFlowInstance, setReactFlowInstance, getSetNodes, registerSetNodes, isLocked, setIsLocked, layoutMode, setLayoutMode, isDeterministicMapping, setIsDeterministicMapping, panelWidth, setPanelWidth, isPromptBoxCentered, setIsPromptBoxCentered, lineStyle, setLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, setEditMenuPillMode, viewMode, boardRule, setBoardRule, boardStyle, setBoardStyle, boardFont, setBoardFont, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, setClickedEdge, flashcardMode, setFlashcardMode, selectedTag, setSelectedTag: toggleSelectedTag, isDrawing, setIsDrawing, drawTool, setDrawTool, eraserMode, setEraserMode, drawTipSize, setDrawTipSize, eraserTipSize, setEraserTipSize, pencilColor, setPencilColor, highlighterColor, setHighlighterColor, drawShape, setDrawShape, mapUndo, mapRedo, canMapUndo: mapUndoRedoState.canUndo, canMapRedo: mapUndoRedoState.canRedo, registerMapUndoRedo, getMapTakeSnapshot, registerMapTakeSnapshot, snapEnabled, setSnapEnabled }}>
+    <ReactFlowContext.Provider value={{ reactFlowInstance, setReactFlowInstance, getSetNodes, registerSetNodes, isLocked, setIsLocked, layoutMode, setLayoutMode, isDeterministicMapping, setIsDeterministicMapping, panelWidth, setPanelWidth, isPromptBoxCentered, setIsPromptBoxCentered, lineStyle, setLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, setEditMenuPillMode, viewMode, boardRule, setBoardRule, boardStyle, setBoardStyle, boardFont, setBoardFont, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, setClickedEdge, flashcardMode, setFlashcardMode, selectedTag, setSelectedTag: toggleSelectedTag, isDrawing, setIsDrawing, drawTool, setDrawTool, eraserMode, setEraserMode, drawTipSize, setDrawTipSize, drawTipZoomLocked, setDrawTipZoomLocked, eraserTipSize, setEraserTipSize, eraserTipZoomLocked, setEraserTipZoomLocked, pencilPalette, pencilColorIndex, setPencilColorIndex, setPencilColorAt, addPencilColor, removePencilColor, highlighterPalette, highlighterColorIndex, setHighlighterColorIndex, setHighlighterColorAt, addHighlighterColor, removeHighlighterColor, pencilColor, highlighterColor, drawShape, setDrawShape, mapUndo, mapRedo, canMapUndo: mapUndoRedoState.canUndo, canMapRedo: mapUndoRedoState.canRedo, registerMapUndoRedo, getMapTakeSnapshot, registerMapTakeSnapshot, snapEnabled, setSnapEnabled }}>
       {children}
     </ReactFlowContext.Provider>
   )
@@ -1250,7 +1503,7 @@ export function useReactFlowContext() {
   const context = useContext(ReactFlowContext)
   if (context === undefined) {
     // Return null values if context is not available (graceful degradation)
-    return { reactFlowInstance: null, setReactFlowInstance: () => { }, getSetNodes: () => undefined, registerSetNodes: () => { }, isLocked: false, setIsLocked: () => { }, layoutMode: 'auto' as const, setLayoutMode: () => { }, isDeterministicMapping: false, setIsDeterministicMapping: () => { }, panelWidth: 768, setPanelWidth: () => { }, isPromptBoxCentered: false, setIsPromptBoxCentered: () => { }, lineStyle: 'solid' as const, setLineStyle: () => { }, arrowDirection: 'down' as const, setArrowDirection: () => { }, editMenuPillMode: 'home' as const, setEditMenuPillMode: () => { }, viewMode: 'canvas' as const, boardRule: 'college' as const, setBoardRule: () => { }, boardStyle: 'dotted' as const, setBoardStyle: () => { }, boardFont: 'default' as const, setBoardFont: () => { }, fillColor: '', setFillColor: () => { }, borderColor: '', setBorderColor: () => { }, borderWeight: 1, setBorderWeight: () => { }, borderStyle: 'solid' as const, setBorderStyle: () => { }, clickedEdge: null, setClickedEdge: () => { }, flashcardMode: null, setFlashcardMode: () => { }, selectedTag: null, setSelectedTag: () => { }, isDrawing: false, setIsDrawing: () => { }, drawTool: null, setDrawTool: () => { }, eraserMode: 'stroke' as const, setEraserMode: () => { }, drawTipSize: 12, setDrawTipSize: () => { }, eraserTipSize: 28, setEraserTipSize: () => { }, pencilColor: 'black' as const, setPencilColor: () => { }, highlighterColor: 'black' as const, setHighlighterColor: () => { }, drawShape: 'rectangle' as const, setDrawShape: () => { }, mapUndo: () => { }, mapRedo: () => { }, canMapUndo: false, canMapRedo: false, registerMapUndoRedo: () => { }, getMapTakeSnapshot: () => undefined, registerMapTakeSnapshot: () => { }, snapEnabled: false, setSnapEnabled: () => { } }
+    return { reactFlowInstance: null, setReactFlowInstance: () => { }, getSetNodes: () => undefined, registerSetNodes: () => { }, isLocked: false, setIsLocked: () => { }, layoutMode: 'auto' as const, setLayoutMode: () => { }, isDeterministicMapping: false, setIsDeterministicMapping: () => { }, panelWidth: 768, setPanelWidth: () => { }, isPromptBoxCentered: false, setIsPromptBoxCentered: () => { }, lineStyle: 'solid' as const, setLineStyle: () => { }, arrowDirection: 'down' as const, setArrowDirection: () => { }, editMenuPillMode: 'home' as const, setEditMenuPillMode: () => { }, viewMode: 'canvas' as const, boardRule: 'college' as const, setBoardRule: () => { }, boardStyle: 'dotted' as const, setBoardStyle: () => { }, boardFont: 'default' as const, setBoardFont: () => { }, fillColor: '', setFillColor: () => { }, borderColor: '', setBorderColor: () => { }, borderWeight: 1, setBorderWeight: () => { }, borderStyle: 'solid' as const, setBorderStyle: () => { }, clickedEdge: null, setClickedEdge: () => { }, flashcardMode: null, setFlashcardMode: () => { }, selectedTag: null, setSelectedTag: () => { }, isDrawing: false, setIsDrawing: () => { }, drawTool: null, setDrawTool: () => { }, eraserMode: 'stroke' as const, setEraserMode: () => { }, drawTipSize: 12, setDrawTipSize: () => { }, drawTipZoomLocked: true, setDrawTipZoomLocked: () => { }, eraserTipSize: 28, setEraserTipSize: () => { }, eraserTipZoomLocked: true, setEraserTipZoomLocked: () => { }, pencilPalette: DEFAULT_PENCIL_PALETTE, pencilColorIndex: 0, setPencilColorIndex: () => { }, setPencilColorAt: () => { }, addPencilColor: () => { }, removePencilColor: () => { }, highlighterPalette: DEFAULT_HIGHLIGHTER_PALETTE, highlighterColorIndex: 0, setHighlighterColorIndex: () => { }, setHighlighterColorAt: () => { }, addHighlighterColor: () => { }, removeHighlighterColor: () => { }, pencilColor: DEFAULT_PENCIL_PALETTE[0], highlighterColor: DEFAULT_HIGHLIGHTER_PALETTE[0], drawShape: 'rectangle' as const, setDrawShape: () => { }, mapUndo: () => { }, mapRedo: () => { }, canMapUndo: false, canMapRedo: false, registerMapUndoRedo: () => { }, getMapTakeSnapshot: () => undefined, registerMapTakeSnapshot: () => { }, snapEnabled: false, setSnapEnabled: () => { } }
   }
   return context
 }

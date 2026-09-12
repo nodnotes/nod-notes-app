@@ -25,7 +25,12 @@ import {
 import { cn } from '@/lib/utils' // Indicator class merge (pointer-events while connecting)
 
 import { DEFAULT_STROKE_SIZE, pointsToPath } from './path' // Stroke → SVG path
-import { HIGHLIGHTER_OPACITY, type FreehandInkKind } from './ink' // Marker opacity + ink kind
+import {
+  HIGHLIGHTER_OPACITY,
+  strokePaintStyle,
+  withInkAlpha,
+  type FreehandInkKind,
+} from './ink' // Authored alpha + legacy highlighter wash
 import type { Points } from './types' // [x, y, pressure] tuples
 
 const CONNECTION_SIDES = ['left', 'right', 'top', 'bottom'] as const // Same four sides as frames
@@ -656,15 +661,27 @@ export function FreehandNode({
                 cursor: 'pointer',
                 stroke: 'none',
                 ...(eraseMaskHoles.length > 0 ? { mask: `url(#${eraseMaskId})` } : {}),
-                ...(data.strokeColor
-                  ? { fill: data.strokeColor } // Authored swatch (pencil or highlighter)
-                  : {}),
-                ...(data.inkKind === 'highlighter'
-                  ? {
-                      opacity: HIGHLIGHTER_OPACITY, // Translucent marker
-                      mixBlendMode: 'multiply' as const, // Classic highlighter over light boards
-                    }
-                  : {}),
+                ...(() => {
+                  if (!data.strokeColor) {
+                    // No authored swatch — highlighter still gets classic wash
+                    return data.inkKind === 'highlighter'
+                      ? { opacity: HIGHLIGHTER_OPACITY, mixBlendMode: 'multiply' as const }
+                      : {}
+                  }
+                  // Legacy 6-digit highlighter → classic 45%; 8-digit uses menu transparency
+                  const hex =
+                    data.inkKind === 'highlighter' && data.strokeColor.length === 7
+                      ? withInkAlpha(data.strokeColor, HIGHLIGHTER_OPACITY)
+                      : data.strokeColor
+                  const paint = strokePaintStyle(hex)
+                  return {
+                    fill: paint.fill,
+                    opacity: paint.opacity,
+                    ...(data.inkKind === 'highlighter'
+                      ? { mixBlendMode: 'multiply' as const }
+                      : {}),
+                  }
+                })(),
               }}
               d={pathData}
             />

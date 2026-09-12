@@ -9,14 +9,20 @@ import { useReactFlowContext } from '@/components/react-flow-context'; // Disarm
 
 import { DEFAULT_STROKE_SIZE, DRAW_TIP_DIAMETER_PX, pointsToPath } from './path' // Path generation + fixed tip
 import {
-  HIGHLIGHTER_OPACITY, // Marker translucency for live preview
   resolveStrokeHex, // Swatch → fill hex for pencil / highlighter
-  resolveStrokeSizeFromZoom, // Tip ÷ zoom → flow stroke width
-  resolveTipDiameterPx, // Screen circle size (highlighter wider)
+  strokePaintStyle, // RGB fill + opacity from authored alpha
+  resolveStrokeSizeFromZoom, // Tip ÷ zoom (locked) or tip as flow (unlocked)
+  resolveBrushScreenDiameterPx, // Screen ring: fixed or × zoom
   type FreehandInkKind, // Persisted ink kind on the node
 } from './ink'
 import type { Points } from './types' // Points type definition
 import type { FreehandNodeType } from './FreehandNode' // Freehand node type
+import {
+  isCanvasNodeErased, // Skip / undo late inserts after erase
+  removeFailedSave, // Shared with erase-persist tombstones
+} from './erase-persist'
+
+export { removeFailedSave } from './erase-persist' // Board-flow erase + undo callers
 
 /** Same inset as RF `calcAutoPan` / thread connect (~35px from the pane edge). */
 const EDGE_PAN_INSET = 35
@@ -103,6 +109,7 @@ function processFlowPoints(points: Points, strokeSize: number = DEFAULT_STROKE_S
 // node: Freehand node that failed to save
 // conversationId: Conversation/board ID
 function storeFailedSave(node: FreehandNodeType, conversationId: string) {
+  if (isCanvasNodeErased(node.id)) return // Erased before save finished — never retry
   try {
     const key = `nodnotes-failed-canvas-saves-${conversationId}`
     const failed = JSON.parse(localStorage.getItem(key) || '[]')
@@ -117,25 +124,6 @@ function storeFailedSave(node: FreehandNodeType, conversationId: string) {
     console.log('🎨 Stored failed save for retry:', node.id)
   } catch (error) {
     console.error('🎨 Error storing failed save:', error)
-  }
-}
-
-// Remove successful save from failed saves list
-// nodeId: ID of the node that was successfully saved
-function removeFailedSave(nodeId: string) {
-  try {
-    // Try to find and remove from any conversation's failed saves
-    const keys = Object.keys(localStorage).filter(key => key.startsWith('nodnotes-failed-canvas-saves-'))
-    for (const key of keys) {
-      const failed = JSON.parse(localStorage.getItem(key) || '[]')
-      const filtered = failed.filter((item: any) => item.node.id !== nodeId)
-      if (filtered.length !== failed.length) {
-        localStorage.setItem(key, JSON.stringify(filtered))
-        console.log('🎨 Removed successful save from failed list:', nodeId)
-      }
-    }
-  } catch (error) {
-    console.error('🎨 Error removing failed save:', error)
   }
 }
 
@@ -159,8 +147,17 @@ export async function retryFailedSaves(conversationId: string) {
 
     const successful: string[] = []
     const stillFailed: any[] = []
+    const skippedErased: string[] = []
 
     for (const item of failed) {
+      const nodeId = item?.node?.id as string | undefined
+      if (!nodeId) continue
+      // Erased drawings must not come back on reload / online retry
+      if (isCanvasNodeErased(nodeId)) {
+        skippedErased.push(nodeId)
+        removeFailedSave(nodeId)
+        continue
+      }
       try {
         const { error } = await supabase
           .from('canvas_nodes')
@@ -177,8 +174,18 @@ export async function retryFailedSaves(conversationId: string) {
           })
 
         if (error) {
+          // Unique violation = already saved (or raced); treat as done
+          if (error.code === '23505') {
+            successful.push(nodeId)
+            continue
+          }
           console.error('🎨 Still failed to save:', item.node.id, error)
           stillFailed.push(item)
+        } else if (isCanvasNodeErased(nodeId)) {
+          // Insert won a race against erase — delete again so reload stays clean
+          await supabase.from('canvas_nodes').delete().eq('id', nodeId).eq('user_id', user.id)
+          skippedErased.push(nodeId)
+          removeFailedSave(nodeId)
         } else {
           console.log('🎨 ✅ Retry successful:', item.node.id)
           successful.push(item.node.id)
@@ -199,7 +206,9 @@ export async function retryFailedSaves(conversationId: string) {
     // Remove successful saves from all failed lists
     successful.forEach(id => removeFailedSave(id))
 
-    console.log(`🎨 Retry complete: ${successful.length} successful, ${stillFailed.length} still failed`)
+    console.log(
+      `🎨 Retry complete: ${successful.length} successful, ${stillFailed.length} still failed, ${skippedErased.length} erased skipped`,
+    )
   } catch (error) {
     console.error('🎨 Error retrying failed saves:', error)
   }
@@ -215,23 +224,24 @@ export function Freehand({ conversationId, onBeforeCreate }: { conversationId?: 
     Edge
   >();
   const store = useStoreApi() // panBy lives on the RF store (same as thread connect auto-pan)
-  const { setDrawTool, setIsDrawing, drawTool, drawTipSize, pencilColor, highlighterColor } =
+  const { setDrawTool, setIsDrawing, drawTool, drawTipSize, drawTipZoomLocked, pencilColor, highlighterColor } =
     useReactFlowContext() // Click-select disarms ink; tip + color from Draw bar
   const inkKind: FreehandInkKind = drawTool === 'highlighter' ? 'highlighter' : 'pencil' // Armed tool → stroke kind
-  const inkId = inkKind === 'highlighter' ? highlighterColor : pencilColor // Per-tool swatch
-  const strokeColor = resolveStrokeHex(inkKind, inkId) // Persisted + preview fill
+  const strokeColor = resolveStrokeHex(inkKind, inkKind === 'highlighter' ? highlighterColor : pencilColor) // Hex (or legacy id) → fill
+  const strokePaint = strokePaintStyle(strokeColor) // RGB + opacity from transparency slider
   const pointRef = useRef<Points>([]) // Absolute flow-space samples for the active stroke
   const [points, setPoints] = useState<Points>([]) // Overlay-local preview (reprojected from flow)
   const overlayRef = useRef<HTMLDivElement>(null) // Hit-test peeks under this layer
   const startRef = useRef<{ x: number; y: number; pointerType: string } | null>(null) // Gesture origin for click-vs-stroke
   const pointerRef = useRef({ x: 0, y: 0, pressure: 0.5 }) // Latest client pointer for edge-pan ticks
   const strokeActiveRef = useRef(false) // True between pointerdown and up/cancel
+  const suppressInkRef = useRef(false) // True while 2+ touches — pinch/pan owns the gesture, not ink
   const autoPanRafRef = useRef(0) // Active edge-pan rAF id (0 = stopped)
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null) // Brush-tip circle (same pattern as spot eraser)
-  const zoom = useStore((s) => s.transform[2] || 1) // Live zoom — thickness = tip ÷ zoom (like eraser)
-  const tipPx = drawTipSize || DRAW_TIP_DIAMETER_PX // Thickness bar value (screen px)
-  const brushDiameterPx = resolveTipDiameterPx(inkKind, tipPx) // Screen tip (highlighter wider)
-  const strokeSize = resolveStrokeSizeFromZoom(inkKind, tipPx, zoom) // Flow width for commit + getStroke
+  const zoom = useStore((s) => s.transform[2] || 1) // Live zoom — locked tip ÷ zoom; unlocked tip = flow
+  const tipPx = drawTipSize || DRAW_TIP_DIAMETER_PX // Thickness bar value
+  const brushDiameterPx = resolveBrushScreenDiameterPx(inkKind, tipPx, zoom, drawTipZoomLocked) // Screen ring
+  const strokeSize = resolveStrokeSizeFromZoom(inkKind, tipPx, zoom, drawTipZoomLocked) // Flow width for commit + getStroke
 
   /** RF pane box used for edge inset + overlay-local preview math. */
   function flowPaneRect(): DOMRect | null {
@@ -332,11 +342,33 @@ export function Freehand({ conversationId, onBeforeCreate }: { conversationId?: 
   // Drop edge-pan rAF if the overlay unmounts mid-stroke (tool disarm / route change)
   useEffect(() => () => stopEdgePan(), [])
 
+  // Two-finger zoom/pan wins over ink — same pattern as Draw Lasso (`freehand-lasso-select`)
+  useEffect(() => {
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length < 2) return // One finger may still draw
+      suppressInkRef.current = true // Block new strokes until all fingers lift
+      clearStroke() // Drop any blot/stroke started by the first finger
+    }
+    const onTouchEnd = (event: TouchEvent) => {
+      if (event.touches.length > 0) return // Still pinching / holding
+      suppressInkRef.current = false // Next one-finger down may ink again
+    }
+    // Capture: 2nd finger often arrives before its pointerdown (iOS)
+    window.addEventListener('touchstart', onTouchStart, { capture: true, passive: true })
+    window.addEventListener('touchend', onTouchEnd, { capture: true, passive: true })
+    window.addEventListener('touchcancel', onTouchEnd, { capture: true, passive: true })
+    return () => {
+      window.removeEventListener('touchstart', onTouchStart, true)
+      window.removeEventListener('touchend', onTouchEnd, true)
+      window.removeEventListener('touchcancel', onTouchEnd, true)
+    }
+  }, [])
+
   /**
-   * Click (no drag): select the RF node under the pointer instead of leaving a ink blot.
-   * Hitting a node also disarms pencil so resize/rotate/drag work; empty click only clears selection.
+   * Peek under the ink overlay for an RF node id (null = empty board).
+   * Pointer-events are toggled off briefly so elementFromPoint sees frames / ink beneath.
    */
-  function selectUnderPoint(clientX: number, clientY: number) {
+  function nodeIdUnderPoint(clientX: number, clientY: number): string | null {
     const overlay = overlayRef.current // Full-board capture layer
     const prev = overlay?.style.pointerEvents // Restore after peek
     if (overlay) overlay.style.pointerEvents = 'none' // Let elementFromPoint see frames / ink under us
@@ -344,18 +376,24 @@ export function Freehand({ conversationId, onBeforeCreate }: { conversationId?: 
     if (overlay) overlay.style.pointerEvents = prev ?? '' // Resume capture for the next stroke
     const nodeEl =
       hit instanceof Element ? (hit.closest('.react-flow__node') as HTMLElement | null) : null // RF node wrapper
-    const nodeId = nodeEl?.getAttribute('data-id') ?? null // null = empty board click
-    setNodes((nodes) => nodes.map((n) => ({ ...n, selected: n.id === nodeId }))) // Single-select / clear
+    return nodeEl?.getAttribute('data-id') ?? null // null = empty board click
+  }
+
+  /**
+   * Click on a selectable node: select it and disarm pencil so resize/rotate/drag work.
+   * Empty-board clicks do not call this — they mint a blot like a normal stroke.
+   */
+  function selectNodeAndDisarm(nodeId: string) {
+    setNodes((nodes) => nodes.map((n) => ({ ...n, selected: n.id === nodeId }))) // Single-select the hit
     setEdges((edges) => edges.map((e) => ({ ...e, selected: false }))) // Drop thread selection with the click
-    if (nodeId) {
-      setDrawTool(null) // Leave Draw tool so the overlay unmounts
-      setIsDrawing(false) // Stop freehand capture — selected chrome needs the pointer
-    }
+    setDrawTool(null) // Leave Draw tool so the overlay unmounts
+    setIsDrawing(false) // Stop freehand capture — selected chrome needs the pointer
   }
 
   // Handle pointer down - start a new drawing stroke
   function handlePointerDown(e: PointerEvent<HTMLDivElement>) {
     if (e.button !== 0) return // Primary only — right-click stays for board/frame menus
+    if (suppressInkRef.current) return // Two-finger zoom/pan in progress — do not ink
     ;(e.target as HTMLDivElement).setPointerCapture(e.pointerId) // Capture pointer for this element
     startRef.current = { x: e.clientX, y: e.clientY, pointerType: e.pointerType } // Remember origin for click slop
     if (!flowPaneRect()) return // Need the RF pane for flow math
@@ -381,7 +419,7 @@ export function Freehand({ conversationId, onBeforeCreate }: { conversationId?: 
     if (!strokeActiveRef.current) setCursor(null)
   }
 
-  // Handle pointer up - finish stroke and create freehand node (or click-select)
+  // Handle pointer up - finish stroke and create freehand node (or click-select a hit node)
   function handlePointerUp(e: PointerEvent) {
     try {
       ;(e.target as HTMLDivElement).releasePointerCapture(e.pointerId) // Release before hit-test peek
@@ -392,6 +430,12 @@ export function Freehand({ conversationId, onBeforeCreate }: { conversationId?: 
     stopEdgePan() // Halt pan before commit / click-select
     strokeActiveRef.current = false
 
+    // Two-finger zoom/pan cancelled this gesture — never mint a blot or select
+    if (suppressInkRef.current) {
+      clearStroke()
+      return
+    }
+
     // Get points from ref (not state, as state might be stale)
     const finalPoints = pointRef.current
     const start = startRef.current
@@ -401,14 +445,18 @@ export function Freehand({ conversationId, onBeforeCreate }: { conversationId?: 
       return
     }
 
-    // Click / tap within slop → select under the pointer; do not mint a blot
+    // Click / tap within slop: hit a node → select+disarm; empty board → fall through and mint a blot
     const slop = start.pointerType === 'mouse' ? PANE_CLICK_SLOP_PX : PANE_TAP_SLOP_PX
     const dx = e.clientX - start.x
     const dy = e.clientY - start.y
     if (dx * dx + dy * dy <= slop * slop) {
-      clearStroke() // Drop the preview sample(s)
-      selectUnderPoint(e.clientX, e.clientY) // Select frame/ink or clear selection
-      return
+      const hitId = nodeIdUnderPoint(e.clientX, e.clientY) // Peek once before deciding
+      if (hitId) {
+        clearStroke() // Drop the preview sample(s) — selecting, not drawing
+        selectNodeAndDisarm(hitId) // Select frame/ink and leave Draw
+        return
+      }
+      // Empty board click — keep finalPoints and continue as a normal stroke commit (dot blot)
     }
 
     // Process already-flow samples (bbox padding matches the armed thickness)
@@ -493,6 +541,12 @@ export function Freehand({ conversationId, onBeforeCreate }: { conversationId?: 
             return
           }
 
+          // Erased while the save was queued / retried — never resurrect
+          if (isCanvasNodeErased(newNode.id)) {
+            removeFailedSave(newNode.id)
+            return
+          }
+
           // Save node to canvas_nodes table
           const { error, data } = await supabase
             .from('canvas_nodes')
@@ -533,6 +587,11 @@ export function Freehand({ conversationId, onBeforeCreate }: { conversationId?: 
               // Store failed save for retry later
               storeFailedSave(newNode, conversationId)
             }
+          } else if (isCanvasNodeErased(newNode.id)) {
+            // Late insert after erase — remove so reload does not bring the stroke back
+            await supabase.from('canvas_nodes').delete().eq('id', newNode.id).eq('user_id', user.id)
+            removeFailedSave(newNode.id)
+            console.log('🎨 Dropped late freehand insert after erase:', newNode.id)
           } else {
             console.log('🎨 ✅ Saved freehand node to database:', newNode.id, data)
             // Remove from failed saves if it was there
@@ -575,7 +634,7 @@ export function Freehand({ conversationId, onBeforeCreate }: { conversationId?: 
       onPointerCancel={handlePointerUp} // Treat cancel like up (clear or commit)
       onPointerLeave={handlePointerLeave} // Hide tip when idle leave
     >
-      {/* Brush tip — fixed screen ring like spot eraser; zoom sets flow thickness */}
+      {/* Brush tip — locked = fixed screen ring; unlocked = scales with zoom */}
       {cursor && (
         <div
           className="pointer-events-none absolute rounded-full border border-gray-500/70 dark:border-gray-300/70"
@@ -596,13 +655,14 @@ export function Freehand({ conversationId, onBeforeCreate }: { conversationId?: 
             style={
               inkKind === 'highlighter'
                 ? {
-                    fill: strokeColor, // Marker color from Draw swatch
-                    opacity: HIGHLIGHTER_OPACITY, // Let board content show through
+                    fill: strokePaint.fill, // Marker RGB from Draw swatch
+                    opacity: strokePaint.opacity, // Transparency from color menu
                     mixBlendMode: 'multiply', // Classic highlighter over light boards
                     stroke: 'none',
                   }
                 : {
-                    fill: strokeColor, // Pencil also uses the selected swatch
+                    fill: strokePaint.fill, // Pencil RGB from Draw swatch
+                    opacity: strokePaint.opacity, // Transparency from color menu
                     stroke: 'none',
                   }
             }

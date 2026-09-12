@@ -3,8 +3,14 @@
 import type { QueryClient } from '@tanstack/react-query'
 import type { Edge, Node } from 'reactflow'
 import { createClient } from '@/lib/supabase/client'
+import { clearCanvasNodeErased } from '@/components/freehand/erase-persist' // Undo restore may re-insert erased ids
 import { boardTitleOrDefault } from '@/lib/board-title'
 import { getLinkedBoardId } from '@/lib/blocks'
+import {
+  panelEdgeEndpointColumns,
+  panelEdgesMatchOrFilter,
+  threadEndpointFromNode,
+} from '@/lib/threads/endpoints' // Frame + drawing thread ends
 
 type BoardMessage = {
   id: string
@@ -184,6 +190,8 @@ async function restoreNodes(
 
   const freehandNodes = nodes.filter((n) => n.type === 'freehand')
   if (freehandNodes.length > 0) {
+    // Undo can bring erased ink back — clear tombstones so restore upsert + retries are allowed
+    clearCanvasNodeErased(freehandNodes.map((n) => n.id))
     const rows = freehandNodes.map((node) => ({
       id: node.id,
       conversation_id: conversationId,
@@ -219,15 +227,16 @@ async function restoreEdges(
   for (const edge of edges) {
     const sourceNode = nodes.find((n) => n.id === edge.source)
     const targetNode = nodes.find((n) => n.id === edge.target)
-    const sourceMessageId = (sourceNode?.data as { promptMessage?: BoardMessage })?.promptMessage?.id
-    const targetMessageId = (targetNode?.data as { promptMessage?: BoardMessage })?.promptMessage?.id
-    if (!sourceMessageId || !targetMessageId || sourceMessageId === targetMessageId) continue
+    const sourceEp = threadEndpointFromNode(sourceNode)
+    const targetEp = threadEndpointFromNode(targetNode)
+    if (!sourceEp || !targetEp) continue
+    if (sourceEp.kind === targetEp.kind && sourceEp.id === targetEp.id) continue
 
+    const endpointCols = panelEdgeEndpointColumns(sourceEp, targetEp)
     const row = {
       conversation_id: conversationId,
       user_id: user.id,
-      source_message_id: sourceMessageId,
-      target_message_id: targetMessageId,
+      ...endpointCols,
       metadata: edge.data ?? {},
     }
     let { error } = await supabase.from('panel_edges').insert(row)
@@ -235,8 +244,7 @@ async function restoreEdges(
       const retry = await supabase.from('panel_edges').insert({
         conversation_id: conversationId,
         user_id: user.id,
-        source_message_id: sourceMessageId,
-        target_message_id: targetMessageId,
+        ...endpointCols,
       })
       error = retry.error
     }
@@ -259,17 +267,15 @@ async function deleteEdges(
   for (const edge of edges) {
     const sourceNode = nodes.find((n) => n.id === edge.source)
     const targetNode = nodes.find((n) => n.id === edge.target)
-    const sourceMessageId = (sourceNode?.data as { promptMessage?: BoardMessage })?.promptMessage?.id
-    const targetMessageId = (targetNode?.data as { promptMessage?: BoardMessage })?.promptMessage?.id
-    if (!sourceMessageId || !targetMessageId) continue
+    const sourceEp = threadEndpointFromNode(sourceNode)
+    const targetEp = threadEndpointFromNode(targetNode)
+    if (!sourceEp || !targetEp) continue
 
     const { error } = await supabase
       .from('panel_edges')
       .delete()
       .eq('conversation_id', conversationId)
-      .or(
-        `and(source_message_id.eq.${sourceMessageId},target_message_id.eq.${targetMessageId}),and(source_message_id.eq.${targetMessageId},target_message_id.eq.${sourceMessageId})`
-      )
+      .or(panelEdgesMatchOrFilter(sourceEp, targetEp))
     if (error) console.error('Redo delete thread failed:', error)
   }
   await queryClient.invalidateQueries({ queryKey: ['panel-edges', conversationId] })

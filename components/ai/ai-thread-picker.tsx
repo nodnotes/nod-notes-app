@@ -22,6 +22,7 @@ import {
   sortThreadsWithPins,
   togglePinnedChatThread,
 } from '@/lib/ai/pinned-chat-threads'
+import { createLongPressController } from '@/lib/long-press' // Hold → same row options as hover
 
 export type AiThreadFilter = 'all' | 'board'
 
@@ -53,6 +54,7 @@ export function AiThreadPicker({
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const lastPointerRef = useRef({ x: 0, y: 0 })
+  const rowHoldRef = useRef<ReturnType<typeof createLongPressController> | null>(null) // Suppress select after hold-open
   // Phone dock: bottom anchors grow upward above the mid-chrome / composer; desktop uses top
   const [panelPos, setPanelPos] = useState<{
     top?: number
@@ -220,6 +222,48 @@ export function AiThreadPicker({
     setPinnedIds(togglePinnedChatThread(threadId))
   }
 
+  // Hold (touch/pen/mouse) reveals row actions + opens … — phones have no hover
+  useEffect(() => {
+    if (!open) return // Only while the picker popup is up
+    const panel = panelRef.current
+    if (!panel) return
+
+    const lp = createLongPressController({
+      pointerTypes: ['touch', 'pen', 'mouse'], // Desktop hold too, not only phone
+      onLongPress: (_point, meta) => {
+        const target = meta.target as Element | null
+        const row = target?.closest?.('[data-chat-thread-row]') // Which tab was held
+        if (!row || !panel.contains(row)) return false // Ignore holds outside a chat row
+        if (target?.closest?.('[data-chat-row-actions]')) return false // … / pin own the gesture
+        const id = row.getAttribute('data-thread-id')
+        if (!id) return false
+        setHoveredThreadId(id) // Reveal pin / … like hover
+        setRowMenuId(id) // Open the options list immediately
+        setFilterOpen(false) // Don't stack filter + row menus
+        return true
+      },
+    })
+    rowHoldRef.current = lp
+
+    const onDown = (e: PointerEvent) => lp.pointerDown(e)
+    const onMove = (e: PointerEvent) => lp.pointerMove(e)
+    const onUp = (e: PointerEvent) => lp.pointerUp(e)
+    const onCancel = (e: PointerEvent) => lp.pointerCancel(e)
+    // Capture so row title buttons don't steal the hold before we arm
+    panel.addEventListener('pointerdown', onDown, true)
+    panel.addEventListener('pointermove', onMove, true)
+    panel.addEventListener('pointerup', onUp, true)
+    panel.addEventListener('pointercancel', onCancel, true)
+    return () => {
+      panel.removeEventListener('pointerdown', onDown, true)
+      panel.removeEventListener('pointermove', onMove, true)
+      panel.removeEventListener('pointerup', onUp, true)
+      panel.removeEventListener('pointercancel', onCancel, true)
+      lp.cancel()
+      rowHoldRef.current = null
+    }
+  }, [open, loading, filteredThreads.length])
+
   const panel =
     open && panelPos && typeof document !== 'undefined'
       ? createPortal(
@@ -350,10 +394,21 @@ export function AiThreadPicker({
                             : isHovered &&
                                 '[@media(hover:hover)]:bg-[var(--nod-tab-hover)]'
                         )}
+                        onContextMenu={(e) => {
+                          // Right-click = same as hold: reveal + open options
+                          e.preventDefault()
+                          e.stopPropagation()
+                          setHoveredThreadId(t.id)
+                          setRowMenuId(t.id)
+                          setFilterOpen(false)
+                        }}
                       >
                         <button
                           type="button"
                           onClick={() => {
+                            // Hold just opened options — ignore the leftover click on release
+                            if (rowHoldRef.current?.consumeFired()) return
+                            if (menuOpen) return // Options still open — don't select underneath
                             onSelect(t)
                             setOpen(false)
                           }}

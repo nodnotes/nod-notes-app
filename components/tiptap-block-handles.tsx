@@ -649,6 +649,11 @@ export function TipTapBlockHandles({
     }
 
     const onMove = (event: MouseEvent) => {
+      // Button held = gesture in flight (text drag-select). resolveFromPoint measures via a
+      // probe div appended INTO the editor DOM (lib/dom-transform), and ProseMirror's
+      // DOMObserver answers that foreign mutation by re-asserting its stored caret — which
+      // collapsed the growing range on every move. Hover grips can wait for the release.
+      if (event.buttons !== 0) return
       resolveFromPoint(event.clientX, event.clientY, event.target)
     }
 

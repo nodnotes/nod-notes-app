@@ -29,6 +29,7 @@ import { DOMParser as PMDOMParser } from '@tiptap/pm/model' // Parse stored HTML
 import { TextSelection } from '@tiptap/pm/state' // Only text ranges keep a frame "active" — not boardLink NodeSelection
 import { createPanelExtensions } from '@/lib/tiptap/extensions' // StarterKit + Turn into nodes
 import { useBoardCollab } from '@/lib/collab/board-collab-context' // Yjs frame fragments + carets
+import { isIbarLiveCreate } from '@/lib/ibar-live-create' // In-session I-bar creates skip Yjs
 import { handleCaptureLinkPaste } from '@/lib/tiptap/capture-link-paste' // Paste capture URL → named link
 import { TipTapBlockHandles } from '@/components/tiptap-block-handles' // Per-content-block ⋮⋮ (Notion)
 import { FrameStackRevealLine } from '@/components/frame-stack-reveal-line' // Stack edge dashed line → reveal
@@ -1166,6 +1167,7 @@ function TipTapContentLive({
   onPageTurnInto,
   suspendContentSync = false, // True while RF frame-dragging — skip setContent remounts
   dragSuspendRef, // Sync flag armed on pointerdown (React state alone is one frame late)
+  seedSuspendRef, // Armed while I-bar seeds are still landing — content lags the caret by a key
   frameDragging = false, // RF frame drag — databaseBlock swaps to a light shell
   frameFreeResize = false, // Unlocked user-sized frame — DB table fills clip box
   frameClipHeight = null, // Host clipBoxH (layout px) for DB scroll sizing
@@ -1217,6 +1219,7 @@ function TipTapContentLive({
   onPageTurnInto?: (blockType: 'board' | 'boardIn', boardInParentId?: string | null) => void
   suspendContentSync?: boolean
   dragSuspendRef?: React.MutableRefObject<boolean> // Parent mutates sync on pointerdown
+  seedSuspendRef?: React.MutableRefObject<boolean> // Parent arms it per I-bar seed (rolling window)
   frameDragging?: boolean
   frameFreeResize?: boolean
   frameClipHeight?: number | null
@@ -1478,8 +1481,10 @@ function TipTapContentLive({
       collabSeededRef.current = true
       return
     }
+    // Only seed an empty editor. Live I-bar creates stay off collab (`isIbarLiveCreate`); this
+    // path is reload / first peer. Skip if the doc already has text so we don't clobber typing.
     const html = (contentRef.current || '').trim()
-    if (html && html !== '<p></p>') {
+    if (html && html !== '<p></p>' && isBlockContentEmpty(editor.getHTML())) {
       editor.commands.setContent(html, { emitUpdate: false })
     }
     collabSeededRef.current = true
@@ -1917,6 +1922,11 @@ function TipTapContentLive({
     // While RF is dragging the frame, never setContent AND never consume a force-sync key
     // (consuming here dropped the post-drag restore and left row cards empty until a 2nd drag).
     if (suspendContentSync || dragSuspendRef?.current) return
+    // I-bar handoff: `content` trails the capture buffer by a keystroke, so syncing it here
+    // rewinds the doc the caret is typing into (ProseMirror then reconciles the live DOM against
+    // the stale doc and doubles a char / splits the tail into its own block). Focus alone is not a
+    // usable guard — the editor is momentarily unfocused between seed and focus('end').
+    if (seedSuspendRef?.current) return
     if (forceContentSyncKey !== lastAiForceSyncRef.current) {
       lastAiForceSyncRef.current = forceContentSyncKey
     }
@@ -1978,6 +1988,12 @@ function TipTapContentLive({
         const commentList = comments
         queueMicrotask(() => {
           if (editor.isDestroyed || !editor.view) return
+          // Focus can land BETWEEN the isFocused check above and this microtask — the I-bar seed
+          // hands the caret over mid-keystroke (setContent → focus('end')). Re-check, or a stale
+          // `content` prop rewinds the doc the caret is typing into and ProseMirror's DOMObserver
+          // reconciles the live DOM against it: characters double, or the tail parses as a second
+          // block (`<p>gsgsgsgs</p><p>g</p>`). AI force-sync still owns the doc regardless.
+          if (editor.isFocused && !aiForce) return
           // emitUpdate:false — programmatic AI eye/discard/save must not fire onUpdate
           // (that set promptHasChanges and blocked discard from restoring the original)
           editor.commands.setContent(html, { emitUpdate: false })
@@ -2025,6 +2041,11 @@ function TipTapContentLive({
     if (selectOnlyClickRef.current) {
       selectOnlyClickRef.current = false
       clearFrameTextEditActive() // First-select click must not arm text-edit Delete
+      return
+    }
+    // Drag-select ends with a click — collapsing to a caret here wiped the range every time
+    if (!editor.state.selection.empty) {
+      if (hostNodeId) setFrameTextEditActive(hostNodeId) // Keep text-edit Delete armed
       return
     }
     // DB table / cell inputs own the gesture — don't steal focus after a row warm.
@@ -7074,6 +7095,14 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // Auto-focus note editor when first created (empty component panel or inline note with fadeIn flag)
   // Map I-bar typing seeds arrive via tt-ibar-typed-seed so keystrokes aren't dropped while the frame spawns
   const slashMenuOpenedRef = useRef(false)
+  // Armed for a rolling window around every I-bar seed so prop content can't clobber live typing.
+  // Rolling (not latched) so it self-heals: phone capture keeps seeding, desktop stops at handoff.
+  const iBarSeedSuspendRef = useRef(false)
+  const iBarSeedReleaseRef = useRef<number | null>(null)
+  // In-session I-bar / grip creates: keep Yjs OFF for this mount. Remounting with Collaboration
+  // after create merges a ghost first-keystroke paragraph into the seeded doc
+  // (`<p>t</p><p>testt</p>`). Reload binds cleanly from postgres HTML.
+  const allowCollabJoin = !isIbarLiveCreate(promptMessage?.id)
   useEffect(() => {
     if (!isComponentPanel || isFlashcard) return
     slashMenuOpenedRef.current = false
@@ -7168,7 +7197,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       // After handoff, only accept equal-or-longer seeds so a stale buffer cannot rewind typed text.
       const seedChanged = text !== current
       const seedAhead = text.length >= current.length
-      if (seedChanged && (captureOwns || seedAhead)) {
+      // Caret already handed over (TipTap focused, capture no longer holds the keyboard): the
+      // buffer can only trail live typing now, and replacing the doc under an in-flight keystroke
+      // is what dropped/doubled characters and split the tail into its own block. Release instead.
+      const editorOwnsCaret = ed.isFocused && !captureOwns
+      if (seedChanged && !editorOwnsCaret && (captureOwns || seedAhead)) {
         ed.commands.setContent(html || '<p></p>') // Paint the capture buffer, including deletions
         if (!keepCaptureForPhone()) focusFrameEditor(ed) // Desktop: show I-bar even while capture still focused
         setPromptContent(html || '<p></p>')
@@ -7185,6 +7218,13 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     const onSeed = (event: Event) => {
       const detail = (event as CustomEvent<{ messageId?: string; text?: string; html?: string }>).detail
       if (!detail?.messageId || detail.messageId !== promptMessage?.id) return
+      // Seeds are still arriving — the caret owns the doc until they stop (one keystroke past the
+      // last seed), so keep prop-content sync off for this frame until the window expires.
+      iBarSeedSuspendRef.current = true
+      if (iBarSeedReleaseRef.current) window.clearTimeout(iBarSeedReleaseRef.current)
+      iBarSeedReleaseRef.current = window.setTimeout(() => {
+        iBarSeedSuspendRef.current = false
+      }, 600)
       const ok = applySeed(detail.html || '<p></p>', detail.text || '')
       const ed = promptEditorRef.current
       // Phone: capture still owns the keyboard — don’t release it (would drop the soft keyboard)
@@ -8347,6 +8387,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               }
               const ed = promptEditorRef.current
               if (!ed || ed.isDestroyed) return
+              // Drag-select mouseup→click can land on TipTap padding (not .ProseMirror) —
+              // placing a caret here wiped the range after TipTapContent preserved it.
+              if (!ed.state.selection.empty) return
               e.stopPropagation()
               const block = findEditorBlockAtClientPoint(ed, e.clientX, e.clientY)
               if (!block) return
@@ -8400,6 +8443,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               dbAlwaysExpanded={dbAlwaysExpanded}
               dbVisibleRowCap={dbVisibleRowCap}
               dragSuspendRef={frameDragSuspendRef} // Sync arm on pointerdown — state lags one frame
+              seedSuspendRef={iBarSeedSuspendRef} // Armed per I-bar seed — prop content lags typing
               forceContentSyncKey={aiForceSyncKey} // AI eye / remove / save swaps content even while focused
               isLoading={false}
               onBlur={handleEditorBlur}
@@ -8426,6 +8470,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               centerInShape={shapeCenterContent}
               enableCollab={
                 // Notion page bodies stay on HTML/LWW + Notion sync — not Yjs text CRDT
+                allowCollabJoin &&
                 !(
                   isBoardBodyMeta(promptMessage?.metadata as Record<string, unknown>) &&
                   typeof (promptMessage?.metadata as { notionPageId?: string } | undefined)

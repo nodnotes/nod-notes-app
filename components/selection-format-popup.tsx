@@ -15,13 +15,13 @@ import {
   Strikethrough, // Strikethrough toggle icon in format row
   Code, // Inline-code icon in format row
   Paintbrush, // Clear-formatting (moved from top bar)
-  MoreHorizontal, // Overflow / more-options icon
   MessageSquare, // Comment row label icon
   Smile, // Add-reaction face icon
   Plus, // Plus badge on reaction / sticky actions
   ChevronRight, // Submenu chevron on style header
   Type, // "Normal Text" style glyph
   SquareRadical, // Equation / math icon
+  Highlighter, // Yellow highlight mark (same as top-bar Highlight)
   PencilLine, // Suggest edits skill icon
   SlidersHorizontal, // Skills section settings icon
   Baseline, // Text-color / A glyph stand-in
@@ -36,6 +36,9 @@ import { cn } from '@/lib/utils' // Conditional classes for active Hide text row
 import { getMenuSafeRect } from '@/lib/menu-placement' // Same chrome-free lane as action menus
 import { getSkill } from '@/lib/ai/skills'
 import { requestAiSkill } from '@/lib/ai/attach-skill'
+
+/** Default yellow highlight — matches editor-toolbar Highlight button. */
+const HIGHLIGHT_COLOR = '#fef08a'
 
 const EDGE_GAP = 8 // Gap between highlight edge and popup
 const VIEWPORT_PAD = 8 // Minimum inset from the visible viewport edges
@@ -191,7 +194,7 @@ export function SelectionFormatPopup({
         </button>
       </div>
 
-      {/* Format row 2: align, strike, code, equation, more */}
+      {/* Format row 2: align, strike, highlight, code, equation */}
       <div className="flex items-center justify-between gap-0.5 px-2 pb-1.5">
         <button
           type="button"
@@ -211,14 +214,22 @@ export function SelectionFormatPopup({
         >
           <Strikethrough className="h-4 w-4" />
         </button>
+        <button
+          type="button"
+          className={cn(ICON_CELL, editor?.isActive('highlight') && 'bg-gray-100 dark:bg-gray-800')}
+          tabIndex={-1}
+          title="Highlight"
+          onClick={() =>
+            run(() => editor!.chain().focus().toggleHighlight({ color: HIGHLIGHT_COLOR }).run())
+          }
+        >
+          <Highlighter className="h-4 w-4" />
+        </button>
         <button type="button" className={ICON_CELL} tabIndex={-1} title="Code">
           <Code className="h-4 w-4" />
         </button>
         <button type="button" className={ICON_CELL} tabIndex={-1} title="Equation">
           <SquareRadical className="h-4 w-4" />
-        </button>
-        <button type="button" className={ICON_CELL} tabIndex={-1} title="More">
-          <MoreHorizontal className="h-4 w-4" />
         </button>
       </div>
 
@@ -589,6 +600,8 @@ export function SelectionFormatPopupAnchor({
   const popupRef = useRef<HTMLDivElement>(null) // Floating element for autoUpdate + hit tests
   const cleanupAutoUpdateRef = useRef<(() => void) | null>(null) // Dispose autoUpdate on hide
   const userClearedSelectionRef = useRef(false) // Skip restore when user intentionally collapses
+  // Primary button still down → user may be drag-selecting; popup must wait for release
+  const primaryPointerDownRef = useRef(false)
 
   // Measure popup and apply single-line / multi-line placement rules
   const placePopup = useCallback(() => {
@@ -650,6 +663,12 @@ export function SelectionFormatPopupAnchor({
       }
 
       setSavedSelection({ from, to })
+      // Wait for mouse/pen release — mounting mid-drag parks the card under the caret
+      // end (pointer-events:auto) and steals mousemove so drag-select dies early.
+      if (primaryPointerDownRef.current) {
+        setShowPopup(false) // Keep range saved; reveal on pointerup via sync below
+        return
+      }
       setShowPopup(true)
 
       // Restore selection if popup mount stole focus/range
@@ -665,15 +684,37 @@ export function SelectionFormatPopupAnchor({
       requestAnimationFrame(syncFromSelection)
     }
 
+    // Track primary press so we never open the format card during a drag-select
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.isPrimary && e.button === 0) primaryPointerDownRef.current = true
+    }
+    const onPointerUp = (e: PointerEvent) => {
+      if (!e.isPrimary) return
+      primaryPointerDownRef.current = false
+      // Selection is final now — show the card if the range is still non-empty
+      requestAnimationFrame(syncFromSelection)
+    }
+    const onPointerCancel = (e: PointerEvent) => {
+      if (!e.isPrimary) return
+      primaryPointerDownRef.current = false
+      requestAnimationFrame(syncFromSelection)
+    }
+
     editor.on('selectionUpdate', handleEditorUpdate)
     editor.on('update', handleEditorUpdate)
     document.addEventListener('selectionchange', handleEditorUpdate)
+    document.addEventListener('pointerdown', onPointerDown, true)
+    document.addEventListener('pointerup', onPointerUp, true)
+    document.addEventListener('pointercancel', onPointerCancel, true)
     syncFromSelection()
 
     return () => {
       editor.off('selectionUpdate', handleEditorUpdate)
       editor.off('update', handleEditorUpdate)
       document.removeEventListener('selectionchange', handleEditorUpdate)
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      document.removeEventListener('pointerup', onPointerUp, true)
+      document.removeEventListener('pointercancel', onPointerCancel, true)
       cleanupAutoUpdateRef.current?.()
       cleanupAutoUpdateRef.current = null
     }

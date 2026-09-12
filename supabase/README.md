@@ -18,6 +18,7 @@ The database includes the following tables:
 See `migration-list.txt` + `schema-snapshot.md` for the full local/remote snapshot.
 
 Latest on Nod Notes (DDL):
+- `20260912192642_panel_edges_canvas_endpoints` — Threads may terminate on canvas nodes (drawings/shapes), not only frames
 - `20260811225342_conversations_owner_select_for_insert_returning` (+ local `20260811225322_…`) — conversations SELECT/UPDATE allow owner `user_id` or share rank (INSERT…RETURNING)
 - `rename_page_to_board_share_and_ai` / remote `20260811223628_…` (+ local `20260811220510_…`) — `board_share_*`, `user_board_*` RPCs, `ai_threads.board_id`
 - `20260811103152_page_share_links_and_people` (+ local `20260811063000_…`) — original share tables (renamed above)
@@ -25,6 +26,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260912223626_ibar_collab_defer_select_freehand_canvas_threads` — Defer Yjs on in-session I-bar create; drag-select probe guard; freehand + canvas-thread endpoints (DDL `20260912192642`)
 - `20260912180012_freehand_spot_erase_holes_tip_chrome` — Freehand tip bars + tip-diameter paint; spot erase circular holes (SVG mask)
 - `20260912031705_board_collab_hocuspocus_early_access` — Hocuspocus/Yjs board collab; shared boards in nav; early-access allowlist +meghanapandit18@gmail.com
 - `20260912003036_frame_shape_grip_clip_border` — Shape ⋮⋮ clip while selected; silhouette border default on / Default hides; lock-frames icon outline↔filled

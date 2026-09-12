@@ -36,6 +36,15 @@ import {
 } from '@/components/threads' // Miro-style editable threads + connection preview
 import { useIsThreadConnecting } from '@/components/threads/use-is-thread-connecting' // Pane class while connecting
 import {
+  endpointsFromSavedEdge,
+  endpointIsFlashcard,
+  nodesForSavedEndpoint,
+  panelEdgeEndpointColumns,
+  panelEdgesMatchOrFilter,
+  savedEdgePairKey,
+  threadEndpointFromNode,
+} from '@/lib/threads/endpoints' // Frame + drawing/shape thread ends
+import {
   BlockActionsMenu,
   type BlockActionId,
   type BlockActionPayload,
@@ -159,6 +168,7 @@ import { minStackIndex } from '@/lib/frame-side-stacks' // Per-side stack z-orde
 import { FrameNestStackOverlay } from './frame-nest-stack-overlay' // Snap preview line on host edge
 import { IBarFlowAnchor } from './ibar-flow-anchor' // I-bar placement without BoardFlow pan/zoom re-renders
 import { placeFrameScale } from '@/lib/ibar-place-scale' // Zoom-compensated frameScale for board place
+import { markIbarLiveCreate } from '@/lib/ibar-live-create' // Keep Yjs off for in-session I-bar creates
 import {
   armMarqueeFrameSelect,
   clearMarqueeFrameSelect,
@@ -213,6 +223,13 @@ import { LeftVerticalMenu } from './left-vertical-menu'
 import { FreehandNode } from './freehand/FreehandNode' // Freehand drawing node component
 import { Freehand, retryFailedSaves } from './freehand/Freehand' // Freehand drawing overlay component and retry function
 import { FreehandEraser } from './freehand/FreehandEraser' // Draw-bar eraser — drag removes freehand strokes
+import {
+  clearCanvasNodeErased, // New split pieces must be allowed to persist
+  isCanvasNodeErased, // Skip spot upsert after delete / block load-effect resurrection
+  markCanvasNodesErased, // Tombstone so late inserts / retries cannot resurrect ink
+  putCanvasNodeInQueryCache, // Cache split-off drawings so load effect keeps them
+  removeCanvasNodesFromQueryCache, // Drop erased ids from RQ before/without invalidate
+} from './freehand/erase-persist'
 import { ShapeNode } from './shapes/ShapeNode' // Shape node component
 import { useUndoRedo } from './use-undo-redo' // Undo/redo hook for map actions
 import {
@@ -468,18 +485,20 @@ function AnimatedDottedEdge({
 // Fetch edges (connections) for a conversation - lightweight query (just message IDs)
 // For homepage boards, uses API route (public access via service role)
 // For regular boards, requires authentication and ownership
-async function fetchEdgesForConversation(conversationId: string): Promise<
-  Array<{ source_message_id: string; target_message_id: string; metadata?: ThreadEdgeData | null }>
-> {
+type FetchedPanelEdge = {
+  source_message_id?: string | null
+  target_message_id?: string | null
+  source_canvas_node_id?: string | null
+  target_canvas_node_id?: string | null
+  metadata?: ThreadEdgeData | null
+}
+
+async function fetchEdgesForConversation(conversationId: string): Promise<FetchedPanelEdge[]> {
   const supabase = createClient()
 
   const ephemeral = getEphemeralSandbox(conversationId) // Visitor clone threads
   if (ephemeral) {
-    return ephemeral.edges as Array<{
-      source_message_id: string
-      target_message_id: string
-      metadata?: ThreadEdgeData | null
-    }>
+    return ephemeral.edges as FetchedPanelEdge[]
   }
   
   if (isPublicBoardId(conversationId)) {
@@ -487,11 +506,7 @@ async function fetchEdgesForConversation(conversationId: string): Promise<
       const response = await fetch(`/api/public-board/${conversationId}`)
       if (response.ok) {
         const data = await response.json()
-        return (data.edges || []) as Array<{
-          source_message_id: string
-          target_message_id: string
-          metadata?: ThreadEdgeData | null
-        }>
+        return (data.edges || []) as FetchedPanelEdge[]
       }
     } catch (error) {
       console.error('Error fetching public board edges from API:', error)
@@ -505,11 +520,22 @@ async function fetchEdgesForConversation(conversationId: string): Promise<
   }
 
   // Authenticated user - fetch their own boards (RLS will enforce ownership)
-  // Prefer metadata (control points); fall back if column not migrated yet
+  // Prefer metadata + canvas ends; fall back if columns not migrated yet
   let { data, error } = await supabase
     .from('panel_edges')
-    .select('source_message_id, target_message_id, metadata')
+    .select(
+      'source_message_id, target_message_id, source_canvas_node_id, target_canvas_node_id, metadata'
+    )
     .eq('conversation_id', conversationId)
+
+  if (error && String(error.message || '').includes('canvas_node')) {
+    const noCanvas = await supabase
+      .from('panel_edges')
+      .select('source_message_id, target_message_id, metadata')
+      .eq('conversation_id', conversationId)
+    data = noCanvas.data as typeof data
+    error = noCanvas.error
+  }
 
   if (error && String(error.message || '').includes('metadata')) {
     const fallback = await supabase
@@ -1853,6 +1879,8 @@ function BoardFlowInner({
   const deleteNodesByIdsRef = useRef<
     (nodeIds: string[], nodesSnapshot?: Node[]) => Promise<boolean | void>
   >(async () => {})
+  /** Serialize spot-erase DB writes so an older upsert cannot recreate a deleted stroke. */
+  const spotErasePersistChainRef = useRef(Promise.resolve())
   const queryClientRef = useRef<ReturnType<typeof useQueryClient> | null>(null)
   /** Bumped when undo restores frames — stale delete refetches must not overwrite the cache. */
   const mapMessageCacheEpochRef = useRef(0)
@@ -3771,13 +3799,22 @@ function BoardFlowInner({
   useEffect(() => {
     if (!savedCanvasNodes || savedCanvasNodes.length === 0) {
       console.log('🎨 BoardFlow: No saved canvas nodes to load', { savedCanvasNodesLength: savedCanvasNodes?.length || 0 })
+      // Still strip intentionally erased ink that a stale merge may have re-added
+      setNodes((existingNodes) => {
+        const next = existingNodes.filter(
+          (n) => !(n.type === 'freehand' && isCanvasNodeErased(n.id)),
+        )
+        return next.length === existingNodes.length ? existingNodes : next
+      })
       return
     }
 
     console.log(`🎨 BoardFlow: Loading ${savedCanvasNodes.length} saved canvas nodes from database`)
 
-    // Convert saved canvas nodes to React Flow nodes
-    const canvasReactFlowNodes: Node[] = savedCanvasNodes.map((savedNode) => {
+    // Convert saved canvas nodes to React Flow nodes (skip tombstoned — erase must stick live)
+    const canvasReactFlowNodes: Node[] = savedCanvasNodes
+      .filter((savedNode) => !isCanvasNodeErased(savedNode.id))
+      .map((savedNode) => {
       // Create React Flow node from saved canvas node
       // Note: reactflow v11 requires width/height in style, not as direct properties
       const reactFlowNode: Node = {
@@ -3804,21 +3841,27 @@ function BoardFlowInner({
 
     // Add canvas nodes to existing nodes (merge with message-based nodes)
     setNodes((existingNodes) => {
+      // Drop tombstoned freehand even if a prior merge put them back
+      const withoutErased = existingNodes.filter(
+        (n) => !(n.type === 'freehand' && isCanvasNodeErased(n.id)),
+      )
       // Filter out any existing canvas nodes with same IDs (avoid duplicates)
       const existingCanvasNodeIds = new Set(
-        existingNodes
-          .filter((n) => n.type === 'freehand' || n.type === savedCanvasNodes[0]?.node_type)
+        withoutErased
+          .filter((n) => n.type === 'freehand' || n.type === 'shape' || n.type === savedCanvasNodes[0]?.node_type)
           .map((n) => n.id)
       )
 
-      // Only add canvas nodes that don't already exist
+      // Only add canvas nodes that don't already exist and were not erased
       const newCanvasNodes = canvasReactFlowNodes.filter(
-        (node) => !existingCanvasNodeIds.has(node.id)
+        (node) => !existingCanvasNodeIds.has(node.id) && !isCanvasNodeErased(node.id)
       )
 
-      if (newCanvasNodes.length > 0) {
-        console.log(`🎨 BoardFlow: Adding ${newCanvasNodes.length} canvas nodes to React Flow`)
-        return [...existingNodes, ...newCanvasNodes]
+      if (newCanvasNodes.length > 0 || withoutErased.length !== existingNodes.length) {
+        if (newCanvasNodes.length > 0) {
+          console.log(`🎨 BoardFlow: Adding ${newCanvasNodes.length} canvas nodes to React Flow`)
+        }
+        return [...withoutErased, ...newCanvasNodes]
       }
 
       return existingNodes
@@ -3838,11 +3881,12 @@ function BoardFlowInner({
       savedEdges?.length ?? 0,
       edges.length,
       lineStyle,
-      (savedEdges ?? []).map((e) => `${e.source_message_id}>${e.target_message_id}`).join('|'),
+      (savedEdges ?? []).map((e) => savedEdgePairKey(e)).join('|'),
       nodes
         .map((n) => {
-          const messageId = n.data?.promptMessage?.id
-          return messageId ? `${n.id}~${messageId}` : ''
+          const ep = threadEndpointFromNode(n)
+          if (!ep) return ''
+          return `${n.id}~${ep.kind[0]}:${ep.id}`
         })
         .filter(Boolean)
         .join('|'),
@@ -3862,28 +3906,33 @@ function BoardFlowInner({
 
     console.log(`🔄 BoardFlow: Loading ${savedEdges.length} saved edges from database, ${nodes.length} nodes available`)
 
-    // Convert saved edges (message IDs) to React Flow edges (node IDs)
+    // Convert saved edges (message / canvas ids) to React Flow edges (node IDs)
     const reactFlowEdges: Edge[] = []
 
     for (const savedEdge of savedEdges) {
-      // Find nodes by message ID (only nodes with promptMessage, skip freehand nodes)
-      const sourceNodes = nodes.filter(n => n.data.promptMessage?.id === savedEdge.source_message_id)
-      const targetNodes = nodes.filter(n => n.data.promptMessage?.id === savedEdge.target_message_id)
+      const { source: sourceEp, target: targetEp } = endpointsFromSavedEdge(savedEdge)
+      if (!sourceEp || !targetEp) {
+        console.warn('🔄 BoardFlow: Skipping edge with missing endpoints', savedEdge)
+        continue
+      }
+
+      const sourceNodes = nodesForSavedEndpoint(nodes, sourceEp)
+      const targetNodes = nodesForSavedEndpoint(nodes, targetEp)
 
       // Skip if either source or target is a flashcard
-      const sourceIsFlashcard = sourceNodes.some(n => n.data.promptMessage?.metadata?.isFlashcard === true)
-      const targetIsFlashcard = targetNodes.some(n => n.data.promptMessage?.metadata?.isFlashcard === true)
+      const sourceIsFlashcard = sourceNodes.some((n) => endpointIsFlashcard(n))
+      const targetIsFlashcard = targetNodes.some((n) => endpointIsFlashcard(n))
       
       if (sourceIsFlashcard || targetIsFlashcard) {
-        console.log(`🔄 BoardFlow: Skipping edge for flashcard: ${savedEdge.source_message_id} -> ${savedEdge.target_message_id}`)
+        console.log(`🔄 BoardFlow: Skipping edge for flashcard: ${savedEdgePairKey(savedEdge)}`)
         continue
       }
 
       if (sourceNodes.length === 0) {
-        console.warn(`🔄 BoardFlow: Source node not found for message ID: ${savedEdge.source_message_id}`)
+        console.warn(`🔄 BoardFlow: Source node not found for endpoint: ${sourceEp.kind}:${sourceEp.id}`)
       }
       if (targetNodes.length === 0) {
-        console.warn(`🔄 BoardFlow: Target node not found for message ID: ${savedEdge.target_message_id}`)
+        console.warn(`🔄 BoardFlow: Target node not found for endpoint: ${targetEp.kind}:${targetEp.id}`)
       }
 
       // Create edges between all matching source and target nodes
@@ -4458,6 +4507,10 @@ function BoardFlowInner({
     const nodeIdsSet = new Set(nodeIdsToDelete)
     if (!nodesSnapshot?.length) {
       setNodes((nds) => nds.filter((n) => !nodeIdsSet.has(n.id)))
+      // Drop threads attached to deleted drawings/frames (DB cascade covers panel_edges)
+      setEdges((eds) =>
+        eds.filter((e) => !nodeIdsSet.has(e.source) && !nodeIdsSet.has(e.target))
+      )
     }
 
     try {
@@ -4507,6 +4560,9 @@ function BoardFlowInner({
 
       // Delete canvas nodes (freehand drawings) from database
       if (canvasNodeIdsToDelete.length > 0) {
+        // Tombstone + drop from RQ cache before await so the load effect cannot re-add live
+        markCanvasNodesErased(canvasNodeIdsToDelete)
+        removeCanvasNodesFromQueryCache(queryClient, conversationId, canvasNodeIdsToDelete)
         const { error } = await supabase
           .from('canvas_nodes')
           .delete()
@@ -4517,25 +4573,40 @@ function BoardFlowInner({
           canvasNodesDeleted = false
         } else {
           console.log('✅ Deleted canvas nodes from database')
-          // Invalidate canvas nodes query to refresh the UI
-          await queryClient.invalidateQueries({ queryKey: ['canvas-nodes', conversationId] })
+          // Cache already updated — avoid invalidate/refetch that can race and re-merge ink
         }
       }
 
-      // If any deletion failed, re-add nodes to React Flow state
+      // If any deletion failed, re-add nodes to React Flow state (except intentional freehand erases)
       if (!messagesDeleted || !canvasNodesDeleted) {
-        setNodes((nds) => [...nds, ...nodesToDelete])
+        const restore = nodesToDelete.filter(
+          (n) => !(n.type === 'freehand' && isCanvasNodeErased(n.id)),
+        )
+        if (restore.length > 0) {
+          setNodes((nds) => {
+            const have = new Set(nds.map((n) => n.id))
+            return [...nds, ...restore.filter((n) => !have.has(n.id))]
+          })
+        }
         return false
       }
 
       return true
     } catch (error) {
       console.error('Error deleting nodes:', error)
-      // Re-add nodes to React Flow state if deletion failed
-      setNodes((nds) => [...nds, ...nodesToDelete])
+      // Re-add nodes to React Flow state if deletion failed (skip tombstoned freehand)
+      const restore = nodesToDelete.filter(
+        (n) => !(n.type === 'freehand' && isCanvasNodeErased(n.id)),
+      )
+      if (restore.length > 0) {
+        setNodes((nds) => {
+          const have = new Set(nds.map((n) => n.id))
+          return [...nds, ...restore.filter((n) => !have.has(n.id))]
+        })
+      }
       return false
     }
-  }, [conversationId, setNodes, queryClient])
+  }, [conversationId, setNodes, setEdges, queryClient])
 
   deleteNodesByIdsRef.current = deleteNodesByIds
 
@@ -7326,6 +7397,7 @@ function BoardFlowInner({
       opts?.html ??
       (opts?.propertyType ? propertyBlockHtml(opts.propertyType, '', { inline: true }) : '<p></p>') // User property = inline Empty cell
     const messageId = generateUUID() // Client id so the RF node and DB row match
+    markIbarLiveCreate(messageId) // This tab: no Yjs until reload (avoids create-remount merge split)
 
     const optimisticMessage = {
       id: messageId,
@@ -8909,28 +8981,27 @@ function BoardFlowInner({
         return
       }
 
-      // Extract base message IDs (only for chatPanel nodes)
-      if (!sourceNode.data.promptMessage?.id || !targetNode.data.promptMessage?.id) {
-        console.warn('Cannot delete edge: source or target is not a chatPanel node (freehand nodes cannot have edges)')
+      // Resolve durable endpoints (frame message id or canvas node id)
+      const sourceEp = threadEndpointFromNode(sourceNode)
+      const targetEp = threadEndpointFromNode(targetNode)
+      if (!sourceEp || !targetEp) {
+        console.warn('Cannot delete edge: source or target is not a threadable node')
         // Re-add edge to React Flow state
         setEdges((eds) => [...eds, edgeToDelete])
         return
       }
-      const sourceMessageId = sourceNode.data.promptMessage.id
-      const targetMessageId = targetNode.data.promptMessage.id
 
       console.log('🗑️ Deleting edge from database:', {
         conversationId,
-        sourceMessageId,
-        targetMessageId,
+        sourceEp,
+        targetEp,
       })
 
       const { error, data } = await supabase
         .from('panel_edges')
         .delete()
         .eq('conversation_id', conversationId)
-        .eq('source_message_id', sourceMessageId)
-        .eq('target_message_id', targetMessageId)
+        .or(panelEdgesMatchOrFilter(sourceEp, targetEp))
         .select()
 
       if (error) {
@@ -8940,7 +9011,9 @@ function BoardFlowInner({
         setClickedEdge(edgeToDelete) // Re-open popup
       } else {
         console.log('✅ Deleted edge from database', data)
-        void detachFramesOnDeletedEdge(sourceMessageId, targetMessageId)
+        if (sourceEp.kind === 'message' && targetEp.kind === 'message') {
+          void detachFramesOnDeletedEdge(sourceEp.id, targetEp.id)
+        }
         // Refetch edges to update savedEdges and prevent edge loading useEffect from re-adding it
         refetchEdges()
       }
@@ -8994,17 +9067,16 @@ function BoardFlowInner({
       )
       setClickedEdge({ ...clickedEdge, type: 'editable', data: nextData })
       if (!conversationId) return
-      const sourceMsg = nodes.find((n) => n.id === clickedEdge.source)?.data?.promptMessage?.id
-      const targetMsg = nodes.find((n) => n.id === clickedEdge.target)?.data?.promptMessage?.id
-      if (!sourceMsg || !targetMsg) return
+      const sourceEp = threadEndpointFromNode(nodes.find((n) => n.id === clickedEdge.source))
+      const targetEp = threadEndpointFromNode(nodes.find((n) => n.id === clickedEdge.target))
+      if (!sourceEp || !targetEp) return
       void (async () => {
         const supabase = createClient()
         const { error } = await supabase
           .from('panel_edges')
           .update({ metadata: nextData })
           .eq('conversation_id', conversationId)
-          .eq('source_message_id', sourceMsg)
-          .eq('target_message_id', targetMsg)
+          .or(panelEdgesMatchOrFilter(sourceEp, targetEp))
         if (error && !String(error.message || '').includes('metadata')) {
           console.error('Failed to persist thread style:', error)
         }
@@ -9107,7 +9179,10 @@ function BoardFlowInner({
 
       const sourceNode = nodes.find((n) => n.id === newConnection.source)
       const targetNode = nodes.find((n) => n.id === newConnection.target)
-      if (!sourceNode?.data?.promptMessage?.id || !targetNode?.data?.promptMessage?.id) return
+      const sourceEp = threadEndpointFromNode(sourceNode)
+      const targetEp = threadEndpointFromNode(targetNode)
+      if (!sourceEp || !targetEp) return
+      if (endpointIsFlashcard(sourceNode) || endpointIsFlashcard(targetNode)) return
 
       takeSnapshot()
 
@@ -9134,31 +9209,26 @@ function BoardFlowInner({
       if (!conversationId) return
       try {
         const supabase = createClient()
-        const oldSource = nodes.find((n) => n.id === oldEdge.source)?.data?.promptMessage?.id
-        const oldTarget = nodes.find((n) => n.id === oldEdge.target)?.data?.promptMessage?.id
-        if (!oldSource || !oldTarget) return
+        const oldSourceEp = threadEndpointFromNode(nodes.find((n) => n.id === oldEdge.source))
+        const oldTargetEp = threadEndpointFromNode(nodes.find((n) => n.id === oldEdge.target))
+        if (!oldSourceEp || !oldTargetEp) return
 
+        const endpointCols = panelEdgeEndpointColumns(sourceEp, targetEp)
         const { error } = await supabase
           .from('panel_edges')
           .update({
-            source_message_id: sourceNode.data.promptMessage.id,
-            target_message_id: targetNode.data.promptMessage.id,
+            ...endpointCols,
             metadata: nextEdge.data ?? {},
           })
           .eq('conversation_id', conversationId)
-          .eq('source_message_id', oldSource)
-          .eq('target_message_id', oldTarget)
+          .or(panelEdgesMatchOrFilter(oldSourceEp, oldTargetEp))
 
         if (error && String(error.message || '').includes('metadata')) {
           await supabase
             .from('panel_edges')
-            .update({
-              source_message_id: sourceNode.data.promptMessage.id,
-              target_message_id: targetNode.data.promptMessage.id,
-            })
+            .update(endpointCols)
             .eq('conversation_id', conversationId)
-            .eq('source_message_id', oldSource)
-            .eq('target_message_id', oldTarget)
+            .or(panelEdgesMatchOrFilter(oldSourceEp, oldTargetEp))
         } else if (error) {
           console.error('Error updating thread reconnect:', error)
         }
@@ -9351,6 +9421,7 @@ function BoardFlowInner({
 
         const messageId = generateUUID()
         iBarPendingMessageIdRef.current = messageId
+        markIbarLiveCreate(messageId) // This tab: no Yjs until reload (avoids create-remount merge split)
         const html = isSlashSpawn ? '<p></p>' : bufferToHtml(iBarTypeBufferRef.current)
         const optimisticMessage = {
           id: messageId,
@@ -10140,21 +10211,20 @@ function BoardFlowInner({
         onDrop={handleDrop}
         onConnect={async (params) => {
           if (!isLocked && params.source && params.target) {
-            // Check if either source or target is a flashcard or freehand node
+            // Check if either source or target is a flashcard or non-threadable node
             const sourceNode = nodes.find(n => n.id === params.source)
             const targetNode = nodes.find(n => n.id === params.target)
-            
-            // Prevent edge creation for freehand nodes (they don't have promptMessage)
-            if (!sourceNode?.data?.promptMessage || !targetNode?.data?.promptMessage) {
-              console.log('🔄 BoardFlow: Cannot create edge for freehand nodes')
+            const sourceEp = threadEndpointFromNode(sourceNode)
+            const targetEp = threadEndpointFromNode(targetNode)
+
+            // Frames, drawings, and shapes can host threads; flashcards cannot
+            if (!sourceEp || !targetEp) {
+              console.log('🔄 BoardFlow: Cannot create edge — missing threadable endpoints')
               return
             }
             
-            const sourceIsFlashcard = sourceNode.data.promptMessage.metadata?.isFlashcard === true
-            const targetIsFlashcard = targetNode.data.promptMessage.metadata?.isFlashcard === true
-            
             // Prevent edge creation for flashcards
-            if (sourceIsFlashcard || targetIsFlashcard) {
+            if (endpointIsFlashcard(sourceNode) || endpointIsFlashcard(targetNode)) {
               console.log('🔄 BoardFlow: Cannot create edge for flashcard')
               return
             }
@@ -10180,7 +10250,7 @@ function BoardFlowInner({
               normalizeHandleId(params.targetHandle) || params.targetHandle || null
             const fallback =
               !sourceHandle || !targetHandle
-                ? findClosestHandles(sourceNode, targetNode)
+                ? findClosestHandles(sourceNode!, targetNode!)
                 : null
             if (!sourceHandle && !fallback?.sourceHandle) {
               console.warn('🔄 BoardFlow: Could not resolve source handle for edge creation')
@@ -10265,34 +10335,33 @@ function BoardFlowInner({
                 replaceBoardUrl(newConversation.id) // Address bar only — router.replace remounts the map
               }
 
-              // Find source and target nodes to get message IDs
-              const sourceNode = nodes.find(n => n.id === params.source)
-              const targetNode = nodes.find(n => n.id === params.target)
+              // Re-resolve endpoints after possible board mint (nodes unchanged)
+              const liveSource = nodes.find(n => n.id === params.source)
+              const liveTarget = nodes.find(n => n.id === params.target)
+              const liveSourceEp = threadEndpointFromNode(liveSource)
+              const liveTargetEp = threadEndpointFromNode(liveTarget)
 
-              if (sourceNode && targetNode) {
-                // Ensure both nodes are chatPanel nodes (have promptMessage)
-                if (!sourceNode.data.promptMessage?.id || !targetNode.data.promptMessage?.id) {
-                  console.warn('Cannot save edge: source or target is not a chatPanel node (freehand nodes cannot have edges)')
-                  // Remove edge from React Flow state
+              if (liveSourceEp && liveTargetEp) {
+                // Same endpoint twice (shouldn't happen for distinct RF ids, but guard canvas↔canvas self)
+                if (
+                  liveSourceEp.kind === liveTargetEp.kind &&
+                  liveSourceEp.id === liveTargetEp.id
+                ) {
+                  console.log('🔄 BoardFlow: Cannot create edge from node to itself')
                   setEdges((eds) => eds.filter(e => e.id !== newEdge.id))
                   return
                 }
-                const sourceMessageId = sourceNode.data.promptMessage.id
-                const targetMessageId = targetNode.data.promptMessage.id
+
+                const endpointCols = panelEdgeEndpointColumns(liveSourceEp, liveTargetEp)
+                const usesCanvasEnd =
+                  liveSourceEp.kind === 'canvas' || liveTargetEp.kind === 'canvas'
 
                 // Check if edge already exists in database (in either direction)
                 const { data: existingEdges } = await supabase
                   .from('panel_edges')
                   .select('id')
                   .eq('conversation_id', currentConversationId)
-                  .or(`and(source_message_id.eq.${sourceMessageId},target_message_id.eq.${targetMessageId}),and(source_message_id.eq.${targetMessageId},target_message_id.eq.${sourceMessageId})`)
-                
-                // Also check if we're trying to connect a node to itself
-                if (sourceMessageId === targetMessageId) {
-                  console.log('🔄 BoardFlow: Cannot create edge from node to itself')
-                  setEdges((eds) => eds.filter(e => e.id !== newEdge.id))
-                  return
-                }
+                  .or(panelEdgesMatchOrFilter(liveSourceEp, liveTargetEp))
 
                 if (existingEdges && existingEdges.length > 0) {
                   console.log('🔄 BoardFlow: Edge already exists in database between these nodes, preventing duplicate')
@@ -10301,15 +10370,29 @@ function BoardFlowInner({
                   return
                 }
 
-                const { error } = await supabase
-                  .from('panel_edges')
-                  .insert({
-                    conversation_id: currentConversationId,
-                    user_id: user.id,
-                    source_message_id: sourceMessageId,
-                    target_message_id: targetMessageId,
-                    metadata: newEdge.data ?? {},
-                  })
+                const edgeRow = {
+                  conversation_id: currentConversationId,
+                  user_id: user.id,
+                  ...endpointCols,
+                  metadata: newEdge.data ?? {},
+                }
+
+                // Drawing save is async — retry briefly if the canvas_nodes FK is not ready yet
+                let error: { message?: string; code?: string; details?: string; hint?: string; name?: string } | null =
+                  null
+                for (let attempt = 0; attempt < (usesCanvasEnd ? 6 : 1); attempt++) {
+                  const result = await supabase.from('panel_edges').insert(edgeRow)
+                  error = result.error
+                  if (!error) break
+                  if (
+                    usesCanvasEnd &&
+                    (error.code === '23503' || String(error.message || '').includes('canvas_node'))
+                  ) {
+                    await new Promise((r) => setTimeout(r, 80 * (attempt + 1)))
+                    continue
+                  }
+                  break
+                }
 
                 if (error) {
                   // Retry without metadata if column not migrated yet
@@ -10317,8 +10400,7 @@ function BoardFlowInner({
                     const retry = await supabase.from('panel_edges').insert({
                       conversation_id: currentConversationId,
                       user_id: user.id,
-                      source_message_id: sourceMessageId,
-                      target_message_id: targetMessageId,
+                      ...endpointCols,
                     })
                     if (retry.error) {
                       console.error('Error saving edge to database:', retry.error)
@@ -10431,7 +10513,19 @@ function BoardFlowInner({
               }
             }
           }
-          // Phone first-tap / desktop multi-select / text on selected: select, dismiss menu if open
+          // Already selected + text/chrome click (incl. drag-select mouseup→click): keep TipTap
+          // selection. Falling through used to blur ProseMirror and wipe every range.
+          if (alreadySelected && !isFrameDragAreaTarget(event.target)) {
+            if (rightClickedNodeRef.current?.id === node.id) {
+              rightClickedNodeRef.current = null
+              setRightClickedNode(null)
+              setNodePopupPosition({ x: 0, y: 0 })
+              nodeClickPositionRef.current = null
+              nodePopupZoomRef.current = null
+            }
+            return
+          }
+          // Phone first-tap / desktop multi-select: select frame, dismiss menu if open
           if (rightClickedNodeRef.current?.id === node.id) {
             rightClickedNodeRef.current = null
             setRightClickedNode(null)
@@ -10780,39 +10874,101 @@ function BoardFlowInner({
             onSpotMutate={({ removeIds, upsertNodes }) => {
               // RF already updated in FreehandEraser; persist canvas_nodes only
               if (!conversationId) return
-              void (async () => {
-                try {
-                  const supabase = createClient()
-                  const { data: { user } } = await supabase.auth.getUser()
-                  if (!user) return
-                  if (removeIds.length > 0) {
-                    const { error } = await supabase
-                      .from('canvas_nodes')
-                      .delete()
-                      .in('id', removeIds)
-                      .eq('conversation_id', conversationId)
-                      .eq('user_id', user.id)
-                    if (error) console.error('🎨 Spot erase delete failed:', error)
-                  }
-                  for (const node of upsertNodes) {
-                    const row = {
-                      id: node.id,
-                      conversation_id: conversationId,
-                      user_id: user.id,
-                      node_type: 'freehand' as const,
-                      position_x: node.position.x,
-                      position_y: node.position.y,
-                      width: node.width,
-                      height: node.height,
-                      data: node.data,
+              if (removeIds.length > 0) {
+                // Tombstone + strip RQ cache immediately — load effect must not re-add live
+                markCanvasNodesErased(removeIds)
+                removeCanvasNodesFromQueryCache(queryClient, conversationId, removeIds)
+              }
+              // New split-off ids must not be treated as erased
+              clearCanvasNodeErased(upsertNodes.map((n) => n.id).filter((id) => !removeIds.includes(id)))
+              for (const node of upsertNodes) {
+                if (isCanvasNodeErased(node.id) || removeIds.includes(node.id)) continue
+                const width =
+                  typeof node.width === 'number'
+                    ? node.width
+                    : Number((node.style as { width?: number } | undefined)?.width) || 0
+                const height =
+                  typeof node.height === 'number'
+                    ? node.height
+                    : Number((node.style as { height?: number } | undefined)?.height) || 0
+                putCanvasNodeInQueryCache(queryClient, conversationId, {
+                  id: node.id,
+                  node_type: 'freehand',
+                  position_x: node.position.x,
+                  position_y: node.position.y,
+                  width,
+                  height,
+                  data: node.data,
+                })
+              }
+              // Serialize writes: densified punches fire many mutations; last-write-wins must be in order
+              spotErasePersistChainRef.current = spotErasePersistChainRef.current
+                .then(async () => {
+                  try {
+                    const supabase = createClient()
+                    const {
+                      data: { user },
+                    } = await supabase.auth.getUser()
+                    if (!user) return
+                    if (removeIds.length > 0) {
+                      const { error } = await supabase
+                        .from('canvas_nodes')
+                        .delete()
+                        .in('id', removeIds)
+                        .eq('conversation_id', conversationId)
+                      if (error) console.error('🎨 Spot erase delete failed:', error)
                     }
-                    const { error } = await supabase.from('canvas_nodes').upsert(row, { onConflict: 'id' })
-                    if (error) console.error('🎨 Spot erase upsert failed:', error, node.id)
+                    for (const node of upsertNodes) {
+                      if (isCanvasNodeErased(node.id) || removeIds.includes(node.id)) continue
+                      const width =
+                        typeof node.width === 'number'
+                          ? node.width
+                          : Number((node.style as { width?: number } | undefined)?.width) || null
+                      const height =
+                        typeof node.height === 'number'
+                          ? node.height
+                          : Number((node.style as { height?: number } | undefined)?.height) || null
+                      const row = {
+                        position_x: node.position.x,
+                        position_y: node.position.y,
+                        ...(width != null ? { width } : {}),
+                        ...(height != null ? { height } : {}),
+                        data: node.data,
+                      }
+                      // Prefer update for existing pieces; insert when this is a new split-off drawing
+                      const { data: updated, error: updateError } = await supabase
+                        .from('canvas_nodes')
+                        .update(row)
+                        .eq('id', node.id)
+                        .eq('conversation_id', conversationId)
+                        .select('id')
+                      if (updateError) {
+                        console.error('🎨 Spot erase update failed:', updateError, node.id)
+                        continue
+                      }
+                      if (updated && updated.length > 0) continue
+                      const { error: insertError } = await supabase.from('canvas_nodes').insert({
+                        id: node.id,
+                        conversation_id: conversationId,
+                        user_id: user.id,
+                        node_type: 'freehand',
+                        position_x: node.position.x,
+                        position_y: node.position.y,
+                        width: width ?? 100,
+                        height: height ?? 100,
+                        data: node.data,
+                      })
+                      if (insertError) {
+                        console.error('🎨 Spot erase insert failed:', insertError, node.id)
+                      }
+                    }
+                  } catch (err) {
+                    console.error('🎨 Spot erase persist failed:', err)
                   }
-                } catch (err) {
-                  console.error('🎨 Spot erase persist failed:', err)
-                }
-              })()
+                })
+                .catch((err) => {
+                  console.error('🎨 Spot erase persist chain failed:', err)
+                })
             }}
           />
         )}

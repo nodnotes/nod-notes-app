@@ -1,31 +1,32 @@
-// Eraser overlay for Draw mode — stroke deletes whole ink; spot punches circular holes in paint
+// Eraser overlay for Draw mode — stroke deletes whole ink; spot splits paint into separate drawings
 import { useRef, useState, type PointerEvent } from 'react' // Capture erase gestures without RF pan
-import { useReactFlow, type Node } from 'reactflow' // Flow coords + live freehand nodes
-import { useReactFlowContext } from '@/components/react-flow-context' // eraserMode + tip size
+import { useReactFlow, useStore, type Node } from 'reactflow' // Flow coords + live freehand nodes + zoom
+import { useReactFlowContext } from '@/components/react-flow-context' // eraserMode + tip size + zoom lock
+import { generateUUID } from '@/lib/utils' // New ids for split-off pieces
 
 import { DEFAULT_STROKE_SIZE, DEFAULT_ERASER_TIP_DIAMETER_PX, pathOptions } from './path' // Stroke width + default eraser tip
 import type { Points } from './types' // [x, y, pressure] tuples on freehand nodes
-import type { FreehandNodeData, FreehandNodeType } from './FreehandNode' // Node shape + eraseHoles
+import type { FreehandNodeData, FreehandNodeType } from './FreehandNode' // Node shape
 
 /** Squared distance from point P to segment AB (flow space). */
 function dist2PointToSegment(
-  px: number, // Eraser tip x
-  py: number, // Eraser tip y
-  ax: number, // Segment start x
-  ay: number, // Segment start y
-  bx: number, // Segment end x
-  by: number, // Segment end y
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
 ) {
-  const dx = bx - ax // Segment vector x
-  const dy = by - ay // Segment vector y
-  const len2 = dx * dx + dy * dy // Squared length
+  const dx = bx - ax
+  const dy = by - ay
+  const len2 = dx * dx + dy * dy
   if (len2 === 0) {
     const ex = px - ax
     const ey = py - ay
     return ex * ex + ey * ey
   }
-  let t = ((px - ax) * dx + (py - ay) * dy) / len2 // Project onto segment
-  t = Math.max(0, Math.min(1, t)) // Clamp to AB
+  let t = ((px - ax) * dx + (py - ay) * dy) / len2
+  t = Math.max(0, Math.min(1, t))
   const qx = ax + t * dx
   const qy = ay + t * dy
   const ex = px - qx
@@ -33,9 +34,9 @@ function dist2PointToSegment(
   return ex * ex + ey * ey
 }
 
-type FreehandData = FreehandNodeData // Alias for size helpers
+type FreehandData = FreehandNodeData
 
-/** Resolve AABB + content box for hit tests / hole math. */
+/** Resolve AABB + content box for hit tests / split math. */
 function freehandSize(node: Node) {
   const data = node.data as FreehandData | undefined
   const initialW = data?.initialSize?.width ?? 0
@@ -43,7 +44,6 @@ function freehandSize(node: Node) {
   const aabbW = (node.width as number | undefined) ?? initialW
   const aabbH = (node.height as number | undefined) ?? initialH
   const rotation = typeof data?.rotation === 'number' ? data.rotation : 0
-  // Upright: RF box is the content box (same as FreehandNode.resolveContentSize)
   const contentW =
     Math.abs(rotation) <= 0.5
       ? aabbW
@@ -73,10 +73,10 @@ function localToFlow(
   scaleY: number,
   rotation: number,
 ) {
-  const lx = localX * scaleX - contentW / 2 // Content-local, origin at center
+  const lx = localX * scaleX - contentW / 2
   const ly = localY * scaleY - contentH / 2
   if (Math.abs(rotation) <= 0.5) {
-    return { x: nodeX + localX * scaleX, y: nodeY + localY * scaleY } // Upright: AABB = content
+    return { x: nodeX + localX * scaleX, y: nodeY + localY * scaleY }
   }
   const rad = (rotation * Math.PI) / 180
   const c = Math.cos(rad)
@@ -87,40 +87,7 @@ function localToFlow(
   }
 }
 
-/** Absolute flow → authored local (inverse of localToFlow). */
-function flowToLocal(
-  flowX: number,
-  flowY: number,
-  nodeX: number,
-  nodeY: number,
-  contentW: number,
-  contentH: number,
-  aabbW: number,
-  aabbH: number,
-  scaleX: number,
-  scaleY: number,
-  rotation: number,
-) {
-  if (Math.abs(rotation) <= 0.5) {
-    return {
-      x: scaleX > 0 ? (flowX - nodeX) / scaleX : 0,
-      y: scaleY > 0 ? (flowY - nodeY) / scaleY : 0,
-    }
-  }
-  const rad = (-rotation * Math.PI) / 180 // Inverse rotate
-  const c = Math.cos(rad)
-  const s = Math.sin(rad)
-  const dx = flowX - (nodeX + aabbW / 2)
-  const dy = flowY - (nodeY + aabbH / 2)
-  const lx = dx * c + dy * s // R^T · d
-  const ly = -dx * s + dy * c
-  return {
-    x: scaleX > 0 ? (lx + contentW / 2) / scaleX : 0,
-    y: scaleY > 0 ? (ly + contentH / 2) / scaleY : 0,
-  }
-}
-
-/** True when the eraser tip hits this freehand stroke (stroke mode / punch gate). */
+/** True when the eraser tip hits this freehand stroke (stroke mode / split gate). */
 function freehandIntersectsEraser(
   node: Node,
   flowX: number,
@@ -158,38 +125,137 @@ function freehandIntersectsEraser(
   return false
 }
 
-/** True when every centerline sample’s paint disk is covered by erase holes. */
-function strokeFullyErased(
+/**
+ * Keep polyline runs outside the tip disk; interpolate crossings so cut ends sit on the circle.
+ * clipR = tipR + paintR → round caps leave a tip-sized hole (not a V-notch).
+ */
+function clipPolylineOutsideBrush(
   points: Points,
-  strokeSize: number,
-  holes: { x: number; y: number; r: number }[],
-) {
-  if (holes.length === 0 || points.length === 0) return false
-  const paintR = strokeSize * 0.5
-  for (const [px, py] of points) {
-    let covered = false
-    for (const h of holes) {
-      // Paint disk around sample covered when hole reaches the far side of the stamp
-      if (Math.hypot(px - h.x, py - h.y) + paintR <= h.r + 0.5) {
-        covered = true
-        break
-      }
+  cx: number,
+  cy: number,
+  clipR: number,
+): Points[] {
+  if (points.length === 0 || !(clipR > 0)) return points.length ? [points] : []
+  const r2 = clipR * clipR
+  const outside = (x: number, y: number) => (x - cx) * (x - cx) + (y - cy) * (y - cy) > r2
+
+  /** Point on AB at the circle boundary closest to B when A is inside / B outside (or reverse). */
+  function edgePoint(
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
+    aOut: boolean,
+  ): [number, number, number] {
+    // Binary search the crossing (stable for short segments)
+    let t0 = 0
+    let t1 = 1
+    for (let i = 0; i < 12; i++) {
+      const tm = (t0 + t1) / 2
+      const mx = ax + (bx - ax) * tm
+      const my = ay + (by - ay) * tm
+      const o = outside(mx, my)
+      if (o === aOut) t0 = tm
+      else t1 = tm
     }
-    if (!covered) return false
+    const t = (t0 + t1) / 2
+    return [ax + (bx - ax) * t, ay + (by - ay) * t, 1]
   }
-  return true
+
+  const runs: Points[] = []
+  let cur: Points = []
+  let prev = points[0]
+  let prevOut = outside(prev[0], prev[1])
+  if (prevOut) cur.push([prev[0], prev[1], prev[2] ?? 1])
+
+  for (let i = 1; i < points.length; i++) {
+    const p = points[i]
+    const out = outside(p[0], p[1])
+    if (prevOut && out) {
+      cur.push([p[0], p[1], p[2] ?? 1])
+    } else if (prevOut && !out) {
+      // Leaving outside → close run at boundary
+      cur.push(edgePoint(prev[0], prev[1], p[0], p[1], true))
+      if (cur.length >= 1) runs.push(cur)
+      cur = []
+    } else if (!prevOut && out) {
+      // Entering outside → open run at boundary
+      cur = [edgePoint(prev[0], prev[1], p[0], p[1], false), [p[0], p[1], p[2] ?? 1]]
+    }
+    prev = p
+    prevOut = out
+  }
+  if (cur.length >= 1) runs.push(cur)
+
+  // Drop tiny crumbs (noise from densified samples)
+  const minLen = Math.max(clipR * 0.15, 1)
+  return runs.filter((run) => {
+    if (run.length >= 2) {
+      let len = 0
+      for (let i = 1; i < run.length; i++) {
+        len += Math.hypot(run[i][0] - run[i - 1][0], run[i][1] - run[i - 1][1])
+      }
+      return len >= minLen
+    }
+    // Single sample — keep if it is a meaningful dab
+    return run.length === 1
+  })
+}
+
+/** Flow-space samples → freehand node geometry (padded bbox, local points). */
+function nodeGeometryFromFlowPoints(points: Points, strokeSize: number) {
+  let x1 = Infinity
+  let y1 = Infinity
+  let x2 = -Infinity
+  let y2 = -Infinity
+  const flowPoints: Points = points.map(([x, y, p]) => [x, y, p ?? 1])
+  for (const [x, y] of flowPoints) {
+    x1 = Math.min(x1, x)
+    y1 = Math.min(y1, y)
+    x2 = Math.max(x2, x)
+    y2 = Math.max(y2, y)
+  }
+  const thickness = strokeSize * 0.5
+  x1 -= thickness
+  y1 -= thickness
+  x2 += thickness
+  y2 += thickness
+  for (const pt of flowPoints) {
+    pt[0] -= x1
+    pt[1] -= y1
+  }
+  let width = x2 - x1
+  let height = y2 - y1
+  const minSize = strokeSize * 2
+  if (width < minSize) {
+    const cx = (x1 + x2) / 2
+    x1 = cx - minSize / 2
+    width = minSize
+  }
+  if (height < minSize) {
+    const cy = (y1 + y2) / 2
+    y1 = cy - minSize / 2
+    height = minSize
+  }
+  return {
+    position: { x: x1, y: y1 },
+    width,
+    height,
+    points: flowPoints,
+  }
 }
 
 export type SpotEraseMutation = {
-  removeIds: string[] // Fully erased strokes
-  upsertNodes: FreehandNodeType[] // Same-id strokes with new eraseHoles
+  removeIds: string[] // Fully erased strokes (no remaining paint)
+  upsertNodes: FreehandNodeType[] // Updated pieces + brand-new split-off drawings
 }
 
 /**
- * Punch a circular hole matching the tip — evenodd erase, not centerline split.
- * Returns null when the tip does not overlap this stroke’s paint.
+ * Carve the tip disk out of a stroke’s centerline.
+ * One remaining run → same node updated; several → separate drawings (own adjust + connection points).
+ * Round caps (no taper) face the tip-sized gap.
  */
-function spotPunchHole(
+function spotSplitStroke(
   node: Node,
   flowX: number,
   flowY: number,
@@ -206,45 +272,73 @@ function spotPunchHole(
 
   const scaleX = initialW > 0 ? contentW / initialW : 1
   const scaleY = initialH > 0 ? contentH / initialH : 1
-  const scale = Math.min(scaleX, scaleY) || 1
-  const local = flowToLocal(
-    flowX,
-    flowY,
-    node.position.x,
-    node.position.y,
-    contentW,
-    contentH,
-    w,
-    h,
-    scaleX,
-    scaleY,
-    rotation,
-  )
-  const rLocal = radiusFlow / scale // Tip radius in authored space
-  if (!(rLocal > 0)) return null
-
-  const prevHoles = Array.isArray(data?.eraseHoles) ? data!.eraseHoles! : []
-  const nextHoles = [...prevHoles, { x: local.x, y: local.y, r: rLocal }]
   const strokeSize = typeof data?.strokeSize === 'number' ? data.strokeSize : DEFAULT_STROKE_SIZE
+  const paintedStroke = strokeSize * Math.min(scaleX, scaleY)
+  // Tip hole clears round caps: clip centerline by tipR + paintR
+  const clipR = radiusFlow + paintedStroke * 0.5
 
-  if (strokeFullyErased(points, strokeSize, nextHoles)) {
+  const flowPts: Points = points.map((p) => {
+    const pt = localToFlow(
+      p[0],
+      p[1],
+      node.position.x,
+      node.position.y,
+      contentW,
+      contentH,
+      w,
+      h,
+      scaleX,
+      scaleY,
+      rotation,
+    )
+    return [pt.x, pt.y, 1]
+  })
+
+  const runs = clipPolylineOutsideBrush(flowPts, flowX, flowY, clipR)
+  if (runs.length === 0) {
     return { removeIds: [node.id], upsertNodes: [] }
   }
 
-  const nextData: FreehandNodeData = {
-    ...(data as FreehandNodeData),
-    eraseHoles: nextHoles,
+  // Unchanged geometry (tip missed the skeleton after inflate) — skip
+  if (
+    runs.length === 1 &&
+    runs[0].length === flowPts.length &&
+    runs[0].every((p, i) => Math.hypot(p[0] - flowPts[i][0], p[1] - flowPts[i][1]) < 0.01)
+  ) {
+    return null
   }
-  const upsert: FreehandNodeType = {
-    ...(node as FreehandNodeType),
-    data: nextData,
-  }
-  return { removeIds: [], upsertNodes: [upsert] }
+
+  const base = data as FreehandNodeData
+  const upsertNodes: FreehandNodeType[] = runs.map((run, index) => {
+    const geo = nodeGeometryFromFlowPoints(run, paintedStroke)
+    const id = index === 0 ? node.id : generateUUID() // First piece keeps id; rest are new drawings
+    const nextData: FreehandNodeData = {
+      points: geo.points,
+      initialSize: { width: geo.width, height: geo.height },
+      strokeSize: paintedStroke,
+      inkKind: base.inkKind,
+      strokeColor: base.strokeColor,
+      // Fresh upright piece — drop rotation / holes / legacy tapers from the parent
+    }
+    return {
+      id,
+      type: 'freehand',
+      position: geo.position,
+      width: geo.width,
+      height: geo.height,
+      style: { width: geo.width, height: geo.height },
+      data: nextData,
+      selectable: true,
+      draggable: true,
+    } satisfies FreehandNodeType
+  })
+
+  return { removeIds: [], upsertNodes }
 }
 
 /**
  * Full-board overlay while Draw → Eraser is armed.
- * Stroke mode removes whole freehand nodes; spot mode punches tip-sized holes in paint.
+ * Stroke mode removes whole freehand nodes; spot mode splits paint into separate drawings.
  */
 export function FreehandEraser({
   onBeforeErase,
@@ -255,15 +349,21 @@ export function FreehandEraser({
   onEraseNodes: (ids: string[]) => void
   onSpotMutate: (mutation: SpotEraseMutation) => void
 }) {
-  const { eraserMode, eraserTipSize } = useReactFlowContext() // Flavor + tip from Draw bar
-  const { screenToFlowPosition, getNodes, getViewport, setNodes } = useReactFlow()
-  const erasingRef = useRef(false) // Primary button held
-  const erasedIdsRef = useRef(new Set<string>()) // Stroke mode: already deleted this gesture
-  const snapshotTakenRef = useRef(false) // One undo step per drag
-  const lastSpotFlowRef = useRef<{ x: number; y: number } | null>(null) // Densify punches along the drag
-  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null) // Tip preview
-  const tipDiameterPx = eraserTipSize || DEFAULT_ERASER_TIP_DIAMETER_PX // Thickness bar → screen tip
-  const tipRadiusPx = tipDiameterPx / 2 // Stroke erase + spot punch radius in screen px
+  const { eraserMode, eraserTipSize, eraserTipZoomLocked } = useReactFlowContext()
+  const { screenToFlowPosition, getNodes, setNodes } = useReactFlow()
+  const zoom = useStore((s) => s.transform[2] || 1) // Live zoom so unlocked tip ring tracks pinch
+  const erasingRef = useRef(false)
+  const erasedIdsRef = useRef(new Set<string>())
+  const snapshotTakenRef = useRef(false)
+  const lastSpotFlowRef = useRef<{ x: number; y: number } | null>(null)
+  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null)
+  const tipAuthored = eraserTipSize || DEFAULT_ERASER_TIP_DIAMETER_PX // Thickness bar value
+  // Screen ring: locked = fixed px; unlocked = scales with zoom (board-relative)
+  const tipDiameterPx = eraserTipZoomLocked ? tipAuthored : tipAuthored * Math.max(0.01, zoom)
+  // Flow carve radius: locked = tip ÷ zoom; unlocked = tip is already flow-space
+  const tipRadiusFlow = eraserTipZoomLocked
+    ? tipAuthored / 2 / Math.max(0.01, zoom)
+    : tipAuthored / 2
 
   /** Apply a spot mutation to RF immediately so the next sample sees fresh geometry. */
   function applySpotLocally(mutation: SpotEraseMutation) {
@@ -280,10 +380,10 @@ export function FreehandEraser({
   }
 
   /**
-   * Punch every freehand stroke under one or more tip samples (densified drag).
-   * Accumulates holes in-memory so React setNodes races don’t drop punches.
+   * Split every freehand stroke under tip samples (densified drag).
+   * Accumulates in-memory so React setNodes races don’t drop pieces.
    */
-  function punchSamples(samples: { x: number; y: number }[], radiusFlow: number) {
+  function splitSamples(samples: { x: number; y: number }[], radiusFlow: number) {
     if (samples.length === 0) return
     const liveById = new Map<string, Node>()
     for (const node of getNodes()) {
@@ -291,24 +391,28 @@ export function FreehandEraser({
     }
     const removeIds: string[] = []
     const upsertById = new Map<string, FreehandNodeType>()
+
     for (const sample of samples) {
       for (const [id, node] of [...liveById]) {
         if (removeIds.includes(id)) continue
-        const punched = spotPunchHole(node, sample.x, sample.y, radiusFlow)
-        if (!punched) continue
-        if (punched.removeIds.length > 0) {
-          removeIds.push(...punched.removeIds)
+        const split = spotSplitStroke(node, sample.x, sample.y, radiusFlow)
+        if (!split) continue
+        if (split.removeIds.length > 0) {
+          removeIds.push(...split.removeIds)
           liveById.delete(id)
           upsertById.delete(id)
           continue
         }
-        const next = punched.upsertNodes[0]
-        if (next) {
-          liveById.set(id, next)
-          upsertById.set(id, next)
+        // Replace this live node with all resulting pieces (1 = trim, 2+ = separate drawings)
+        liveById.delete(id)
+        upsertById.delete(id)
+        for (const piece of split.upsertNodes) {
+          liveById.set(piece.id, piece)
+          upsertById.set(piece.id, piece)
         }
       }
     }
+
     const upsertNodes = [...upsertById.values()]
     if (removeIds.length === 0 && upsertNodes.length === 0) return
     if (!snapshotTakenRef.current) {
@@ -322,8 +426,7 @@ export function FreehandEraser({
 
   function eraseStrokeAt(clientX: number, clientY: number) {
     const { x, y } = screenToFlowPosition({ x: clientX, y: clientY })
-    const zoom = getViewport().zoom || 1
-    const radiusFlow = tipRadiusPx / zoom
+    const radiusFlow = tipRadiusFlow
     const hits: string[] = []
     for (const node of getNodes()) {
       if (erasedIdsRef.current.has(node.id)) continue
@@ -341,13 +444,11 @@ export function FreehandEraser({
 
   function eraseSpotAt(clientX: number, clientY: number) {
     const { x, y } = screenToFlowPosition({ x: clientX, y: clientY })
-    const zoom = getViewport().zoom || 1
-    const radiusFlow = tipRadiusPx / zoom // Thickness bar tip; zoom scales punch in board space
+    const radiusFlow = tipRadiusFlow
     const prev = lastSpotFlowRef.current
     lastSpotFlowRef.current = { x, y }
     const samples: { x: number; y: number }[] = []
     if (prev) {
-      // Stamp overlapping tip disks so a drag leaves a continuous tunnel
       const dx = x - prev.x
       const dy = y - prev.y
       const dist = Math.hypot(dx, dy)
@@ -361,7 +462,7 @@ export function FreehandEraser({
       }
     }
     samples.push({ x, y })
-    punchSamples(samples, radiusFlow)
+    splitSamples(samples, radiusFlow)
   }
 
   function eraseAt(clientX: number, clientY: number) {
@@ -382,7 +483,7 @@ export function FreehandEraser({
     erasingRef.current = true
     erasedIdsRef.current = new Set()
     snapshotTakenRef.current = false
-    lastSpotFlowRef.current = null // Fresh densify baseline for this gesture
+    lastSpotFlowRef.current = null
     setCursor(containerPoint(e.clientX, e.clientY))
     eraseAt(e.clientX, e.clientY)
   }

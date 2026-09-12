@@ -40,6 +40,7 @@ import {
 import { useSidebarContext } from './sidebar-context'
 import { useLiveAuthUser, waitForAuthUserId } from '@/lib/use-live-auth-user'
 import { demoteBlockForDeletedBoard, expandBoardsForDelete, syncBoardRenameToBlock } from '@/lib/blocks' // Keep block cards ↔ pages in sync; cascade nested deletes
+import { createLongPressController } from '@/lib/long-press' // Hold tab → reveal / open options (no hover on phone)
 import {
   isPaidSubscriptionTier,
   subscriptionTierLabel,
@@ -295,6 +296,10 @@ function SortableBoardItem({
 
   const router = useRouter()
   const { closeSidebar } = useSidebarContext() // Dismiss nav when a board is opened
+  const rowRef = useRef<HTMLDivElement>(null) // Hold target for reveal / options
+  const longPressRef = useRef<ReturnType<typeof createLongPressController> | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false) // … menu (hover or hold)
+  const [holdReveal, setHoldReveal] = useState(false) // Force + / … visible after hold
   const {
     attributes,
     listeners,
@@ -302,7 +307,45 @@ function SortableBoardItem({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: conversation.id, disabled: !!conversation.isShared }) // Shared boards aren't reordered here
+  } = useSortable({
+    id: conversation.id,
+    disabled: !!conversation.isShared || menuOpen, // Don't reorder while options are open
+  }) // Shared boards aren't reordered here
+
+  // Hold (touch/pen/mouse) or right-click → same options chrome as hover
+  useEffect(() => {
+    const el = rowRef.current
+    if (!el) return
+    const lp = createLongPressController({
+      pointerTypes: ['touch', 'pen', 'mouse'], // General — not phone-only
+      onLongPress: (_point, meta) => {
+        const target = meta.target as Element | null
+        // + / … / chevron / icon own their gestures — title hold still opens options
+        if (target?.closest?.('[data-board-row-actions], [data-board-row-chrome]')) return false
+        setHoldReveal(true) // Show + / … like group-hover
+        setMenuOpen(true) // Open the options list
+        return true
+      },
+    })
+    longPressRef.current = lp
+    const onDown = (e: PointerEvent) => lp.pointerDown(e)
+    const onMove = (e: PointerEvent) => lp.pointerMove(e)
+    const onUp = (e: PointerEvent) => lp.pointerUp(e)
+    const onCancel = (e: PointerEvent) => lp.pointerCancel(e)
+    // Capture: title Link stopPropagation would otherwise block bubble to the row
+    el.addEventListener('pointerdown', onDown, true)
+    el.addEventListener('pointermove', onMove, true)
+    el.addEventListener('pointerup', onUp, true)
+    el.addEventListener('pointercancel', onCancel, true)
+    return () => {
+      el.removeEventListener('pointerdown', onDown, true)
+      el.removeEventListener('pointermove', onMove, true)
+      el.removeEventListener('pointerup', onUp, true)
+      el.removeEventListener('pointercancel', onCancel, true)
+      lp.cancel()
+      longPressRef.current = null
+    }
+  }, [conversation.id])
 
   const isShared = !!conversation.isShared
 
@@ -315,6 +358,9 @@ function SortableBoardItem({
   // Plain click opens; Shift / ⌘-Ctrl updates multi-select without navigating
   const handleTitleClick = (e: React.MouseEvent) => {
     e.preventDefault() // router.push owns navigation (Link unmount from closeSidebar can cancel default)
+    // Hold just opened options — don't navigate on the leftover click
+    if (longPressRef.current?.consumeFired()) return
+    if (menuOpen) return // Options still open — stay in the nav
     if (onBoardRowClick?.(e, conversation.id)) return // Modifier select handled — stay in the menu
     openBoard()
   }
@@ -354,6 +400,7 @@ function SortableBoardItem({
       )}
 
       <div
+        ref={rowRef}
         {...attributes}
         {...listeners}
         className={cn(
@@ -371,6 +418,13 @@ function SortableBoardItem({
         )}
         style={{ paddingLeft: `${16 + depth * 14}px`, touchAction: 'manipulation' }} // Indent nested sub-pages; skip double-tap zoom delay
         title={isShared ? 'Shared with you' : showNestHighlight ? 'Drop to nest inside' : undefined}
+        onContextMenu={(e) => {
+          // Right-click = same as hold: reveal + open options
+          e.preventDefault()
+          e.stopPropagation()
+          setHoldReveal(true)
+          setMenuOpen(true)
+        }}
       >
         {showNestHighlight && (
           // Left nest cue — mirrors Notion’s “make sub-page” hover state
@@ -383,6 +437,7 @@ function SortableBoardItem({
         {hasChildren ? (
           <button
             type="button"
+            data-board-row-chrome
             className="h-5 w-5 flex-shrink-0 flex items-center justify-center rounded hover:bg-gray-200/60 dark:hover:bg-gray-700/60 text-gray-500"
             onClick={(e) => {
               e.preventDefault()
@@ -397,6 +452,7 @@ function SortableBoardItem({
         ) : (
           <span className="h-5 w-5 flex-shrink-0" aria-hidden /> // Spacer aligns titles with parents that have chevrons
         )}
+        <span data-board-row-chrome className="flex-shrink-0 inline-flex">
         <PageIconButton
           conversation={conversation}
           supabase={supabase}
@@ -404,6 +460,7 @@ function SortableBoardItem({
           userId={userId}
           readOnly={isShared} // Invitees can't change the owner's icon
         />
+        </span>
         <Link
           href={`/board/${conversation.id}`}
           className="flex items-center gap-2 flex-1 min-w-0 text-gray-700 dark:text-gray-300"
@@ -429,12 +486,16 @@ function SortableBoardItem({
           </span>
         </Link>
 
-        {/* Hover actions: + nests a child board; … opens the rest of the options */}
+        {/* Hover / hold actions: + nests a child board; … opens the rest of the options */}
         <div
+          data-board-row-actions
           className={cn(
             'flex items-center flex-shrink-0 transition-opacity',
             // Always visible on touch; fade in on hover-capable pointers only (avoids sticky first-tap)
-            'opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100'
+            // Hold / open menu also force-visible (iPad reports hover but has no real hover)
+            holdReveal || menuOpen
+              ? 'opacity-100'
+              : 'opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100'
           )}
         >
           {!isShared && (
@@ -462,7 +523,13 @@ function SortableBoardItem({
             <Plus className="h-4 w-4" />
           </Button>
           )}
-        <DropdownMenu>
+        <DropdownMenu
+          open={menuOpen}
+          onOpenChange={(next) => {
+            setMenuOpen(next)
+            if (!next) setHoldReveal(false) // Drop forced reveal when the menu closes
+          }}
+        >
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
@@ -671,6 +738,44 @@ function DroppableProjectItem({
     id: `project-${project.id}`, // Prefix with 'project-' to identify as project drop target
   })
 
+  const rowRef = useRef<HTMLDivElement>(null) // Hold target for … options
+  const longPressRef = useRef<ReturnType<typeof createLongPressController> | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false) // … menu (hover or hold)
+  const [holdReveal, setHoldReveal] = useState(false) // Force … visible after hold
+
+  // Hold (touch/pen/mouse) → same project options as hover
+  useEffect(() => {
+    const el = rowRef.current
+    if (!el) return
+    const lp = createLongPressController({
+      pointerTypes: ['touch', 'pen', 'mouse'],
+      onLongPress: (_point, meta) => {
+        const target = meta.target as Element | null
+        if (target?.closest?.('[data-board-row-actions], [data-board-row-chrome]')) return false
+        setHoldReveal(true)
+        setMenuOpen(true)
+        return true
+      },
+    })
+    longPressRef.current = lp
+    const onDown = (e: PointerEvent) => lp.pointerDown(e)
+    const onMove = (e: PointerEvent) => lp.pointerMove(e)
+    const onUp = (e: PointerEvent) => lp.pointerUp(e)
+    const onCancel = (e: PointerEvent) => lp.pointerCancel(e)
+    el.addEventListener('pointerdown', onDown, true)
+    el.addEventListener('pointermove', onMove, true)
+    el.addEventListener('pointerup', onUp, true)
+    el.addEventListener('pointercancel', onCancel, true)
+    return () => {
+      el.removeEventListener('pointerdown', onDown, true)
+      el.removeEventListener('pointermove', onMove, true)
+      el.removeEventListener('pointerup', onUp, true)
+      el.removeEventListener('pointercancel', onCancel, true)
+      lp.cancel()
+      longPressRef.current = null
+    }
+  }, [project.id])
+
   const hasBoards = projectBoards.length > 0
   // Show folder icon when not expanded, folder-open icon when expanded and has boards, file icon when expanded but no boards
   const Icon = !isExpanded ? Folder : (hasBoards ? FolderOpen : File)
@@ -699,6 +804,7 @@ function DroppableProjectItem({
       )}
 
       <div
+        ref={rowRef}
         className={cn(
           'flex items-center gap-2 px-4 h-8 rounded-lg transition-colors text-sm border-2 group',
           isActive
@@ -707,13 +813,31 @@ function DroppableProjectItem({
               ? 'tt-selected text-gray-700 dark:text-gray-300 border-blue-500 dark:border-blue-400 border-dashed'
               : 'hover:bg-gray-50 dark:hover:bg-[#1f1f1f] text-gray-700 dark:text-gray-300 border-transparent'
         )}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setHoldReveal(true)
+          setMenuOpen(true)
+        }}
       >
         <Link
           href={`/project/${project.id}`}
           className="flex items-center gap-2 flex-1 min-w-0"
+          onClick={(e) => {
+            // Hold just opened options — don't navigate on release
+            if (longPressRef.current?.consumeFired()) {
+              e.preventDefault()
+              return
+            }
+            if (menuOpen) {
+              e.preventDefault()
+              return
+            }
+          }}
         >
           {hasBoards ? (
             <button
+              data-board-row-chrome
               onClick={(e) => {
                 e.preventDefault()
                 e.stopPropagation()
@@ -731,14 +855,24 @@ function DroppableProjectItem({
           <span className="truncate flex-1">{project.name}</span>
         </Link>
 
-        {/* Dropdown menu button */}
-        <DropdownMenu>
+        {/* Dropdown menu button — hover or hold */}
+        <DropdownMenu
+          open={menuOpen}
+          onOpenChange={(next) => {
+            setMenuOpen(next)
+            if (!next) setHoldReveal(false)
+          }}
+        >
           <DropdownMenuTrigger asChild>
             <Button
+              data-board-row-actions
               variant="ghost"
               size="icon"
               className={cn(
-                'h-8 w-6 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 hover:bg-transparent',
+                'h-8 w-6 transition-opacity flex-shrink-0 hover:bg-transparent',
+                holdReveal || menuOpen
+                  ? 'opacity-100'
+                  : 'opacity-0 group-hover:opacity-100',
                 isActive ? 'text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-900' : 'text-gray-500 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-200'
               )}
               onClick={(e) => {

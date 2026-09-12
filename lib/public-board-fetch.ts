@@ -51,10 +51,31 @@ export async function fetchPublicBoard(boardId: string): Promise<PublicBoardPayl
 
   const { data: edges, error: edgesError } = await supabaseAdmin
     .from('panel_edges')
-    .select('source_message_id, target_message_id, metadata')
+    .select(
+      'source_message_id, target_message_id, source_canvas_node_id, target_canvas_node_id, metadata'
+    )
     .eq('conversation_id', boardId)
 
-  if (edgesError) return null
+  if (edgesError) {
+    // Pre-migration boards still only have message endpoints
+    const fallback = await supabaseAdmin
+      .from('panel_edges')
+      .select('source_message_id, target_message_id, metadata')
+      .eq('conversation_id', boardId)
+    if (fallback.error) return null
+    return {
+      conversation,
+      messages: messages || [],
+      edges: fallback.data || [],
+      canvasNodes: (
+        await supabaseAdmin
+          .from('canvas_nodes')
+          .select('id, node_type, position_x, position_y, width, height, data')
+          .eq('conversation_id', boardId)
+          .order('created_at', { ascending: true })
+      ).data || [],
+    }
+  }
 
   const { data: canvasNodes } = await supabaseAdmin
     .from('canvas_nodes')

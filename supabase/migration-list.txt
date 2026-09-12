@@ -1,9 +1,9 @@
 # Remote Supabase migration/version snapshot
 # project_ref=yhsyhtnnklpkfcpydbst
 # project_name=Nod Notes
-# snapped_at=2026-09-12T18:00:12Z
+# snapped_at=2026-09-12T22:36:26Z
 # postgres=17.6.1.052 gotrue=v2.196.0 rest=v14.5 storage=v1.73.1
-# local_marker=20260912180012_freehand_spot_erase_holes_tip_chrome (no DDL)
+# local_marker=20260912223626_ibar_collab_defer_select_freehand_canvas_threads (no DDL; DDL=20260912192642_panel_edges_canvas_endpoints)
 # production=https://nodnotes.com
 # Remote applied (via Supabase Management API on nod-notes):
 # 20251124231547 create_saas_schema
@@ -206,3 +206,8 @@
 20260911193105_thread_uniform_frame_size_stroke.sql
 20260911194959_empty_board_no_init_fit_ibar_grip_center.sql
 20260911205603_profile_avatar_openmoji_menu_trim.sql
+20260912003036_frame_shape_grip_clip_border.sql
+20260912031705_board_collab_hocuspocus_early_access.sql
+20260912180012_freehand_spot_erase_holes_tip_chrome.sql
+20260912192642_panel_edges_canvas_endpoints.sql
+20260912223626_ibar_collab_defer_select_freehand_canvas_threads.sql
