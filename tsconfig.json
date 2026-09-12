@@ -37,6 +37,9 @@
   ],
   "exclude": [
     "node_modules",
+    "mobile",
+    "desktop",
+    "collab",
     "**/*-pro-example/**",
     "**/*example*/**"
   ]

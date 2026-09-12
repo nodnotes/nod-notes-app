@@ -1,11 +1,24 @@
 # Keep Electron build output out of Vercel uploads (installers are on GitHub Releases)
+desktop
 desktop/node_modules
 desktop/release
 desktop/dist
+
+# Capacitor iOS shell is not part of the Next deploy
+mobile
+mobile/node_modules
+mobile/ios
+mobile/www
 
 # Local / cache noise
 node_modules
 .next
 .vercel
-**/*-pro-example/**
+.git
 apps/web/.next
+apps/web/supabase/.temp
+supabase/.temp
+
+# Pro examples (local reference only)
+**/*-pro-example/**
+React Flow copy
