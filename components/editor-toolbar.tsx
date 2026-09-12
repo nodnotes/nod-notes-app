@@ -72,6 +72,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useTheme } from './theme-provider'
 import { TidyUpIcon } from './tidy-up-icon' // Layout bar — 2×2 rounded squares
 import { ShareBoardMenu } from './share-board-menu' // Share dropdown: Notion people + role links
+import { CollabPresenceAvatars } from './collab/presence-avatars' // Who's on this board
 import { BoardTopBarShare } from './board-top-bar-share' // Copy link / favorite / More (board actions + Connections)
 import {
   NotionConnectProvider,
@@ -3362,6 +3363,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
             <ConnectionSyncTopBarIndicator conversationId={conversationId} />
             <NotionTopBarPin />
             <AiOriginTopBarToggle />
+            <CollabPresenceAvatars />
             {canShare && conversationId ? (
               <ShareBoardMenu boardId={conversationId} />
             ) : canShare ? (

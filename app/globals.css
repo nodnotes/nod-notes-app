@@ -2115,12 +2115,16 @@ span[data-added="true"] {
   .tt-menu-surface {
     /* Alpha is the knob: lower = more board shows through. Blur stays light — a heavy blur
        smears the backdrop into a flat wash, which reads as opaque even at low alpha.
-       The wash stays on the element (a background never scrolls, so `overflow-y-auto` menus
-       keep it), while the blur rides the pane below. */
+       The wash stays on the element (a background never scrolls). Blur rides ::below on a
+       non-scrolling shell — put overflow-y on [data-tt-menu-body] / [data-tt-menu-scroll],
+       never on .tt-menu-surface itself, or the ::before pane scrolls away and board content
+       punches through at the bottom of a long Color / Turn into list. */
+    position: relative; /* Containing block for ::before blur pane */
     background-color: rgba(255, 255, 255, 0.6);
   }
   /* Frame / block / thread menus: shrink height from the bottom and scroll — never squash row height. */
   [data-tt-menu-body],
+  [data-tt-menu-scroll],
   [data-tt-menu-flyout] {
     min-height: 0; /* Flex child can scroll instead of compressing rows */
     overscroll-behavior: contain;
@@ -2128,10 +2132,12 @@ span[data-added="true"] {
     -webkit-overflow-scrolling: touch; /* iOS momentum scroll inside clamped menus */
   }
   [data-tt-menu-body] > *,
-  [data-tt-menu-flyout] > * {
-    flex-shrink: 0; /* Rows keep h-8; overflow-y-auto clips from the bottom */
+  [data-tt-menu-scroll] > *,
+  [data-tt-menu-flyout] > *:not([data-tt-menu-scroll]) {
+    flex-shrink: 0; /* Rows / chrome keep height; the scroller itself may flex */
   }
-  [data-tt-menu-flyout] .overflow-y-auto {
+  [data-tt-menu-flyout] .overflow-y-auto,
+  [data-tt-menu-scroll] {
     min-height: 0; /* Nested scroller inside a clamped flyout */
   }
   [data-tt-menu-flyout] button {
@@ -3060,3 +3066,28 @@ html.nn-capacitor [data-nn-safe-bottom] {
 
 
 
+
+/* Multiplayer TipTap carets (CollaborationCaret) */
+.collaboration-carets__caret {
+  border-left: 1px solid currentColor;
+  border-right: none;
+  margin-left: -1px;
+  margin-right: -1px;
+  pointer-events: none;
+  position: relative;
+  word-break: normal;
+}
+.collaboration-carets__label {
+  border-radius: 3px 3px 3px 0;
+  color: #fff;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  left: -1px;
+  line-height: normal;
+  padding: 0.1rem 0.3rem;
+  position: absolute;
+  top: -1.4em;
+  user-select: none;
+  white-space: nowrap;
+}

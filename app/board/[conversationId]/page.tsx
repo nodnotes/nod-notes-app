@@ -12,6 +12,7 @@ import { ReactFlowContextProvider } from '@/components/react-flow-context'
 import { PreviewFocusProvider } from '@/lib/preview-focus-context'
 import { AiEditSessionProvider } from '@/lib/ai/edit-session'
 import { BoardAccessProvider } from '@/lib/share/board-access-context'
+import { BoardCollabShell } from '@/components/collab/board-collab-shell' // Yjs session above top bar + board
 import { redeemShareToken, resolveBoardAccessRole } from '@/lib/share/server'
 import { canEditBoard } from '@/lib/share/roles'
 
@@ -80,16 +81,18 @@ export default async function ConversationPage({
         <PreviewFocusProvider>
           <AiEditSessionProvider conversationId={conversationId}>
             <BoardAccessProvider role={role} boardId={conversationId}>
-              <div className="h-full flex">
-                <div className="flex-1 relative min-w-0 h-full">
-                  <BoardFlow conversationId={conversationId} />
-                  {editable ? <WelcomeText /> : null} {/* Empty-board hints — hide for view/comment */}
-                  {/* Top bar stays for all roles; write tools gate via BoardAccess */}
-                  <InputAreaWithStickyPrompt conversationId={conversationId} />
+              <BoardCollabShell boardId={conversationId}>
+                <div className="h-full flex">
+                  <div className="flex-1 relative min-w-0 h-full">
+                    <BoardFlow conversationId={conversationId} />
+                    {editable ? <WelcomeText /> : null} {/* Empty-board hints — hide for view/comment */}
+                    {/* Top bar stays for all roles; write tools gate via BoardAccess */}
+                    <InputAreaWithStickyPrompt conversationId={conversationId} />
+                  </div>
+                  {/* AI sidebar is an edit surface — hide for view/comment */}
+                  {editable ? <ChatSidebar conversationId={conversationId} /> : null}
                 </div>
-                {/* AI sidebar is an edit surface — hide for view/comment */}
-                {editable ? <ChatSidebar conversationId={conversationId} /> : null}
-              </div>
+              </BoardCollabShell>
             </BoardAccessProvider>
           </AiEditSessionProvider>
         </PreviewFocusProvider>

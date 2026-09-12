@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-12T00:30:36Z`
+- Snapped at: `2026-09-12T03:17:05Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (link refreshed; `db dump` / `migration list` blocked on remote login-role alter — marker + version snapshot only)
@@ -9,6 +9,14 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260912031705_board_collab_hocuspocus_early_access.sql`.
+- **Multiplayer**: Hocuspocus/Yjs board collab (`collab/server.mjs`, `lib/collab/*`, TipTap Collaboration); presence avatars + peer cursors; roster sync for frame create/delete.
+- **Share nav**: shared boards appear under owned with Users icon; grantee row actions hidden.
+- **Early access**: allowlist adds `meghanapandit18@gmail.com` (Vercel `EARLY_ACCESS_EMAILS` + docs).
+- Schema unchanged; remote applied still tops out at `20260811225342`.
+
+## Prior: shape grip clip + silhouette border default
 
 - DDL: none. Marker `20260912003036_frame_shape_grip_clip_border.sql`.
 - **Shape ⋮⋮ clip**: skip fill-shell silhouette `clip-path` while the frame is selected so block grips / add lines in the L chrome are not cut off.

@@ -28,6 +28,7 @@ import { useEditor, EditorContent } from '@tiptap/react'
 import { DOMParser as PMDOMParser } from '@tiptap/pm/model' // Parse stored HTML → PM doc for exact (non-string) sync compare
 import { TextSelection } from '@tiptap/pm/state' // Only text ranges keep a frame "active" — not boardLink NodeSelection
 import { createPanelExtensions } from '@/lib/tiptap/extensions' // StarterKit + Turn into nodes
+import { useBoardCollab } from '@/lib/collab/board-collab-context' // Yjs frame fragments + carets
 import { handleCaptureLinkPaste } from '@/lib/tiptap/capture-link-paste' // Paste capture URL → named link
 import { TipTapBlockHandles } from '@/components/tiptap-block-handles' // Per-content-block ⋮⋮ (Notion)
 import { FrameStackRevealLine } from '@/components/frame-stack-reveal-line' // Stack edge dashed line → reveal
@@ -1185,6 +1186,7 @@ function TipTapContentLive({
   frameScale = 1, // Locked-resize CSS scale — grips remeasure when it changes
   handleGutterFlow = 0, // Blue L/R gutter width (flow px) — ⋮⋮ local left compensates contentFit scale
   centerInShape = false, // Silhouette frames: center TipTap in the visible cross / diamond
+  enableCollab = true, // False for Notion page bodies (Notion remains content SoT)
 }: {
   content: string
   className?: string
@@ -1235,10 +1237,12 @@ function TipTapContentLive({
   frameScale?: number // Locked-resize scale — ⋮⋮ remeasure (CSS transform skips RO)
   handleGutterFlow?: number // Adjust-box L gutter (flow px); grips inverse-scale into it
   centerInShape?: boolean // Shaped frame: center text in silhouette
+  enableCollab?: boolean // Local frames join board Yjs; Notion bodies stay HTML/LWW
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const { setActiveEditor } = useEditorContext()
   const { canEdit } = useBoardAccess() // view/comment → read-only editors (RLS still enforces)
+  const boardCollab = useBoardCollab() // Shared board Y.Doc when multiplayer is on
   // Live frame-selected flag for TipTap DOM handlers (useEditor config is not recreated each render)
   const isPanelSelectedRef = useRef(!!isPanelSelected)
   isPanelSelectedRef.current = !!isPanelSelected
@@ -1265,6 +1269,7 @@ function TipTapContentLive({
   suspendContentSyncRef.current = suspendContentSync
   const contentRef = useRef(content)
   contentRef.current = content
+  const collabSeededRef = useRef(false) // One-shot HTML → Y.XmlFragment seed per mount
 
   const resolvedPlaceholder =
     placeholder !== undefined && placeholder !== ''
@@ -1275,10 +1280,40 @@ function TipTapContentLive({
           : 'Explain it clearly or let AI help'
         : ''
 
+  // Multiplayer: wait for board sync, then bind Collaboration to this frame's fragment
+  const collabReady =
+    enableCollab &&
+    boardCollab.configured &&
+    boardCollab.synced &&
+    !!boardCollab.provider &&
+    !!boardCollab.localUser &&
+    !!hostMessageId
+  const collabFragment = collabReady ? boardCollab.getFragment(hostMessageId!) : null
+  const collabActive = !!(collabReady && collabFragment)
+
   // Stable across drag ticks — createPanelExtensions() allocates new StarterKit instances each call
   const extensions = useMemo(
-    () => createPanelExtensions(resolvedPlaceholder),
-    [resolvedPlaceholder]
+    () =>
+      createPanelExtensions(
+        resolvedPlaceholder,
+        collabActive && collabFragment && boardCollab.provider && boardCollab.localUser
+          ? {
+              fragment: collabFragment,
+              provider: boardCollab.provider,
+              user: {
+                name: boardCollab.localUser.name,
+                color: boardCollab.localUser.color,
+              },
+            }
+          : null
+      ),
+    [
+      resolvedPlaceholder,
+      collabActive,
+      collabFragment,
+      boardCollab.provider,
+      boardCollab.localUser,
+    ]
   )
 
   const editorProps = useMemo(
@@ -1393,7 +1428,8 @@ function TipTapContentLive({
   const editor = useEditor(
     {
       extensions,
-      content,
+      // When CRDT is active, Y.XmlFragment is SoT — omit HTML content (seed empty fragments below)
+      content: collabActive ? undefined : content,
       // Unselected frames are not contenteditable — iOS long-press opens the frame menu, not text select
       editable: canEdit && !!isPanelSelected,
       immediatelyRender: false, // Prevent SSR hydration mismatches
@@ -1430,8 +1466,24 @@ function TipTapContentLive({
     },
     // Non-empty deps: TipTap skips per-render setOptions (deps=[] compares options every RF
     // drag tick → remounts databaseBlock NodeView → table vanishes / frame hugs to a stub).
-    [extensions, editorProps]
+    // Include collabActive so we remount once when Yjs binds (UniqueID / empty-para safety).
+    [extensions, editorProps, collabActive]
   )
+
+  // First peer: seed empty Y fragment from durable HTML once (others already have CRDT state)
+  useEffect(() => {
+    if (!editor || editor.isDestroyed || !collabActive) return
+    if (collabSeededRef.current) return
+    if (!boardCollab.fragmentNeedsSeed(hostMessageId!)) {
+      collabSeededRef.current = true
+      return
+    }
+    const html = (contentRef.current || '').trim()
+    if (html && html !== '<p></p>') {
+      editor.commands.setContent(html, { emitUpdate: false })
+    }
+    collabSeededRef.current = true
+  }, [editor, collabActive, boardCollab, hostMessageId])
 
   // Keep FrameHost storage in sync so databaseBlock NodeViews can convert layout without React context
   useEffect(() => {
@@ -1857,6 +1909,9 @@ function TipTapContentLive({
 
   useEffect(() => {
     if (!editor || editor.isDestroyed || !editor.view) return
+    // Yjs owns the doc while multiplayer is synced — postgres HTML must not clobber carets
+    const aiForce = forceContentSyncKey !== lastAiForceSyncRef.current
+    if (collabActive && !aiForce) return
     // Caret owns the doc while typing — except when AI review forces a content swap
     if (editor.isFocused && forceContentSyncKey === lastAiForceSyncRef.current) return
     // While RF is dragging the frame, never setContent AND never consume a force-sync key
@@ -1958,7 +2013,7 @@ function TipTapContentLive({
           }
         })
       }
-  }, [editor, content, comments, suspendContentSync, forceContentSyncKey])
+  }, [editor, content, comments, suspendContentSync, forceContentSyncKey, collabActive])
 
   // Focus editor + place I-bar — only when the frame is already selected (not the select click)
   const handleContainerClick = useCallback((e: React.MouseEvent) => {
@@ -8369,6 +8424,14 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               frameScale={frameScale}
               handleGutterFlow={handleGutterFlow}
               centerInShape={shapeCenterContent}
+              enableCollab={
+                // Notion page bodies stay on HTML/LWW + Notion sync — not Yjs text CRDT
+                !(
+                  isBoardBodyMeta(promptMessage?.metadata as Record<string, unknown>) &&
+                  typeof (promptMessage?.metadata as { notionPageId?: string } | undefined)
+                    ?.notionPageId === 'string'
+                )
+              }
               boardInTargets={(() => {
                 const convs =
                   (queryClient.getQueryData(['conversations']) as

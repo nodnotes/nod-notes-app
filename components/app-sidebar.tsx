@@ -7,7 +7,7 @@ import { createClient } from '@/lib/supabase/client'
 import { DEFAULT_BOARD_TITLE } from '@/lib/board-title' // Nav + / nested mint use the same default as empty `/board`
 import type { User } from '@supabase/supabase-js'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, MoreHorizontal, Trash2, Pencil, ChevronDown, File, FileText, Folder, FolderOpen, Loader2, Share2, UserPlus, CornerUpLeft, Sparkles, HelpCircle, LogOut, ChevronRight as ChevronRightIcon, Settings } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Trash2, Pencil, ChevronDown, File, FileText, Folder, FolderOpen, Loader2, Share2, UserPlus, Users, CornerUpLeft, Sparkles, HelpCircle, LogOut, ChevronRight as ChevronRightIcon, Settings } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { SettingsPanel } from '@/components/settings-panel'
@@ -88,11 +88,13 @@ function PageIconButton({
   supabase,
   queryClient,
   userId,
+  readOnly = false,
 }: {
   conversation: Conversation
   supabase: ReturnType<typeof createClient>
   queryClient: ReturnType<typeof useQueryClient>
   userId: string
+  readOnly?: boolean // Shared boards — show icon, no picker
 }) {
   const { resolvedTheme } = useTheme()
   const [open, setOpen] = useState(false)
@@ -100,6 +102,7 @@ function PageIconButton({
   const hasContent = conversation.metadata?.hasContent === true // Filled page glyph when contentful
 
   const saveIcon = async (next: PageIconMeta) => {
+    if (readOnly) return
     try {
       const { data: row, error: fetchError } = await supabase
         .from('conversations')
@@ -146,13 +149,14 @@ function PageIconButton({
   }
 
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
+    <DropdownMenu open={readOnly ? false : open} onOpenChange={readOnly ? undefined : setOpen}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
           className="h-5 w-5 flex-shrink-0 flex items-center justify-center rounded hover:bg-gray-200/70 dark:hover:bg-gray-700/70"
-          title="Change icon"
-          aria-label="Change board icon"
+          title={readOnly ? undefined : 'Change icon'}
+          aria-label={readOnly ? 'Board icon' : 'Change board icon'}
+          disabled={readOnly}
           onClick={(e) => {
             e.preventDefault()
             e.stopPropagation()
@@ -162,6 +166,7 @@ function PageIconButton({
           {iconNode}
         </button>
       </DropdownMenuTrigger>
+      {!readOnly && (
       <DropdownMenuContent
         align="start"
         className="p-0 w-auto border-0 shadow-lg overflow-hidden"
@@ -188,6 +193,7 @@ function PageIconButton({
           </DropdownMenuItem>
         </div>
       </DropdownMenuContent>
+      )}
     </DropdownMenu>
   )
 }
@@ -296,7 +302,9 @@ function SortableBoardItem({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: conversation.id })
+  } = useSortable({ id: conversation.id, disabled: !!conversation.isShared }) // Shared boards aren't reordered here
+
+  const isShared = !!conversation.isShared
 
   const openBoard = () => {
     if (isDragging) return // Drag in progress — ignore stray click
@@ -350,7 +358,8 @@ function SortableBoardItem({
         {...listeners}
         className={cn(
           // Always 1px border so select wash doesn’t jump the row; color matches property-cell hover
-          'flex items-center gap-1 pr-4 h-8 rounded-lg border border-transparent transition-colors text-sm group cursor-grab active:cursor-grabbing relative select-none',
+          'flex items-center gap-1 pr-4 h-8 rounded-lg border border-transparent transition-colors text-sm group relative select-none',
+          isShared ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
           isActive
             ? 'tt-selected' // Open board — grey selected wash
             // Hover bg only on real hover devices — iOS sticky :hover ate the first board tap
@@ -361,7 +370,7 @@ function SortableBoardItem({
           showNestHighlight && 'bg-blue-100 dark:bg-blue-950/50 ring-2 ring-inset ring-blue-500 dark:ring-blue-400'
         )}
         style={{ paddingLeft: `${16 + depth * 14}px`, touchAction: 'manipulation' }} // Indent nested sub-pages; skip double-tap zoom delay
-        title={showNestHighlight ? 'Drop to nest inside' : undefined}
+        title={isShared ? 'Shared with you' : showNestHighlight ? 'Drop to nest inside' : undefined}
       >
         {showNestHighlight && (
           // Left nest cue — mirrors Notion’s “make sub-page” hover state
@@ -393,6 +402,7 @@ function SortableBoardItem({
           supabase={supabase}
           queryClient={queryClient}
           userId={userId}
+          readOnly={isShared} // Invitees can't change the owner's icon
         />
         <Link
           href={`/board/${conversation.id}`}
@@ -402,6 +412,12 @@ function SortableBoardItem({
         >
           <span className="flex items-center gap-1.5 flex-1 min-w-0">
             <span className="truncate">{conversation.title}</span>
+            {isShared && (
+              <Users
+                className="h-3.5 w-3.5 flex-shrink-0 text-gray-400 dark:text-gray-500"
+                aria-label="Shared with you"
+              />
+            )}
             {/* Bookmark count badge with circular yellow shadow - positioned inline right after title text */}
             {bookmarkCount > 0 && (
               <span
@@ -421,6 +437,7 @@ function SortableBoardItem({
             'opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100'
           )}
         >
+          {!isShared && (
           <Button
             variant="ghost"
             size="icon"
@@ -444,6 +461,7 @@ function SortableBoardItem({
           >
             <Plus className="h-4 w-4" />
           </Button>
+          )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -468,6 +486,13 @@ function SortableBoardItem({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
+            {isShared ? (
+              <DropdownMenuItem disabled>
+                <Users className="h-4 w-4 mr-2" />
+                Shared with you
+              </DropdownMenuItem>
+            ) : (
+              <>
             <DropdownMenuItem
               onClick={(e) => {
                 e.stopPropagation() // Don't navigate the row
@@ -555,6 +580,8 @@ function SortableBoardItem({
                   ? `Delete (${actionTargetCount})`
                   : 'Delete'}
             </DropdownMenuItem>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
         </div>
@@ -854,6 +881,8 @@ interface Conversation {
   created_at: string
   updated_at: string
   position?: number // Optional position field for ordering
+  user_id?: string // Owner — differs from viewer when shared
+  isShared?: boolean // True when this user is a grantee, not the owner
   metadata?: {
     project_id?: string
     parent_id?: string // Nest under another board (Notion-style sub-pages)
@@ -970,7 +999,8 @@ async function createUntitledBoard(
   return boardId // Navigate + cache-patch with this id
 }
 
-// Fetch conversations/boards for an explicit user id (must match live session)
+// Fetch conversations/boards for an explicit user id (must match live session).
+// RLS returns owned + shared; we mark shared (not owned) for the nav icon / action gates.
 async function fetchConversations(userId: string): Promise<Conversation[]> {
   const supabase = createClient()
   // Wait until browser session is this user — never cache [] from a transient mismatch
@@ -979,9 +1009,9 @@ async function fetchConversations(userId: string): Promise<Conversation[]> {
   const { data, error } = await supabase
     .from('conversations')
     .select('id, title, created_at, updated_at, metadata, user_id')
-    .eq('user_id', userId)
+    // No .eq('user_id') — RLS (user_board_access_role ≥ view) includes boards shared with me
     .order('updated_at', { ascending: false })
-    .limit(100)
+    .limit(200)
 
   if (error) {
     console.error('Error fetching conversations:', error)
@@ -990,25 +1020,33 @@ async function fetchConversations(userId: string): Promise<Conversation[]> {
 
   // Map data and include full metadata (for project_id and position)
   // IMPORTANT: Return ALL conversations (including project boards) - filtering happens in component
-  const conversations = (data || [])
-    .filter((conv: { user_id?: string }) => conv.user_id === userId) // Defense in depth
-    .map((conv: any) => ({
+  const conversations = (data || []).map((conv: any) => {
+    const ownerId = typeof conv.user_id === 'string' ? conv.user_id : ''
+    const isShared = !!ownerId && ownerId !== userId
+    return {
       id: conv.id,
       title: conv.title,
       created_at: conv.created_at,
       updated_at: conv.updated_at,
       position: conv.metadata?.position ?? undefined,
+      user_id: ownerId || undefined,
+      isShared,
       metadata: conv.metadata || undefined, // Include full metadata object for project_id
-    })) as Conversation[]
-
-  // Sort by position if available, otherwise by updated_at
-  // Don't filter here - we need all conversations to show project boards under projects
-  return conversations.sort((a, b) => {
-    if (a.position !== undefined && b.position !== undefined) {
-      return a.position - b.position
     }
-    if (a.position !== undefined) return -1
-    if (b.position !== undefined) return 1
+  }) as Conversation[]
+
+  // Owned first (position / updated_at), then shared (updated_at) so invites sit under yours
+  return conversations.sort((a, b) => {
+    const aShared = a.isShared ? 1 : 0
+    const bShared = b.isShared ? 1 : 0
+    if (aShared !== bShared) return aShared - bShared
+    if (!a.isShared && !b.isShared) {
+      if (a.position !== undefined && b.position !== undefined) {
+        return a.position - b.position
+      }
+      if (a.position !== undefined) return -1
+      if (b.position !== undefined) return 1
+    }
     return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
   })
 }
@@ -2131,12 +2169,15 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
   // Filter conversations based on search query
   // Separate conversations into those with projects and those without
   // Check for project_id in metadata - must be truthy and not empty string
+  // Shared-with-me boards always list under Boards (invitee doesn't own the owner's project)
   const conversationsWithProjects = conversations.filter((conversation) => {
+    if (conversation.isShared) return false
     const projectId = conversation.metadata?.project_id
     const hasProject = projectId && typeof projectId === 'string' && projectId.trim() !== ''
     return hasProject
   })
   const conversationsWithoutProjects = conversations.filter((conversation) => {
+    if (conversation.isShared) return true
     const projectId = conversation.metadata?.project_id
     const hasProject = projectId && typeof projectId === 'string' && projectId.trim() !== ''
     return !hasProject

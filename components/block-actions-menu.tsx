@@ -146,6 +146,55 @@ function normalizePickerHex(raw: string): string {
   return '#000000'
 }
 
+/** Soft pastel hue wheel for Custom rows — matches light palette swatches. */
+const CUSTOM_COLOR_WHEEL =
+  'linear-gradient(rgba(255,255,255,0.55), rgba(255,255,255,0.55)), conic-gradient(from 180deg, #F8C9C9, #FFE8A3, #CDEBC8, #C5E4F5, #E0D0F5, #F6D0E3, #FFD9B0, #F8C9C9)'
+
+/** One Custom row: full-row native color input (menu root must not preventDefault on it). */
+function FrameCustomColorRow({
+  kind,
+  selected,
+  pickerValue,
+  onPick,
+}: {
+  kind: FrameColorKind
+  selected: boolean
+  pickerValue: string
+  onPick: (hex: string) => void
+}) {
+  const label = kind === 'fill' ? 'Custom background' : 'Custom border'
+  return (
+    <div
+      className={cn(
+        'relative mx-1 flex w-[calc(100%-8px)] items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] text-gray-900 hover:bg-gray-50 dark:text-gray-100 dark:hover:bg-[#2a2a2a]',
+        selected &&
+          'bg-purple-50/60 outline outline-2 outline-blue-500 outline-offset-[-1px] dark:bg-purple-950/30'
+      )}
+    >
+      <span
+        className="pointer-events-none flex h-5 w-5 shrink-0 overflow-hidden rounded-[4px] border border-gray-200 dark:border-gray-600"
+        style={{ background: CUSTOM_COLOR_WHEEL }}
+        aria-hidden
+      />
+      <span className="pointer-events-none flex-1 truncate">{label}</span>
+      {/* Full-row hit target — direct user gesture opens the OS picker (not a synthetic click). */}
+      <input
+        type="color"
+        value={pickerValue}
+        onMouseDown={(e) => e.stopPropagation()} // Critical: root mousedown preventDefault blocks the picker
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => {
+          e.stopPropagation()
+          onPick(e.target.value)
+        }}
+        className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+        title={label}
+        aria-label={label}
+      />
+    </div>
+  )
+}
+
 /** Persist last-used frame color for the top of the Color flyout. */
 function writeFrameLastColor(entry: FrameLastColor) {
   try {
@@ -964,10 +1013,14 @@ export function BlockActionsMenu({
       }}
       onClick={(e) => {
         e.stopPropagation()
+        // Native color pickers need the click; search already stops at the input
+        if ((e.target as HTMLElement | null)?.closest?.('input[type="color"]')) return
         e.preventDefault()
       }}
       onMouseDown={(e) => {
         e.stopPropagation()
+        // preventDefault here would swallow <input type="color"> and never open the OS picker
+        if ((e.target as HTMLElement | null)?.closest?.('input[type="color"]')) return
         e.preventDefault()
       }}
       onKeyDown={(e) => {
@@ -1664,39 +1717,12 @@ export function BlockActionsMenu({
             const customSelected = Boolean(fillResolved) && !isPresetFrameFill(fillResolved)
             const pickerValue = normalizePickerHex(fillResolved || '#ffffff')
             return (
-              <label
-                className={cn(
-                  'mx-1 flex w-[calc(100%-8px)] cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] text-gray-900 hover:bg-gray-50 dark:text-gray-100 dark:hover:bg-[#2a2a2a]',
-                  customSelected &&
-                    'bg-purple-50/60 outline outline-2 outline-blue-500 outline-offset-[-1px] dark:bg-purple-950/30'
-                )}
-              >
-                <span
-                  className="relative flex h-5 w-5 shrink-0 overflow-hidden rounded-[4px] border border-gray-200 dark:border-gray-600"
-                  aria-hidden
-                >
-                  <span
-                    className="absolute inset-0"
-                    style={{
-                      background:
-                        'conic-gradient(from 180deg, #ef4444, #eab308, #22c55e, #3b82f6, #a855f7, #ec4899, #ef4444)',
-                    }}
-                  />
-                  <input
-                    type="color"
-                    value={pickerValue}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => {
-                      e.stopPropagation()
-                      applyCustomFrameColor('fill', e.target.value)
-                    }}
-                    className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                    title="Custom background"
-                    aria-label="Custom background color"
-                  />
-                </span>
-                <span className="flex-1 truncate">Custom background</span>
-              </label>
+              <FrameCustomColorRow
+                kind="fill"
+                selected={customSelected}
+                pickerValue={pickerValue}
+                onPick={(hex) => applyCustomFrameColor('fill', hex)}
+              />
             )
           })()}
 
@@ -1738,39 +1764,12 @@ export function BlockActionsMenu({
             const customSelected = Boolean(borderResolved) && !isPresetFrameBorder(borderResolved)
             const pickerValue = normalizePickerHex(borderResolved || '#000000')
             return (
-              <label
-                className={cn(
-                  'mx-1 flex w-[calc(100%-8px)] cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] text-gray-900 hover:bg-gray-50 dark:text-gray-100 dark:hover:bg-[#2a2a2a]',
-                  customSelected &&
-                    'bg-purple-50/60 outline outline-2 outline-blue-500 outline-offset-[-1px] dark:bg-purple-950/30'
-                )}
-              >
-                <span
-                  className="relative flex h-5 w-5 shrink-0 overflow-hidden rounded-[4px] border border-gray-200 dark:border-gray-600"
-                  aria-hidden
-                >
-                  <span
-                    className="absolute inset-0"
-                    style={{
-                      background:
-                        'conic-gradient(from 180deg, #ef4444, #eab308, #22c55e, #3b82f6, #a855f7, #ec4899, #ef4444)',
-                    }}
-                  />
-                  <input
-                    type="color"
-                    value={pickerValue}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => {
-                      e.stopPropagation()
-                      applyCustomFrameColor('border', e.target.value)
-                    }}
-                    className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                    title="Custom border"
-                    aria-label="Custom border color"
-                  />
-                </span>
-                <span className="flex-1 truncate">Custom border</span>
-              </label>
+              <FrameCustomColorRow
+                kind="border"
+                selected={customSelected}
+                pickerValue={pickerValue}
+                onPick={(hex) => applyCustomFrameColor('border', hex)}
+              />
             )
           })()}
         </div>

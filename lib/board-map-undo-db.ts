@@ -60,7 +60,7 @@ function messagesFromNodes(nodes: Node[]): BoardMessage[] {
   return out
 }
 
-function patchMessagesCache(queryClient: QueryClient, conversationId: string, messages: BoardMessage[]) {
+export function patchMessagesCache(queryClient: QueryClient, conversationId: string, messages: BoardMessage[]) {
   if (messages.length === 0) return
   const patch = (old: unknown) => {
     if (!Array.isArray(old)) return old

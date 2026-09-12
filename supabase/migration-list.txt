@@ -1,9 +1,9 @@
 # Remote Supabase migration/version snapshot
 # project_ref=yhsyhtnnklpkfcpydbst
 # project_name=Nod Notes
-# snapped_at=2026-09-12T00:30:36Z
+# snapped_at=2026-09-12T03:17:05Z
 # postgres=17.6.1.052 gotrue=v2.196.0 rest=v14.5 storage=v1.73.1
-# local_marker=20260912003036_frame_shape_grip_clip_border (no DDL)
+# local_marker=20260912031705_board_collab_hocuspocus_early_access (no DDL)
 # production=https://nodnotes.com
 # Remote applied (via Supabase Management API on nod-notes):
 # 20251124231547 create_saas_schema

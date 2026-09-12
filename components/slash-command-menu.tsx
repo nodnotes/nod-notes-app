@@ -334,9 +334,10 @@ export function SlashCommandMenu(props: SlashCommandMenuProps) {
 
       {codeFlyout && (
         <div
-          className="absolute left-full top-0 z-[1] ml-1 min-w-[180px] overflow-y-auto tt-menu-surface relative rounded-lg border border-gray-200 p-1 shadow-lg dark:border-[#2f2f2f] max-h-[min(70vh,320px)]"
+          className="absolute left-full top-0 z-[1] ml-1 min-w-[180px] tt-menu-surface relative rounded-lg border border-gray-200 p-1 shadow-lg dark:border-[#2f2f2f] max-h-[min(70vh,320px)] overflow-hidden"
           onMouseEnter={() => setCodeFlyout(true)}
         >
+          <div data-tt-menu-scroll className="max-h-[min(70vh,320px)] overflow-y-auto">
           <div className="px-2 py-1.5 text-[11px] text-gray-400">Language</div>
           {SLASH_CODE_LANGUAGES.map((lang) => (
             <Button
@@ -363,6 +364,7 @@ export function SlashCommandMenu(props: SlashCommandMenuProps) {
           >
             Plain text
           </Button>
+          </div>
         </div>
       )}
 

@@ -178,6 +178,14 @@ import {
 } from '@/lib/preview-host-tools' // Host top bar → nested preview board tools
 import { BoardEmbedProvider } from '@/lib/board-embed-context' // Hide nested preview controls inside embed
 import { useBoardAccess } from '@/lib/share/board-access-context' // Shared view/comment → read-only map
+import { useBoardCollab } from '@/lib/collab/board-collab-context' // Multiplayer Yjs session
+import { useBoardCollabLayoutSync } from '@/lib/collab/use-board-collab-layout' // Live frame position sync
+import { useBoardCollabThreads } from '@/lib/collab/use-board-collab-threads' // Live thread sync
+import { useBoardCollabRoster } from '@/lib/collab/use-board-collab-roster' // Live frame create/delete
+import {
+  BoardCollabCursors,
+  BoardCollabPointerPublisher,
+} from '@/components/collab/board-cursors' // Peer cursors + pointer publish
 import { NodNotesBrandMark } from './personalize-ai-modal'
 import { NavZoomControl } from './nav-zoom-control' // Zoom % lives in bottom nav (not top bar)
 import { NavRotateControl } from './nav-rotate-control' // Board rotate icon — right of zoom %
@@ -682,11 +690,24 @@ function BoardFlowInner({
   hideMapChrome?: boolean // Hide Free nav + minimap (pre-login homepage)
 }) {
   const { canEdit } = useBoardAccess() // RLS is authority; UI mirrors for viewers
+  const boardCollab = useBoardCollab() // Yjs session (no-op when Hocuspocus URL unset)
   const { resolvedTheme } = useTheme()
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const nodesRef = useRef(nodes) // Long-press / drag handlers without stale closures
   nodesRef.current = nodes
-  const [edges, setEdges, onEdgesState] = useEdgesState([])
+  const [edges, setEdges, onEdgesChange] = useEdgesState([])
+
+  const { publishNodesLayouts } = useBoardCollabLayoutSync({
+    nodes,
+    setNodes,
+    canEdit,
+  })
+  const { publishThread } = useBoardCollabThreads({
+    edges,
+    setEdges,
+    canEdit,
+    boardId: conversationId,
+  })
   
   // Memoize nodeTypes and edgeTypes to prevent React Flow warnings
   // Even though they're defined outside, useMemo ensures stable reference
@@ -2728,6 +2749,23 @@ function BoardFlowInner({
     },
   })
 
+  // Multiplayer: broadcast frame create/delete via Y roster; peers patch cache + refetch
+  useBoardCollabRoster({
+    boardId: conversationId,
+    messages: messages as Array<{
+      id: string
+      role: 'user' | 'assistant'
+      content: string
+      created_at?: string
+      metadata?: Record<string, unknown> | null
+    }>,
+    canEdit,
+    queryClient,
+    refetchMessages: () => {
+      void refetchMessages()
+    },
+  })
+
   // Cold load: paint shimmer shells at last-visit positions so fitView has real places to focus
   useEffect(() => {
     if (!conversationId || !isMessagesPending || messages.length > 0) return
@@ -3564,11 +3602,14 @@ function BoardFlowInner({
     }
   }, [messages.length, reactFlowInstance, minimapExpanded, viewMode, rfStore, focusedPreviewId, previewMinimapState, postToFocusedPreview]) // Re-attach when minimap visibility or view mode changes
 
-  // Set up Supabase Realtime subscription for live message updates
+  // Set up Supabase Realtime subscription for live message updates.
+  // When Yjs collab is synced, skip content UPDATE refetches (Yjs owns live text/layout);
+  // keep INSERT so new frames from other writers still appear.
   useEffect(() => {
     if (!conversationId) return
     if (isEphemeralSandboxId(conversationId)) return // Sandboxes are local-only — no realtime
 
+    const skipContentUpdates = boardCollab.configured && boardCollab.synced
     const supabaseClient = createClient()
     const channel = supabaseClient
       .channel(`messages:${conversationId}`)
@@ -3600,9 +3641,37 @@ function BoardFlowInner({
           filter: `conversation_id=eq.${conversationId}`,
         },
         (payload) => {
+          if (skipContentUpdates) {
+            // Structural metadata-only changes can still matter (e.g. new linkedBoardId) —
+            // ignore pure content churn that fights TipTap Collaboration.
+            const next = payload.new as { content?: string; metadata?: unknown } | undefined
+            const prev = payload.old as { content?: string; metadata?: unknown } | undefined
+            const contentOnly =
+              next &&
+              prev &&
+              next.content !== prev.content &&
+              JSON.stringify(next.metadata ?? null) === JSON.stringify(prev.metadata ?? null)
+            if (contentOnly || !prev) return
+          }
           console.log('Message updated:', payload.new)
-          // Refetch when messages are updated
           refetchMessages()
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'messages',
+          filter: `conversation_id=eq.${conversationId}`,
+        },
+        (payload) => {
+          const oldId = (payload.old as { id?: string } | undefined)?.id
+          console.log('🔄 BoardFlow: Realtime - Message deleted:', oldId)
+          if (oldId && conversationId) {
+            removeMessagesFromCache(queryClient, conversationId, [oldId])
+          }
+          void refetchMessages()
         }
       )
       .subscribe()
@@ -3610,7 +3679,7 @@ function BoardFlowInner({
     return () => {
       supabaseClient.removeChannel(channel)
     }
-  }, [conversationId, refetchMessages])
+  }, [conversationId, refetchMessages, boardCollab.configured, boardCollab.synced, queryClient])
 
   // Listen for message updates to refetch immediately (fallback)
   useEffect(() => {
@@ -9884,7 +9953,7 @@ function BoardFlowInner({
         nodes={nodes}
         edges={edges}
         onNodesChange={handleNodesChange}
-        onEdgesChange={onEdgesState}
+        onEdgesChange={onEdgesChange}
         // Fill the (positioned) BoardFlow root via absolute insets — percentage height:100%
         // was resolving short, so the pane/dotted <Background> only covered the top of the map
         // (nodes/chrome still painted lower). inset:0 gives a definite full-height box.
@@ -9968,6 +10037,9 @@ function BoardFlowInner({
           if (node?.type === 'chatPanel') {
             endFrameDragging()
             setFrameMountRecomputeKey((k) => k + 1) // Refresh deferred TipTap mount set after drag
+            // Multiplayer: broadcast final position to peers (+ debounced DB snapshot)
+            const selected = nodesRef.current.filter((n) => n.selected && n.type === 'chatPanel')
+            publishNodesLayouts(selected.length > 0 ? selected : [node])
             const w =
               typeof node.width === 'number'
                 ? node.width
@@ -10107,6 +10179,8 @@ function BoardFlowInner({
               if (eds.some((e) => e.id === newEdge.id)) return eds // Already present
               return [...eds, newEdge]
             })
+            // Multiplayer: broadcast thread to peers (also snapshots panel_edges)
+            void publishThread(newEdge)
             // Remeasure handle bounds so the path attaches on both ends
             if (params.source) updateNodeInternals(params.source)
             if (params.target) updateNodeInternals(params.target)
@@ -10652,6 +10726,10 @@ function BoardFlowInner({
 
         {/* Draw bar insert-space: guide line + the gap being opened */}
         <InsertSpaceOverlay ui={insertSpaceUi} />
+
+        {/* Multiplayer: peer cursors + local pointer → awareness */}
+        <BoardCollabPointerPublisher />
+        <BoardCollabCursors />
 
       </ReactFlow>
     {/* Minimap + Free nav + brand — outside RF, absolute on BoardFlow root */}
@@ -11460,6 +11538,8 @@ export function BoardFlow({
   embedded?: boolean // Page-within-page: strip outer chrome
   hideMapChrome?: boolean // Pre-login homepage: no Free nav / minimap
 }) {
+  // Collab provider lives on the board page (BoardCollabShell) so the top bar
+  // presence stack shares the same session. Embeds/sandboxes stay non-collab.
   return (
     <BoardEmbedProvider embedded={embedded}>
       <ReactFlowProvider>

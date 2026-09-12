@@ -371,8 +371,37 @@ export function applyMenuPlacement(root: HTMLElement, opts: ApplyMenuPlacementOp
     if (el === body || el.dataset.ttMenuFlyout) continue
     el.style.flexShrink = '' // Clear chrome clamp from the last pass
   }
-  if (flyout) flyout.style.maxHeight = '' // Natural flyout
+  if (flyout) {
+    // Optional data-tt-menu-max-h caps tall lists (Color) so placement does not expand to the full lane.
+    const flyCap = Number(flyout.dataset.ttMenuMaxH)
+    flyout.style.maxHeight =
+      Number.isFinite(flyCap) && flyCap > 0 ? `${flyCap}px` : '' // Cap during measure; else natural
+    flyout.style.overflow = 'hidden' // Keep measure inside the cap (visible would paint tall content)
+    flyout.style.overflowY = 'hidden'
+    flyout.style.display = ''
+    flyout.style.flexDirection = ''
+    const flyScroll = flyout.querySelector(':scope > [data-tt-menu-scroll]') as HTMLElement | null
+    if (flyScroll) {
+      flyScroll.style.maxHeight = ''
+      flyScroll.style.minHeight = ''
+      flyScroll.style.flex = ''
+      flyScroll.style.overflowY = 'auto' // Scroll under the capped shell while measuring
+    }
+  }
   if (nested) nested.style.maxHeight = '' // Natural nested
+  if (nested) {
+    nested.style.overflow = ''
+    nested.style.overflowY = ''
+    nested.style.display = ''
+    nested.style.flexDirection = ''
+    const nestScroll = nested.querySelector(':scope > [data-tt-menu-scroll]') as HTMLElement | null
+    if (nestScroll) {
+      nestScroll.style.maxHeight = ''
+      nestScroll.style.minHeight = ''
+      nestScroll.style.flex = ''
+      nestScroll.style.overflowY = ''
+    }
+  }
 
   const menuW = Math.ceil(root.getBoundingClientRect().width) // Card width (overflow flyouts do not expand the box)
   const menuH = Math.ceil(root.getBoundingClientRect().height) // Card height — not scrollHeight (that includes flyouts)
@@ -382,7 +411,11 @@ export function applyMenuPlacement(root: HTMLElement, opts: ApplyMenuPlacementOp
   const nestedH = nested ? Math.ceil(nested.getBoundingClientRect().height) : 0 // Nested card height
 
   const menuMaxH = clampSize(menuH, safe.height) // Shrink the main card if the lane is short
-  const flyoutMaxH = flyout ? clampSize(flyoutH, safe.height) : 0 // Shrink the flyout independently
+  // Prefer data-tt-menu-max-h over the full safe lane so Color / long lists stay compact.
+  const flyCap = flyout ? Number(flyout.dataset.ttMenuMaxH) : NaN
+  const flyLimit =
+    flyout && Number.isFinite(flyCap) && flyCap > 0 ? Math.min(safe.height, flyCap) : safe.height
+  const flyoutMaxH = flyout ? clampSize(flyoutH, flyLimit) : 0 // Shrink the flyout independently
   const nestedMaxH = nested ? clampSize(nestedH, safe.height) : 0 // Shrink Board in independently
 
   const clusterH = Math.max(menuMaxH, flyoutMaxH, nestedMaxH) // Tallest card in the cluster
@@ -541,7 +574,24 @@ export function applyMenuPlacement(root: HTMLElement, opts: ApplyMenuPlacementOp
     const flyoutTop = clampStart(prefFlyoutTop, flyoutMaxH, safe.top, safe.bottom) // Vertical clamp for the flyout alone
     setRelativeTo(flyout, root, clampedFlyoutLeft, flyoutTop) // Position as an absolute child
     flyout.style.maxHeight = `${flyoutMaxH}px` // Shrink if the lane is short
-    flyout.style.overflowY = 'auto' // Scroll leftover rows
+    // Scroll an inner [data-tt-menu-scroll] so .tt-menu-surface::before blur stays put.
+    // Do NOT display:flex + flex:1 the shell — that stretches the flyout to maxHeight (empty frost
+    // panel) and washes out the main menu when the flyout overlaps it.
+    const flyScroll = flyout.querySelector(':scope > [data-tt-menu-scroll]') as HTMLElement | null
+    if (flyScroll) {
+      flyout.style.overflow = 'hidden'
+      flyout.style.overflowY = 'hidden'
+      let chromeH = 0 // Tabs / headers above the scroller (Turn into Format·Property)
+      for (const child of Array.from(flyout.children)) {
+        const el = child as HTMLElement
+        if (el === flyScroll || el.dataset.ttMenuFlyout) continue // Nested Board-in stays absolute
+        chromeH += Math.ceil(el.getBoundingClientRect().height)
+      }
+      flyScroll.style.maxHeight = `${Math.max(32, flyoutMaxH - chromeH)}px`
+      flyScroll.style.overflowY = 'auto'
+    } else {
+      flyout.style.overflowY = 'auto' // Legacy flyouts without an inner scroller
+    }
   }
 
   if (nested && flyout) {
@@ -551,7 +601,15 @@ export function applyMenuPlacement(root: HTMLElement, opts: ApplyMenuPlacementOp
     const nestedTop = clampStart(flyoutBox.top, nestedMaxH, safe.top, safe.bottom) // Align with Turn into, then clamp
     setRelativeTo(nested, flyout, clampedNestedLeft, nestedTop) // Nested is a child of the Turn into flyout
     nested.style.maxHeight = `${nestedMaxH}px` // Shrink if needed
-    nested.style.overflowY = 'auto' // Scroll leftover boards
+    const nestScroll = nested.querySelector(':scope > [data-tt-menu-scroll]') as HTMLElement | null
+    if (nestScroll) {
+      nested.style.overflow = 'hidden'
+      nested.style.overflowY = 'hidden'
+      nestScroll.style.maxHeight = `${nestedMaxH}px`
+      nestScroll.style.overflowY = 'auto'
+    } else {
+      nested.style.overflowY = 'auto'
+    }
   }
 }
 

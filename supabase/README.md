@@ -25,6 +25,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260912031705_board_collab_hocuspocus_early_access` — Hocuspocus/Yjs board collab; shared boards in nav; early-access allowlist +meghanapandit18@gmail.com
 - `20260912003036_frame_shape_grip_clip_border` — Shape ⋮⋮ clip while selected; silhouette border default on / Default hides; lock-frames icon outline↔filled
 - `20260911205603_profile_avatar_openmoji_menu_trim` — Profile avatar Edit dialog (OpenMoji + color); remove frame Condense/Expand + block Move to
 - `20260911194959_empty_board_no_init_fit_ibar_grip_center` — Empty-board no init fitView; I-bar ⋮⋮ centered on caret

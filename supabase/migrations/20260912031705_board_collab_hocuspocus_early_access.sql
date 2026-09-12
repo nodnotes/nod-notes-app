@@ -1,0 +1,2 @@
+-- Board multiplayer via Hocuspocus/Yjs; shared-board nav; early-access allowlist +meghana.
+-- App/docs marker only; no DDL.

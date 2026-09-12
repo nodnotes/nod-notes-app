@@ -364,10 +364,11 @@ export function TurnIntoMenuItems({
 
           {showBoardIn && (
             <div
-              className="absolute left-full top-0 z-[1] ml-1 min-w-[200px] overflow-y-auto tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1 max-h-[min(70vh,420px)]"
+              className="absolute left-full top-0 z-[1] ml-1 min-w-[200px] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1 max-h-[min(70vh,420px)] overflow-hidden"
               onMouseEnter={() => setShowBoardIn(true)}
               onMouseLeave={() => setShowBoardIn(false)}
             >
+              <div data-tt-menu-scroll className="max-h-[min(70vh,420px)] overflow-y-auto">
               <div className="px-2 py-1.5 text-[11px] text-gray-400">Nest board under…</div>
               {(boardInTargets.length > 0 ? boardInTargets : [{ id: '', title: 'Current board' }]).map(
                 (target) => (
@@ -390,6 +391,7 @@ export function TurnIntoMenuItems({
                   </Button>
                 )
               )}
+              </div>
             </div>
           )}
         </div>
