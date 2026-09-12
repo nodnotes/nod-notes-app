@@ -23,7 +23,7 @@ import {
 
 import { cn, generateUUID } from '@/lib/utils'
 import { boardTitleOrDefault } from '@/lib/board-title' // Empty conversation names show New board
-import { resolveFrameBorderColor } from '@/lib/frame-colors' // Soften legacy preset frame borders
+import { resolveFrameBorderColor, resolveFrameFillColor, FRAME_BORDER_WEIGHT } from '@/lib/frame-colors' // Soften / upgrade legacy preset frame colors; fixed stroke width
 import { useEditor, EditorContent } from '@tiptap/react'
 import { DOMParser as PMDOMParser } from '@tiptap/pm/model' // Parse stored HTML → PM doc for exact (non-string) sync compare
 import { TextSelection } from '@tiptap/pm/state' // Only text ranges keep a frame "active" — not boardLink NodeSelection
@@ -2982,28 +2982,19 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   }, [])
 
   // Calculate panel background color
-  // Notion-style pastels are stored as-is (full color); empty = transparent
+  // Pastels are stored as-is; empty = transparent; legacy pale fills remap to clearer tints
   const panelBackgroundColor = useMemo(() => {
-    if (data.fillColor) {
-      return data.fillColor // Solid wash — pastels read correctly (0.15 made them invisible)
-    }
-    return 'transparent'
+    return resolveFrameFillColor(data.fillColor) ?? 'transparent'
   }, [data.fillColor])
 
   // Calculate prompt/grey area background color — inherit frame fill when set
   const promptAreaBackgroundColor = useMemo(() => {
-    if (data.fillColor) {
-      return data.fillColor
-    }
-    return 'transparent'
+    return resolveFrameFillColor(data.fillColor) ?? 'transparent'
   }, [data.fillColor])
 
   // Calculate response/white area background color — inherit frame fill when set
   const responseAreaBackgroundColor = useMemo(() => {
-    if (data.fillColor) {
-      return data.fillColor
-    }
-    return 'transparent'
+    return resolveFrameFillColor(data.fillColor) ?? 'transparent'
   }, [data.fillColor])
 
   const resolvedBorderColor = useMemo(
@@ -6242,7 +6233,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     showEmptyFrameBorder ||
     paintBorderOnFillShell // Inset on fill shell — not part of the panel box
       ? 0
-      : 2 * (parseFloat(String(data.borderWeight)) || 1) // borderWeight is typed as a string ('2px')
+      : 2 * FRAME_BORDER_WEIGHT // Fixed stroke — ignore stored borderWeight variation
   const unlockedInnerW = resizeDimensions
     ? Math.max(1, resizeDimensions.width - panelBorderBox)
     : null
@@ -7444,10 +7435,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       : resolvedTheme === 'dark'
         ? '#9ca3af'
         : '#6b7280'
-  const shapeFill = isFillTransparent ? 'transparent' : data.fillColor!
-  const shapeStrokeW = shapeBorderHidden
-    ? 0
-    : Math.max(1, parseFloat(String(data.borderWeight || '2')) || 2)
+  const shapeFill = isFillTransparent ? 'transparent' : (resolveFrameFillColor(data.fillColor) ?? data.fillColor!)
+  const shapeStrokeW = shapeBorderHidden ? 0 : FRAME_BORDER_WEIGHT
   // Silhouette paints on the content box — not the blue L/R gutters when selected
   const shapeAreaStyle: React.CSSProperties = {
     left: adjustPadCss || 0,
@@ -7489,13 +7478,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     // Blue adjust / drag ring already outlines the frame — skip empty grey so it doesn’t read as an inner border
     if (showAdjustFrame || showDragBorderOnly) {
       if (!paintBorderOnFillShell) return undefined
-      const w = Math.max(1, parseFloat(String(data.borderWeight)) || 1)
-      return `inset 0 0 0 ${w}px ${resolvedBorderColor}` // Keep user-set stroke on the rounded fill
+      return `inset 0 0 0 ${FRAME_BORDER_WEIGHT}px ${resolvedBorderColor}` // Keep user-set stroke on the rounded fill
     }
     if (showEmptyFrameBorder) return `inset 0 0 0 1px ${emptyFrameBorderColor}`
     if (paintBorderOnFillShell) {
-      const w = Math.max(1, parseFloat(String(data.borderWeight)) || 1)
-      return `inset 0 0 0 ${w}px ${resolvedBorderColor}`
+      return `inset 0 0 0 ${FRAME_BORDER_WEIGHT}px ${resolvedBorderColor}`
     }
     return undefined
   })()
@@ -7647,7 +7634,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           showEmptyFrameBorder ||
           paintBorderOnFillShell
             ? 0
-            : (data.borderWeight || 1),
+            : FRAME_BORDER_WEIGHT,
         ['--tt-frame-radius' as string]: `${frameCornerRadius}px`, // Fill radius only — adjust ring is square
         // Handle / line / ui-scale sizes come from live `--tt-board-zoom` CSS (not React)
       }}

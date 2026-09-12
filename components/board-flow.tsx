@@ -58,6 +58,7 @@ import {
   parseFrameShape,
   type FrameShapeChoice,
 } from '@/lib/frame-shape' // Frame-as-shape silhouette helpers
+import { FRAME_BORDER_WEIGHT } from '@/lib/frame-colors' // Fixed frame border stroke width
 import {
   ThreadActionsMenu,
   type ThreadActionId,
@@ -8037,7 +8038,7 @@ function BoardFlowInner({
         if (kind === 'borderColor') {
           if (value) {
             if (!out.borderStyle || out.borderStyle === 'none') out.borderStyle = 'solid'
-            if (out.borderWeight == null) out.borderWeight = 1
+            out.borderWeight = FRAME_BORDER_WEIGHT // One line width for every frame border
           } else if (parseFrameShape(out.frameShape)) {
             // Default border on a silhouette → hide stroke (empty color alone still paints theme gray)
             out.borderStyle = 'none'
@@ -8066,7 +8067,7 @@ function BoardFlowInner({
                 borderStyle: (data.borderStyle && data.borderStyle !== 'none'
                   ? data.borderStyle
                   : 'solid') as string,
-                borderWeight: data.borderWeight ?? 1,
+                borderWeight: FRAME_BORDER_WEIGHT,
               }
             : kind === 'borderColor' && !value && shaped
               ? { borderStyle: 'none' } // Hide silhouette stroke with Color → Default border
@@ -8095,60 +8096,6 @@ function BoardFlowInner({
           await supabase.from('messages').update({ metadata: meta }).eq('id', msgId)
         } catch (err) {
           console.error('Failed to save frame color:', err)
-        }
-      }
-    },
-    [frameActionTargets, nodes, setNodes, takeSnapshot]
-  )
-
-  // Persist border thickness onto the menu target (and selected mates)
-  const handleSetFrameBorderWeight = useCallback(
-    async (weight: number, commit = true) => {
-      const targets = frameActionTargets()
-      if (targets.length === 0) return
-      const w = Math.min(8, Math.max(1, weight)) // Continuous 1–8px (no integer snap)
-      if (commit) takeSnapshot?.() // One undo point per drag gesture
-      const ids = new Set(targets.map((n) => n.id))
-      const patchMeta = (meta: Record<string, unknown>) => ({
-        ...meta,
-        borderWeight: w,
-        // Ensure a visible stroke when thickening — keep existing color/style
-        borderStyle:
-          meta.borderStyle && meta.borderStyle !== 'none' ? meta.borderStyle : 'solid',
-      })
-      const patchData = (data: ChatPanelNodeData): ChatPanelNodeData => {
-        const pm = data?.promptMessage
-        const meta = patchMeta({ ...((pm?.metadata as Record<string, unknown>) || {}) })
-        return {
-          ...data,
-          borderWeight: w,
-          borderStyle:
-            data.borderStyle && data.borderStyle !== 'none' ? data.borderStyle : 'solid',
-          promptMessage: pm ? { ...pm, metadata: meta } : pm,
-        }
-      }
-      setNodes((nds) =>
-        nds.map((n) => {
-          if (!ids.has(n.id)) return n
-          return { ...n, data: patchData(n.data) }
-        })
-      )
-      setRightClickedNode((prev) => {
-        if (!prev || !ids.has(prev.id)) return prev
-        return { ...prev, data: patchData(prev.data) }
-      })
-      if (!commit) return // Live preview only while the slider is moving
-      const supabase = createClient()
-      for (const n of targets) {
-        const msgId = n.data?.promptMessage?.id as string | undefined
-        if (!msgId) continue
-        const live = nodes.find((x) => x.id === n.id) || n
-        const pm = live.data?.promptMessage
-        const meta = patchMeta({ ...((pm?.metadata as Record<string, unknown>) || {}) })
-        try {
-          await supabase.from('messages').update({ metadata: meta }).eq('id', msgId)
-        } catch (err) {
-          console.error('Failed to save frame border weight:', err)
         }
       }
     },
@@ -8498,12 +8445,6 @@ function BoardFlowInner({
         case 'setBorderColor':
           void handleSetFrameColor('borderColor', payload?.borderColor ?? '')
           break
-        case 'setBorderWeight':
-          void handleSetFrameBorderWeight(
-            payload?.borderWeight ?? 1,
-            payload?.borderWeightCommit !== false // Default commit; slider drag passes false
-          )
-          break
         case 'lockToBoard':
           handleToggleBoardLock()
           break
@@ -8587,7 +8528,6 @@ function BoardFlowInner({
       handleTurnIntoProperty,
       handleSetFrameShape,
       handleSetFrameColor,
-      handleSetFrameBorderWeight,
       handleToggleBoardLock,
       handleToggleFrameLock,
       handleNotionConnection,
@@ -11225,14 +11165,6 @@ function BoardFlowInner({
             (rightClickedNode.data?.promptMessage?.metadata?.borderColor as string | undefined) ||
             ''
           }
-          currentBorderWeight={(() => {
-            const raw =
-              rightClickedNode.data?.borderWeight ??
-              (rightClickedNode.data?.promptMessage?.metadata as Record<string, unknown> | undefined)
-                ?.borderWeight
-            const n = typeof raw === 'number' ? raw : parseFloat(String(raw ?? '1'))
-            return Number.isFinite(n) && n > 0 ? n : 1
-          })()}
           boardLocked={
             (rightClickedNode.data?.promptMessage?.metadata as Record<string, unknown> | undefined)
               ?.boardLocked === true

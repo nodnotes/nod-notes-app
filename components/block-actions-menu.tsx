@@ -75,7 +75,7 @@ import { applyMenuPlacement, watchMenuSafeRect } from '@/lib/menu-placement' // 
 import { COMPACT_PREVIEW_ROWS, NOTION_DB_CLIENT_ROW_CAP } from '@/lib/notion/database' // Table rows floor + show-all ceiling
 import { LegoBrickIcon } from './lego-brick-icon' // Frame-group lock: two bricks, top one stud back
 import Shape from '@/components/shapes/Shape' // Mini silhouette previews in the Shape flyout
-import { FRAME_COLOR_SWATCHES } from '@/lib/frame-colors' // Pastel fills + subtle borders
+import { FRAME_COLOR_SWATCHES, resolveFrameBorderColor, resolveFrameFillColor } from '@/lib/frame-colors' // Pastel fills + subtle borders + legacy remap
 import {
   FRAME_SHAPE_NONE,
   FRAME_SHAPE_TYPES,
@@ -95,9 +95,17 @@ type FrameLastColor = {
 
 const FRAME_LAST_COLOR_KEY = 'nodnotes-frame-last-color' // localStorage key
 
-/** Case-insensitive hex/empty match for active swatch highlighting. */
+/** Case-insensitive hex/empty match for active swatch highlighting (legacy fills/borders remap). */
 function colorsMatch(a: string, b: string): boolean {
-  return (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase()
+  const na = (a || '').trim().toLowerCase()
+  const nb = (b || '').trim().toLowerCase()
+  if (na === nb) return true
+  const fillA = resolveFrameFillColor(a)?.toLowerCase()
+  const fillB = resolveFrameFillColor(b)?.toLowerCase()
+  if (fillA && fillB && fillA === fillB) return true
+  const borderA = resolveFrameBorderColor(a)?.toLowerCase()
+  const borderB = resolveFrameBorderColor(b)?.toLowerCase()
+  return !!(borderA && borderB && borderA === borderB)
 }
 
 /** Read last-used frame color from localStorage (null if missing/corrupt). */
@@ -113,6 +121,29 @@ function readFrameLastColor(): FrameLastColor | null {
   } catch {
     return null
   }
+}
+
+/** True when hex matches a palette fill (incl. Default empty). */
+function isPresetFrameFill(hex: string): boolean {
+  return FRAME_COLOR_SWATCHES.some((s) => colorsMatch(hex, s.fill))
+}
+
+/** True when hex matches a palette border (incl. Default empty). */
+function isPresetFrameBorder(hex: string): boolean {
+  return FRAME_COLOR_SWATCHES.some((s) => colorsMatch(hex, s.border))
+}
+
+/** Normalize native `<input type="color">` values to `#rrggbb`. */
+function normalizePickerHex(raw: string): string {
+  const t = (raw || '').trim()
+  if (/^#[0-9a-fA-F]{6}$/.test(t)) return t.toLowerCase()
+  if (/^#[0-9a-fA-F]{3}$/.test(t)) {
+    const r = t[1]
+    const g = t[2]
+    const b = t[3]
+    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase()
+  }
+  return '#000000'
 }
 
 /** Persist last-used frame color for the top of the Color flyout. */
@@ -169,7 +200,6 @@ export type BlockActionId =
   | 'setFrameShape' // Apply / clear a silhouette on the host frame
   | 'setFillColor' // Frame background (transparent when empty)
   | 'setBorderColor' // Frame border stroke
-  | 'setBorderWeight' // Frame border thickness in px
   | 'lockToBoard' // Pin selected frames so they cannot drag
   | 'lockFramesTogether' // Rigid-group lock for ≥2 selected frames
   | 'connectNotion' // Connections → Notion (link this frame)
@@ -194,8 +224,6 @@ export type BlockActionPayload = {
   frameShape?: FrameShapeChoice // Present when action === 'setFrameShape'
   fillColor?: string // Empty string = transparent fill
   borderColor?: string // Empty string = transparent border
-  borderWeight?: number // Border thickness in px (fractional OK)
-  borderWeightCommit?: boolean // true = undo snapshot + DB save (slider release)
   notionSync?: NotionSyncMode // Present when action === 'setNotionSync'
   convertLayout?: DbConvertLayoutId // Present when action === 'convertLayout'
   dbRows?: DbRowsSetterValue // Present when action === 'setDbRows'
@@ -230,8 +258,6 @@ export type BlockActionsMenuProps = {
   currentFillColor?: string
   /** Current frame border (frame menu). Empty = transparent. */
   currentBorderColor?: string
-  /** Current frame border thickness in px (frame menu). */
-  currentBorderWeight?: number
   /** True when the focused frame is pinned to the board. */
   boardLocked?: boolean
   /** True when ≥2 selected frames share a frameLockGroupId. */
@@ -480,7 +506,6 @@ export function BlockActionsMenu({
   showFrameShape = false,
   currentFillColor = '',
   currentBorderColor = '',
-  currentBorderWeight = 1,
   boardLocked = false,
   framesLockedTogether = false,
   canLockFramesTogether = false,
@@ -525,8 +550,6 @@ export function BlockActionsMenu({
   const connectionsRowRef = useRef<HTMLButtonElement>(null) // Align Connections picker to that row
   const colorRowRef = useRef<HTMLButtonElement>(null) // Align frame Color flyout to Color row
   const [lastFrameColor, setLastFrameColor] = useState<FrameLastColor | null>(null) // Last used fill/border
-  const [borderWeightDraft, setBorderWeightDraft] = useState<number | null>(null) // Live slider value while dragging
-  const borderWeightDraggingRef = useRef(false) // Ignore prop sync mid-drag
 
   useEffect(() => {
     // Phone / touch: skip search autofocus — soft keyboard must not open with the frame menu (I-bar isn’t placed)
@@ -558,11 +581,6 @@ export function BlockActionsMenu({
   useEffect(() => {
     setLastFrameColor(readFrameLastColor()) // Hydrate Last used after mount
   }, [])
-
-  // Follow prop when not dragging so external updates stay in sync
-  useEffect(() => {
-    if (!borderWeightDraggingRef.current) setBorderWeightDraft(null)
-  }, [currentBorderWeight])
 
   useEffect(() => {
     if (showPropertySearch) propertySearchRef.current?.focus() // Caret in Property search
@@ -604,6 +622,17 @@ export function BlockActionsMenu({
     const value = kind === 'fill' ? swatch.fill : swatch.border
     const label = `${swatch.name} ${kind === 'fill' ? 'background' : 'border'}`
     const entry: FrameLastColor = { kind, id: swatch.id, value, label }
+    writeFrameLastColor(entry)
+    setLastFrameColor(entry)
+    if (kind === 'fill') onAction('setFillColor', { fillColor: value })
+    else onAction('setBorderColor', { borderColor: value })
+  }
+
+  /** Apply a free hex from the native color picker at the bottom of each list. */
+  const applyCustomFrameColor = (kind: FrameColorKind, rawHex: string) => {
+    const value = normalizePickerHex(rawHex)
+    const label = kind === 'fill' ? 'Custom background' : 'Custom border'
+    const entry: FrameLastColor = { kind, id: 'custom', value, label }
     writeFrameLastColor(entry)
     setLastFrameColor(entry)
     if (kind === 'fill') onAction('setFillColor', { fillColor: value })
@@ -1630,57 +1659,51 @@ export function BlockActionsMenu({
               </button>
             )
           })}
+          {(() => {
+            const fillResolved = resolveFrameFillColor(currentFillColor) || currentFillColor
+            const customSelected = Boolean(fillResolved) && !isPresetFrameFill(fillResolved)
+            const pickerValue = normalizePickerHex(fillResolved || '#ffffff')
+            return (
+              <label
+                className={cn(
+                  'mx-1 flex w-[calc(100%-8px)] cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] text-gray-900 hover:bg-gray-50 dark:text-gray-100 dark:hover:bg-[#2a2a2a]',
+                  customSelected &&
+                    'bg-purple-50/60 outline outline-2 outline-blue-500 outline-offset-[-1px] dark:bg-purple-950/30'
+                )}
+              >
+                <span
+                  className="relative flex h-5 w-5 shrink-0 overflow-hidden rounded-[4px] border border-gray-200 dark:border-gray-600"
+                  aria-hidden
+                >
+                  <span
+                    className="absolute inset-0"
+                    style={{
+                      background:
+                        'conic-gradient(from 180deg, #ef4444, #eab308, #22c55e, #3b82f6, #a855f7, #ec4899, #ef4444)',
+                    }}
+                  />
+                  <input
+                    type="color"
+                    value={pickerValue}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      e.stopPropagation()
+                      applyCustomFrameColor('fill', e.target.value)
+                    }}
+                    className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                    title="Custom background"
+                    aria-label="Custom background color"
+                  />
+                </span>
+                <span className="flex-1 truncate">Custom background</span>
+              </label>
+            )
+          })()}
 
           <div className="my-1.5 mx-2 h-px bg-gray-100 dark:bg-[#2f2f2f]" />
 
           {/* Border color */}
           <div className="px-3 pt-0.5 pb-1 text-[11px] font-medium text-gray-400">Border color</div>
-          {/* Size slider — continuous drag; commit on release (no numeric readout) */}
-          {(() => {
-            const clampedProp = Math.min(8, Math.max(1, Number(currentBorderWeight) || 1))
-            const shown =
-              borderWeightDraft != null
-                ? Math.min(8, Math.max(1, borderWeightDraft))
-                : clampedProp
-            return (
-              <div className="mx-1 mb-1.5 flex items-center px-2 py-1">
-                <input
-                  type="range"
-                  min={1}
-                  max={8}
-                  step={0.1}
-                  value={shown}
-                  onPointerDown={(e) => {
-                    e.stopPropagation()
-                    borderWeightDraggingRef.current = true // Own the thumb until release
-                    setBorderWeightDraft(shown)
-                  }}
-                  onChange={(e) => {
-                    e.stopPropagation()
-                    const w = parseFloat(e.target.value)
-                    setBorderWeightDraft(w)
-                    // Live preview only — no undo snapshot / DB write yet
-                    onAction('setBorderWeight', { borderWeight: w, borderWeightCommit: false })
-                  }}
-                  onPointerUp={(e) => {
-                    e.stopPropagation()
-                    borderWeightDraggingRef.current = false
-                    const w = parseFloat((e.currentTarget as HTMLInputElement).value) // Final thumb position
-                    onAction('setBorderWeight', { borderWeight: w, borderWeightCommit: true })
-                    setBorderWeightDraft(null)
-                  }}
-                  onPointerCancel={() => {
-                    borderWeightDraggingRef.current = false
-                    setBorderWeightDraft(null)
-                  }}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-gray-200 accent-gray-700 dark:bg-[#333] dark:accent-gray-300"
-                  title="Border size"
-                  aria-label="Border size"
-                />
-              </div>
-            )
-          })()}
           {FRAME_COLOR_SWATCHES.map((swatch) => {
             const selected = colorsMatch(currentBorderColor, swatch.border)
             return (
@@ -1710,6 +1733,46 @@ export function BlockActionsMenu({
               </button>
             )
           })}
+          {(() => {
+            const borderResolved = resolveFrameBorderColor(currentBorderColor) || currentBorderColor
+            const customSelected = Boolean(borderResolved) && !isPresetFrameBorder(borderResolved)
+            const pickerValue = normalizePickerHex(borderResolved || '#000000')
+            return (
+              <label
+                className={cn(
+                  'mx-1 flex w-[calc(100%-8px)] cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] text-gray-900 hover:bg-gray-50 dark:text-gray-100 dark:hover:bg-[#2a2a2a]',
+                  customSelected &&
+                    'bg-purple-50/60 outline outline-2 outline-blue-500 outline-offset-[-1px] dark:bg-purple-950/30'
+                )}
+              >
+                <span
+                  className="relative flex h-5 w-5 shrink-0 overflow-hidden rounded-[4px] border border-gray-200 dark:border-gray-600"
+                  aria-hidden
+                >
+                  <span
+                    className="absolute inset-0"
+                    style={{
+                      background:
+                        'conic-gradient(from 180deg, #ef4444, #eab308, #22c55e, #3b82f6, #a855f7, #ec4899, #ef4444)',
+                    }}
+                  />
+                  <input
+                    type="color"
+                    value={pickerValue}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      e.stopPropagation()
+                      applyCustomFrameColor('border', e.target.value)
+                    }}
+                    className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                    title="Custom border"
+                    aria-label="Custom border color"
+                  />
+                </span>
+                <span className="flex-1 truncate">Custom border</span>
+              </label>
+            )
+          })()}
         </div>
       )}
 

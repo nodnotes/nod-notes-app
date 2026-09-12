@@ -193,7 +193,7 @@ export function editSystemPrompt(extraSkillHints: string[] = []): string {
     '- Only after the user confirms (e.g. "yes", "do it", "go ahead") may you fill edits/creates/threads with the approximation. Then set capabilityGap to "".',
     '- Small supported requests (create frames, link them, edit text, bullet/numbered/checklist lists, hide/reveal text, color frames) → capabilityGap "" and proceed immediately.',
     '',
-    'FRAME COLOR (Notion pastels — fill + subtle border):',
+    'FRAME COLOR (light pastels — fill + subtle border):',
     '- Each create/edit may set "color" to a palette id: default | gray | brown | orange | yellow | green | blue | purple | pink | red.',
     '- Empty string "" = leave color unchanged (edits) or transparent default (creates).',
     '- SMART GROUPING: when creating a brainstorm / idea map / several themed frames, assign one color per theme so related ideas share a fill (different themes → different colors). Prefer distinct hues; reuse a color only for the same idea group.',
