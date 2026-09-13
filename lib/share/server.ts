@@ -15,7 +15,7 @@ const REDEEM_WINDOW_MS = 15 * 60 * 1000 // 15-minute rate-limit window
 const REDEEM_MAX_PER_USER = 30 // Max redeem attempts per user per window
 const REDEEM_MAX_PER_IP = 60 // Max redeem attempts per IP hash per window
 
-/** Ensure the signed-in user owns this Thinktable page (conversation). */
+/** Ensure the signed-in user owns this NodNotes page (conversation). */
 export async function assertOwnsBoard(
   supabase: SupabaseClient, // User-scoped client (RLS)
   boardId: string, // conversations.id
@@ -249,7 +249,7 @@ export async function redeemShareToken(opts: {
   return { ok: true, role }
 }
 
-/** Look up a Thinktable user id by email for invite binding. */
+/** Look up a NodNotes user id by email for invite binding. */
 export async function findUserIdByEmail(email: string): Promise<string | null> {
   const admin = createAdminClient() // profiles is readable with service role
   const normalized = email.trim().toLowerCase()

@@ -1,0 +1,2 @@
+-- Homepage hero: refined brand lockup, Asap NOTES, Young Serif headline, decorative thread.
+-- No DDL — schema unchanged; remote applied still tops out at 20260811225342.

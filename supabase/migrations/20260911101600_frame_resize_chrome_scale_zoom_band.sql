@@ -1,0 +1,3 @@
+-- Frame corner-drag soft floor (40px); connection/resize dots fixed local paint +
+-- transform scale(ui) for screen-constant rings; board zoom band 10%–1000%.
+-- App/docs marker only; no DDL.

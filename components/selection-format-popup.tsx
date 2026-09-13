@@ -15,14 +15,14 @@ import {
   Strikethrough, // Strikethrough toggle icon in format row
   Code, // Inline-code icon in format row
   Paintbrush, // Clear-formatting (moved from top bar)
-  MoreHorizontal, // Overflow / more-options icon
   MessageSquare, // Comment row label icon
   Smile, // Add-reaction face icon
   Plus, // Plus badge on reaction / sticky actions
   ChevronRight, // Submenu chevron on style header
   Type, // "Normal Text" style glyph
   SquareRadical, // Equation / math icon
-  StickyNote, // Suggest-edit / sticky action icon
+  Highlighter, // Yellow highlight mark (same as top-bar Highlight)
+  PencilLine, // Suggest edits skill icon
   SlidersHorizontal, // Skills section settings icon
   Baseline, // Text-color / A glyph stand-in
   EyeOff, // Hide text action icon
@@ -30,20 +30,21 @@ import {
   AlignCenter, // Text align center
   AlignRight, // Text align right
   AlignJustify, // Text align justify
+  RotateCcw, // Revert text to original sent/received
 } from 'lucide-react'
 import { cn } from '@/lib/utils' // Conditional classes for active Hide text row
 import { getMenuSafeRect } from '@/lib/menu-placement' // Same chrome-free lane as action menus
+import { getSkill } from '@/lib/ai/skills'
+import { requestAiSkill } from '@/lib/ai/attach-skill'
+
+/** Default yellow highlight — matches editor-toolbar Highlight button. */
+const HIGHLIGHT_COLOR = '#fef08a'
 
 const EDGE_GAP = 8 // Gap between highlight edge and popup
 const VIEWPORT_PAD = 8 // Minimum inset from the visible viewport edges
 
-// Static Skills list shown in the Notion-style AI section (labels only for now)
-const SKILL_LABELS = [
-  'Improve writing', // Placeholder skill row
-  'Proofread', // Placeholder skill row
-  'Explain', // Placeholder skill row
-  'Reformat', // Placeholder skill row
-] as const
+// Skills surfaced in the selection popup (opens AI chat with the pill attached)
+const POPUP_SKILL_IDS = ['suggest-edits'] as const
 
 // Shared class for each icon cell in the 5-column format grids
 const ICON_CELL =
@@ -73,7 +74,20 @@ const TEXT_COLORS = [
 /**
  * Formatting popup — marks, clear-format, and text align live here (moved off the top bar).
  */
-export function SelectionFormatPopup({ editor }: { editor: Editor | null }) {
+export function SelectionFormatPopup({
+  editor,
+  showRevertText = false,
+  canRevertText = false,
+  onRevertText,
+}: {
+  editor: Editor | null
+  /** List Revert text (chat frames; board omits until wired). */
+  showRevertText?: boolean
+  /** True when the host body diverges from the original sent/received text. */
+  canRevertText?: boolean
+  /** Restore the original prompt/response body (closes selection naturally). */
+  onRevertText?: () => void
+}) {
   const [, setTick] = useState(0) // Re-render when marks/align change so active styles stay in sync
   const [openFlyout, setOpenFlyout] = useState<'color' | 'align' | null>(null) // One flyout at a time
   const isHazed = !!editor?.isActive('haze') // Selection already has haze mark
@@ -96,13 +110,22 @@ export function SelectionFormatPopup({ editor }: { editor: Editor | null }) {
     run(() => editor!.chain().focus().toggleHaze().run()) // Toggle frost on the current selection
   }
 
+  const attachPopupSkill = (skillId: string) => {
+    requestAiSkill({
+      skillId,
+      mode: skillId === 'suggest-edits' ? 'edit' : undefined,
+    })
+  }
+
   const currentAlign = ALIGN_OPTIONS.find((o) => editor?.isActive({ textAlign: o.value })) ?? ALIGN_OPTIONS[0] // Icon for current align
   const AlignIcon = currentAlign.Icon // Show the active alignment glyph
 
   return (
-    // Outer card: white surface, light border, soft shadow, ~Notion corner radius
+    // Outer card: translucent menu surface, light border, soft shadow, ~Notion corner radius.
+    // `z-0` is load-bearing: it gives the card a stacking context so the `.tt-menu-surface`
+    // wash pane (`z-index: -1`) sits behind the rows rather than behind the whole popup.
     <div
-      className="relative w-[220px] select-none overflow-visible rounded-lg border border-gray-200 bg-white text-[13px] text-gray-900 shadow-lg dark:border-[#2f2f2f] dark:bg-[#1f1f1f] dark:text-gray-100"
+      className="tt-menu-surface relative z-0 w-[220px] select-none overflow-visible rounded-lg border border-gray-200 text-[13px] text-gray-900 shadow-lg dark:border-[#2f2f2f] dark:text-gray-100"
       onMouseDown={(e) => {
         // Keep TipTap selection alive when interacting with the popup chrome
         e.preventDefault()
@@ -171,7 +194,7 @@ export function SelectionFormatPopup({ editor }: { editor: Editor | null }) {
         </button>
       </div>
 
-      {/* Format row 2: align, strike, code, equation, more */}
+      {/* Format row 2: align, strike, highlight, code, equation */}
       <div className="flex items-center justify-between gap-0.5 px-2 pb-1.5">
         <button
           type="button"
@@ -191,20 +214,28 @@ export function SelectionFormatPopup({ editor }: { editor: Editor | null }) {
         >
           <Strikethrough className="h-4 w-4" />
         </button>
+        <button
+          type="button"
+          className={cn(ICON_CELL, editor?.isActive('highlight') && 'bg-gray-100 dark:bg-gray-800')}
+          tabIndex={-1}
+          title="Highlight"
+          onClick={() =>
+            run(() => editor!.chain().focus().toggleHighlight({ color: HIGHLIGHT_COLOR }).run())
+          }
+        >
+          <Highlighter className="h-4 w-4" />
+        </button>
         <button type="button" className={ICON_CELL} tabIndex={-1} title="Code">
           <Code className="h-4 w-4" />
         </button>
         <button type="button" className={ICON_CELL} tabIndex={-1} title="Equation">
           <SquareRadical className="h-4 w-4" />
         </button>
-        <button type="button" className={ICON_CELL} tabIndex={-1} title="More">
-          <MoreHorizontal className="h-4 w-4" />
-        </button>
       </div>
 
       {/* Color flyout — sits beside the format card */}
       {openFlyout === 'color' && (
-        <div className="absolute left-full top-10 z-[1001] ml-1 w-[168px] rounded-lg border border-gray-200 bg-white p-2 shadow-lg dark:border-[#2f2f2f] dark:bg-[#1f1f1f]">
+        <div className="tt-menu-surface absolute left-full top-10 z-[1001] ml-1 w-[168px] rounded-lg border border-gray-200 p-2 shadow-lg dark:border-[#2f2f2f]">
           <div className="grid grid-cols-5 gap-1.5">
             {TEXT_COLORS.map((hex) => {
               const active = editor?.getAttributes('textStyle').color === hex || (!editor?.getAttributes('textStyle').color && hex === '#000000')
@@ -234,14 +265,14 @@ export function SelectionFormatPopup({ editor }: { editor: Editor | null }) {
 
       {/* Align flyout — left / center / right / justify */}
       {openFlyout === 'align' && (
-        <div className="absolute left-full top-20 z-[1001] ml-1 min-w-[140px] rounded-lg border border-gray-200 bg-white p-1 shadow-lg dark:border-[#2f2f2f] dark:bg-[#1f1f1f]">
+        <div className="tt-menu-surface absolute left-full top-20 z-[1001] ml-1 min-w-[140px] rounded-lg border border-gray-200 p-1 shadow-lg dark:border-[#2f2f2f]">
           {ALIGN_OPTIONS.map((opt) => (
             <button
               key={opt.value}
               type="button"
               className={cn(
                 'flex h-8 w-full items-center gap-2 rounded-md px-2 text-sm hover:bg-gray-100 dark:hover:bg-[#2a2a2a]',
-                editor?.isActive({ textAlign: opt.value }) && 'bg-blue-50 dark:bg-blue-950/40'
+                editor?.isActive({ textAlign: opt.value }) && 'tt-selected'
               )}
               onClick={() => {
                 run(() => editor!.chain().focus().setTextAlign(opt.value).run())
@@ -283,9 +314,10 @@ export function SelectionFormatPopup({ editor }: { editor: Editor | null }) {
           type="button"
           className={ICON_CELL}
           tabIndex={-1}
-          title="Suggest edit"
+          title="Suggest edits"
+          onClick={() => attachPopupSkill('suggest-edits')}
         >
-          <StickyNote className="h-4 w-4" />
+          <PencilLine className="h-4 w-4" />
         </button>
       </div>
 
@@ -303,6 +335,29 @@ export function SelectionFormatPopup({ editor }: { editor: Editor | null }) {
           <EyeOff className="h-4 w-4 shrink-0 text-gray-600 dark:text-gray-300" />
           <span>{isHazed ? 'Unhide text' : 'Hide text'}</span>
         </button>
+        {showRevertText ? (
+          <button
+            type="button"
+            className={cn(
+              'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-gray-50 dark:hover:bg-gray-800',
+              !canRevertText && 'pointer-events-none opacity-40'
+            )}
+            tabIndex={-1}
+            disabled={!canRevertText}
+            title={
+              canRevertText
+                ? 'Restore the original sent or received text'
+                : 'No edits to revert'
+            }
+            onClick={() => {
+              if (!canRevertText || !onRevertText) return
+              onRevertText()
+            }}
+          >
+            <RotateCcw className="h-4 w-4 shrink-0 text-gray-600 dark:text-gray-300" />
+            <span>Revert text</span>
+          </button>
+        ) : null}
       </div>
 
       {/* Divider before Skills */}
@@ -316,18 +371,26 @@ export function SelectionFormatPopup({ editor }: { editor: Editor | null }) {
         </button>
       </div>
 
-      {/* Skills list — labels only */}
+      {/* Skills list */}
       <div className="px-1 pb-1">
-        {SKILL_LABELS.map((label) => (
-          <button
-            key={label}
-            type="button"
-            className="flex w-full rounded-md px-2 py-1.5 text-left hover:bg-gray-50 dark:hover:bg-gray-800"
-            tabIndex={-1}
-          >
-            {label}
-          </button>
-        ))}
+        {POPUP_SKILL_IDS.map((skillId) => {
+          const skill = getSkill(skillId)
+          if (!skill?.enabled) return null
+          return (
+            <button
+              key={skillId}
+              type="button"
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-gray-50 dark:hover:bg-gray-800"
+              tabIndex={-1}
+              onClick={() => attachPopupSkill(skillId)}
+            >
+              {skillId === 'suggest-edits' && (
+                <PencilLine className="h-4 w-4 shrink-0 text-gray-600 dark:text-gray-300" />
+              )}
+              <span>{skill.name}</span>
+            </button>
+          )
+        })}
       </div>
 
       {/* Divider before Edit with AI */}
@@ -517,9 +580,18 @@ function getSelectionVirtualElement(): VirtualElement | null {
 export function SelectionFormatPopupAnchor({
   editor,
   containerRef,
+  showRevertText = false,
+  canRevertText = false,
+  onRevertText,
 }: {
   editor: Editor | null // Active TipTap editor for this panel section
   containerRef: React.RefObject<HTMLDivElement | null> // TipTapContent root (ownership / click tests)
+  /** List Revert text (chat frames). */
+  showRevertText?: boolean
+  /** True when the host body diverges from the original sent/received text. */
+  canRevertText?: boolean
+  /** Restore the original prompt/response body. */
+  onRevertText?: () => void
 }) {
   const [showPopup, setShowPopup] = useState(false) // Whether a valid selection is active
   const [isNavigating, setIsNavigating] = useState(false) // Hide while the board pans/zooms; return when nav stops
@@ -528,6 +600,8 @@ export function SelectionFormatPopupAnchor({
   const popupRef = useRef<HTMLDivElement>(null) // Floating element for autoUpdate + hit tests
   const cleanupAutoUpdateRef = useRef<(() => void) | null>(null) // Dispose autoUpdate on hide
   const userClearedSelectionRef = useRef(false) // Skip restore when user intentionally collapses
+  // Primary button still down → user may be drag-selecting; popup must wait for release
+  const primaryPointerDownRef = useRef(false)
 
   // Measure popup and apply single-line / multi-line placement rules
   const placePopup = useCallback(() => {
@@ -589,6 +663,12 @@ export function SelectionFormatPopupAnchor({
       }
 
       setSavedSelection({ from, to })
+      // Wait for mouse/pen release — mounting mid-drag parks the card under the caret
+      // end (pointer-events:auto) and steals mousemove so drag-select dies early.
+      if (primaryPointerDownRef.current) {
+        setShowPopup(false) // Keep range saved; reveal on pointerup via sync below
+        return
+      }
       setShowPopup(true)
 
       // Restore selection if popup mount stole focus/range
@@ -604,15 +684,37 @@ export function SelectionFormatPopupAnchor({
       requestAnimationFrame(syncFromSelection)
     }
 
+    // Track primary press so we never open the format card during a drag-select
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.isPrimary && e.button === 0) primaryPointerDownRef.current = true
+    }
+    const onPointerUp = (e: PointerEvent) => {
+      if (!e.isPrimary) return
+      primaryPointerDownRef.current = false
+      // Selection is final now — show the card if the range is still non-empty
+      requestAnimationFrame(syncFromSelection)
+    }
+    const onPointerCancel = (e: PointerEvent) => {
+      if (!e.isPrimary) return
+      primaryPointerDownRef.current = false
+      requestAnimationFrame(syncFromSelection)
+    }
+
     editor.on('selectionUpdate', handleEditorUpdate)
     editor.on('update', handleEditorUpdate)
     document.addEventListener('selectionchange', handleEditorUpdate)
+    document.addEventListener('pointerdown', onPointerDown, true)
+    document.addEventListener('pointerup', onPointerUp, true)
+    document.addEventListener('pointercancel', onPointerCancel, true)
     syncFromSelection()
 
     return () => {
       editor.off('selectionUpdate', handleEditorUpdate)
       editor.off('update', handleEditorUpdate)
       document.removeEventListener('selectionchange', handleEditorUpdate)
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      document.removeEventListener('pointerup', onPointerUp, true)
+      document.removeEventListener('pointercancel', onPointerCancel, true)
       cleanupAutoUpdateRef.current?.()
       cleanupAutoUpdateRef.current = null
     }
@@ -757,7 +859,12 @@ export function SelectionFormatPopupAnchor({
         pointerEvents: isNavigating ? 'none' : 'auto',
       }}
     >
-      <SelectionFormatPopup editor={editor} />
+      <SelectionFormatPopup
+        editor={editor}
+        showRevertText={showRevertText}
+        canRevertText={canRevertText}
+        onRevertText={onRevertText}
+      />
     </div>,
     document.body
   )

@@ -2,6 +2,12 @@
 // A titled frame links to a child page. `isBlock` ≠ TipTap block. See DEFINITIONS.md.
 
 import type { SupabaseClient } from '@supabase/supabase-js' // Typed client for sync helpers
+import { parseFrameShape } from '@/lib/frame-shape' // Silhouette on frame metadata
+import {
+  getEphemeralMessage,
+  isEphemeralMessageId,
+  patchEphemeralMessage,
+} from '@/lib/ephemeral-sandbox' // Visitor playground clones — local-only patches
 
 /** RF node id for a block-group message (`block-group-{messageId}`). */
 export function blockGroupNodeId(groupMessageId: string): string {
@@ -92,7 +98,7 @@ export function isBlockContentEmpty(content: string | undefined | null): boolean
   if (!content) return true
   if (content === '<p></p>' || content === '<p><br></p>') return true
   // boardLink / legacy pageLink / databaseBlock / imageBlock store payload in attrs — stripping tags looks empty
-  if (/data-type=["'](?:boardLink|pageLink|databaseBlock|imageBlock|propertyBlock)["']/i.test(content)) return false
+  if (/data-type=["'](?:boardLink|pageLink|captureLink|databaseBlock|imageBlock|videoBlock|audioBlock|fileBlock|bookmarkBlock|propertyBlock)["']/i.test(content)) return false
   // TipTap often stores spaces as &nbsp; / &#160; / U+00A0 — treat those as empty too
   const plain = content
     .replace(/<[^>]*>/g, ' ') // Drop tags; leftover is typed text only
@@ -104,8 +110,94 @@ export function isBlockContentEmpty(content: string | undefined | null): boolean
   return plain.length === 0
 }
 
-/** Notion connection sync mode on a frame (Connections menu). */
-export type NotionSyncMode = 'live' | 'manual'
+/** Live RF node / React state that may lead persisted metadata on the same gesture. */
+export type FrameChromeLive = {
+  fillColor?: string | null
+  borderColor?: string | null
+  borderStyle?: string | null
+  isUserResized?: boolean
+  frameShape?: unknown
+  rotation?: number
+}
+
+function hasFrameColorValue(value: unknown): boolean {
+  return typeof value === 'string' && value.trim() !== ''
+}
+
+/**
+ * True when the frame has user-set color, resize, shape, rotation, lock, or property type.
+ * Sole-empty frames with chrome stay on the board when deselected (unlike plain empty spawns).
+ */
+export function frameHasChromeProperties(
+  meta?: Record<string, unknown> | null,
+  live?: FrameChromeLive | null
+): boolean {
+  const m = meta || {}
+  const l = live || {}
+
+  if (hasFrameColorValue(l.fillColor ?? m.fillColor)) return true
+  if (hasFrameColorValue(l.borderColor ?? m.borderColor)) return true
+
+  const borderStyle = l.borderStyle ?? m.borderStyle
+  if (typeof borderStyle === 'string' && borderStyle !== '' && borderStyle !== 'none') return true
+
+  if (l.isUserResized) return true
+  const dims = m.resizeDimensions as { width?: number; height?: number } | null | undefined
+  if (
+    dims &&
+    typeof dims.width === 'number' &&
+    dims.width > 0 &&
+    typeof dims.height === 'number' &&
+    dims.height > 0
+  ) {
+    return true
+  }
+
+  if (parseFrameShape(l.frameShape ?? m.frameShape)) return true
+
+  const rot = typeof l.rotation === 'number' ? l.rotation : m.rotation
+  if (typeof rot === 'number' && Math.abs(rot) > 0.01) return true
+
+  if (m.frameUnlocked === true) return true
+  if (m.frameTextWrap === true) return true
+  if (typeof m.frameScale === 'number' && Math.abs(m.frameScale - 1) > 0.001) return true
+  if (m.unlockedFrameSize && typeof m.unlockedFrameSize === 'object') return true
+  if (typeof m.wrapColWidth === 'number' && m.wrapColWidth > 0) return true
+  if (typeof m.propertyType === 'string' && m.propertyType.trim() !== '') return true
+
+  return false
+}
+
+/** Notion connection sync — connected frames always live-sync NodNotes → Notion. */
+export type NotionSyncMode = 'live'
+
+/** Coerce stored metadata (legacy `manual` / `two-way` → `live`). */
+export function normalizeNotionSyncMode(_raw?: unknown): NotionSyncMode {
+  return 'live'
+}
+
+/** True when the frame pushes edits to Notion (always when connected). */
+export function isNotionAutoSync(_sync?: NotionSyncMode): boolean {
+  return true
+}
+
+/** True when NodNotes edits should push to the Notion page body. */
+export function shouldPushNotionPage(_sync?: NotionSyncMode): boolean {
+  return true
+}
+
+/** Imported Notion page on a board-body frame — eligible for page-body sync. */
+export function notionPageBodySyncTarget(meta?: Record<string, unknown> | null): {
+  pageId: string
+} | null {
+  if (!meta || !isBoardBodyMeta(meta)) return null
+  const pageId = typeof meta.notionPageId === 'string' ? meta.notionPageId : null
+  if (!pageId) return null
+  if (meta.notionObject === 'database') return null
+  const { connected } = readNotionConnection(meta)
+  if (!connected) return null
+  return { pageId }
+}
 
 /** Read whether this frame is Notion-connected and which sync mode is on. */
 export function readNotionConnection(meta?: Record<string, unknown> | null): {
@@ -114,7 +206,7 @@ export function readNotionConnection(meta?: Record<string, unknown> | null): {
 } {
   if (!meta) return { connected: false, sync: 'live' }
   if (meta.notionConnected === false) return { connected: false, sync: 'live' } // Explicit unlink
-  const sync: NotionSyncMode = meta.notionSync === 'manual' ? 'manual' : 'live'
+  const sync = normalizeNotionSyncMode(meta.notionSync)
   if (meta.notionConnected === true) return { connected: true, sync }
   // Imported Notion frames already have a page/url — treat as connected
   const imported =
@@ -251,9 +343,12 @@ export async function migrateMessagesToBlockFlag(
     toPersist.push({ id: msg.id, meta }) // Queue DB write — do not block on serial UPDATEs
   }
   if (toPersist.length === 0) return
+  // Skip DB writes for visitor sandbox messages (remapped ids are not in Supabase)
+  const durable = toPersist.filter(({ id }) => !isEphemeralMessageId(id))
+  if (durable.length === 0) return
   // Fire-and-forget parallel persists so cold load returns after one messages select
   void Promise.all(
-    toPersist.map(({ id, meta }) =>
+    durable.map(({ id, meta }) =>
       supabase.from('messages').update({ metadata: meta }).eq('id', id)
     )
   ).catch((err) => {
@@ -395,6 +490,96 @@ export async function syncBoardRenameToBlock(
   return match.conversation_id as string
 }
 
+/**
+ * Expand board ids to delete so nested boards (parent_id tree) and boards linked from
+ * frames on those maps (linkedBoardId) are included. Returns children-before-parents order
+ * so demote can clear parent map links before the parent row is removed.
+ */
+export async function expandBoardsForDelete(
+  supabase: SupabaseClient,
+  userId: string,
+  roots: { id: string; title: string }[]
+): Promise<{ id: string; title: string }[]> {
+  if (roots.length === 0) return []
+
+  // Full nav tree for this user (sidebar query is capped — delete must see every child)
+  const { data: all, error } = await supabase
+    .from('conversations')
+    .select('id, title, metadata')
+    .eq('user_id', userId)
+  if (error) throw error
+
+  const byId = new Map((all || []).map((c) => [c.id as string, c]))
+  const childrenOf = new Map<string, string[]>() // parent_id → child conversation ids
+  for (const c of all || []) {
+    const meta = (c.metadata as Record<string, unknown> | null) || {}
+    const parentId = meta.parent_id
+    if (typeof parentId === 'string' && parentId.trim()) {
+      const list = childrenOf.get(parentId) || []
+      list.push(c.id as string)
+      childrenOf.set(parentId, list)
+    }
+  }
+
+  const addSubtree = (id: string, into: Set<string>) => {
+    if (into.has(id)) return
+    into.add(id)
+    for (const childId of childrenOf.get(id) || []) addSubtree(childId, into)
+  }
+
+  const toDelete = new Set<string>()
+  for (const root of roots) addSubtree(root.id, toDelete)
+
+  // Boards linked from frames on maps being deleted (boardLink / titled cards)
+  const scannedMsgs = new Set<string>() // conversation_ids whose messages we already walked
+  let expanded = true
+  while (expanded) {
+    expanded = false
+    const unscanned = [...toDelete].filter((id) => !scannedMsgs.has(id))
+    for (let i = 0; i < unscanned.length; i += 100) {
+      const batch = unscanned.slice(i, i + 100)
+      for (const id of batch) scannedMsgs.add(id)
+      const { data: msgs } = await supabase
+        .from('messages')
+        .select('metadata')
+        .in('conversation_id', batch)
+      for (const m of msgs || []) {
+        const meta = (m.metadata as Record<string, unknown> | null) || {}
+        const linked =
+          typeof meta.linkedBoardId === 'string' && meta.linkedBoardId.trim()
+            ? meta.linkedBoardId.trim()
+            : typeof meta.linkedPageId === 'string' && meta.linkedPageId.trim()
+              ? meta.linkedPageId.trim()
+              : null
+        if (!linked || toDelete.has(linked) || !byId.has(linked)) continue
+        const before = toDelete.size
+        addSubtree(linked, toDelete) // Include that board + its nested children
+        if (toDelete.size > before) expanded = true
+      }
+    }
+  }
+
+  // Children before parents so demote still finds the parent map frame
+  const ordered: { id: string; title: string }[] = []
+  const seen = new Set<string>()
+  const walk = (id: string) => {
+    if (seen.has(id) || !toDelete.has(id)) return
+    for (const childId of childrenOf.get(id) || []) walk(childId)
+    if (seen.has(id)) return
+    seen.add(id)
+    const row = byId.get(id)
+    const rootTitle = roots.find((r) => r.id === id)?.title
+    ordered.push({
+      id,
+      title: rootTitle || (typeof row?.title === 'string' ? row.title : 'Untitled'),
+    })
+  }
+  for (const root of roots) walk(root.id)
+  for (const id of toDelete) walk(id) // Linked-only boards not under a root parent_id
+
+  return ordered
+}
+
 /** When a page is deleted from the menu, demote its block card (keep body, clear page link). */
 export async function demoteBlockForDeletedBoard(
   supabase: SupabaseClient,
@@ -496,6 +681,7 @@ export function duplicateBlockMetadata(
   delete next.blockTitle // Untitled until user retitles
   delete next.blockGroupId // Outside any group until grouped again
   delete next.isBlockGroup
+  delete next.dbVisibleRowCap // Each copy pages show-more on its own
   return next
 }
 
@@ -597,6 +783,24 @@ export async function persistBlockPlacement(
     blockGroupId?: string | null // Group message id, or null to stand alone on the page
   }
 ): Promise<void> {
+  // Visitor sandbox: patch the in-memory clone only — never touch the master
+  if (isEphemeralMessageId(opts.messageId)) {
+    const row = getEphemeralMessage(opts.messageId)
+    if (!row) return
+    const { meta: migrated } = migrateLegacyBlockFlags(
+      (row.metadata as Record<string, unknown>) || {}
+    )
+    const next: Record<string, unknown> = {
+      ...migrated,
+      isBlock: true,
+      position: opts.position,
+    }
+    if (opts.blockGroupId) next.blockGroupId = opts.blockGroupId
+    else delete next.blockGroupId
+    patchEphemeralMessage(opts.messageId, { metadata: next })
+    return
+  }
+
   const { data: row } = await supabase
     .from('messages')
     .select('metadata')
@@ -623,6 +827,21 @@ export async function persistBlockGroupFrame(
     size: { width: number; height: number } // Frame size
   }
 ): Promise<void> {
+  if (isEphemeralMessageId(opts.groupMessageId)) {
+    const row = getEphemeralMessage(opts.groupMessageId)
+    if (!row) return
+    const existing = { ...((row.metadata as Record<string, unknown>) || {}) }
+    patchEphemeralMessage(opts.groupMessageId, {
+      metadata: {
+        ...existing,
+        isBlockGroup: true,
+        position: opts.position,
+        resizeDimensions: opts.size,
+      },
+    })
+    return
+  }
+
   const { data: row } = await supabase
     .from('messages')
     .select('metadata')

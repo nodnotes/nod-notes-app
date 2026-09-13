@@ -194,7 +194,7 @@ export async function ensureNotionMapFrameIsBoardLink(
     if (match) linkedBoardId = match.id as string
   }
 
-  // Create a nested Thinktable page when none exists yet
+  // Create a nested NodNotes page when none exists yet
   if (!linkedBoardId) {
     const { data: created, error } = await supabase
       .from('conversations')

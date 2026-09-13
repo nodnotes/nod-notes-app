@@ -1,0 +1,2 @@
+-- Freehand: tip bars, tip-diameter paint stamp, spot erase circular holes (SVG mask).
+-- App/docs marker only; no DDL.

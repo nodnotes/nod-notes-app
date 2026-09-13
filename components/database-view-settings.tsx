@@ -1,9 +1,9 @@
 'use client'
 
 // Database view settings panel — layout, property visibility/order, filter, sort,
-// group, conditional color, sub-tasks. Thinktable chrome (not a Notion pixel clone).
+// group, conditional color, sub-tasks. NodNotes chrome (not a Notion pixel clone).
 
-import { useMemo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import {
   ArrowDownAZ,
   ArrowLeft,
@@ -295,7 +295,7 @@ export function DatabaseViewSettingsPanel({
                   className={cn(
                     'flex flex-col items-center gap-1 rounded-md border p-2 text-[11px]',
                     selected
-                      ? 'border-blue-500 text-blue-600 bg-blue-50'
+                      ? 'border-blue-500 text-blue-500 tt-selected'
                       : 'border-gray-200 text-gray-600',
                     !implemented && 'opacity-40 cursor-not-allowed'
                   )}
@@ -955,7 +955,7 @@ function ColorRuleCard({
 }
 
 /** Compact toolbar: search + filter/sort/settings triggers. */
-export function DatabaseViewToolbar({
+export const DatabaseViewToolbar = memo(function DatabaseViewToolbar({
   settings,
   onChange,
   properties,
@@ -991,7 +991,7 @@ export function DatabaseViewToolbar({
         type="button"
         className={cn(
           'inline-flex items-center gap-1 rounded px-1.5 py-1 text-[11px] hover:bg-black/[0.04]',
-          settings.filters.length && 'text-blue-600 bg-blue-50'
+          settings.filters.length && 'text-blue-500 tt-selected'
         )}
         onClick={() => setSettingsOpen(true)}
         title="Filters"
@@ -1003,7 +1003,7 @@ export function DatabaseViewToolbar({
         type="button"
         className={cn(
           'inline-flex items-center gap-1 rounded px-1.5 py-1 text-[11px] hover:bg-black/[0.04]',
-          settings.sorts.length && 'text-blue-600 bg-blue-50'
+          settings.sorts.length && 'text-blue-500 tt-selected'
         )}
         onClick={() => setSettingsOpen(true)}
         title="Sort"
@@ -1029,4 +1029,4 @@ export function DatabaseViewToolbar({
       />
     </div>
   )
-}
+})

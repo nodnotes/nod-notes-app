@@ -1,4 +1,4 @@
-# Thinktable definitions (official terms)
+# NodNotes definitions (official terms)
 
 Source of truth for product language. Code identifiers may lag (`chatPanel`, `blockGroup`, `Edge`, `Handle`, `metadata.isBlock`). New copy, comments, and CONTEXT must use these words.
 
@@ -39,4 +39,4 @@ When the user says **block**, they mean the TipTap line (blue wash + ⋮⋮), no
 
 Avoid: page/map/canvas (for the board), card/panel/map card (for the frame), block group/group (as a type), edge/arrow (for the thread), handle/nodule/node (for the connection point).
 
-Notion **pages** (Notion API objects) keep that name — they are not Thinktable boards.
+Notion **pages** (Notion API objects) keep that name — they are not NodNotes boards.

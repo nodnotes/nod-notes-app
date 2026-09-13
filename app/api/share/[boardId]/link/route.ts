@@ -14,7 +14,7 @@ type RouteContext = { params: Promise<{ boardId: string }> } // Dynamic route pa
 
 export async function POST(request: Request, context: RouteContext) {
   try {
-    const { boardId } = await context.params // Target Thinktable page
+    const { boardId } = await context.params // Target NodNotes page
     const supabase = await createClient() // Cookie session
     const {
       data: { user },

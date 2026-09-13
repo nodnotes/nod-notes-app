@@ -33,10 +33,10 @@ Environment variables are only loaded when the server starts!
 
 ### 3. Wrong File Location
 
-Make sure `.env.local` is in the **`apps/web/`** directory, not the root `thinktable/` directory:
+Make sure `.env.local` is in the **`apps/web/`** directory, not the root `nod-notes/` directory:
 
 ```
-thinktable/
+nod-notes/
   apps/
     web/
       .env.local  ← Should be here

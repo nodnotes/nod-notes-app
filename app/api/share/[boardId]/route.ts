@@ -113,7 +113,7 @@ export async function POST(request: Request, context: RouteContext) {
       return NextResponse.json({ error: 'Email or Notion user required' }, { status: 400 })
     }
 
-    // Bind to existing Thinktable account when email matches
+    // Bind to existing NodNotes account when email matches
     const granteeUserId = email ? await findUserIdByEmail(email) : null
 
     let existingId: string | null = null

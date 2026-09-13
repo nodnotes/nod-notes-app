@@ -1,15 +1,15 @@
 'use client'
 
-// Full-height right chat column — Thinktable AI copilot (Ask in sidebar; drag blocks onto page)
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react' // Hooks
+// Full-height right chat column — NodNotes AI copilot (Ask in sidebar; drag blocks onto page)
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react' // Hooks + seam drag types
 import { createPortal } from 'react-dom' // Phone dock must paint on the map, not inside clipped main
 import {
   useSidebarContext,
-  CHAT_SIDEBAR_WIDTH,
-  TT_CHAT_THREAD_ID_KEY,
-} from './sidebar-context' // Open state + logo + thread persist key
-import { ThinktableBrandMark, PersonalizeAiModal } from './personalize-ai-modal' // Brand
-import { AiThreadPicker, type AiThreadFilter } from './ai/ai-thread-picker' // History
+  NN_CHAT_THREAD_ID_KEY,
+} from './sidebar-context' // Open state + logo + thread persist key + resizable width
+import { ACCOUNT_CHANGED_EVENT } from '@/lib/auth-session-isolation'
+import { NodNotesBrandMark, PersonalizeAiModal } from './personalize-ai-modal' // Brand
+import { AiThreadPicker } from './ai/ai-thread-picker' // History
 import { AiTranscript } from './ai/ai-transcript' // Turns
 import { CustomizeAgentPanel } from './ai/customize-agent-panel' // Brand → customize agent
 import {
@@ -23,14 +23,34 @@ import { AiPromptBars } from './ai/ai-prompt-bars' // Compact prompt stack / pho
 import type { AiContextSnapshot, AiMessage, AiThread } from '@/lib/ai/types' // Types
 import { isSelectableAiMode } from '@/lib/ai/modes'
 import {
+  AI_ATTACH_SKILL_EVENT,
+  type AiAttachSkillDetail,
+} from '@/lib/ai/attach-skill'
+import {
+  AI_OPEN_CHAT_TURN_EVENT,
+  type AiOpenChatTurnDetail,
+} from '@/lib/ai/open-chat-turn'
+import {
   loadAgentDrafts,
   saveAgentDrafts,
   WORKSPACE_AGENT_ID,
 } from '@/lib/ai/agents' // Personalize → custom agent icon
 import { useAiEditSession, buildFramePendingEdit, buildCreateFramePendingEdit, buildCreateThreadPendingEdit } from '@/lib/ai/edit-session'
 import { htmlToPlain } from '@/lib/ai/context-pack' // Plain excerpts for snapshots
+import {
+  clearAllChatFrameLinkCues,
+  syncChatFrameLinkCuesFromMessages,
+} from '@/lib/ai/chat-frame-link-cues' // Board simulators stay chat-linked while sidebar is closed
 import { createClient } from '@/lib/supabase/client' // Snapshot frame load
 import { cn } from '@/lib/utils' // cn
+import {
+  CHAT_SEAM_GAP_HALF,
+  subscribeChatSeamGaps,
+} from '@/lib/ai/chat-sidebar-seam' // Punch gaps where chat↔board threads cross
+import {
+  clearChatTurnSelected,
+  getChatTurnSelected,
+} from '@/lib/ai/chat-turn-selected' // Selected turn survives phone↔sidebar remount
 import {
   ArrowDown,
   ChevronsRight,
@@ -46,14 +66,147 @@ interface ChatSidebarProps {
 /** Write / clear the active thread id so reload restores the same chat. */
 function persistActiveThreadId(threadId: string | null) {
   if (typeof window === 'undefined') return // No storage on server
-  if (threadId) localStorage.setItem(TT_CHAT_THREAD_ID_KEY, threadId) // Remember thread
-  else localStorage.removeItem(TT_CHAT_THREAD_ID_KEY) // New chat / cleared
+  if (threadId) localStorage.setItem(NN_CHAT_THREAD_ID_KEY, threadId) // Remember thread
+  else localStorage.removeItem(NN_CHAT_THREAD_ID_KEY) // New chat / cleared
+}
+
+/**
+ * Left-edge divider for the chat column — solid by default, with transparent
+ * holes where chat↔board threads (or a rubber-band) cross the seam.
+ * Notion-style: hover tip Close/Resize, click closes, drag resizes min→half window.
+ */
+function ChatSidebarSeam() {
+  const { setChatSidebarOpen, chatSidebarWidth, setChatSidebarWidth } = useSidebarContext()
+  const lineRef = useRef<HTMLDivElement>(null) // Painted seam — mask written imperatively
+  const [tipOpen, setTipOpen] = useState(false) // Hover tip beside the handle
+  const dragRef = useRef<{ startX: number; startW: number; moved: boolean } | null>(null)
+
+  useEffect(() => {
+    const apply = (clientYs: number[]) => {
+      const el = lineRef.current // Live seam node
+      if (!el) return // Not mounted yet
+      const rect = el.getBoundingClientRect() // Map client Y → local px
+      const h = rect.height // Seam height in px
+      if (h <= 0 || clientYs.length === 0) {
+        el.style.webkitMaskImage = '' // Full solid line (WebKit)
+        el.style.maskImage = '' // Full solid line
+        return
+      }
+      // Local Y ranges (px from top of the seam), sorted + merged
+      const half = CHAT_SEAM_GAP_HALF // Half-gap around each crossing
+      const ranges = clientYs
+        .map((y) => ({
+          top: Math.max(0, y - rect.top - half), // Clamp gap top
+          bottom: Math.min(h, y - rect.top + half), // Clamp gap bottom
+        }))
+        .filter((r) => r.bottom > r.top) // Drop empty ranges
+        .sort((a, b) => a.top - b.top) // Merge requires sorted order
+      if (ranges.length === 0) {
+        el.style.webkitMaskImage = '' // Nothing visible to punch
+        el.style.maskImage = ''
+        return
+      }
+      const merged: Array<{ top: number; bottom: number }> = [] // Coalesce overlaps
+      for (const r of ranges) {
+        const last = merged[merged.length - 1] // Prior gap
+        if (last && r.top <= last.bottom) {
+          last.bottom = Math.max(last.bottom, r.bottom) // Expand into overlap
+        } else {
+          merged.push({ ...r }) // New discrete gap
+        }
+      }
+      // Mask: black = visible divider, transparent = gap for the blue thread
+      const stops: string[] = ['#000 0'] // Start solid
+      for (const g of merged) {
+        stops.push(`#000 ${g.top}px`, `transparent ${g.top}px`, `transparent ${g.bottom}px`, `#000 ${g.bottom}px`)
+      }
+      stops.push('#000 100%') // End solid
+      const mask = `linear-gradient(to bottom, ${stops.join(', ')})` // CSS mask image
+      el.style.webkitMaskImage = mask // Safari
+      el.style.maskImage = mask // Standard
+      el.style.webkitMaskSize = '100% 100%' // Cover full seam
+      el.style.maskSize = '100% 100%'
+    }
+    return subscribeChatSeamGaps(apply) // Imperative — no React setState on scroll
+  }, [])
+
+  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return // Left button only
+    e.preventDefault()
+    setTipOpen(false) // Hide tip while dragging
+    dragRef.current = { startX: e.clientX, startW: chatSidebarWidth, moved: false }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current
+    if (!drag) return
+    const dx = drag.startX - e.clientX // Drag left → wider chat (panel is on the right)
+    if (!drag.moved && Math.abs(dx) < 3) return // Click-slop before resize
+    drag.moved = true
+    setChatSidebarWidth(drag.startW + dx) // Clamp lives in context
+  }
+
+  const onPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current
+    dragRef.current = null
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    } catch {
+      /* already released */
+    }
+    if (drag && !drag.moved) setChatSidebarOpen(false) // Click without drag = Close
+  }
+
+  const mod = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'
+
+  return (
+    <div
+      data-chat-sidebar-seam-hit
+      className="absolute inset-y-0 left-0 z-30 w-3 -translate-x-1/2 cursor-col-resize touch-none"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      onMouseEnter={() => {
+        if (!dragRef.current) setTipOpen(true)
+      }}
+      onMouseLeave={() => setTipOpen(false)}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize or close chat"
+      tabIndex={-1}
+    >
+      <div
+        ref={lineRef}
+        aria-hidden
+        data-chat-sidebar-seam
+        className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-black/10 dark:bg-white/10"
+      />
+      {tipOpen ? (
+        <div
+          className="pointer-events-none absolute left-0 top-1/2 z-40 -translate-x-full -translate-y-1/2 -ml-2 rounded-md bg-[#2f2f2f] px-2.5 py-1.5 text-[12px] leading-snug text-white shadow-lg whitespace-nowrap"
+          role="tooltip"
+        >
+          <div>
+            <span className="font-semibold">Close</span>
+            <span className="text-white/70"> Click or {mod};</span>
+          </div>
+          <div>
+            <span className="font-semibold">Resize</span>
+            <span className="text-white/70"> Drag</span>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 export function ChatSidebar({ conversationId }: ChatSidebarProps) {
   const {
     isChatSidebarOpen,
     setChatSidebarOpen,
+    chatSidebarWidth,
     isMobileMode,
     logoDrawing,
     setLogoDrawing,
@@ -70,11 +223,11 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
   const [agentIconRevision, setAgentIconRevision] = useState(0) // Reload custom icons after Done
   const [hoverBrand, setHoverBrand] = useState(false) // Customize pill on empty state
   const [thread, setThread] = useState<AiThread | null>(null) // Active thread
-  const [filter, setFilter] = useState<AiThreadFilter>('all') // History filter
   const [messages, setMessages] = useState<AiMessage[]>([]) // Transcript
   const [streamingId, setStreamingId] = useState<string | null>(null) // Live assistant
   const [mode, setMode] = useState<'ask' | 'edit'>('ask') // Composer mode
   const [seedPrompt, setSeedPrompt] = useState<string | undefined>(undefined) // Quick action
+  const [seedSkillIds, setSeedSkillIds] = useState<string[] | undefined>(undefined) // Skill pill from menus
   const [attachedSnapshots, setAttachedSnapshots] = useState<AiContextSnapshot[]>([]) // Chips
   const [refreshKey, setRefreshKey] = useState(0) // Thread list refresh
   const [savedSnapshots, setSavedSnapshots] = useState<AiContextSnapshot[]>([]) // Library
@@ -91,10 +244,37 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
   const [showReturnToBottom, setShowReturnToBottom] = useState(false) // Transcript scrolled away from bottom
   const transcriptScrollRef = useRef<HTMLDivElement>(null) // Phone content card or desktop sidebar scroller
   const scrolledOpenThreadRef = useRef<string | null>(null) // Which thread we already pinned to bottom on open
-  /** Distance from bottom — survives phone↔desktop remounts on resize */
-  const scrollAnchorRef = useRef<{ threadId: string; fromBottom: number } | null>(null)
+  const linkCueSourceIdsRef = useRef<Set<string>>(new Set()) // Last synced turn-* cue sources
+  /**
+   * Transcript scroll memory across phone dock ↔ desktop column remounts.
+   * Prefer first-visible turn + offset (stable when window height changes);
+   * fromBottom is the near-end fallback.
+   */
+  const scrollAnchorRef = useRef<{
+    threadId: string
+    messageId?: string // First visible turn id (optional)
+    offsetTop?: number // That turn’s top relative to the scroller top
+    fromBottom: number // Distance content bottom → viewport bottom
+  } | null>(null)
+  /** Keep re-applying the saved anchor until height settles after a reformat */
+  const pendingScrollRestoreRef = useRef(false)
   const activeThreadIdRef = useRef<string | null>(null) // Latest thread id for scroll capture in listeners
   activeThreadIdRef.current = thread?.id ?? null
+
+  // Frame / selection menus → attach a skill and open chat
+  useEffect(() => {
+    const onAttachSkill = (event: Event) => {
+      const detail = (event as CustomEvent<AiAttachSkillDetail>).detail
+      if (!detail?.skillId) return
+      setChatSidebarOpen(true)
+      if (detail.mode === 'edit' || detail.mode === 'ask') setMode(detail.mode)
+      else if (detail.skillId === 'suggest-edits') setMode('edit')
+      setSeedSkillIds([detail.skillId])
+      if (detail.prompt) setSeedPrompt(detail.prompt)
+    }
+    window.addEventListener(AI_ATTACH_SKILL_EVENT, onAttachSkill)
+    return () => window.removeEventListener(AI_ATTACH_SKILL_EVENT, onAttachSkill)
+  }, [setChatSidebarOpen])
 
   /** Read the live transcript scroller (desktop column or phone card). */
   const getTranscriptScroller = useCallback((): HTMLElement | null => {
@@ -104,16 +284,104 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
     )
   }, [])
 
-  /** Apply a saved from-bottom offset onto the current scroller. */
-  const restoreTranscriptScroll = useCallback(() => {
-    const anchor = scrollAnchorRef.current
+  /** Snapshot scroll from a connected scroller — never call on a detached node. */
+  const captureTranscriptScroll = useCallback(
+    (root: HTMLElement) => {
+      if (!root.isConnected) return // Detached remount cleanup must not clobber the real anchor
+      const threadId = activeThreadIdRef.current
+      if (!threadId) return
+      const rootRect = root.getBoundingClientRect()
+      let messageId: string | undefined
+      let offsetTop: number | undefined
+      // First turn whose bottom is still below the scroller top = still in view
+      const turns = root.querySelectorAll('[data-ai-turn]')
+      for (let i = 0; i < turns.length; i++) {
+        const el = turns[i] as HTMLElement
+        const rect = el.getBoundingClientRect()
+        if (rect.bottom > rootRect.top + 1) {
+          messageId = el.getAttribute('data-ai-turn') || undefined
+          offsetTop = rect.top - rootRect.top
+          break
+        }
+      }
+      const fromBottom = Math.max(0, root.scrollHeight - root.scrollTop - root.clientHeight)
+      scrollAnchorRef.current = { threadId, messageId, offsetTop, fromBottom }
+      setShowReturnToBottom(fromBottom > 64)
+    },
+    []
+  )
+
+  /** Pin a selected turn into the visible transcript window (instant). */
+  const scrollSelectedTurnIntoView = useCallback((): boolean => {
     const threadId = activeThreadIdRef.current
-    if (!anchor || !threadId || anchor.threadId !== threadId) return
+    const pick = getChatTurnSelected()
+    if (!threadId || !pick || pick.threadId !== threadId) return false
+    const messageId = pick.anchorId || pick.messageIds[0]
+    if (!messageId) return false
     const root = getTranscriptScroller()
-    if (!root) return
+    const el = document.querySelector(
+      `[data-ai-turn="${CSS.escape(messageId)}"]`
+    ) as HTMLElement | null
+    if (!root || !el) return false
+    // Align turn top to scroller top — same math as prompt-bar jump
+    const delta = el.getBoundingClientRect().top - root.getBoundingClientRect().top
+    root.scrollTop = Math.max(0, root.scrollTop + delta)
+    captureTranscriptScroll(root) // Refresh anchor from the restored view
+    return true
+  }, [getTranscriptScroller, captureTranscriptScroll])
+
+  // Board chat-link simulator click → open chat and scroll to the linked turn
+  useEffect(() => {
+    const onOpenTurn = (event: Event) => {
+      const detail = (event as CustomEvent<AiOpenChatTurnDetail>).detail
+      if (!detail?.messageId || !detail?.threadId) return
+      setChatSidebarOpen(true) // Selection already set in requestOpenChatTurn
+      pendingScrollRestoreRef.current = true // Prefer selected turn over bottom pin
+      let tries = 0
+      const tick = () => {
+        if (scrollSelectedTurnIntoView() || tries++ > 24) {
+          pendingScrollRestoreRef.current = false
+          return
+        }
+        requestAnimationFrame(tick) // Wait for desktop column / phone dock to mount
+      }
+      requestAnimationFrame(tick)
+    }
+    window.addEventListener(AI_OPEN_CHAT_TURN_EVENT, onOpenTurn)
+    return () => window.removeEventListener(AI_OPEN_CHAT_TURN_EVENT, onOpenTurn)
+  }, [setChatSidebarOpen, scrollSelectedTurnIntoView])
+
+  /** Apply the saved scroll memory onto the current scroller. */
+  const restoreTranscriptScroll = useCallback((): boolean => {
+    const threadId = activeThreadIdRef.current
+    // Selected chat frame wins when present
+    if (scrollSelectedTurnIntoView()) return true
+    const anchor = scrollAnchorRef.current
+    if (!anchor || !threadId || anchor.threadId !== threadId) return false
+    const root = getTranscriptScroller()
+    if (!root) return false
+    // Prefer the turn that was at the top of the window (works across height reformats)
+    if (anchor.messageId != null && anchor.offsetTop != null) {
+      const el = root.querySelector(
+        `[data-ai-turn="${CSS.escape(anchor.messageId)}"]`
+      ) as HTMLElement | null
+      if (el) {
+        const delta =
+          el.getBoundingClientRect().top -
+          root.getBoundingClientRect().top -
+          anchor.offsetTop
+        root.scrollTop = Math.max(0, root.scrollTop + delta)
+        setShowReturnToBottom(
+          root.scrollHeight - root.scrollTop - root.clientHeight > 64
+        )
+        return true
+      }
+    }
+    // Near-end / no turn stamp — keep distance from bottom
     root.scrollTop = Math.max(0, root.scrollHeight - root.clientHeight - anchor.fromBottom)
     setShowReturnToBottom(anchor.fromBottom > 64)
-  }, [getTranscriptScroller])
+    return true
+  }, [getTranscriptScroller, scrollSelectedTurnIntoView])
 
   // Publish whether the chat box (transcript) has messages — Free nav fill depends on it
   useEffect(() => {
@@ -127,7 +395,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
     return () => setAiChatHasTranscript(false) // Clear on unmount
   }, [messages.length, threadHydrated, thread?.id, loadedThreadId, setAiChatHasTranscript])
 
-  // Show return-to-bottom only when a chat has turns and the scroller is not at the end
+  // Track scroll while connected; re-apply pending restore as height settles after reformat
   useEffect(() => {
     if (messages.length === 0) {
       setShowReturnToBottom(false) // Empty “New AI chat” — never show
@@ -139,51 +407,79 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
       return
     }
     let raf = 0
-    const update = () => {
-      const gap = root.scrollHeight - root.scrollTop - root.clientHeight
-      const threadId = activeThreadIdRef.current
-      if (threadId) scrollAnchorRef.current = { threadId, fromBottom: Math.max(0, gap) }
-      setShowReturnToBottom(gap > 64) // Past a small threshold → offer jump down
-    }
-    const onScroll = () => {
+    const onScrollOrResize = () => {
       if (raf) return
       raf = requestAnimationFrame(() => {
         raf = 0
-        update()
+        // After phone↔sidebar remount, keep pinning until layout height is real
+        if (pendingScrollRestoreRef.current) {
+          restoreTranscriptScroll()
+          return
+        }
+        captureTranscriptScroll(root)
       })
     }
-    update()
-    root.addEventListener('scroll', onScroll, { passive: true })
-    const ro = new ResizeObserver(onScroll) // Streaming / layout growth
+    // Don't capture from a brand-new scroller at top — that would wipe the restore target
+    if (!pendingScrollRestoreRef.current) captureTranscriptScroll(root)
+    else restoreTranscriptScroll()
+    root.addEventListener('scroll', onScrollOrResize, { passive: true })
+    const ro = new ResizeObserver(onScrollOrResize) // Streaming / layout growth
     ro.observe(root)
     if (root.firstElementChild) ro.observe(root.firstElementChild)
     return () => {
-      // Capture from this node — ref may already point elsewhere mid phone↔desktop swap
-      const threadId = activeThreadIdRef.current
-      if (threadId) {
-        const fromBottom = Math.max(0, root.scrollHeight - root.scrollTop - root.clientHeight)
-        scrollAnchorRef.current = { threadId, fromBottom }
-      }
-      root.removeEventListener('scroll', onScroll)
+      // Never read scrollTop from a detached node — browsers often reset it to 0
+      root.removeEventListener('scroll', onScrollOrResize)
       ro.disconnect()
       if (raf) cancelAnimationFrame(raf)
     }
-  }, [messages.length, streamingId, isMobileMode, isChatSidebarOpen, dockCompact, getTranscriptScroller])
+  }, [
+    messages.length,
+    streamingId,
+    isMobileMode,
+    isChatSidebarOpen,
+    dockCompact,
+    getTranscriptScroller,
+    captureTranscriptScroll,
+    restoreTranscriptScroll,
+  ])
 
-  // Phone↔desktop (or dock compact) remounts a new scroller at top — restore prior offset
+  // Phone↔desktop / dock compact / open state remounts a new scroller — restore prior scroll
+  useLayoutEffect(() => {
+    if (messages.length === 0) return
+    pendingScrollRestoreRef.current = true // Lock capture until height settles after reformat
+    restoreTranscriptScroll()
+    const raf = requestAnimationFrame(() => restoreTranscriptScroll())
+    const t = window.setTimeout(() => {
+      restoreTranscriptScroll()
+      pendingScrollRestoreRef.current = false
+      const root = getTranscriptScroller()
+      if (root) captureTranscriptScroll(root)
+    }, 50)
+    return () => {
+      cancelAnimationFrame(raf)
+      window.clearTimeout(t)
+    }
+  }, [
+    isMobileMode,
+    isChatSidebarOpen,
+    dockCompact,
+    restoreTranscriptScroll,
+    getTranscriptScroller,
+    captureTranscriptScroll,
+  ])
+
+  // When the transcript first paints (or grows onto a fresh scroller), apply any saved anchor once
   useLayoutEffect(() => {
     if (messages.length === 0) return
     restoreTranscriptScroll()
-    const raf = requestAnimationFrame(() => restoreTranscriptScroll())
-    return () => cancelAnimationFrame(raf)
-  }, [isMobileMode, isChatSidebarOpen, dockCompact, messages.length, restoreTranscriptScroll])
+  }, [messages.length, restoreTranscriptScroll])
   // Restore the last active thread once on mount (same chat after reload)
   useEffect(() => {
     if (typeof window === 'undefined') { // SSR guard
       setThreadHydrated(true) // Nothing to restore on server
       return
     }
-    const storedId = localStorage.getItem(TT_CHAT_THREAD_ID_KEY) // Last thread id
+    const storedId = localStorage.getItem(NN_CHAT_THREAD_ID_KEY) // Last thread id
     if (!storedId) {
       setThreadHydrated(true) // No saved chat — allow later persists
       return
@@ -216,6 +512,24 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
     if (!threadHydrated) return // Wait until restore finished (or found nothing)
     persistActiveThreadId(thread?.id ?? null) // Persist select / clear on new
   }, [thread?.id, threadHydrated])
+
+  // Account switch — drop prior user's transcript/thread from memory
+  useEffect(() => {
+    const onAccountChanged = () => {
+      setThread(null)
+      setMessages([])
+      setStreamingId(null)
+      setLoadedThreadId(null)
+      setAttachedSnapshots([])
+      setSavedSnapshots([])
+      setRefreshKey((n) => n + 1)
+      setThreadHydrated(true) // Storage already cleared; don't restore a stale id
+      scrolledOpenThreadRef.current = null
+      scrollAnchorRef.current = null
+    }
+    window.addEventListener(ACCOUNT_CHANGED_EVENT, onAccountChanged)
+    return () => window.removeEventListener(ACCOUNT_CHANGED_EVENT, onAccountChanged)
+  }, [])
 
   /** Brand mark → customize agent panel (not the draw modal). */
   const openCustomize = useCallback(() => {
@@ -259,6 +573,8 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
   useEffect(() => {
     scrolledOpenThreadRef.current = null // New selection must pin to bottom again after load
     scrollAnchorRef.current = null // Don't restore the previous chat's offset
+    pendingScrollRestoreRef.current = false // Don't re-pin a stale layout restore
+    clearChatTurnSelected() // Thread switch / New chat — drop prior turn select
     if (!thread?.id) {
       setMessages([])
       setLoadedThreadId(null) // New chat — nothing to restore
@@ -285,6 +601,25 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
       cancelled = true
     }
   }, [thread?.id])
+
+  // Keep board chat-link simulators in sync from loaded messages — even while desktop
+  // chat returns null (transcript unmounted). Do not clear on that UI close.
+  useEffect(() => {
+    linkCueSourceIdsRef.current = syncChatFrameLinkCuesFromMessages(
+      messages,
+      linkCueSourceIdsRef.current,
+      thread?.id // Arm reverse lookup for board cue → chat turn
+    )
+  }, [messages, thread?.id])
+
+  // Leaving the board drops stale cues so the next board does not inherit them
+  useEffect(() => {
+    return () => {
+      clearAllChatFrameLinkCues()
+      linkCueSourceIdsRef.current = new Set()
+    }
+  }, [])
+
   useEffect(() => {
     if (!isChatSidebarOpen) return
     let cancelled = false
@@ -431,6 +766,20 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
     setMode('ask')
   }, [])
 
+  /** Open a forked copy of the current chat (picker GitFork). */
+  const handleFork = useCallback((t: AiThread) => {
+    setThread(t) // Switch into the duplicate
+    setMode(isSelectableAiMode(t.mode) ? t.mode : 'ask') // Match source mode
+    setRefreshKey((k) => k + 1) // Show the copy in the thread list
+  }, [])
+
+  /** Open an imported chat from the composer + menu File picker. */
+  const handleChatImported = useCallback((t: AiThread) => {
+    setThread(t)
+    setMode(isSelectableAiMode(t.mode) ? t.mode : 'ask')
+    setRefreshKey((k) => k + 1)
+  }, [])
+
   /** Scroll the transcript to a user prompt picked from the compact bars. */
   const handleJumpToMessage = useCallback((messageId: string) => {
     const el = document.querySelector(`[data-ai-turn="${messageId}"]`) // Row stamped in AiTranscript
@@ -451,10 +800,13 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
 
   const handleEditUserMessage = useCallback(
     async (messageId: string, content: string) => {
+      if (streamingId) return // Don't stack a second stream
+      const trimmed = content.trim()
+      if (!trimmed) return
       const res = await fetch(`/api/ai/messages/${messageId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content: trimmed }),
       })
       if (!res.ok) throw new Error(await res.text())
       const data = await res.json()
@@ -467,7 +819,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
       const threadId = (data.threadId as string) || thread?.id
       if (!threadId) return
       await regenerateAfterEdit({
-        message: content,
+        message: trimmed,
         threadId,
         boardId: conversationId,
         snapshotIds: attachedSnapshots.map((s) => s.id),
@@ -476,8 +828,31 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
       })
       setRefreshKey((k) => k + 1)
     },
-    [thread?.id, conversationId, attachedSnapshots]
+    [thread?.id, conversationId, attachedSnapshots, streamingId]
   )
+
+  /** Response frame menu — drop this turn + later, re-run from the preceding prompt. */
+  const handleRegenerateResponse = useCallback(
+    async (assistantMessageId: string) => {
+      const idx = messages.findIndex((m) => m.id === assistantMessageId)
+      if (idx < 0) return
+      let userMsg: (typeof messages)[number] | null = null
+      for (let i = idx - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
+          userMsg = messages[i]
+          break
+        }
+      }
+      if (!userMsg) return
+      await handleEditUserMessage(userMsg.id, userMsg.content || '')
+    },
+    [messages, handleEditUserMessage]
+  )
+
+  /** TipTap soft-save / board-link merge — replace one turn in local state. */
+  const handleMessagePatch = useCallback((messageId: string, message: AiMessage) => {
+    setMessages((prev) => prev.map((m) => (m.id === messageId ? message : m)))
+  }, [])
 
   const handleSaveSnapshot = useCallback(
     async (message: AiMessage) => {
@@ -569,6 +944,12 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
     if (scrolledOpenThreadRef.current === thread.id) return // One jump per open
     const root = getTranscriptScroller()
     if (!root) return
+    // Board cue / explicit pick already chose a turn — don't stomp with bottom pin
+    if (getChatTurnSelected()?.threadId === thread.id) {
+      scrollSelectedTurnIntoView()
+      scrolledOpenThreadRef.current = thread.id
+      return
+    }
     const pin = () => {
       root.scrollTop = root.scrollHeight // Instant — opening should land at bottom
       scrollAnchorRef.current = { threadId: thread.id, fromBottom: 0 }
@@ -579,13 +960,19 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
     // Second frame: markdown / images may grow height after first paint
     const raf = requestAnimationFrame(pin)
     return () => cancelAnimationFrame(raf)
-  }, [thread?.id, loadedThreadId, messages.length, loadPhase, getTranscriptScroller])
+  }, [
+    thread?.id,
+    loadedThreadId,
+    messages.length,
+    loadPhase,
+    getTranscriptScroller,
+    scrollSelectedTurnIntoView,
+  ])
 
   if (!isChatSidebarOpen && !isMobileMode) return null // Desktop: unmount when closed; phone: keep dock mounted for same-tap focus
 
   const promptBarProps = {
-    boardId: conversationId, // This-board recents when the picker is filtered
-    filter, // Match the thread picker
+    boardId: conversationId,
     thread, // Skip the open chat in the recent fallback
     messages, // In-thread user prompts
     refreshKey, // Refetch recents after send
@@ -617,16 +1004,23 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
       onStreamingId={setStreamingId}
       seedPrompt={seedPrompt}
       onSeedConsumed={() => setSeedPrompt(undefined)}
+      seedSkillIds={seedSkillIds}
+      onSeedSkillsConsumed={() => setSeedSkillIds(undefined)}
       autoFocus={false} // Brand tap focuses via registerAiComposerFocus (same user gesture)
+      onChatImported={handleChatImported}
       onEdits={async (edits) => {
         const mapped = edits
           .map((e) => {
+            const colorChanged = e.fillColor !== undefined
             if (e.kind === 'create_frame' && e.frameId) {
               return buildCreateFramePendingEdit({
                 messageId: e.frameId,
                 contentHtml: e.contentHtml || '',
                 summary: e.summary,
                 actionLogId: e.actionLogId,
+                fillColor: e.fillColor,
+                borderColor: e.borderColor,
+                colorChanged,
               })
             }
             if (e.kind === 'create_thread' && e.edgeId) {
@@ -646,6 +1040,11 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
               replacements: e.replacements,
               summary: e.summary,
               actionLogId: e.actionLogId,
+              fillColor: e.fillColor,
+              borderColor: e.borderColor,
+              originalFillColor: e.originalFillColor,
+              originalBorderColor: e.originalBorderColor,
+              colorChanged,
             })
           })
           .filter((e): e is NonNullable<typeof e> => e !== null)
@@ -717,6 +1116,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
               <>
             {(isChatSidebarOpen && !dockCompact && (hasTranscript || showLoadPlaceholder)) && (
               <div
+                data-chat-content-window // Thread stubs attach here only — not prompt / mid chrome
                 className={cn(
                   'relative rounded-xl min-h-[40px]', // Response box — ticks pin here, not in the composer
                   'bg-white/95 dark:bg-[#202020]/95 backdrop-blur-md',
@@ -726,14 +1126,18 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                 <div
                   ref={transcriptScrollRef}
                   data-ai-transcript-scroll
-                  className="max-h-[32vh] overflow-y-auto px-3 py-2 pr-12"
+                  className="relative max-h-[32vh] overflow-y-auto px-3 py-2" // Equal L/R — ticks are absolute and must not shift mx-auto centering
                 >
                   <ChatLoadStage phase={loadPhase} placeholder={<AiTranscriptPlaceholder />}>
                     {hasTranscript ? (
                       <AiTranscript
                         messages={messages}
+                        threadId={thread?.id}
                         streamingId={streamingId}
+                        conversationId={conversationId}
                         onEditUserMessage={handleEditUserMessage}
+                        onRegenerateResponse={handleRegenerateResponse}
+                        onMessagePatch={handleMessagePatch}
                       />
                     ) : null}
                   </ChatLoadStage>
@@ -769,23 +1173,22 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                 <button
                   type="button"
                   onClick={openCustomize}
-                  className="flex-shrink-0 rounded-full overflow-visible focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 opacity-90 hover:opacity-100 transition-opacity"
-                  title="Customize Thinktable AI"
-                  aria-label="Customize Thinktable AI"
+                  className="relative z-10 flex-shrink-0 rounded-full overflow-visible focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 opacity-90 hover:opacity-100 transition-opacity"
+                  title="Customize Nod Notes AI"
+                  aria-label="Customize Nod Notes AI"
                 >
-                  <ThinktableBrandMark drawingUrl={logoDrawing} size={28} />
+                  {/* Open chat: sparkles on (Nod blue, same as map toggle) */}
+                  <NodNotesBrandMark drawingUrl={logoDrawing} size={28} showAiStar />
                 </button>
                 <div className="flex-1 min-w-0 overflow-hidden bg-transparent">
                   <AiThreadPicker
                     boardId={conversationId}
                     thread={thread}
-                    filter={filter}
-                    onFilterChange={setFilter}
                     onSelect={(t) => {
                       setThread(t)
                       setMode(isSelectableAiMode(t.mode) ? t.mode : 'ask')
                     }}
-                    onNew={handleNew}
+                    onFork={handleFork}
                     refreshKey={refreshKey}
                   />
                 </div>
@@ -809,7 +1212,10 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                 </button>
               </div>
             )}
-            <div className="rounded-xl overflow-hidden bg-white dark:bg-[#202020] border border-black/10 dark:border-white/10 shadow-lg">
+            <div
+              data-chat-prompt
+              className="rounded-xl overflow-hidden tt-tab-hover border border-black/10 dark:border-white/10 shadow-lg"
+            >
               <div className="px-1 pt-1">{composer}</div>
             </div>
               </>
@@ -837,47 +1243,49 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
       <aside
         data-chat-sidebar
         className={cn(
-          'relative h-full flex flex-col', // relative so ticks pin to this column (site height)
-          'bg-gray-50 dark:bg-[#0f0f0f]',
-          'border-l border-black/10 dark:border-white/10'
+          'relative h-full flex flex-col isolate', // isolate so under-thread SVG stacks under chrome
+          'bg-gray-50 dark:bg-[#0f0f0f]'
+          // Left edge is ChatSidebarSeam (gapped where threads cross) — not CSS border-l
         )}
-        style={{ width: CHAT_SIDEBAR_WIDTH }}
+        style={{ width: chatSidebarWidth }}
       >
+        <ChatSidebarSeam />
         {customizeOpen ? (
-          <CustomizeAgentPanel
-            open={customizeOpen}
-            onClose={() => setCustomizeOpen(false)}
-            sharedDrawingUrl={logoDrawing}
-            onRequestPersonalize={openPersonalizeForDraft}
-            iconRevision={agentIconRevision}
-          />
+          <div className="relative z-10 flex-1 min-h-0 flex flex-col">
+            <CustomizeAgentPanel
+              open={customizeOpen}
+              onClose={() => setCustomizeOpen(false)}
+              sharedDrawingUrl={logoDrawing}
+              onRequestPersonalize={openPersonalizeForDraft}
+              iconRevision={agentIconRevision}
+            />
+          </div>
         ) : (
           <>
-        <header className="flex-shrink-0 flex items-center justify-between gap-2 px-3 h-11">
+        <header className="relative z-10 flex-shrink-0 flex items-center justify-between gap-2 px-3 h-[52px]">
           {/* Brand only when transcript exists — empty state already has the big icon */}
           <div className="flex items-center gap-1.5 min-w-0 flex-1">
             {hasTranscript && (
               <button
                 type="button"
                 onClick={openCustomize}
-                className="flex-shrink-0 rounded-full overflow-visible focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 opacity-90 hover:opacity-100 transition-opacity"
-                title="Customize Thinktable AI"
-                aria-label="Customize Thinktable AI"
+                className="relative z-10 flex-shrink-0 rounded-full overflow-visible focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 opacity-90 hover:opacity-100 transition-opacity"
+                title="Customize Nod Notes AI"
+                aria-label="Customize Nod Notes AI"
               >
-                <ThinktableBrandMark drawingUrl={logoDrawing} size={28} />
+                {/* Open chat: sparkles on (Nod blue, same as map toggle) */}
+                <NodNotesBrandMark drawingUrl={logoDrawing} size={28} showAiStar />
               </button>
             )}
             <div className="min-w-0 flex-1 overflow-hidden">
               <AiThreadPicker
                 boardId={conversationId}
                 thread={thread}
-                filter={filter}
-                onFilterChange={setFilter}
                 onSelect={(t) => {
                   setThread(t)
                   setMode(isSelectableAiMode(t.mode) ? t.mode : 'ask')
                 }}
-                onNew={handleNew}
+                onFork={handleFork}
                 refreshKey={refreshKey}
               />
             </div>
@@ -905,15 +1313,18 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
           </div>
         </header>
 
-        <div className="relative flex-1 min-h-0 flex flex-col">
+        <div
+          data-chat-content-window // Thread stubs attach to transcript column — not the composer
+          className="relative z-10 flex-1 min-h-0 flex flex-col bg-gray-50 dark:bg-[#0f0f0f]" // Opaque so under-thread strokes stay behind text
+        >
           <div
             ref={transcriptScrollRef}
             data-ai-transcript-scroll
-            className="flex-1 min-h-0 overflow-y-auto px-4 py-6 pr-8"
+            className="relative flex-1 min-h-0 overflow-y-auto px-4 py-6" // Equal L/R — prompt ticks are absolute overlays; asymmetric pr shifted mx-auto turns
           >
             <ChatLoadStage phase={loadPhase} placeholder={<AiTranscriptPlaceholder />}>
               {!hasTranscript ? (
-              <div className="flex flex-col items-start gap-5 max-w-[280px] mx-auto mt-6">
+              <div className="flex flex-col items-start gap-5 w-full min-w-0 mt-6">
                 <div
                   className="flex items-center gap-2.5"
                   onMouseEnter={() => setHoverBrand(true)}
@@ -922,11 +1333,12 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                   <button
                     type="button"
                     onClick={openCustomize}
-                    className="rounded-full overflow-visible focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50"
-                    title="Customize Thinktable AI"
-                    aria-label="Customize Thinktable AI"
+                    className="relative z-10 rounded-full overflow-visible focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50"
+                    title="Customize Nod Notes AI"
+                    aria-label="Customize Nod Notes AI"
                   >
-                    <ThinktableBrandMark drawingUrl={logoDrawing} size={52} />
+                    {/* Open chat empty state: sparkles on (Nod blue, same as map toggle) */}
+                    <NodNotesBrandMark drawingUrl={logoDrawing} size={52} showAiStar />
                   </button>
                   <button
                     type="button"
@@ -985,8 +1397,12 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
             ) : (
               <AiTranscript
                 messages={messages}
+                threadId={thread?.id}
                 streamingId={streamingId}
+                conversationId={conversationId}
                 onEditUserMessage={handleEditUserMessage}
+                onRegenerateResponse={handleRegenerateResponse}
+                onMessagePatch={handleMessagePatch}
               />
             )}
             </ChatLoadStage>
@@ -1012,8 +1428,11 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
           <AiPromptBars orientation="vertical" {...promptBarProps} />
         </div>
 
-        <div className="flex-shrink-0 px-3 pb-3 pt-1 pointer-events-auto">
-          <div className="rounded-xl overflow-hidden bg-white dark:bg-[#202020] border border-black/10 dark:border-white/10 shadow-sm">
+        <div className="relative z-10 flex-shrink-0 px-3 pb-3 pt-1 pointer-events-auto">
+          <div
+            data-chat-prompt
+            className="rounded-xl overflow-hidden tt-tab-hover border border-black/10 dark:border-white/10 shadow-sm"
+          >
             <div className="px-1 pt-1">{composer}</div>
           </div>
         </div>

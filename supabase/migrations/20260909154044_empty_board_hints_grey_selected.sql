@@ -1,0 +1,2 @@
+-- Empty-board Virgil hints + idle brand nod; grey selected tab / menu wash.
+-- No DDL — schema unchanged; remote applied still tops out at 20260811225342.

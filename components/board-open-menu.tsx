@@ -57,7 +57,7 @@ export const BoardOpenMenu = forwardRef<HTMLSpanElement, BoardOpenMenuProps>(
         >
           <AppWindow className="h-3.5 w-3.5" />
         </button>
-        {/* Open the full Thinktable page */}
+        {/* Open the full NodNotes page */}
         <button
           type="button"
           className="tt-board-link-preview-btn nodrag nopan"

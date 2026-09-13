@@ -1,5 +1,5 @@
-// Thinktable database view model — layout / filter / sort / group / color / sub-tasks.
-// View config is Thinktable-owned; row content stays Notion-owned.
+// NodNotes database view model — layout / filter / sort / group / color / sub-tasks.
+// View config is NodNotes-owned; row content stays Notion-owned.
 
 import type { NotionDbCell, NotionDbProperty, NotionDbRow } from './database'
 
@@ -53,7 +53,7 @@ export type SubTasksSettings = {
   filterMode: 'parents_and_subs' | 'matching_only'
 }
 
-/** Map Notion Views API `configuration.subtasks` → Thinktable Sub-tasks settings. */
+/** Map Notion Views API `configuration.subtasks` → NodNotes Sub-tasks settings. */
 export function subTasksFromNotionView(
   subtasks: {
     property_id?: string | null
@@ -239,7 +239,7 @@ export function defaultDatabaseViewSettings(name = 'Default'): DatabaseViewSetti
       filterMode: 'parents_and_subs',
     },
     layoutOptions: {
-      showDataSourceTitle: true,
+      showDataSourceTitle: false, // Blue databaseBlock header owns the name — no grey duplicate in the table
       showVerticalLines: false,
       showPageIcon: true,
       wrapAllContent: true,

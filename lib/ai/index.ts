@@ -1,4 +1,4 @@
-// Barrel export for Thinktable AI foundation
+// Barrel export for NodNotes AI foundation
 export * from './modes'
 export * from './skills'
 export * from './agents'
@@ -7,7 +7,12 @@ export * from './actions'
 export * from './types'
 export * from './context-pack'
 export * from './selection-bridge'
+export * from './chat-board-links'
+export * from './chat-frame-link-cues'
+export * from './chat-thread-clip'
 export * from './stream'
 export * from './wrap-ai-html'
 export * from './edit-session'
 export * from './markdown-to-tiptap'
+export * from './attach-skill'
+export * from './open-chat-turn'

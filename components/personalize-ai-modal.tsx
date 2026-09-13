@@ -1,11 +1,12 @@
 'use client'
 
-// Personalize Thinktable AI — default mark is a hand-drawn T; saved PNG stays editable
+// Personalize Nod Notes AI — default mark is a hand-drawn T; saved PNG stays editable
 import {
   useCallback,
   useEffect,
   useRef,
   useState,
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { Eraser, Pencil, RotateCcw, X } from 'lucide-react'
@@ -18,18 +19,24 @@ import {
 import { cn } from '@/lib/utils'
 
 /** localStorage key for the custom logo drawing (PNG data URL) */
-export const TT_LOGO_DRAWING_STORAGE_KEY = 'thinktable-ai-logo-drawing'
+export const NN_LOGO_DRAWING_STORAGE_KEY = 'nodnotes-ai-logo-drawing'
 
 /** Legacy topper key — cleared on hydrate so old toppers do not linger */
-const TT_TOPPER_STORAGE_KEY_LEGACY = 'thinktable-ai-topper'
+const NN_TOPPER_STORAGE_KEY_LEGACY = 'nodnotes-ai-topper'
 
-/** Logo circle fill — matches public/thinktable-logo.svg .cls-1 */
+/** Legacy grey disc — brand `discVariant` only (not the draw editor) */
 export const LOGO_CIRCLE_COLOR = '#a2a7af'
 
-/** AI sparkles badge fill — yellow accent on brand mark */
-const AI_STAR_COLOR = '#f5c518'
+/** Editor + board light disc fill (same as `bg-gray-50`) */
+const EDITOR_DISC_COLOR = '#f9fafb'
 
-/** Stroke color for custom marks (white cutout look) */
+/** AI sparkles fill — same blue-500 as the Nod wordmark on every logo that shows stars */
+export const AI_STAR_COLOR = '#3b82f6'
+
+/** Pen ink in the editor — matches board positive stroke (`gray-900`) */
+const DRAW_INK = '#111827'
+
+/** White strokes for brand-grey SVG / ink-mask export */
 const DRAW_WHITE = '#ffffff'
 
 /** Canvas pixel size for editor + export */
@@ -61,12 +68,111 @@ function clipLogoDisc(ctx: CanvasRenderingContext2D) {
   ctx.clip() // Keep marker inside the circle
 }
 
-/** Paint the default hand-drawn T + table-dot in white (disc already filled) */
+/** Parse `#rrggbb` → RGB tuple */
+function hexRgb(hex: string): [number, number, number] {
+  const h = hex.slice(1) // Drop #
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
+}
+
+/** True when a pixel matches the editor light disc or legacy grey disc fill */
+function isDiscFillPixel(r: number, g: number, b: number, tol = 10): boolean {
+  for (const hex of [EDITOR_DISC_COLOR, LOGO_CIRCLE_COLOR]) {
+    const [br, bg, bb] = hexRgb(hex)
+    if (
+      Math.abs(r - br) <= tol &&
+      Math.abs(g - bg) <= tol &&
+      Math.abs(b - bb) <= tol
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * True when the disc has any non-fill ink.
+ * Blank circle → false so Done/Close can restore the default brand mark.
+ */
+function canvasHasInk(ctx: CanvasRenderingContext2D): boolean {
+  const { data } = ctx.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE) // Full editor bitmap
+  const cx = CANVAS_SIZE / 2 // Disc center x
+  const cy = CANVAS_SIZE / 2 // Disc center y
+  const r = CANVAS_SIZE / 2 - 0.5 // Same radius as paintSolidCircle
+  for (let y = 0; y < CANVAS_SIZE; y++) {
+    for (let x = 0; x < CANVAS_SIZE; x++) {
+      const dx = x + 0.5 - cx // Pixel center vs disc
+      const dy = y + 0.5 - cy
+      if (dx * dx + dy * dy > r * r) continue // Ignore outside the logo disc
+      const i = (y * CANVAS_SIZE + x) * 4 // RGBA index
+      if (!isDiscFillPixel(data[i], data[i + 1], data[i + 2])) {
+        return true // Stroke or other mark on the disc
+      }
+    }
+  }
+  return false // Only the solid disc fill
+}
+
+/**
+ * Strip disc fills; keep ink as opaque white on transparent.
+ * Saved marks are masks — board + editor paint them positive (dark on light).
+ */
+function imageDataToInkMask(image: ImageData): ImageData {
+  const out = new ImageData(image.width, image.height) // Transparent by default
+  const src = image.data
+  const dst = out.data
+  for (let i = 0; i < src.length; i += 4) {
+    if (src[i + 3] < 8) continue // Already empty
+    if (isDiscFillPixel(src[i], src[i + 1], src[i + 2])) continue // Disc fill — not ink
+    dst[i] = 255 // White mask pixel (CSS mask uses luminance/alpha)
+    dst[i + 1] = 255
+    dst[i + 2] = 255
+    dst[i + 3] = 255 // Full ink
+  }
+  return out
+}
+
+/** Canvas → ink-only PNG data URL (transparent disc, white strokes) */
+function exportInkMaskFromCanvas(source: HTMLCanvasElement): string {
+  const ctx = source.getContext('2d')
+  if (!ctx) return source.toDataURL('image/png')
+  const ink = imageDataToInkMask(ctx.getImageData(0, 0, source.width, source.height))
+  const out = document.createElement('canvas') // Offscreen export
+  out.width = source.width
+  out.height = source.height
+  const octx = out.getContext('2d')
+  if (!octx) return source.toDataURL('image/png')
+  octx.putImageData(ink, 0, 0)
+  return out.toDataURL('image/png')
+}
+
+/** Normalize a stored logo PNG (legacy grey+white or ink mask) to ink-only for CSS masks */
+function normalizeLogoDrawingToInkMask(src: string): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new window.Image()
+    img.onload = () => {
+      const c = document.createElement('canvas')
+      c.width = CANVAS_SIZE
+      c.height = CANVAS_SIZE
+      const ctx = c.getContext('2d')
+      if (!ctx) {
+        resolve(src)
+        return
+      }
+      ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE)
+      ctx.drawImage(img, 0, 0, CANVAS_SIZE, CANVAS_SIZE)
+      resolve(exportInkMaskFromCanvas(c))
+    }
+    img.onerror = () => resolve(src)
+    img.src = src
+  })
+}
+
+/** Paint the default hand-drawn T + table-dot in editor ink (disc already filled) */
 function strokeDefaultDrawnMark(ctx: CanvasRenderingContext2D) {
   ctx.save() // Restore clip + style after
-  clipLogoDisc(ctx) // Stay inside the grey disc
-  ctx.strokeStyle = DRAW_WHITE // Same white as the pen tool
-  ctx.fillStyle = DRAW_WHITE // Dot is a filled blob
+  clipLogoDisc(ctx) // Stay inside the disc
+  ctx.strokeStyle = DRAW_INK // Positive dark ink (matches board)
+  ctx.fillStyle = DRAW_INK // Dot is a filled blob
   ctx.lineCap = 'round' // Marker ends
   ctx.lineJoin = 'round' // Marker corners
   ctx.lineWidth = DRAWN_T_WIDTH // T bar/stem weight
@@ -77,20 +183,43 @@ function strokeDefaultDrawnMark(ctx: CanvasRenderingContext2D) {
   ctx.restore() // Drop clip
 }
 
-/** Default AI mark — same marker strokes the canvas seeds with */
-function DefaultDrawnLogoSvg({ size, className }: { size: number; className?: string }) {
+/** Table-dot centroid in the 256 canvas — T hinges here for the load nod */
+const DRAWN_DOT_CX = 176
+const DRAWN_DOT_CY = 104
+
+function DefaultDrawnLogoSvg({
+  size,
+  className,
+  onBoard = false,
+  nod = false,
+}: {
+  size: number
+  className?: string
+  onBoard?: boolean // Map chat toggle: black/white strokes on board fill
+  nod?: boolean // Board open/load: T bows around the dot, then settles
+}) {
+  const stroke = onBoard ? 'currentColor' : DRAW_WHITE
   return (
     <svg
       viewBox={`0 0 ${CANVAS_SIZE} ${CANVAS_SIZE}`}
       width={size}
       height={size}
-      className={className}
+      className={cn(onBoard && 'text-gray-900 dark:text-white', className)}
+      style={
+        nod
+          ? ({
+              ['--nn-nod-cx']: `${(DRAWN_DOT_CX / CANVAS_SIZE) * 100}%`, // Table-dot center x
+              ['--nn-nod-cy']: `${(DRAWN_DOT_CY / CANVAS_SIZE) * 100}%`, // Table-dot center y
+            } as CSSProperties)
+          : undefined
+      }
       role="img"
-      aria-label="Thinktable"
+      aria-label="Nod Notes"
     >
       <g
+        className={nod ? 'nn-icon-nod-arm' : undefined}
         fill="none"
-        stroke={DRAW_WHITE}
+        stroke={stroke}
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth={DRAWN_T_WIDTH}
@@ -99,7 +228,7 @@ function DefaultDrawnLogoSvg({ size, className }: { size: number; className?: st
         <path d={DRAWN_T_STEM} />
         <path d={DRAWN_T_FOOT} />
       </g>
-      <path d={DRAWN_DOT} fill={DRAW_WHITE} />
+      <path d={DRAWN_DOT} fill={stroke} />
     </svg>
   )
 }
@@ -108,68 +237,122 @@ function DefaultDrawnLogoSvg({ size, className }: { size: number; className?: st
 export function getStoredLogoDrawing(): string | null {
   if (typeof window === 'undefined') return null
   try {
-    localStorage.removeItem(TT_TOPPER_STORAGE_KEY_LEGACY)
+    localStorage.removeItem(NN_TOPPER_STORAGE_KEY_LEGACY)
   } catch {
     // Ignore storage errors
   }
-  return localStorage.getItem(TT_LOGO_DRAWING_STORAGE_KEY)
+  return localStorage.getItem(NN_LOGO_DRAWING_STORAGE_KEY)
 }
 
-type ThinktableBrandMarkProps = {
-  drawingUrl?: string | null // Saved composite PNG (solid circle + white strokes)
+type NodNotesBrandMarkProps = {
+  drawingUrl?: string | null // Saved ink-mask PNG (or legacy grey+white composite)
   size?: number
   className?: string
+  /** Board fill + theme strokes (default); brand = legacy grey disc for personalize canvas */
+  discVariant?: 'brand' | 'board'
+  /** AI sparkles badge — on for map toggle + chat logos; off on customize-agent icon */
+  showAiStar?: boolean
+  /** Default mark only: T hinges on the table-dot once (board open / load) */
+  nod?: boolean
+}
+
+/** Custom drawing as a CSS mask so strokes follow board colors (positive like the default SVG). */
+function LogoInkMask({
+  drawingUrl,
+  onBoard,
+}: {
+  drawingUrl: string
+  onBoard: boolean
+}) {
+  const [maskUrl, setMaskUrl] = useState<string | null>(null) // Normalized ink mask
+
+  useEffect(() => {
+    let cancelled = false
+    void normalizeLogoDrawingToInkMask(drawingUrl).then((url) => {
+      if (!cancelled) setMaskUrl(url)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [drawingUrl])
+
+  if (!maskUrl) return null // Wait for normalize (avoids a grey flash)
+
+  return (
+    <div
+      className={cn(
+        'h-full w-full',
+        onBoard ? 'bg-gray-900 dark:bg-white' : 'bg-white' // Positive / editor-grey disc
+      )}
+      style={{
+        WebkitMaskImage: `url(${maskUrl})`,
+        maskImage: `url(${maskUrl})`,
+        WebkitMaskSize: '100% 100%',
+        maskSize: '100% 100%',
+        WebkitMaskRepeat: 'no-repeat',
+        maskRepeat: 'no-repeat',
+        WebkitMaskPosition: 'center',
+        maskPosition: 'center',
+      }}
+      role="img"
+      aria-label="Nod Notes"
+    />
+  )
 }
 
 /**
- * Brand mark — default hand-drawn T + table-dot, or a saved circle PNG.
+ * Brand mark — default hand-drawn T + table-dot, or a saved ink mask.
  * Solid circle behind the mark so any transparency still reads as the logo disc.
- * AI sparkles badge sits top-left with a white border (outside the disc clip).
+ * AI sparkles badge sits top-right with a white border (outside the disc clip).
  */
-export function ThinktableBrandMark({
+export function NodNotesBrandMark({
   drawingUrl = null,
   size = 56,
   className,
-}: ThinktableBrandMarkProps) {
+  discVariant = 'board',
+  showAiStar = true,
+  nod = false,
+}: NodNotesBrandMarkProps) {
   const badgeSize = Math.max(14, Math.round(size * 0.34)) // Scales with logo
+  const onBoard = discVariant === 'board'
 
   return (
     <div
       className={cn('relative flex-shrink-0', className)}
       style={{ width: size, height: size }}
     >
-      {/* Logo disc — clipped circle + border matching grey button icons */}
+      {/* Logo disc — board fill + border by default; legacy grey on personalize canvas */}
       <div
-        className="h-full w-full overflow-hidden rounded-full border-[1.5px] border-gray-500 dark:border-gray-400"
-        style={{ backgroundColor: LOGO_CIRCLE_COLOR }}
+        className={cn(
+          'h-full w-full overflow-hidden rounded-full border-[1.5px]',
+          onBoard
+            ? 'bg-gray-50 dark:bg-[#0f0f0f] border-gray-500 dark:border-gray-400'
+            : 'border-gray-500 dark:border-gray-400'
+        )}
+        style={onBoard ? undefined : { backgroundColor: LOGO_CIRCLE_COLOR }}
       >
         {drawingUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={drawingUrl}
-            alt="Thinktable"
-            width={size}
-            height={size}
-            className="h-full w-full object-cover"
-            draggable={false}
-          />
+          <LogoInkMask drawingUrl={drawingUrl} onBoard={onBoard} />
         ) : (
           <DefaultDrawnLogoSvg
             size={size}
             className="h-full w-full"
+            onBoard={onBoard}
+            nod={nod}
           />
         )}
       </div>
 
-      {/* AI stars — top-left; main + top spark only (no bottom), soft yellow + white outline */}
+      {/* AI stars — top-right; Nod blue on map toggle + open chat */}
+      {showAiStar ? (
       <svg
         viewBox="0 0 24 24"
-        className="absolute pointer-events-none"
+        className="absolute pointer-events-none z-10"
         style={{
           width: badgeSize,
           height: badgeSize,
           top: -Math.round(badgeSize * 0.15),
-          left: -Math.round(badgeSize * 0.15),
+          right: -Math.round(badgeSize * 0.15),
           color: AI_STAR_COLOR,
           filter: 'drop-shadow(0 0 0.6px #fff) drop-shadow(0 0 0.6px #fff) drop-shadow(0 0 0.6px #fff)',
         }}
@@ -188,6 +371,7 @@ export function ThinktableBrandMark({
         <path d="M20 2v4" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
         <path d="M22 4h-4" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
       </svg>
+      ) : null}
     </div>
   )
 }
@@ -210,13 +394,13 @@ export function PersonalizeAiModal({
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const drawingRef = useRef(false)
   const lastPtRef = useRef<{ x: number; y: number } | null>(null)
-  const resetRef = useRef(false) // Reset → Done restores the default drawn mark
+  const resetRef = useRef(false) // Reset paints a blank disc; blank Done/Close restores default icon
   const [tool, setTool] = useState<Tool>('pen')
   const [thickness, setThickness] = useState<(typeof THICKNESSES)[number]>(8)
   const [dirty, setDirty] = useState(false)
   const [ready, setReady] = useState(false) // Canvas seeded for this open
 
-  /** Fill the full logo disc with solid gray (draw surface under the mark) */
+  /** Fill the full logo disc with board-light grey (positive draw surface) */
   const paintSolidCircle = useCallback((ctx: CanvasRenderingContext2D) => {
     const s = CANVAS_SIZE
     ctx.clearRect(0, 0, s, s)
@@ -224,36 +408,60 @@ export function PersonalizeAiModal({
     ctx.beginPath()
     ctx.arc(s / 2, s / 2, s / 2 - 0.5, 0, Math.PI * 2)
     ctx.closePath()
-    ctx.fillStyle = LOGO_CIRCLE_COLOR
+    ctx.fillStyle = EDITOR_DISC_COLOR
     ctx.fill()
     ctx.restore()
   }, [])
 
-  /** Load a prior generated image onto the disc (edit later) */
+  /**
+   * Load a saved ink mask (or legacy grey+white PNG) as dark ink on the light disc
+   * so the editor matches the positive brand mark outside.
+   */
   const paintSavedImage = useCallback(
     (ctx: CanvasRenderingContext2D, src: string) =>
       new Promise<void>((resolve) => {
-        const img = new window.Image()
-        img.onload = () => {
-          paintSolidCircle(ctx) // Solid base first
-          ctx.save()
-          ctx.beginPath()
-          ctx.arc(CANVAS_SIZE / 2, CANVAS_SIZE / 2, CANVAS_SIZE / 2 - 0.5, 0, Math.PI * 2)
-          ctx.clip()
-          ctx.drawImage(img, 0, 0, CANVAS_SIZE, CANVAS_SIZE) // Prior drawing on top
-          ctx.restore()
-          resolve()
-        }
-        img.onerror = () => {
-          paintSolidCircle(ctx)
-          resolve()
-        }
-        img.src = src
+        void normalizeLogoDrawingToInkMask(src).then((maskUrl) => {
+          const img = new window.Image()
+          img.onload = () => {
+            paintSolidCircle(ctx) // Light disc first
+            const tmp = document.createElement('canvas') // Recolor white mask → dark ink
+            tmp.width = CANVAS_SIZE
+            tmp.height = CANVAS_SIZE
+            const tctx = tmp.getContext('2d')
+            if (!tctx) {
+              resolve()
+              return
+            }
+            tctx.drawImage(img, 0, 0, CANVAS_SIZE, CANVAS_SIZE)
+            const image = tctx.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE)
+            const [ir, ig, ib] = hexRgb(DRAW_INK)
+            const d = image.data
+            for (let i = 0; i < d.length; i += 4) {
+              if (d[i + 3] < 8) continue // Empty
+              d[i] = ir // Positive ink
+              d[i + 1] = ig
+              d[i + 2] = ib
+            }
+            tctx.putImageData(image, 0, 0)
+            ctx.save()
+            ctx.beginPath()
+            ctx.arc(CANVAS_SIZE / 2, CANVAS_SIZE / 2, CANVAS_SIZE / 2 - 0.5, 0, Math.PI * 2)
+            ctx.clip()
+            ctx.drawImage(tmp, 0, 0) // Dark strokes on light disc
+            ctx.restore()
+            resolve()
+          }
+          img.onerror = () => {
+            paintSolidCircle(ctx)
+            resolve()
+          }
+          img.src = maskUrl
+        })
       }),
     [paintSolidCircle]
   )
 
-  /** Grey disc + default marker T (reset / first open) */
+  /** Light disc + default marker T (first open with no saved drawing) */
   const paintDefaultDrawnLogo = useCallback((ctx: CanvasRenderingContext2D) => {
     paintSolidCircle(ctx) // Solid disc first
     strokeDefaultDrawnMark(ctx) // Hand-drawn T + table-dot on top
@@ -267,11 +475,13 @@ export function PersonalizeAiModal({
     if (!ctx) return
     if (drawingUrl && !resetRef.current) {
       await paintSavedImage(ctx, drawingUrl) // Continue editing prior image
+    } else if (resetRef.current) {
+      paintSolidCircle(ctx) // Reset path: blank disc only
     } else {
-      paintDefaultDrawnLogo(ctx) // Start from the drawn character, not a blank disc
+      paintDefaultDrawnLogo(ctx) // First open: start from the drawn character
     }
     setReady(true)
-  }, [drawingUrl, paintSavedImage, paintDefaultDrawnLogo])
+  }, [drawingUrl, paintSavedImage, paintDefaultDrawnLogo, paintSolidCircle])
 
   // Dialog mounts canvas after open — seed when open flips true
   useEffect(() => {
@@ -314,7 +524,7 @@ export function PersonalizeAiModal({
     ctx.lineJoin = 'round'
     ctx.lineWidth = thickness
     ctx.globalCompositeOperation = 'source-over'
-    ctx.strokeStyle = tool === 'eraser' ? LOGO_CIRCLE_COLOR : DRAW_WHITE
+    ctx.strokeStyle = tool === 'eraser' ? EDITOR_DISC_COLOR : DRAW_INK
     ctx.beginPath()
     if (last) {
       ctx.moveTo(last.x, last.y)
@@ -363,30 +573,49 @@ export function PersonalizeAiModal({
     const ctx = canvas?.getContext('2d')
     if (!ctx) return
     resetRef.current = true
-    paintDefaultDrawnLogo(ctx) // Back to the default drawn character
+    paintSolidCircle(ctx) // Blank grey disc — not the default drawn T
     setDirty(false)
     setTool('pen')
   }
 
-  /** Export square PNG with opaque solid circle + strokes (corners transparent OK — clip in UI) */
+  /** Export ink-only PNG — transparent disc + white strokes (board paints positive) */
   const exportDrawing = () => {
     const canvas = canvasRef.current
     if (!canvas) return null
-    return canvas.toDataURL('image/png')
+    return exportInkMaskFromCanvas(canvas)
   }
 
-  const handleDone = () => {
-    if (resetRef.current && !dirty) {
-      onDrawingChange(null) // Default drawn mark everywhere
-    } else if (dirty) {
-      onDrawingChange(exportDrawing()) // Generated image shown + editable next open
+  /**
+   * Persist on Done/Close: blank disc → clear storage (default icon);
+   * ink + edits → save ink-mask PNG; otherwise leave the prior URL alone.
+   */
+  const commitDrawing = () => {
+    const canvas = canvasRef.current
+    const ctx = canvas?.getContext('2d')
+    if (!ctx || !ready) return // Canvas not seeded yet — don't wipe storage
+    if (!canvasHasInk(ctx)) {
+      onDrawingChange(null) // Blank circle → default drawn mark outside the editor
+      return
     }
-    // No edits: keep existing drawingUrl
+    if (dirty) {
+      onDrawingChange(exportDrawing()) // Ink mask — positive on board like the default SVG
+    }
+  }
+
+  /** Done, X, escape, and overlay dismiss all commit the same way */
+  const requestClose = () => {
+    commitDrawing()
     onOpenChange(false)
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) commitDrawing() // Escape / overlay — same blank→default rule as Done
+        onOpenChange(next)
+      }}
+    >
       <DialogContent
         className={cn(
           'sm:max-w-[400px] p-0 gap-0 overflow-hidden',
@@ -394,18 +623,18 @@ export function PersonalizeAiModal({
           '[&>button]:hidden'
         )}
       >
-        <DialogTitle className="sr-only">Personalize your Thinktable AI</DialogTitle>
+        <DialogTitle className="sr-only">Personalize your Nod Notes AI</DialogTitle>
         <DialogDescription className="sr-only">
           Draw on the solid logo circle; your image is saved and can be edited later
         </DialogDescription>
 
         <div className="relative flex items-center justify-center px-4 pt-4 pb-2">
           <h2 className="text-base font-semibold text-gray-100">
-            Personalize your Thinktable AI
+            Personalize your Nod Notes AI
           </h2>
           <button
             type="button"
-            onClick={() => onOpenChange(false)}
+            onClick={requestClose}
             className="absolute right-3 top-3 w-7 h-7 rounded-md flex items-center justify-center text-gray-400 hover:text-gray-100 hover:bg-white/10 transition-colors"
             aria-label="Close"
           >
@@ -420,8 +649,8 @@ export function PersonalizeAiModal({
             style={{
               width: 168,
               height: 168,
-              backgroundColor: LOGO_CIRCLE_COLOR, // Visible solid disc while canvas seeds
-              boxShadow: '0 0 0 1px rgba(255,255,255,0.08)',
+              backgroundColor: EDITOR_DISC_COLOR, // Same light disc as board brand mark
+              boxShadow: '0 0 0 1.5px rgb(107 114 128)', // gray-500 ring like the board icon
             }}
           >
             <canvas
@@ -436,8 +665,8 @@ export function PersonalizeAiModal({
             />
           </div>
           <p className="text-xs text-gray-500 text-center max-w-[260px]">
-            The logo starts as a drawing — edit it, or reset to the default mark. Done saves the
-            image; open again to keep editing.
+            The logo starts as a drawing — edit it, or reset to a blank circle. Done or close with a
+            blank circle restores the default icon; otherwise your drawing is saved.
           </p>
         </div>
 
@@ -491,7 +720,7 @@ export function PersonalizeAiModal({
                 )}
               >
                 <span
-                  className="rounded-full bg-white"
+                  className="rounded-full bg-gray-200"
                   style={{
                     width: Math.max(4, t / 2.5),
                     height: Math.max(4, t / 2.5),
@@ -513,7 +742,7 @@ export function PersonalizeAiModal({
           </button>
           <button
             type="button"
-            onClick={handleDone}
+            onClick={requestClose}
             className="h-8 px-4 rounded-md bg-blue-600 hover:bg-blue-500 text-sm font-medium text-white transition-colors"
           >
             Done

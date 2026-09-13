@@ -1,0 +1,2 @@
+-- Frame shape: skip clip-path while selected (⋮⋮ visible); silhouette border defaults on, Default hides.
+-- App/docs marker only; no DDL.

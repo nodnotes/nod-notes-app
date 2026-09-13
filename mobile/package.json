@@ -1,0 +1,23 @@
+{
+  "name": "nod-notes-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Nod Notes mobile shell (Capacitor) — loads the web app",
+  "author": "Nod Notes",
+  "license": "UNLICENSED",
+  "scripts": {
+    "sync": "npx cap sync ios",
+    "open": "npx cap open ios",
+    "ios": "npx cap run ios",
+    "ios:prod": "npx cap run ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "^7.4.3",
+    "@capacitor/ios": "^7.4.3",
+    "@capacitor/keyboard": "^7.0.3",
+    "@capacitor/status-bar": "^7.0.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.4.3"
+  }
+}

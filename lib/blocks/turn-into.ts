@@ -2,12 +2,9 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js' // Persist transforms
 import type { BlockTypeId } from '@/components/block-actions-menu' // Shared type ids
-import { looksLikeImageSrc } from '@/lib/tiptap/image-block' // URL-only blocks become image src
-import {
-  ensureBoardBodyBlock,
-  isBlockContentEmpty,
-  migrateLegacyBlockFlags,
-} from '@/lib/blocks'
+import { looksLikeImageSrc } from '@/lib/tiptap/image-src' // URL-only blocks become image src (server-safe — no TipTap)
+import { ensureBoardBodyBlock, isBlockContentEmpty, migrateLegacyBlockFlags } from '@/lib/blocks'
+import { boardTitleOrDefault } from '@/lib/board-title' // Turn into Board with no first line → New board
 
 /** Strip tags → plain text (title / list item seed). */
 export function htmlToPlainText(html: string): string {
@@ -87,7 +84,7 @@ function unwrapKnownShells(html: string): string {
   const trimmed = (html || '').trim() || '<p></p>'
   // Pull content out of our custom wrappers / headings / lists / quote / code
   const wrappers = [
-    /^<div[^>]*data-type="(?:callout|toggleList|toggleHeading|blockEquation|syncedBlock|columns|imageBlock|propertyBlock)"[^>]*>([\s\S]*)<\/div>$/i,
+    /^<div[^>]*data-type="(?:callout|toggleList|toggleHeading|blockEquation|syncedBlock|columns|imageBlock|videoBlock|audioBlock|fileBlock|bookmarkBlock|propertyBlock)"[^>]*>([\s\S]*)<\/div>$/i,
     /^<h[1-4][^>]*>([\s\S]*)<\/h[1-4]>$/i,
     /^<blockquote[^>]*>([\s\S]*)<\/blockquote>$/i,
     /^<pre[^>]*><code[^>]*>([\s\S]*)<\/code><\/pre>$/i,
@@ -257,10 +254,10 @@ export async function applyTurnInto(
   // Board / Board in — promote frame to a linked board; dual-read legacy page*
   const bt = blockType as string
   if (bt === 'board' || bt === 'boardIn' || bt === 'page' || bt === 'pageIn') {
-    const title =
+    const title = boardTitleOrDefault(
       htmlToPlainText(row.content || '').split('\n')[0]?.trim() ||
-      (typeof migrated.blockTitle === 'string' && migrated.blockTitle.trim()) ||
-      'Untitled'
+        (typeof migrated.blockTitle === 'string' ? migrated.blockTitle : '')
+    )
     const parentId =
       (bt === 'boardIn' || bt === 'pageIn') && opts.boardInParentId
         ? opts.boardInParentId

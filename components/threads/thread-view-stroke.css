@@ -1,0 +1,40 @@
+/*
+ * Imported AFTER reactflow/dist/style.css in board-flow.tsx.
+ * RF sets `.react-flow__edge-path { stroke-width: 1 }` which would otherwise
+ * override globals.css (layout loads globals before the RF import).
+ *
+ * `--tt-thread-inv-zoom` is a concrete 1/zoom stamped every zoom tick (same
+ * pattern as `--tt-frame-line-w`) so thickness stays screen-constant.
+ */
+.react-flow__edge-path {
+  /* 1px unit so unitless --tt-edge-w × inv-zoom always resolves (bare calc can no-op → all look equal) */
+  stroke-width: calc(var(--tt-edge-w, 2) * 1px * var(--tt-thread-inv-zoom, 1)) !important;
+}
+
+.react-flow__edge-path.tt-thread-dotted {
+  stroke-dasharray: calc(5 * var(--tt-thread-inv-zoom, 1)), calc(5 * var(--tt-thread-inv-zoom, 1));
+}
+
+.react-flow__edge-interaction {
+  stroke-width: calc(20 * var(--tt-thread-inv-zoom, 1)) !important;
+}
+
+.react-flow__connectionline-path {
+  stroke-width: calc(var(--tt-edge-w, 2) * 1px * var(--tt-thread-inv-zoom, 1)) !important;
+}
+
+.react-flow__edge.tt-ai-pending-thread path.react-flow__edge-path {
+  stroke-width: calc(2.5 * var(--tt-thread-inv-zoom, 1)) !important;
+}
+
+/*
+ * Thread adjust knobs + on-path dots — same recipe as frame resize dots:
+ * fixed local paint size, then scale(--tt-frame-ui-scale) so screen size stays
+ * constant (boost/zoom). Do not also shrink `r` by zoom (that double-compensated).
+ */
+.react-flow__edges circle.tt-thread-knob,
+.react-flow__edges circle.tt-thread-on-path-dot {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: scale(var(--tt-frame-ui-scale, 1.4)) !important;
+}

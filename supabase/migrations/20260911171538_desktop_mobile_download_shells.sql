@@ -1,0 +1,2 @@
+-- Desktop Electron + Capacitor iOS shells, signed-in /download, thread stroke + phone chrome.
+-- App/docs marker only; no DDL.

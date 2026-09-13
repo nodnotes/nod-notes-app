@@ -38,7 +38,7 @@ This makes Supabase send emails through Resend, so you get Resend's beautiful em
      - Username: `resend`
      - Password: Your Resend API key (starts with `re_`)
      - Sender email: `onboarding@resend.dev` (for testing) or your verified domain
-     - Sender name: `ThinkTable`
+     - Sender name: `Nod Notes`
 
 3. **Test:** Sign up again - emails should come from Resend!
 

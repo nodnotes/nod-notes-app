@@ -1,0 +1,2 @@
+-- Homepage showcase: signed-in users claim a private copy on "Open board"
+-- (not on homepage preview alone). App/docs marker only; no DDL.

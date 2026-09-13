@@ -1,0 +1,2 @@
+-- Restore default hand-drawn T + table-dot brand mark (revert mistaken N strokes).
+-- No DDL — schema unchanged; remote applied still tops out at 20260811225342.

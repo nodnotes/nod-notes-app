@@ -1,7 +1,8 @@
 'use client';
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { NodNotesWordmark } from '@/components/nod-notes-wordmark';
 import ReactFlow, {
   Node,
   Edge,
@@ -315,11 +316,23 @@ function ResearchShowcase() {
 export default function ProductPage() {
   const [activeTab, setActiveTab] = useState<'brainstorm' | 'workflow' | 'research'>('brainstorm');
 
+  useEffect(() => {
+    const applyHash = () => {
+      const hash = window.location.hash.replace(/^#/, '')
+      if (hash === 'brainstorm' || hash === 'workflow' || hash === 'research') {
+        setActiveTab(hash)
+      }
+    }
+    applyHash()
+    window.addEventListener('hashchange', applyHash)
+    return () => window.removeEventListener('hashchange', applyHash)
+  }, [])
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
       {/* Navigation */}
       <nav className="container mx-auto px-6 py-4 flex justify-between items-center">
-        <Link href="/" className="text-2xl font-bold text-blue-600">ThinkTable</Link>
+        <Link href="/"><NodNotesWordmark /></Link>
         <div className="flex gap-6">
           <Link href="/" className="text-gray-700 hover:text-blue-600 transition-colors">
             Home
@@ -339,7 +352,7 @@ export default function ProductPage() {
       {/* Hero Section */}
       <section className="container mx-auto px-6 py-16 text-center">
         <h1 className="text-5xl font-bold text-gray-900 mb-4">
-          See ThinkTable in Action
+          See <span className="text-blue-600">Nod</span><span className="text-gray-500"> Notes</span> in Action
         </h1>
         <p className="text-xl text-gray-600 max-w-3xl mx-auto">
           Explore how AI-powered chat transforms into interactive mind maps. 
@@ -348,11 +361,12 @@ export default function ProductPage() {
       </section>
 
       {/* Feature Showcases */}
-      <section className="container mx-auto px-6 py-12">
+      <section id="product-showcases" className="container mx-auto px-6 py-12">
         <div className="max-w-6xl mx-auto">
           {/* Tab Navigation */}
           <div className="flex gap-4 mb-8 border-b border-gray-200">
             <button
+              id="brainstorm"
               onClick={() => setActiveTab('brainstorm')}
               className={`px-6 py-3 font-semibold transition-colors ${
                 activeTab === 'brainstorm'
@@ -363,6 +377,7 @@ export default function ProductPage() {
               Brainstorming
             </button>
             <button
+              id="workflow"
               onClick={() => setActiveTab('workflow')}
               className={`px-6 py-3 font-semibold transition-colors ${
                 activeTab === 'workflow'
@@ -373,6 +388,7 @@ export default function ProductPage() {
               Meeting Notes
             </button>
             <button
+              id="research"
               onClick={() => setActiveTab('research')}
               className={`px-6 py-3 font-semibold transition-colors ${
                 activeTab === 'research'
@@ -485,7 +501,7 @@ export default function ProductPage() {
       {/* Footer */}
       <footer className="container mx-auto px-6 py-8 border-t border-gray-200">
         <div className="flex justify-between items-center">
-          <div className="text-gray-600">© 2024 ThinkTable. All rights reserved.</div>
+          <div className="text-gray-600">© 2024 Nod Notes. All rights reserved.</div>
           <div className="flex gap-6">
             <Link href="/product" className="text-gray-600 hover:text-blue-600 transition-colors">Product</Link>
             <Link href="/about" className="text-gray-600 hover:text-blue-600 transition-colors">About</Link>

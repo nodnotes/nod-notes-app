@@ -44,11 +44,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { ChevronDown, ArrowDown, ChevronUp, Trash2 } from 'lucide-react'
+import { ChevronDown, ArrowDown, Trash2 } from 'lucide-react'
 import { useReactFlowContext } from './react-flow-context'
-import { useSidebarContext } from './sidebar-context'
+import { useSidebarContext, PHONE_LAYOUT_MAX_WIDTH } from './sidebar-context'
 import { useChatSidebarViewportAdjust } from '@/lib/hooks/use-chat-sidebar-viewport'
-import { ThinktableBrandMark } from './personalize-ai-modal'
+import { NodNotesBrandMark } from './personalize-ai-modal'
 import { LeftVerticalMenu } from './left-vertical-menu'
 
 interface Message {
@@ -285,19 +285,19 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
     if (typeof window === 'undefined') return
 
     // STEP 1: Load from localStorage FIRST (synchronous, instant) - ensures UI shows saved prefs immediately
-    const savedViewMode = localStorage.getItem('thinktable-view-mode') as 'linear' | 'canvas' | null
+    const savedViewMode = localStorage.getItem('nodnotes-view-mode') as 'linear' | 'canvas' | null
     if (savedViewMode && ['linear', 'canvas'].includes(savedViewMode)) {
       setViewMode(savedViewMode)
     }
 
-    const savedScrollMode = localStorage.getItem('thinktable-scroll-mode')
+    const savedScrollMode = localStorage.getItem('nodnotes-scroll-mode')
     if (savedScrollMode === 'true') {
       setIsScrollMode(true)
     } else if (savedScrollMode === 'false') {
       setIsScrollMode(false)
     }
 
-    const savedMinimapHidden = localStorage.getItem('thinktable-minimap-hidden')
+    const savedMinimapHidden = localStorage.getItem('nodnotes-minimap-hidden')
     if (savedMinimapHidden === 'true') {
       setIsMinimapHidden(true)
       setIsMinimapManuallyHidden(true)
@@ -327,18 +327,18 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
             // Update from Supabase if values exist (Supabase is source of truth for cross-device sync)
             if (prefs.viewMode && ['linear', 'canvas'].includes(prefs.viewMode)) {
               setViewMode(prefs.viewMode)
-              localStorage.setItem('thinktable-view-mode', prefs.viewMode)
+              localStorage.setItem('nodnotes-view-mode', prefs.viewMode)
             }
 
             if (typeof prefs.isScrollMode === 'boolean') {
               setIsScrollMode(prefs.isScrollMode)
-              localStorage.setItem('thinktable-scroll-mode', String(prefs.isScrollMode))
+              localStorage.setItem('nodnotes-scroll-mode', String(prefs.isScrollMode))
             }
 
             if (typeof prefs.isMinimapHidden === 'boolean') {
               setIsMinimapHidden(prefs.isMinimapHidden)
               setIsMinimapManuallyHidden(prefs.isMinimapHidden)
-              localStorage.setItem('thinktable-minimap-hidden', String(prefs.isMinimapHidden))
+              localStorage.setItem('nodnotes-minimap-hidden', String(prefs.isMinimapHidden))
             }
           }
         }
@@ -394,18 +394,18 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
             // Update from Supabase if values exist
             if (prefs.viewMode && ['linear', 'canvas'].includes(prefs.viewMode)) {
               setViewMode(prefs.viewMode)
-              localStorage.setItem('thinktable-view-mode', prefs.viewMode)
+              localStorage.setItem('nodnotes-view-mode', prefs.viewMode)
             }
 
             if (typeof prefs.isScrollMode === 'boolean') {
               setIsScrollMode(prefs.isScrollMode)
-              localStorage.setItem('thinktable-scroll-mode', String(prefs.isScrollMode))
+              localStorage.setItem('nodnotes-scroll-mode', String(prefs.isScrollMode))
             }
 
             if (typeof prefs.isMinimapHidden === 'boolean') {
               setIsMinimapHidden(prefs.isMinimapHidden)
               setIsMinimapManuallyHidden(prefs.isMinimapHidden)
-              localStorage.setItem('thinktable-minimap-hidden', String(prefs.isMinimapHidden))
+              localStorage.setItem('nodnotes-minimap-hidden', String(prefs.isMinimapHidden))
             }
           }
         }
@@ -415,19 +415,19 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
     }
 
     // Load from localStorage first (instant)
-    const savedViewMode = localStorage.getItem('thinktable-view-mode') as 'linear' | 'canvas' | null
+    const savedViewMode = localStorage.getItem('nodnotes-view-mode') as 'linear' | 'canvas' | null
     if (savedViewMode && ['linear', 'canvas'].includes(savedViewMode)) {
       setViewMode(savedViewMode)
     }
 
-    const savedScrollMode = localStorage.getItem('thinktable-scroll-mode')
+    const savedScrollMode = localStorage.getItem('nodnotes-scroll-mode')
     if (savedScrollMode === 'true') {
       setIsScrollMode(true)
     } else if (savedScrollMode === 'false') {
       setIsScrollMode(false)
     }
 
-    const savedMinimapHidden = localStorage.getItem('thinktable-minimap-hidden')
+    const savedMinimapHidden = localStorage.getItem('nodnotes-minimap-hidden')
     if (savedMinimapHidden === 'true') {
       setIsMinimapHidden(true)
       setIsMinimapManuallyHidden(true)
@@ -478,9 +478,9 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
             }
 
             // Also update localStorage to keep them in sync
-            if (prefs.viewMode) localStorage.setItem('thinktable-view-mode', prefs.viewMode)
-            if (typeof prefs.isScrollMode === 'boolean') localStorage.setItem('thinktable-scroll-mode', String(prefs.isScrollMode))
-            if (typeof prefs.isMinimapHidden === 'boolean') localStorage.setItem('thinktable-minimap-hidden', String(prefs.isMinimapHidden))
+            if (prefs.viewMode) localStorage.setItem('nodnotes-view-mode', prefs.viewMode)
+            if (typeof prefs.isScrollMode === 'boolean') localStorage.setItem('nodnotes-scroll-mode', String(prefs.isScrollMode))
+            if (typeof prefs.isMinimapHidden === 'boolean') localStorage.setItem('nodnotes-minimap-hidden', String(prefs.isMinimapHidden))
 
             return // Successfully loaded from Supabase, skip localStorage fallback
           }
@@ -490,19 +490,19 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
       }
 
       // Fallback to localStorage
-      const savedScrollMode = localStorage.getItem('thinktable-scroll-mode')
+      const savedScrollMode = localStorage.getItem('nodnotes-scroll-mode')
       if (savedScrollMode === 'true') {
         setIsScrollMode(true)
       } else {
         setIsScrollMode(false)
       }
 
-      const savedViewMode = localStorage.getItem('thinktable-view-mode') as 'linear' | 'canvas' | null
+      const savedViewMode = localStorage.getItem('nodnotes-view-mode') as 'linear' | 'canvas' | null
       if (savedViewMode && ['linear', 'canvas'].includes(savedViewMode)) {
         setViewMode(savedViewMode)
       }
 
-      const savedMinimapHidden = localStorage.getItem('thinktable-minimap-hidden')
+      const savedMinimapHidden = localStorage.getItem('nodnotes-minimap-hidden')
       if (savedMinimapHidden === 'true') {
         setIsMinimapHidden(true)
         setIsMinimapManuallyHidden(true)
@@ -584,18 +584,18 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
     if (!studySetId || typeof window === 'undefined') return
 
     // Load from localStorage first (instant) - ensures UI shows saved prefs immediately
-    const savedLayoutMode = localStorage.getItem('thinktable-layout-mode') as 'auto' | 'tree' | 'cluster' | 'none' | null
+    const savedLayoutMode = localStorage.getItem('nodnotes-layout-mode') as 'auto' | 'tree' | 'cluster' | 'none' | null
     if (savedLayoutMode && ['auto', 'tree', 'cluster', 'none'].includes(savedLayoutMode)) {
       setLayoutMode(savedLayoutMode)
       setIsDeterministicMapping(savedLayoutMode !== 'none')
     }
 
-    const savedLineStyle = localStorage.getItem('thinktable-line-style') as 'solid' | 'dotted' | null
+    const savedLineStyle = localStorage.getItem('nodnotes-line-style') as 'solid' | 'dotted' | null
     if (savedLineStyle && ['solid', 'dotted'].includes(savedLineStyle)) {
       setLineStyle(savedLineStyle)
     }
 
-    const savedArrowDirection = localStorage.getItem('thinktable-arrow-direction') as 'down' | 'up' | 'left' | 'right' | null
+    const savedArrowDirection = localStorage.getItem('nodnotes-arrow-direction') as 'down' | 'up' | 'left' | 'right' | null
     if (savedArrowDirection && ['down', 'up', 'left', 'right'].includes(savedArrowDirection)) {
       setArrowDirection(savedArrowDirection)
     }
@@ -623,17 +623,17 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
             if (prefs.layoutMode && ['auto', 'tree', 'cluster', 'none'].includes(prefs.layoutMode)) {
               setLayoutMode(prefs.layoutMode)
               setIsDeterministicMapping(prefs.layoutMode !== 'none')
-              localStorage.setItem('thinktable-layout-mode', prefs.layoutMode)
+              localStorage.setItem('nodnotes-layout-mode', prefs.layoutMode)
             }
 
             if (prefs.lineStyle && ['solid', 'dotted'].includes(prefs.lineStyle)) {
               setLineStyle(prefs.lineStyle)
-              localStorage.setItem('thinktable-line-style', prefs.lineStyle)
+              localStorage.setItem('nodnotes-line-style', prefs.lineStyle)
             }
 
             if (prefs.arrowDirection && ['down', 'up', 'left', 'right'].includes(prefs.arrowDirection)) {
               setArrowDirection(prefs.arrowDirection)
-              localStorage.setItem('thinktable-arrow-direction', prefs.arrowDirection)
+              localStorage.setItem('nodnotes-arrow-direction', prefs.arrowDirection)
             }
           }
         }
@@ -824,8 +824,8 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
     if (typeof window === 'undefined') return
 
     // Save to localStorage immediately (lightweight, instant)
-    localStorage.setItem('thinktable-view-mode', viewMode)
-    localStorage.setItem('thinktable-scroll-mode', String(isScrollMode))
+    localStorage.setItem('nodnotes-view-mode', viewMode)
+    localStorage.setItem('nodnotes-scroll-mode', String(isScrollMode))
 
     // Save to Supabase in background (for cross-device sync)
     const saveToSupabase = async () => {
@@ -864,13 +864,13 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
     if (typeof window === 'undefined') return
 
     // Save to localStorage immediately
-    localStorage.setItem('thinktable-minimap-hidden', String(isMinimapHidden))
+    localStorage.setItem('nodnotes-minimap-hidden', String(isMinimapHidden))
   }, [isMinimapHidden])
 
   // Sync minimap visibility with mode
   useEffect(() => {
     // Save mode to localStorage
-    localStorage.setItem('thinktable-minimap-mode', minimapMode)
+    localStorage.setItem('nodnotes-minimap-mode', minimapMode)
 
     // Apply mode
     if (minimapMode === 'shown') {
@@ -894,7 +894,7 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
   // Load minimap mode from localStorage on mount (after hydration)
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('thinktable-minimap-mode')
+      const saved = localStorage.getItem('nodnotes-minimap-mode')
       if (saved === 'shown' || saved === 'hidden' || saved === 'hover') {
         setMinimapMode(saved)
       }
@@ -995,13 +995,15 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
     refetchOnMount: true, // Refetch when component mounts
     refetchOnReconnect: true, // Refetch when reconnecting
     // Read from cache even when query is initially disabled (for optimistic updates)
-    placeholderData: (previousData) => {
-      // If we have cached data for this studySetId, use it
+    placeholderData: (previousData, previousQuery) => {
+      // Never show another study set's cards while this one loads
+      const prevId = previousQuery?.queryKey?.[1]
+      if (prevId && prevId !== studySetId) return undefined
       if (studySetId) {
         const cached = queryClient.getQueryData(['flashcards-for-study-set', studySetId])
         if (cached) return cached as Message[]
       }
-      return previousData
+      return undefined
     },
   })
 
@@ -1329,7 +1331,7 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
   // Auto-hide minimap when window shrinks below threshold, auto-show when expanded (if not manually closed while expanded)
   // Also triggers mobile mode for sidebar (sidebar hides, toggle moves to top bar)
   useEffect(() => {
-    const MINIMAP_AUTO_HIDE_THRESHOLD = 900 // Window width threshold to auto-hide minimap
+    const MINIMAP_AUTO_HIDE_THRESHOLD = PHONE_LAYOUT_MAX_WIDTH // Same width as phone / mobile layout
 
     const checkMinimapAutoHide = () => {
       const windowWidth = window.innerWidth
@@ -2419,7 +2421,7 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
     if (!studySetId || viewMode !== 'canvas') return
 
     try {
-      const saved = localStorage.getItem(`thinktable-canvas-positions-study-set-${studySetId}`)
+      const saved = localStorage.getItem(`nodnotes-canvas-positions-study-set-${studySetId}`)
       if (saved) {
         const positions = JSON.parse(saved) as Record<string, { x: number; y: number }>
         Object.entries(positions).forEach(([nodeId, pos]) => {
@@ -2451,7 +2453,7 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
             y: node.position.y,
           }
         })
-        localStorage.setItem(`thinktable-canvas-positions-study-set-${studySetId}`, JSON.stringify(positions))
+        localStorage.setItem(`nodnotes-canvas-positions-study-set-${studySetId}`, JSON.stringify(positions))
       } catch (error) {
         console.error('Failed to save canvas positions to localStorage:', error)
       }
@@ -2513,7 +2515,7 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
       // Clear saved positions for this conversation
       if (typeof window !== 'undefined') {
         try {
-          localStorage.removeItem(`thinktable-canvas-positions-study-set-${studySetId}`)
+          localStorage.removeItem(`nodnotes-canvas-positions-study-set-${studySetId}`)
         } catch (error) {
           console.error('Failed to clear canvas positions from localStorage:', error)
         }
@@ -2584,7 +2586,7 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
         // If not in memory and in Canvas mode, try loading from localStorage
         if (!storedPos && viewMode === 'canvas' && studySetId && typeof window !== 'undefined') {
           try {
-            const saved = localStorage.getItem(`thinktable-canvas-positions-study-set-${studySetId}`)
+            const saved = localStorage.getItem(`nodnotes-canvas-positions-study-set-${studySetId}`)
             if (saved) {
               const positions = JSON.parse(saved) as Record<string, { x: number; y: number }>
               const savedPos = positions[baseNodeId]
@@ -3121,10 +3123,10 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
           // Save to localStorage
           if (studySetId && typeof window !== 'undefined') {
             try {
-              const saved = localStorage.getItem(`thinktable-canvas-positions-study-set-${studySetId}`)
+              const saved = localStorage.getItem(`nodnotes-canvas-positions-study-set-${studySetId}`)
               const positions = saved ? JSON.parse(saved) : {}
               positions[node.id] = node.position
-              localStorage.setItem(`thinktable-canvas-positions-study-set-${studySetId}`, JSON.stringify(positions))
+              localStorage.setItem(`nodnotes-canvas-positions-study-set-${studySetId}`, JSON.stringify(positions))
             } catch (error) {
               console.error('Failed to save position to localStorage:', error)
             }
@@ -3191,10 +3193,10 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
           // Save to localStorage
           if (studySetId && typeof window !== 'undefined') {
             try {
-              const saved = localStorage.getItem(`thinktable-canvas-positions-study-set-${studySetId}`)
+              const saved = localStorage.getItem(`nodnotes-canvas-positions-study-set-${studySetId}`)
               const positions = saved ? JSON.parse(saved) : {}
               positions[n.id] = newPosition
-              localStorage.setItem(`thinktable-canvas-positions-study-set-${studySetId}`, JSON.stringify(positions))
+              localStorage.setItem(`nodnotes-canvas-positions-study-set-${studySetId}`, JSON.stringify(positions))
             } catch (error) {
               console.error('Failed to save position to localStorage:', error)
             }
@@ -3245,10 +3247,10 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
         // Save to localStorage
         if (studySetId && typeof window !== 'undefined') {
           try {
-            const saved = localStorage.getItem(`thinktable-canvas-positions-study-set-${studySetId}`)
+            const saved = localStorage.getItem(`nodnotes-canvas-positions-study-set-${studySetId}`)
             const positions = saved ? JSON.parse(saved) : {}
             positions[n.id] = newPosition
-            localStorage.setItem(`thinktable-canvas-positions-study-set-${studySetId}`, JSON.stringify(positions))
+            localStorage.setItem(`nodnotes-canvas-positions-study-set-${studySetId}`, JSON.stringify(positions))
           } catch (error) {
             console.error('Failed to save position to localStorage:', error)
           }
@@ -3809,7 +3811,7 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
       // Load from localStorage first, then use in-memory ref
       if (studySetId && typeof window !== 'undefined') {
         try {
-          const saved = localStorage.getItem(`thinktable-canvas-positions-study-set-${studySetId}`)
+          const saved = localStorage.getItem(`nodnotes-canvas-positions-study-set-${studySetId}`)
           if (saved) {
             const positions = JSON.parse(saved) as Record<string, { x: number; y: number }>
             Object.entries(positions).forEach(([nodeId, pos]) => {
@@ -4022,11 +4024,11 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
   const handleDeleteNode = useCallback(async () => {
     if (!rightClickedNode || !studySetId) return
 
-    // Get all selected nodes (not just the right-clicked one)
+    // Prefer selection; always include the menu target (selection can race clear)
     const selectedNodes = nodes.filter((n) => n.selected)
-    if (selectedNodes.length === 0) return
-
-    const selectedNodeIds = selectedNodes.map((n) => n.id)
+    const ids = new Set(selectedNodes.map((n) => n.id))
+    if (!ids.has(rightClickedNode.id)) ids.add(rightClickedNode.id)
+    if (ids.size === 0) return
 
     // Close popup
     setRightClickedNode(null)
@@ -4034,59 +4036,14 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
     nodePopupZoomRef.current = null
 
     // Delete the nodes
-    await deleteNodesByIds(selectedNodeIds)
+    await deleteNodesByIds([...ids])
   }, [rightClickedNode, studySetId, nodes, deleteNodesByIds])
-
-  // Handle condense node/panel (collapse response) - condense ALL selected panels
-  const handleCondenseNode = useCallback(() => {
-    if (!rightClickedNode) return
-
-    // Get all selected nodes (not just the right-clicked one)
-    const selectedNodes = nodes.filter((n) => n.selected)
-    if (selectedNodes.length === 0) return
-
-    // Determine if we should collapse or expand based on the right-clicked node's state
-    // If the right-clicked node is collapsed, we'll expand all selected; otherwise collapse all
-    const rightClickedNodeState = rightClickedNode.data.isResponseCollapsed || false
-    const shouldCollapse = !rightClickedNodeState // Toggle: if expanded, collapse; if collapsed, expand
-
-    // Update all selected nodes
-    const selectedNodeIds = new Set(selectedNodes.map((n) => n.id))
-    setNodes((nds) =>
-      nds.map((n) =>
-        selectedNodeIds.has(n.id)
-          ? {
-            ...n,
-            data: {
-              ...n.data,
-              isResponseCollapsed: shouldCollapse,
-            },
-          }
-          : n
-      )
-    )
-
-    // Update rightClickedNode to reflect the change
-    setRightClickedNode({
-      ...rightClickedNode,
-      data: {
-        ...rightClickedNode.data,
-        isResponseCollapsed: shouldCollapse,
-      },
-    })
-
-    // Don't close popup - allow user to toggle again if needed
-  }, [rightClickedNode, nodes, setNodes])
 
   // Study-set block actions (wired subset + baseline stubs)
   const handleBlockAction = useCallback(
     (action: BlockActionId, _payload?: BlockActionPayload) => {
       if (action === 'delete') {
         void handleDeleteNode()
-        return
-      }
-      if (action === 'condense') {
-        handleCondenseNode()
         return
       }
       if (action === 'copyLink' && rightClickedNode && studySetId) {
@@ -4101,7 +4058,7 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
       // Baseline stubs close the menu
       setRightClickedNode(null)
     },
-    [handleDeleteNode, handleCondenseNode, rightClickedNode, studySetId]
+    [handleDeleteNode, rightClickedNode, studySetId]
   )
 
   // Open block actions from the ⋮⋮ handle
@@ -4286,87 +4243,6 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
 
     setClickedEdge(edge)
   }, [clickedEdge, reactFlowInstance])
-
-  // Handle collapse/expand all panels connected to the edge
-  const handleCollapseTarget = useCallback(() => {
-    if (!clickedEdge) return
-
-    // Find all nodes in the connected component (all nodes reachable from source and target)
-    const connectedNodeIds = new Set<string>()
-    const visited = new Set<string>()
-
-    // Start with source and target nodes of the clicked edge
-    const startNodes = [clickedEdge.source, clickedEdge.target]
-    const queue = [...startNodes]
-
-    // BFS to find all connected nodes
-    while (queue.length > 0) {
-      const currentNodeId = queue.shift()!
-      if (visited.has(currentNodeId)) continue
-
-      visited.add(currentNodeId)
-      connectedNodeIds.add(currentNodeId)
-
-      // Find all edges connected to this node
-      edges.forEach(edge => {
-        if (edge.source === currentNodeId && !visited.has(edge.target)) {
-          queue.push(edge.target)
-        }
-        if (edge.target === currentNodeId && !visited.has(edge.source)) {
-          queue.push(edge.source)
-        }
-      })
-    }
-
-    // Get all connected nodes
-    const connectedNodes = nodes.filter(n => connectedNodeIds.has(n.id))
-    if (connectedNodes.length === 0) return
-
-    // Check collapse states
-    const allCollapsed = connectedNodes.every(n => n.data.isResponseCollapsed || false)
-    const allExpanded = connectedNodes.every(n => !(n.data.isResponseCollapsed || false))
-    const someCollapsed = connectedNodes.some(n => n.data.isResponseCollapsed || false)
-
-    // Determine action:
-    // - If all are collapsed: expand all
-    // - If all are expanded: collapse all
-    // - If some are collapsed and some expanded: only expand the collapsed ones (don't collapse expanded ones)
-    const shouldCollapse = allExpanded // Only collapse if all are expanded
-    const shouldExpand = allCollapsed || someCollapsed // Expand if all are collapsed OR if some are collapsed
-
-    // Update nodes: expand collapsed ones, or collapse all if all are expanded
-    setNodes((nds) =>
-      nds.map((n) => {
-        if (connectedNodeIds.has(n.id)) {
-          const isCurrentlyCollapsed = n.data.isResponseCollapsed || false
-
-          if (shouldCollapse && allExpanded) {
-            // All are expanded, so collapse all
-            return {
-              ...n,
-              data: {
-                ...n.data,
-                isResponseCollapsed: true,
-              },
-            }
-          } else if (shouldExpand && isCurrentlyCollapsed) {
-            // Some are collapsed, so expand only the collapsed ones
-            return {
-              ...n,
-              data: {
-                ...n.data,
-                isResponseCollapsed: false,
-              },
-            }
-          }
-          // Otherwise, keep current state
-          return n
-        }
-        return n
-      })
-    )
-    setClickedEdge(null) // Close popup
-  }, [clickedEdge, nodes, edges, setNodes])
 
   // Handle delete edge - delete from both React Flow state and database
   const handleDeleteEdge = useCallback(async () => {
@@ -5135,7 +5011,6 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
           x={nodePopupPosition.x}
           y={nodePopupPosition.y}
           zoom={reactFlowInstance.getViewport().zoom}
-          isCollapsed={!!rightClickedNode.data?.isResponseCollapsed}
           selectedCount={nodes.filter((n) => n.selected).length}
           showAddChild={false}
           canUngroup={false}
@@ -5151,7 +5026,7 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
         />
       )}
 
-      {/* Edge popup - shows collapse and delete options */}
+      {/* Edge popup - style + delete options */}
       {clickedEdge && reactFlowInstance && (
         <div
           className="edge-popup absolute z-[1000] bg-white dark:bg-[#1f1f1f] rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-2"
@@ -5172,57 +5047,6 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
           }}
         >
           <div className="flex flex-col gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleCollapseTarget}
-              className="justify-start text-sm"
-            >
-              {(() => {
-                // Find all connected nodes to determine button label
-                const connectedNodeIds = new Set<string>()
-                const visited = new Set<string>()
-                const startNodes = [clickedEdge.source, clickedEdge.target]
-                const queue = [...startNodes]
-
-                while (queue.length > 0) {
-                  const currentNodeId = queue.shift()!
-                  if (visited.has(currentNodeId)) continue
-                  visited.add(currentNodeId)
-                  connectedNodeIds.add(currentNodeId)
-
-                  edges.forEach(edge => {
-                    if (edge.source === currentNodeId && !visited.has(edge.target)) {
-                      queue.push(edge.target)
-                    }
-                    if (edge.target === currentNodeId && !visited.has(edge.source)) {
-                      queue.push(edge.source)
-                    }
-                  })
-                }
-
-                const connectedNodes = nodes.filter(n => connectedNodeIds.has(n.id))
-                const allExpanded = connectedNodes.length > 0 && connectedNodes.every(n => !(n.data.isResponseCollapsed || false))
-                const someCollapsed = connectedNodes.some(n => n.data.isResponseCollapsed || false)
-
-                // Show "Collapse" only if all are expanded, otherwise show "Expand"
-                if (allExpanded) {
-                  return (
-                    <>
-                      <ChevronUp className="h-4 w-4 mr-2" />
-                      Collapse
-                    </>
-                  )
-                } else {
-                  return (
-                    <>
-                      <ChevronDown className="h-4 w-4 mr-2" />
-                      Expand
-                    </>
-                  )
-                }
-              })()}
-            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -5483,7 +5307,7 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
           title="Show chat"
           aria-label="Show chat sidebar"
         >
-          <ThinktableBrandMark drawingUrl={logoDrawing} size={42} />
+          <NodNotesBrandMark drawingUrl={logoDrawing} size={42} />
         </button>
       )}
 

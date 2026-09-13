@@ -5,7 +5,7 @@
 Each app/service that needs environment variables has a `.env.local.example` template file:
 
 ```
-thinktable/
+nod-notes/
   apps/
     web/
       .env.local.example     ← Template (committed to git)

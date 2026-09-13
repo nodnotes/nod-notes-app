@@ -1,0 +1,2 @@
+-- Homepage: interactive AI sidebar in showcase 2; copy reorder; phone threads behind text.
+-- No DDL — schema unchanged; remote applied still tops out at 20260811225342.

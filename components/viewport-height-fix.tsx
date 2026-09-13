@@ -3,10 +3,28 @@
 // Fix viewport height for mobile Safari/iPad
 // Updates CSS variable --vh when viewport height changes (address bar show/hide)
 import { useLayoutEffect } from 'react'
+import { migrateNodNotesStorageKeys } from '@/lib/nodnotes-storage-migrate'
 
 export function ViewportHeightFix() {
   // useLayoutEffect: set --vh before paint so board chrome (minimap/nav/brand) doesn't start high then jump
   useLayoutEffect(() => {
+    migrateNodNotesStorageKeys()
+
+    // Electron shell: ensure desktop chrome classes survive hydration / soft navigations
+    const desktop = window.nodnotesDesktop
+    if (desktop?.isDesktop) {
+      document.documentElement.classList.add('nn-desktop', `nn-desktop-${desktop.platform}`)
+      document.documentElement.dataset.nnDesktop = desktop.platform
+    }
+
+    // Capacitor shell: tag <html> for safe-area / status-bar CSS (parallel to nn-desktop)
+    const capacitor = window.Capacitor
+    if (capacitor?.isNativePlatform?.()) {
+      const platform = capacitor.getPlatform() // 'ios' | 'android'
+      document.documentElement.classList.add('nn-capacitor', `nn-capacitor-${platform}`)
+      document.documentElement.dataset.nnCapacitor = platform
+    }
+
     function setViewportHeight() {
       // Calculate 1% of actual viewport height
       const vh = window.innerHeight * 0.01

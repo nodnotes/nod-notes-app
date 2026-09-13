@@ -65,3 +65,13 @@ export function localToScreen(
   const p = new DOMPoint(localX, localY).matrixTransform(lin)
   return { x: o.x + p.x, y: o.y + p.y }
 }
+
+/** True if (clientX, clientY) lies inside `el`’s local box (rotation-safe). */
+export function clientPointInElement(
+  el: HTMLElement,
+  clientX: number,
+  clientY: number
+): boolean {
+  const p = screenToLocal(el, clientX, clientY)
+  return p.x >= -0.5 && p.x <= el.offsetWidth + 0.5 && p.y >= -0.5 && p.y <= el.offsetHeight + 0.5
+}

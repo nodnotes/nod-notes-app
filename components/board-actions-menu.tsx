@@ -6,6 +6,7 @@ import { useEffect, useLayoutEffect, useRef } from 'react' // Escape close + aut
 import {
   Scan, // Capture — 4 disconnected rounded corners
   ClipboardPaste,
+  LayoutTemplate, // Add template — layout glyph, distinct from Add frame Plus
   Link2,
   Maximize2,
   Plus,
@@ -21,6 +22,7 @@ import { applyMenuPlacement, watchMenuSafeRect } from '@/lib/menu-placement' // 
 /** Actions the board menu can emit (wired + stubs). */
 export type BoardActionId =
   | 'addFrame'
+  | 'addTemplate' // Stub — insert a saved template at the click (thread Save as template is the pair)
   | 'paste'
   | 'selectAll'
   | 'undo'
@@ -83,6 +85,12 @@ export function BoardActionsMenu({
       id: 'addFrame',
       label: 'Add frame',
       icon: <Plus className="h-4 w-4" />,
+    },
+    {
+      kind: 'action',
+      id: 'addTemplate', // Directly under Add frame — add a saved template at the click
+      label: 'Add template',
+      icon: <LayoutTemplate className="h-4 w-4" />,
     },
     {
       kind: 'action',
@@ -152,14 +160,19 @@ export function BoardActionsMenu({
       ref={rootRef}
       tabIndex={-1}
       className={cn(
-        // Same shell as ThreadActionsMenu / BlockActionsMenu
-        'board-actions-menu node-popup z-[1000] bg-white dark:bg-[#1f1f1f] rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1 min-w-[240px] outline-none',
+        'board-actions-menu node-popup z-[1000] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1 outline-none',
         'absolute',
         className
       )}
+      data-tt-menu-width="220"
       style={{
+        position: 'absolute',
         left: `${x}px`,
         top: `${y}px`,
+        right: 'auto',
+        width: 220,
+        maxWidth: 'min(220px, calc(100vw - 24px))',
+        boxSizing: 'border-box',
         transform: 'translate(-50%, -100%)', // Anchor above click
         transformOrigin: 'center bottom',
         marginTop: '-8px',
@@ -185,7 +198,7 @@ export function BoardActionsMenu({
     >
       <div className="px-2.5 pt-1.5 pb-1 text-xs text-gray-500 dark:text-gray-400">Board</div>
 
-      <div data-tt-menu-body className="flex flex-col gap-0.5 overflow-y-auto px-0.5 pb-0.5">
+      <div data-tt-menu-body className="flex min-h-0 flex-col gap-0.5 overflow-y-auto px-0.5 pb-0.5">
         {rows.map((row, index) => {
           if (row.kind === 'separator') {
             return (
@@ -208,14 +221,14 @@ export function BoardActionsMenu({
                 onAction(row.id)
               }}
               className={cn(
-                'justify-start text-sm h-8 px-2 font-normal',
+                'h-8 w-full min-w-0 shrink-0 justify-start px-2 text-sm font-normal',
                 row.disabled && 'opacity-40 pointer-events-none'
               )}
             >
-              <span className="mr-2 text-gray-500 dark:text-gray-400">{row.icon}</span>
-              <span className="flex-1 text-left">{row.label}</span>
+              <span className="mr-2 shrink-0 text-gray-500 dark:text-gray-400">{row.icon}</span>
+              <span className="min-w-0 flex-1 truncate text-left">{row.label}</span>
               {row.shortcut && (
-                <span className="ml-3 text-[11px] text-gray-400 tabular-nums">{row.shortcut}</span>
+                <span className="ml-2 shrink-0 text-[11px] text-gray-400 tabular-nums">{row.shortcut}</span>
               )}
             </Button>
           )

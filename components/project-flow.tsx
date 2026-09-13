@@ -190,12 +190,12 @@ function ProjectFlowInner({ projectId }: { projectId?: string }) {
   useEffect(() => {
     if (typeof window === 'undefined') return
 
-    const savedViewMode = localStorage.getItem('thinktable-view-mode') as 'linear' | 'canvas' | null
+    const savedViewMode = localStorage.getItem('nodnotes-view-mode') as 'linear' | 'canvas' | null
     if (savedViewMode && ['linear', 'canvas'].includes(savedViewMode)) {
       setViewMode(savedViewMode)
     }
 
-    const savedScrollMode = localStorage.getItem('thinktable-scroll-mode')
+    const savedScrollMode = localStorage.getItem('nodnotes-scroll-mode')
     if (savedScrollMode === 'true') {
       setIsScrollMode(true)
     } else if (savedScrollMode === 'false') {
@@ -573,7 +573,7 @@ function ProjectFlowInner({ projectId }: { projectId?: string }) {
         let storedPos = originalPositionsRef.current.get(nodeId)
         if (!storedPos && currentViewMode === 'canvas' && typeof window !== 'undefined') {
           try {
-            const saved = localStorage.getItem(`thinktable-canvas-positions-project-${projectId}`)
+            const saved = localStorage.getItem(`nodnotes-canvas-positions-project-${projectId}`)
             if (saved) {
               const positions = JSON.parse(saved) as Record<string, { x: number; y: number }>
               const savedPos = positions[nodeId]
@@ -901,7 +901,7 @@ function ProjectFlowInner({ projectId }: { projectId?: string }) {
       // Restore stored positions when switching back to Canvas
       if (projectId && typeof window !== 'undefined') {
         try {
-          const saved = localStorage.getItem(`thinktable-canvas-positions-project-${projectId}`)
+          const saved = localStorage.getItem(`nodnotes-canvas-positions-project-${projectId}`)
           if (saved) {
             const positions = JSON.parse(saved) as Record<string, { x: number; y: number }>
             Object.entries(positions).forEach(([nodeId, pos]) => {
@@ -1098,10 +1098,10 @@ function ProjectFlowInner({ projectId }: { projectId?: string }) {
       changes.forEach((change) => {
         if (change.type === 'position' && change.position) {
           try {
-            const saved = localStorage.getItem(`thinktable-canvas-positions-project-${projectId}`)
+            const saved = localStorage.getItem(`nodnotes-canvas-positions-project-${projectId}`)
             const positions = saved ? JSON.parse(saved) : {}
             positions[change.id] = change.position
-            localStorage.setItem(`thinktable-canvas-positions-project-${projectId}`, JSON.stringify(positions))
+            localStorage.setItem(`nodnotes-canvas-positions-project-${projectId}`, JSON.stringify(positions))
 
             // Update stored position
             originalPositionsRef.current.set(change.id, change.position)
@@ -1365,7 +1365,7 @@ function ProjectFlowInner({ projectId }: { projectId?: string }) {
                 }, 250)
               } else {
                 setViewMode('linear')
-                localStorage.setItem('thinktable-view-mode', 'linear')
+                localStorage.setItem('nodnotes-view-mode', 'linear')
                 // Save to Supabase
                 const saveToSupabase = async () => {
                   try {
@@ -1446,7 +1446,7 @@ function ProjectFlowInner({ projectId }: { projectId?: string }) {
                   }
                 } else {
                   setViewMode('canvas')
-                  localStorage.setItem('thinktable-view-mode', 'canvas')
+                  localStorage.setItem('nodnotes-view-mode', 'canvas')
                   // Save to Supabase
                   const saveToSupabase = async () => {
                     try {
@@ -1506,7 +1506,7 @@ function ProjectFlowInner({ projectId }: { projectId?: string }) {
                 <DropdownMenuLabel>Navigation</DropdownMenuLabel>
                 <DropdownMenuRadioGroup value={isScrollMode ? 'scroll' : 'zoom'} onValueChange={(value) => {
                   setIsScrollMode(value === 'scroll')
-                  localStorage.setItem('thinktable-scroll-mode', value === 'scroll' ? 'true' : 'false')
+                  localStorage.setItem('nodnotes-scroll-mode', value === 'scroll' ? 'true' : 'false')
                   // Save to Supabase
                   const saveToSupabase = async () => {
                     try {

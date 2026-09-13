@@ -1,0 +1,2 @@
+-- Rebrand ThinkTable → Nod Notes (product copy, identifiers, GitHub org/repos).
+-- No DDL — schema unchanged; remote applied still tops out at 20260811225342.

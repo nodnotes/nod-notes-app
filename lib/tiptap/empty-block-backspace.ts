@@ -5,9 +5,27 @@
 import { Extension, type Editor } from '@tiptap/core' // Editor type for prune helper
 import { NodeSelection, TextSelection } from '@tiptap/pm/state'
 
+/** True when a textblock has inline atoms (captureLink, etc.) — no textContent but not empty. */
+export function textblockHasInlineAtoms(node: {
+  isTextblock: boolean
+  content: { forEach: (f: (child: { isAtom: boolean }) => void) => void }
+}): boolean {
+  if (!node.isTextblock) return false
+  let found = false
+  node.content.forEach((child) => {
+    if (child.isAtom) found = true
+  })
+  return found
+}
+
 /** True when a textblock has no visible text (empty paragraph / heading). */
-export function isEmptyTextblock(node: { isTextblock: boolean; textContent: string; content: { size: number } }) {
+export function isEmptyTextblock(node: {
+  isTextblock: boolean
+  textContent: string
+  content: { size: number; forEach: (f: (child: { isAtom: boolean }) => void) => void }
+}) {
   if (!node.isTextblock) return false // Atoms / lists are not empty “lines”
+  if (textblockHasInlineAtoms(node)) return false // captureLink chip — textContent is empty
   return node.content.size === 0 || node.textContent.length === 0
 }
 

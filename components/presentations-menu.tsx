@@ -3,6 +3,7 @@
 // View-bar Presentation popover — pick a presentation, then order its captures
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react' // Picker + list
+import { useRouter } from 'next/navigation' // Client-side capture nav
 import {
   DndContext,
   PointerSensor,
@@ -34,13 +35,16 @@ import {
   subscribeCaptures,
   type BoardCapture,
 } from '@/lib/captures' // Local store
+import { navigateToCapture } from '@/lib/capture-link' // In-tab camera nav
 import { cn } from '@/lib/utils' // Class merge
 import { TOOLBAR_MENU_PLACEMENT } from '@/lib/menu-placement' // Under the trigger, never over the board path
+import { CaptureRowMoreMenu } from './capture-row-more-menu' // Row hover ⋯ — copy link
 import { ToolbarTitle } from './toolbar-title' // Animated icon-adjacent title
 
 type PresentationsMenuProps = {
   open: boolean // Controlled by editor-toolbar openDropdown
   onOpenChange: (open: boolean) => void // Keep only one toolbar dropdown open
+  conversationId?: string // Current board — in-tab capture nav
   triggerVisible?: boolean // false when overflowed into More (still mount for controlled open)
   showLabel?: boolean // false when the top bar has condensed titles to icons
 }
@@ -73,12 +77,17 @@ function SortableCaptureRow({
   index,
   onAddAt,
   onPreview,
+  conversationId,
+  onNavigate,
 }: {
   capture: BoardCapture
   index: number
   onAddAt: (index: number) => void
   onPreview: (id: string) => void
+  conversationId?: string
+  onNavigate?: () => void
 }) {
+  const router = useRouter()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: capture.id,
   })
@@ -92,7 +101,7 @@ function SortableCaptureRow({
   return (
     <div ref={setNodeRef} style={style} className="flex flex-col">
       <InsertGap onAdd={() => onAddAt(index)} />
-      <div className="flex items-center gap-1.5 rounded-lg py-1.5 pr-1 hover:bg-gray-50">
+      <div className="flex items-center gap-1.5 rounded-lg py-1.5 pr-1 hover:bg-gray-50 group/capture">
         <button
           type="button"
           className="flex h-11 w-5 flex-shrink-0 cursor-grab items-center justify-center rounded text-gray-400 hover:bg-gray-100 hover:text-gray-600 active:cursor-grabbing"
@@ -126,12 +135,26 @@ function SortableCaptureRow({
             </span>
           )}
         </button>
-        <div className="min-w-0 flex-1 pt-0.5">
+        <button
+          type="button"
+          className="min-w-0 flex-1 pt-0.5 text-left"
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => {
+            navigateToCapture(capture, conversationId, router)
+            onNavigate?.()
+          }}
+        >
           <div className="truncate text-[13px] font-medium text-gray-900">
             {formatCaptureTimestamp(capture.createdAt)}
           </div>
           <div className="mt-0.5 truncate text-[12px] text-gray-500">{capture.boardPath}</div>
-        </div>
+        </button>
+        <CaptureRowMoreMenu
+          capture={capture}
+          conversationId={conversationId}
+          onNavigate={onNavigate}
+          className="opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/capture:opacity-100"
+        />
       </div>
     </div>
   )
@@ -140,6 +163,7 @@ function SortableCaptureRow({
 export function PresentationsMenu({
   open,
   onOpenChange,
+  conversationId,
   triggerVisible = true,
   showLabel = true, // Icon+title until the top bar condenses
 }: PresentationsMenuProps) {
@@ -309,6 +333,8 @@ export function PresentationsMenu({
                     key={capture.id}
                     capture={capture}
                     index={index}
+                    conversationId={conversationId}
+                    onNavigate={() => onOpenChange(false)}
                     onAddAt={(i) => {
                       setInsertAt(i)
                       setPickerOpen(false)

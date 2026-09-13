@@ -1,4 +1,4 @@
-// Share roles for Thinktable pages (copy-link + people grants)
+// Share roles for NodNotes pages (copy-link + people grants)
 
 export const SHARE_ROLES = ['view', 'comment', 'edit'] as const // Ordered by power (weak → strong)
 

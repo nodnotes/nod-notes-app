@@ -7,10 +7,19 @@
 // See DEFINITIONS.md + CONTEXT.md.
 
 import { useCallback, useRef, useState } from 'react' // Drag UI state
+import { useStore } from 'reactflow' // Live zoom for adjust-box chrome scale
 import type { Node } from 'reactflow' // RF node shape
 import { createClient } from '@/lib/supabase/client' // Persist snap link meta
 import { absFlowPosition, nodeFlowSize } from '@/components/use-block-group-drag' // Absolute box helpers
 import { persistBlockPlacement } from '@/lib/blocks' // Save snapped position
+import {
+  frameAdjustFlowBox,
+  frameAdjustFlowBoxAt,
+  frameAdjustFlowSize,
+  frameAdjustScreenRect,
+  rfAbsFromAdjustOrigin,
+  type FlowBox,
+} from '@/lib/frame-adjust-box'
 import {
   findStackEntry,
   groupIdsOf,
@@ -20,7 +29,11 @@ import {
   setSideStackEntry,
   sideStackGroupId,
   stackIndexInGroup,
+  patchGroupEntry,
+  setParentStackHidden,
+  setGroupLocked,
   stripGroupFromMeta,
+  readXY,
   collectNestedSatelliteIds,
   type FrameStackSide,
   type SideStackEntry,
@@ -34,8 +47,11 @@ export type FrameNestStackUi = {
   targetId: string // Host frame RF id we’d snap against
   mode: 'snap' // Edge snap preview only (no auto-stack on release)
   stackSide: FrameStackSide // Which host edge is the snap target
-  /** Screen rect of the target frame (for preview line placement). */
+  /** Screen rect of the host adjust box. */
   targetRect: { top: number; left: number; width: number; height: number }
+  /** Screen rect of the dragged frame adjust box (outside frame in the pair). */
+  sourceRect: { top: number; left: number; width: number; height: number }
+  zoom: number // Viewport scale for indicator outset
 }
 
 const STACK_EXPAND_GAP = 12 // Gap between host and first stacked frame / between mates
@@ -43,12 +59,10 @@ const STACK_EXPAND_GAP = 12 // Gap between host and first stacked frame / betwee
 export const STACK_LINE_GAP = STACK_EXPAND_GAP
 /** Flow-px gap (edge-to-edge) that arms snap preview. */
 const SNAP_ARM_PX = 28
-/** Flow-px gap that magnets the dragged frame to the parked snap distance. */
-const SNAP_MAGNET_PX = 18
 /** Min fraction of the shorter parallel edge that must overlap to count as a side snap. */
 const SNAP_OVERLAP_MIN = 0.25
-
-type FlowBox = { x: number; y: number; width: number; height: number }
+/** Score discount for the edge already armed this drag — one lane per side, no mid-drag hopping. */
+const SNAP_STICKY_BONUS = 14
 
 function nodeMeta(n: Node): Record<string, unknown> {
   return (n.data?.promptMessage?.metadata || {}) as Record<string, unknown>
@@ -74,21 +88,21 @@ export function frameScreenRect(nodeId: string): DOMRect | null {
 }
 
 /**
- * Flow position for a stacked frame expanded out from `front` on `side`.
+ * Adjust-box top-left for a stacked frame expanded out from `frontAdjust` on `side`.
  * `stackOrder` 0 = closest to host; later mates sit further out, adjacent to prior mates.
  */
 export function stackExpandLayout(
-  front: { x: number; y: number; width: number; height: number },
+  frontAdjust: FlowBox,
   side: FrameStackSide,
-  stacked: { width: number; height: number },
+  stackedAdjust: { width: number; height: number },
   stackOrder = 0,
-  priorSizes: Array<{ width: number; height: number }> = []
+  priorAdjustSizes: Array<{ width: number; height: number }> = []
 ): { x: number; y: number } {
-  const w = Math.max(48, stacked.width)
-  const h = Math.max(32, stacked.height)
+  const w = Math.max(48, stackedAdjust.width)
+  const h = Math.max(32, stackedAdjust.height)
   let offset = STACK_EXPAND_GAP
   for (let i = 0; i < stackOrder; i++) {
-    const prev = priorSizes[i] || stacked
+    const prev = priorAdjustSizes[i] || stackedAdjust
     if (side === 'right' || side === 'left') {
       offset += Math.max(48, prev.width) + STACK_EXPAND_GAP
     } else {
@@ -96,15 +110,437 @@ export function stackExpandLayout(
     }
   }
   if (side === 'right') {
-    return { x: front.x + front.width + offset, y: front.y + (front.height - h) / 2 }
+    return {
+      x: frontAdjust.x + frontAdjust.width + offset,
+      y: frontAdjust.y + (frontAdjust.height - h) / 2,
+    }
   }
   if (side === 'left') {
-    return { x: front.x - w - offset, y: front.y + (front.height - h) / 2 }
+    return {
+      x: frontAdjust.x - w - offset,
+      y: frontAdjust.y + (frontAdjust.height - h) / 2,
+    }
   }
   if (side === 'top') {
-    return { x: front.x + (front.width - w) / 2, y: front.y - h - offset }
+    return {
+      x: frontAdjust.x + (frontAdjust.width - w) / 2,
+      y: frontAdjust.y - h - offset,
+    }
   }
-  return { x: front.x + (front.width - w) / 2, y: front.y + front.height + offset }
+  return {
+    x: frontAdjust.x + (frontAdjust.width - w) / 2,
+    y: frontAdjust.y + frontAdjust.height + offset,
+  }
+}
+
+/** RF absolute position after stacking `stackedNode` out from `frontNode` on `side`. */
+export function stackExpandRfAbs(
+  frontNode: Node,
+  live: Node[],
+  side: FrameStackSide,
+  stackedNode: Node,
+  stackOrder: number,
+  priorStackedNodes: Node[],
+  zoom: number
+): { x: number; y: number } {
+  const frontAdjust = frameAdjustFlowBox(frontNode, live, zoom)
+  const stackedAdjustSize = frameAdjustFlowSize(stackedNode, zoom)
+  const priorSizes = priorStackedNodes.map((n) => frameAdjustFlowSize(n, zoom))
+  const adjustOrigin = stackExpandLayout(
+    frontAdjust,
+    side,
+    stackedAdjustSize,
+    stackOrder,
+    priorSizes
+  )
+  return rfAbsFromAdjustOrigin(adjustOrigin, stackedNode, zoom)
+}
+
+/** Thread-layout direction → host edge that packed mates attach to. */
+const PACK_SIDE: Record<'down' | 'up' | 'left' | 'right', FrameStackSide> = {
+  down: 'bottom',
+  up: 'top',
+  left: 'left',
+  right: 'right',
+}
+
+/** Cross-axis align against the *anchor* adjust box (avoids stair-steps). Returns adjust origin. */
+function packCrossAlignAdjust(
+  anchorAdjust: FlowBox,
+  mateAdjustSize: { width: number; height: number },
+  side: FrameStackSide,
+  align: 'single' | 'left' | 'center' | 'right',
+  adjustOrigin: { x: number; y: number }
+): { x: number; y: number } {
+  const a = align === 'left' || align === 'right' ? align : 'center'
+  if (side === 'bottom' || side === 'top') {
+    if (a === 'left') return { x: anchorAdjust.x, y: adjustOrigin.y }
+    if (a === 'right') {
+      return { x: anchorAdjust.x + anchorAdjust.width - mateAdjustSize.width, y: adjustOrigin.y }
+    }
+    return adjustOrigin
+  }
+  if (a === 'left') return { x: adjustOrigin.x, y: anchorAdjust.y }
+  if (a === 'right') {
+    return {
+      x: adjustOrigin.x,
+      y: anchorAdjust.y + anchorAdjust.height - mateAdjustSize.height,
+    }
+  }
+  return adjustOrigin
+}
+
+/** One frame’s new RF position + abs flow after a toolbar snap-together. */
+export type PackedFrame = {
+  id: string
+  messageId?: string // messages.id for persist
+  position: { x: number; y: number } // RF node.position (parent-relative)
+  abs: { x: number; y: number } // Page-absolute for metadata.position
+  stack: { side: FrameStackSide; groupId: string; index: number; anchor?: boolean } | null // sideStacks link (no lock)
+}
+
+/**
+ * Pull selected frames flush along Thread layout direction (works even when far apart).
+ * First in spatial order stays put; others park with stackExpandLayout + align.
+ * Links `sideStacks` so the stack line appears — does not lock (`frameLockGroupId` / `snapLockGroupId`).
+ */
+export function packSelectedFramesTogether(
+  selected: Node[],
+  live: Node[],
+  direction: 'down' | 'up' | 'left' | 'right',
+  align: 'single' | 'left' | 'center' | 'right',
+  zoom = 1
+): PackedFrame[] {
+  if (selected.length < 2) return []
+  const side = PACK_SIDE[direction]
+  const sorted = [...selected].sort((a, b) => {
+    const aa = absFlowPosition(a, live)
+    const bb = absFlowPosition(b, live)
+    if (direction === 'down') return aa.y - bb.y || aa.x - bb.x // Topmost stays
+    if (direction === 'up') return bb.y - aa.y || aa.x - bb.x // Bottommost stays
+    if (direction === 'left') return bb.x - aa.x || aa.y - bb.y // Rightmost stays
+    return aa.x - bb.x || aa.y - bb.y // Leftmost stays
+  })
+  const host = sorted[0]
+  const hostAdjust = frameAdjustFlowBox(host, live, zoom)
+  let frontAdjust = hostAdjust
+  const hostMsgId = host.data?.promptMessage?.id as string | undefined
+  const groupId = hostMsgId ? sideStackGroupId(hostMsgId, side) : null // Stable group from the parked host
+  const out: PackedFrame[] = []
+  for (let i = 0; i < sorted.length; i++) {
+    const n = sorted[i]
+    let abs =
+      i === 0
+        ? absFlowPosition(host, live)
+        : rfAbsFromAdjustOrigin(
+            packCrossAlignAdjust(
+              hostAdjust,
+              frameAdjustFlowSize(n, zoom),
+              side,
+              align,
+              stackExpandLayout(frontAdjust, side, frameAdjustFlowSize(n, zoom), 0)
+            ),
+            n,
+            zoom
+          )
+    const messageId = n.data?.promptMessage?.id as string | undefined
+    out.push({
+      id: n.id,
+      messageId,
+      position: absToNodePosition(n, abs, live),
+      abs,
+      stack: groupId
+        ? { side, groupId, index: i, ...(i === 0 ? { anchor: true } : {}) } // Host anchors; mates sit further out
+        : null,
+    })
+    frontAdjust = frameAdjustFlowBoxAt(n, abs, zoom) // Next mate parks against this adjust box
+  }
+  return out
+}
+
+/** Stamp `sideStacks` on the selection without moving anyone (stack/collapse must not pack). */
+export function linkSelectedFramesInPlace(
+  selected: Node[],
+  live: Node[],
+  direction: 'down' | 'up' | 'left' | 'right'
+): PackedFrame[] {
+  if (selected.length < 2) return [] // Need a host + at least one mate
+  const side = PACK_SIDE[direction] // Which adjust-box edge the group lives on
+  const sorted = [...selected].sort((a, b) => {
+    const aa = absFlowPosition(a, live)
+    const bb = absFlowPosition(b, live)
+    if (direction === 'down') return aa.y - bb.y || aa.x - bb.x // Same host pick as pack
+    if (direction === 'up') return bb.y - aa.y || aa.x - bb.x
+    if (direction === 'left') return bb.x - aa.x || aa.y - bb.y
+    return aa.x - bb.x || aa.y - bb.y
+  })
+  const host = sorted[0] // Visible keeper after collapse
+  const hostMsgId = host.data?.promptMessage?.id as string | undefined
+  const groupId = hostMsgId ? sideStackGroupId(hostMsgId, side) : null // Stable group from the host message
+  return sorted.map((n, i) => {
+    const abs = absFlowPosition(n, live) // Leave the frame where it is
+    return {
+      id: n.id,
+      messageId: n.data?.promptMessage?.id as string | undefined,
+      position: n.position, // RF pos unchanged
+      abs,
+      stack: groupId
+        ? { side, groupId, index: i, ...(i === 0 ? { anchor: true } : {}) } // Host anchors; mates keep their board spots
+        : null,
+    }
+  })
+}
+
+/** Overlay in-place stack links onto a live node list (no position writes). */
+function applyLinkToNodes(live: Node[], packed: PackedFrame[]): Node[] {
+  const byId = new Map(packed.map((p) => [p.id, p])) // Look up link stamps
+  return live.map((n) => {
+    const p = byId.get(n.id)
+    if (!p?.stack) return n // Not in this link pass
+    const pm = n.data?.promptMessage
+    if (!pm) return n
+    const metadata = setSideStackEntry(
+      { ...(pm.metadata || {}) } as Record<string, unknown>,
+      p.stack.side,
+      {
+        groupId: p.stack.groupId,
+        index: p.stack.index,
+        ...(p.stack.anchor ? { anchor: true } : {}),
+        expanded: true, // Still visible until collapse hides mates
+      }
+    )
+    return {
+      ...n,
+      data: { ...n.data, promptMessage: { ...pm, metadata } },
+    }
+  })
+}
+
+/** Shared sideStacks group id across the selection, or null if they are not linked. */
+export function sharedStackGroupId(nodes: Node[]): string | null {
+  if (nodes.length === 0) return null
+  const sets = nodes.map((n) => new Set(groupIdsOf(nodeMeta(n))))
+  if (sets.some((s) => s.size === 0)) return null
+  const common = [...sets[0]].filter((id) => sets.every((s) => s.has(id)))
+  return common[0] ?? null
+}
+
+/** All frames in a side-stack group. */
+export function collectStackGroupNodes(live: Node[], groupId: string): Node[] {
+  return live.filter((n) => n.type === 'chatPanel' && !!findStackEntry(nodeMeta(n), groupId))
+}
+
+/** True when the selection’s shared group has a hidden / collapsed mate. */
+export function selectionIsStacked(selected: Node[], live: Node[]): boolean {
+  const gid = sharedStackGroupId(selected)
+  if (!gid) return false
+  return collectStackGroupNodes(live, gid).some((n) => {
+    if (n.hidden === true) return true
+    const found = findStackEntry(nodeMeta(n), gid)
+    if (!found) return false
+    if (found.entry.anchor === true || found.entry.index === 0) return false
+    return found.entry.expanded !== true
+  })
+}
+
+/** Spatial first frame (same order as packSelectedFramesTogether). */
+function spatialHost(
+  nodes: Node[],
+  live: Node[],
+  direction: 'down' | 'up' | 'left' | 'right'
+): Node {
+  const sorted = [...nodes].sort((a, b) => {
+    const aa = absFlowPosition(a, live)
+    const bb = absFlowPosition(b, live)
+    if (direction === 'down') return aa.y - bb.y || aa.x - bb.x
+    if (direction === 'up') return bb.y - aa.y || aa.x - bb.x
+    if (direction === 'left') return bb.x - aa.x || aa.y - bb.y
+    return aa.x - bb.x || aa.y - bb.y
+  })
+  return sorted[0]
+}
+
+/** RF + persist patch for a toolbar magnet / stack toggle. */
+export type StackTogglePatch = {
+  id: string
+  messageId?: string
+  position?: { x: number; y: number }
+  abs?: { x: number; y: number }
+  hidden: boolean
+  metadata: Record<string, unknown>
+}
+
+/** Delink the selection’s shared stack (unhide; drop sideStacks for that group). */
+export function unlinkSelectedStack(selected: Node[], live: Node[]): StackTogglePatch[] {
+  const gid = sharedStackGroupId(selected)
+  if (!gid) return []
+  return collectStackGroupNodes(live, gid).map((n) => {
+    let metadata = stripGroupFromMeta(nodeMeta(n), gid)
+    metadata = setParentStackHidden(metadata, null)
+    return {
+      id: n.id,
+      messageId: n.data?.promptMessage?.id as string | undefined,
+      hidden: false,
+      metadata,
+    }
+  })
+}
+
+/** Absolute flow XY of `n` from `posLive` (layout at collapse — unstack restores this exact spot). */
+function restoreAbsOf(n: Node, posLive: Node[]): { x: number; y: number } {
+  const src = posLive.find((x) => x.id === n.id) ?? n // Prefer the pre-collapse copy
+  return absFlowPosition(src, posLive) // Live RF abs at collapse (chrome-on or off — expand unhides in place)
+}
+
+/** Hide non-host mates (link in place if needed — do not pack/snap). */
+export function collapseSelectedStack(
+  selected: Node[],
+  live: Node[],
+  direction: 'down' | 'up' | 'left' | 'right',
+  restoreFrom?: Node[] // Pre-collapse nodes so unstack can restore that arrangement
+): StackTogglePatch[] {
+  let working = live
+  let sel = selected
+  let gid = sharedStackGroupId(sel)
+  if (!gid) {
+    const linked = linkSelectedFramesInPlace(sel, working, direction) // Group without moving
+    if (linked.length === 0) return []
+    working = applyLinkToNodes(working, linked)
+    const ids = new Set(sel.map((s) => s.id))
+    sel = working.filter((n) => ids.has(n.id))
+    gid = sharedStackGroupId(sel)
+    if (!gid) return []
+  }
+  const group = collectStackGroupNodes(working, gid)
+  const visibleOrSelected = group.filter(
+    (n) => sel.some((s) => s.id === n.id) || n.hidden !== true
+  )
+  const keeper = spatialHost(visibleOrSelected.length > 0 ? visibleOrSelected : group, working, direction)
+  const posLive = restoreFrom ?? working // Absolute XY from the layout the user sees now
+  const hideNested = collectNestedSatelliteIds(
+    working,
+    group.filter((n) => n.id !== keeper.id).map((n) => n.id),
+    [gid]
+  )
+  const hideIds = new Set([...group.filter((n) => n.id !== keeper.id).map((n) => n.id), ...hideNested])
+  const out: StackTogglePatch[] = []
+  for (const n of working) {
+    if (n.type !== 'chatPanel') continue
+    if (!hideIds.has(n.id) && n.id !== keeper.id && !findStackEntry(nodeMeta(n), gid)) continue
+    let metadata = { ...nodeMeta(n) }
+    const restoreAbs = restoreAbsOf(n, posLive) // Exact board spot for later unstack
+    if (findStackEntry(metadata, gid)) {
+      metadata = patchGroupEntry(metadata, gid, {
+        expanded: n.id === keeper.id,
+        ...(n.id === keeper.id ? { anchor: true } : {}),
+        restoreAbs, // Absolute — not relative to the host
+      })
+      metadata = setGroupLocked(metadata, gid, true) // Hidden mates drag with the host
+    }
+    if (hideIds.has(n.id)) {
+      metadata = setParentStackHidden(metadata, gid)
+      if (!findStackEntry(metadata, gid)) {
+        metadata = { ...metadata, parentStackRestoreAbs: restoreAbs } // Nested satellite: same restore on unstack
+      }
+      out.push({
+        id: n.id,
+        messageId: n.data?.promptMessage?.id as string | undefined,
+        hidden: true,
+        metadata,
+      })
+    } else if (n.id === keeper.id || findStackEntry(metadata, gid)) {
+      metadata = setParentStackHidden(metadata, null)
+      out.push({
+        id: n.id,
+        messageId: n.data?.promptMessage?.id as string | undefined,
+        hidden: false,
+        metadata,
+      })
+    }
+  }
+  return out
+}
+
+/** Reveal stacked mates where they already sit (unlock; keep the stack line). */
+export function expandSelectedStack(
+  selected: Node[],
+  live: Node[],
+  direction: 'down' | 'up' | 'left' | 'right'
+): StackTogglePatch[] {
+  const gid = sharedStackGroupId(selected)
+  if (!gid) return []
+  const group = collectStackGroupNodes(live, gid)
+  const keeper =
+    group.find((n) => {
+      const e = findStackEntry(nodeMeta(n), gid)?.entry // Collapse stamped the visible host
+      return e?.anchor === true || e?.index === 0
+    }) ?? spatialHost(group, live, direction)
+  const keeperAbs = absFlowPosition(keeper, live)
+  const out: StackTogglePatch[] = []
+  for (const n of group) {
+    const found = findStackEntry(nodeMeta(n), gid)
+    const entry = found?.entry
+    const current = absFlowPosition(n, live)
+    // Unhide in place by default — after collapse, chrome-off already left the fill XY
+    // on the node. Rewriting a chrome-time stamp double-shifts the frame.
+    const stamped = entry?.restoreAbs
+    const onKeeper =
+      n.id !== keeper.id &&
+      Math.hypot(current.x - keeperAbs.x, current.y - keeperAbs.y) < 2
+    const abs =
+      stamped && onKeeper
+        ? stamped // Parked on the host — put back to the stamped board XY
+        : entry?.restoreDelta && onKeeper
+          ? { x: keeperAbs.x + entry.restoreDelta.x, y: keeperAbs.y + entry.restoreDelta.y }
+          : current
+    const moved =
+      Math.abs(abs.x - current.x) > 0.5 || Math.abs(abs.y - current.y) > 0.5 // Only write RF when needed
+    let metadata = patchGroupEntry(nodeMeta(n), gid, { expanded: true })
+    metadata = setGroupLocked(metadata, gid, false) // Unstack: independently draggable, still linked
+    metadata = setParentStackHidden(metadata, null)
+    if (moved) metadata = { ...metadata, position: abs } // Persist only when we actually moved
+    out.push({
+      id: n.id,
+      messageId: n.data?.promptMessage?.id as string | undefined,
+      ...(moved ? { position: absToNodePosition(n, abs, live), abs } : {}),
+      hidden: false,
+      metadata,
+    })
+  }
+  const nested = collectNestedSatelliteIds(live, group.map((n) => n.id), [gid])
+  for (const id of nested) {
+    const n = live.find((x) => x.id === id)
+    if (!n) continue
+    const meta0 = nodeMeta(n)
+    const current = absFlowPosition(n, live)
+    const stamped = readXY(meta0.parentStackRestoreAbs)
+    const onKeeper = Math.hypot(current.x - keeperAbs.x, current.y - keeperAbs.y) < 2
+    const abs =
+      stamped && onKeeper
+        ? stamped
+        : (() => {
+            const d = readXY(meta0.parentStackRestoreDelta)
+            return d && onKeeper ? { x: keeperAbs.x + d.x, y: keeperAbs.y + d.y } : undefined
+          })()
+    let metadata = setParentStackHidden(meta0, null)
+    if (metadata.parentStackRestoreAbs !== undefined || metadata.parentStackRestoreDelta !== undefined) {
+      const next = { ...metadata }
+      delete next.parentStackRestoreAbs
+      delete next.parentStackRestoreDelta
+      metadata = next
+    }
+    const moved =
+      abs != null && (Math.abs(abs.x - current.x) > 0.5 || Math.abs(abs.y - current.y) > 0.5)
+    if (moved && abs) metadata = { ...metadata, position: abs }
+    out.push({
+      id: n.id,
+      messageId: n.data?.promptMessage?.id as string | undefined,
+      hidden: false,
+      metadata,
+      ...(moved && abs ? { position: absToNodePosition(n, abs, live), abs } : {}),
+    })
+  }
+  return out
 }
 
 /** True when this chatPanel is a collapsed (hidden) stack mate on every tree it belongs to. */
@@ -133,15 +569,14 @@ function groupExtentOnSide(
   groupId: string,
   side: FrameStackSide,
   live: Node[],
-  fallback: FlowBox
+  fallback: FlowBox,
+  zoom: number
 ): FlowBox {
   const boxes: FlowBox[] = []
   for (const n of live) {
     if (n.type !== 'chatPanel' || n.hidden) continue
     if (!findStackEntry(nodeMeta(n), groupId)) continue
-    const abs = absFlowPosition(n, live)
-    const size = nodeFlowSize(n)
-    boxes.push({ x: abs.x, y: abs.y, width: size.width, height: size.height })
+    boxes.push(frameAdjustFlowBox(n, live, zoom))
   }
   if (boxes.length === 0) return fallback
   if (side === 'right') {
@@ -158,22 +593,24 @@ function groupExtentOnSide(
 
 /**
  * Best edge-snap of `dragged` onto another chatPanel (host).
- * Prefers small edge gap + strong overlap along the shared edge.
+ * Prefers small edge gap + strong overlap along the shared edge; `prefer` (the edge already armed
+ * this drag) wins near-ties so the frame keeps one lane instead of hopping between hosts.
  * Parks past the outermost mate on that **side’s** tree only (other sides untouched).
  */
 export function findFrameEdgeSnap(
   dragged: Node,
   live: Node[],
   armPx = SNAP_ARM_PX,
-  excludeHostSides?: Set<string> // `${hostId}:${side}` — e.g. just-left edge after unstack
+  excludeHostSides?: Set<string>, // `${hostId}:${side}` — e.g. just-left edge after unstack
+  zoom = 1,
+  prefer?: { targetId: string; side: FrameStackSide } | null // Sticky edge from the previous tick
 ): SnapCandidate | null {
   if (dragged.type !== 'chatPanel') return null
   const dragMeta = nodeMeta(dragged)
   const dragGroups = new Set(groupIdsOf(dragMeta))
 
-  const dAbs = absFlowPosition(dragged, live)
-  const dSize = nodeFlowSize(dragged)
-  const dBox: FlowBox = { x: dAbs.x, y: dAbs.y, width: dSize.width, height: dSize.height }
+  const dBox = frameAdjustFlowBox(dragged, live, zoom)
+  const dAdjustSize = frameAdjustFlowSize(dragged, zoom)
 
   let best: SnapCandidate | null = null
   let bestScore = Infinity
@@ -184,9 +621,7 @@ export function findFrameEdgeSnap(
     if (host.hidden) continue
     const hMeta = nodeMeta(host)
 
-    const hAbs = absFlowPosition(host, live)
-    const hSize = nodeFlowSize(host)
-    const hBox: FlowBox = { x: hAbs.x, y: hAbs.y, width: hSize.width, height: hSize.height }
+    const hBox = frameAdjustFlowBox(host, live, zoom)
     const hostStacks = readSideStacks(hMeta)
 
     const sides: FrameStackSide[] = ['right', 'left', 'bottom', 'top']
@@ -203,42 +638,31 @@ export function findFrameEdgeSnap(
 
       // Park past the whole stack on this side when the target already has that side tree
       const parkBox = sideGroup
-        ? groupExtentOnSide(sideGroup, side, live, hBox)
+        ? groupExtentOnSide(sideGroup, side, live, hBox, zoom)
         : hBox
 
-      let snappedAbs = { x: dBox.x, y: dBox.y }
+      // One lane per side: magnet the perpendicular axis only, keep the user’s slide along the edge
+      let snappedAdjust = { x: dBox.x, y: dBox.y }
       if (side === 'right') {
         gap = dBox.x - (hBox.x + hBox.width)
         overlap = overlapLen(dBox.y, dBox.y + dBox.height, hBox.y, hBox.y + hBox.height)
         parallel = Math.min(dBox.height, hBox.height)
-        snappedAbs = {
-          x: parkBox.x + parkBox.width + STACK_LINE_GAP,
-          y: dBox.y,
-        }
+        snappedAdjust = { x: parkBox.x + parkBox.width + STACK_LINE_GAP, y: dBox.y }
       } else if (side === 'left') {
         gap = hBox.x - (dBox.x + dBox.width)
         overlap = overlapLen(dBox.y, dBox.y + dBox.height, hBox.y, hBox.y + hBox.height)
         parallel = Math.min(dBox.height, hBox.height)
-        snappedAbs = {
-          x: parkBox.x - dBox.width - STACK_LINE_GAP,
-          y: dBox.y,
-        }
+        snappedAdjust = { x: parkBox.x - dAdjustSize.width - STACK_LINE_GAP, y: dBox.y }
       } else if (side === 'bottom') {
         gap = dBox.y - (hBox.y + hBox.height)
         overlap = overlapLen(dBox.x, dBox.x + dBox.width, hBox.x, hBox.x + hBox.width)
         parallel = Math.min(dBox.width, hBox.width)
-        snappedAbs = {
-          x: dBox.x,
-          y: parkBox.y + parkBox.height + STACK_LINE_GAP,
-        }
+        snappedAdjust = { x: dBox.x, y: parkBox.y + parkBox.height + STACK_LINE_GAP }
       } else {
         gap = hBox.y - (dBox.y + dBox.height)
         overlap = overlapLen(dBox.x, dBox.x + dBox.width, hBox.x, hBox.x + hBox.width)
         parallel = Math.min(dBox.width, hBox.width)
-        snappedAbs = {
-          x: dBox.x,
-          y: parkBox.y - dBox.height - STACK_LINE_GAP,
-        }
+        snappedAdjust = { x: dBox.x, y: parkBox.y - dAdjustSize.height - STACK_LINE_GAP }
       }
 
       // Gap is measured to the hovered frame (arm), but park uses stack extent
@@ -252,14 +676,18 @@ export function findFrameEdgeSnap(
       if (gap < -2 || gap > armPx) continue
       if (parallel <= 0 || overlap / parallel < SNAP_OVERLAP_MIN) continue
 
-      const score = Math.abs(gap - STACK_LINE_GAP) + (1 - overlap / parallel) * 8
+      const sticky = prefer && prefer.targetId === host.id && prefer.side === side
+      const score =
+        Math.abs(gap - STACK_LINE_GAP) +
+        (1 - overlap / parallel) * 8 -
+        (sticky ? SNAP_STICKY_BONUS : 0)
       if (score >= bestScore) continue
       bestScore = score
       best = {
         targetId: host.id,
         side,
         gap: Math.abs(gap),
-        snappedAbs,
+        snappedAbs: rfAbsFromAdjustOrigin(snappedAdjust, dragged, zoom),
         hostAbs: hBox,
       }
     }
@@ -290,7 +718,8 @@ function absToNodePosition(
 export function computeSnapMateRelayout(
   frameId: string,
   live: Node[],
-  frameSizeOverride?: { width: number; height: number }
+  frameSizeOverride?: { width: number; height: number },
+  zoom = 1
 ): Map<string, { x: number; y: number }> {
   const self = live.find((n) => n.id === frameId)
   if (!self || self.type !== 'chatPanel') return new Map()
@@ -353,25 +782,20 @@ export function computeSnapMateRelayout(
 
       const anchor = members[0]
       const aAbs = absPosOf(anchor, nodePosById)
-      const aSize = sizeOf(anchor)
-      const frontBox = {
-        x: aAbs.x,
-        y: aAbs.y,
-        width: aSize.width,
-        height: aSize.height,
-      }
+
       // Keep anchor put — only repark higher-index mates (and record abs for nesting)
       absById.set(anchor.id, aAbs)
 
       const mates = members.slice(1)
-      const sizes = mates.map((m) => sizeOf(m))
       mates.forEach((mate, order) => {
-        const abs = stackExpandLayout(
-          frontBox,
+        const abs = stackExpandRfAbs(
+          anchor,
+          live.map((n) => (n.id === anchor.id ? { ...n, position: absToNodePosition(anchor, aAbs, live) } : n)),
           side,
-          sizes[order],
+          mate,
           order,
-          sizes.slice(0, order)
+          mates.slice(0, order),
+          zoom
         )
         absById.set(mate.id, abs)
         nodePosById.set(mate.id, absToNodePosition(mate, abs, live))
@@ -389,9 +813,10 @@ export function computeSnapMateRelayout(
 export function applySnapMateRelayout(
   nodes: Node[],
   frameId: string,
-  frameSizeOverride?: { width: number; height: number }
+  frameSizeOverride?: { width: number; height: number },
+  zoom = 1
 ): Node[] {
-  const posById = computeSnapMateRelayout(frameId, nodes, frameSizeOverride)
+  const posById = computeSnapMateRelayout(frameId, nodes, frameSizeOverride, zoom)
   if (posById.size === 0) return nodes
   let changed = false
   const next = nodes.map((n) => {
@@ -423,9 +848,10 @@ export function applySnapMateRelayout(
 export async function persistSnapMateRelayout(
   live: Node[],
   frameId: string,
-  frameSizeOverride?: { width: number; height: number }
+  frameSizeOverride?: { width: number; height: number },
+  zoom = 1
 ): Promise<void> {
-  const posById = computeSnapMateRelayout(frameId, live, frameSizeOverride)
+  const posById = computeSnapMateRelayout(frameId, live, frameSizeOverride, zoom)
   if (posById.size === 0) return
   const supabase = createClient()
   for (const [id, pos] of posById) {
@@ -475,6 +901,7 @@ export function useFrameNestStackDrag({
   isLocked,
   takeSnapshot,
 }: UseFrameNestStackDragOpts) {
+  const zoom = useStore((s) => s.transform[2] ?? 1)
   const [dropUi, setDropUi] = useState<FrameNestStackUi | null>(null) // Snap preview chrome
   const dropUiRef = useRef<FrameNestStackUi | null>(null)
   dropUiRef.current = dropUi
@@ -695,6 +1122,108 @@ export function useFrameNestStackDrag({
     [clearUi, getNodes, setNodes, takeSnapshot]
   )
 
+  const dragSnapRafRef = useRef<number | null>(null) // Coalesce edge-snap scans to one per frame
+  const pendingSnapDragRef = useRef<{
+    event: { clientX: number; clientY: number } | undefined
+    node: Node
+  } | null>(null)
+
+  const runSnapDragTick = useCallback(
+    (_event: { clientX: number; clientY: number } | undefined, node: Node) => {
+      const live = getNodes()
+      const liveNode = live.find((n) => n.id === node.id) || node
+      const dragNode = { ...liveNode, position: node.position }
+      const meta = nodeMeta(liveNode)
+
+      const snapDrag =
+        unstackedThisDragRef.current
+          ? (() => {
+              const m = { ...nodeMeta(dragNode) }
+              delete m.sideStacks
+              delete m.stackGroupId
+              delete m.stackSide
+              delete m.stackIndex
+              delete m.stackAnchor
+              delete m.stackExpanded
+              delete m.parentStackHidden
+              return {
+                ...dragNode,
+                data: {
+                  ...dragNode.data,
+                  promptMessage: dragNode.data?.promptMessage
+                    ? { ...dragNode.data.promptMessage, metadata: m }
+                    : dragNode.data?.promptMessage,
+                },
+              }
+            })()
+          : dragNode
+      const armed = snapRef.current
+      const snap = findFrameEdgeSnap(
+        snapDrag,
+        live,
+        SNAP_ARM_PX,
+        unstackedThisDragRef.current ? excludeSnapSidesRef.current : undefined,
+        zoom,
+        armed ? { targetId: armed.targetId, side: armed.side } : null
+      )
+      if (!snap) {
+        if (dropUiRef.current) clearUi()
+        return
+      }
+
+      snapRef.current = snap
+      const hostNode = live.find((n) => n.id === snap.targetId)
+      const adjustRect = frameAdjustScreenRect(snap.targetId, hostNode, zoom)
+      const targetRect = adjustRect
+        ? { top: adjustRect.top, left: adjustRect.left, width: adjustRect.width, height: adjustRect.height }
+        : {
+            top: 0,
+            left: 0,
+            width: snap.hostAbs.width,
+            height: snap.hostAbs.height,
+          }
+      const parkedAdjust = frameAdjustFlowBoxAt(dragNode, snap.snappedAbs, zoom)
+      const sourceRect = {
+        top: targetRect.top + (parkedAdjust.y - snap.hostAbs.y) * zoom,
+        left: targetRect.left + (parkedAdjust.x - snap.hostAbs.x) * zoom,
+        width: parkedAdjust.width * zoom,
+        height: parkedAdjust.height * zoom,
+      }
+
+      setDropUi({
+        targetId: snap.targetId,
+        mode: 'snap',
+        stackSide: snap.side,
+        targetRect,
+        sourceRect,
+        zoom,
+      })
+
+      const nextPos = absToNodePosition(dragNode, snap.snappedAbs, live)
+      const cur = dragNode.position
+      if (Math.abs(cur.x - nextPos.x) > 0.5 || Math.abs(cur.y - nextPos.y) > 0.5) {
+        setNodes((nds) =>
+          nds.map((n) => (n.id === dragNode.id ? { ...n, position: nextPos } : n))
+        )
+      }
+    },
+    [clearUi, getNodes, setNodes, zoom]
+  )
+
+  const scheduleSnapDragTick = useCallback(
+    (event: { clientX: number; clientY: number } | undefined, node: Node) => {
+      pendingSnapDragRef.current = { event, node }
+      if (dragSnapRafRef.current != null) return
+      dragSnapRafRef.current = requestAnimationFrame(() => {
+        dragSnapRafRef.current = null
+        const pending = pendingSnapDragRef.current
+        if (!pending) return
+        runSnapDragTick(pending.event, pending.node)
+      })
+    },
+    [runSnapDragTick]
+  )
+
   const onNodeDrag = useCallback(
     (_event: { clientX: number; clientY: number } | undefined, node: Node) => {
       if (isLocked || node.type !== 'chatPanel') {
@@ -748,76 +1277,18 @@ export function useFrameNestStackDrag({
         }
       }
 
-      // After unstack: arm any edge except the ones we just left (other side / other frame OK).
-      // Strip stale stack membership on the drag candidate until RF setNodes from unstack flushes —
-      // otherwise dragGroups.has(sideGroup) can still skip the host edge we are free to rejoin
-      // under a fresh group / other side.
-      const snapDrag =
-        unstackedThisDragRef.current
-          ? (() => {
-              const m = { ...nodeMeta(dragNode) }
-              delete m.sideStacks
-              delete m.stackGroupId
-              delete m.stackSide
-              delete m.stackIndex
-              delete m.stackAnchor
-              delete m.stackExpanded
-              delete m.parentStackHidden
-              return {
-                ...dragNode,
-                data: {
-                  ...dragNode.data,
-                  promptMessage: dragNode.data?.promptMessage
-                    ? { ...dragNode.data.promptMessage, metadata: m }
-                    : dragNode.data?.promptMessage,
-                },
-              }
-            })()
-          : dragNode
-      const snap = findFrameEdgeSnap(
-        snapDrag,
-        live,
-        SNAP_ARM_PX,
-        unstackedThisDragRef.current ? excludeSnapSidesRef.current : undefined
-      )
-      if (!snap) {
-        if (dropUiRef.current) clearUi()
-        return
-      }
-
-      snapRef.current = snap
-      const rect = frameScreenRect(snap.targetId)
-      const targetRect = rect
-        ? { top: rect.top, left: rect.left, width: rect.width, height: rect.height }
-        : {
-            top: 0,
-            left: 0,
-            width: snap.hostAbs.width,
-            height: snap.hostAbs.height,
-          }
-
-      setDropUi({
-        targetId: snap.targetId,
-        mode: 'snap',
-        stackSide: snap.side,
-        targetRect,
-      })
-
-      if (snap.gap <= SNAP_MAGNET_PX) {
-        const nextPos = absToNodePosition(dragNode, snap.snappedAbs, live)
-        const cur = dragNode.position
-        if (Math.abs(cur.x - nextPos.x) > 0.5 || Math.abs(cur.y - nextPos.y) > 0.5) {
-          setNodes((nds) =>
-            nds.map((n) => (n.id === dragNode.id ? { ...n, position: nextPos } : n))
-          )
-        }
-      }
+      scheduleSnapDragTick(_event, node)
     },
-    [clearUi, getNodes, isLocked, setNodes, unstackNode]
+    [clearUi, getNodes, isLocked, scheduleSnapDragTick, setNodes, unstackNode]
   )
 
   const onNodeDragStop = useCallback(
     async (_event: unknown, node: Node) => {
+      if (dragSnapRafRef.current != null) {
+        cancelAnimationFrame(dragSnapRafRef.current)
+        dragSnapRafRef.current = null
+      }
+      pendingSnapDragRef.current = null
       const snap = snapRef.current
       const lockSession = lockDragRef.current
       const didUnstack = unstackedThisDragRef.current

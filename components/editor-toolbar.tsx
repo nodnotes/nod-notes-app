@@ -5,7 +5,10 @@
 import { Editor } from '@tiptap/react'
 import { Button } from './ui/button'
 import { useReactFlowContext } from './react-flow-context'
-import { threadAlgorithmFromStyle, type ThreadStylePref } from '@/components/threads' // Smooth/Sharp/Linear
+import {
+  threadAlgorithmFromStyle,
+  type ThreadStylePref,
+} from '@/components/threads' // Board default Smooth / Sharp / Linear + path algorithm
 import { usePreviewFocus } from '@/lib/preview-focus-context' // Nested preview View-style targeting
 import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { createPortal } from 'react-dom' // Phone: mode tools inside the pill; undo/redo to its right
@@ -47,79 +50,244 @@ import {
   Redo2,
   Paintbrush,
   Lock,
+  Unlock,
   PaintBucket,
   LassoSelect,
   Eraser,
   GripVertical,
   GripHorizontal,
-  Sparkles,
-  Circle,
+  Check,
   Grid3x3,
-  Boxes, // Layout Smart Align — multi-box glyph
   Presentation, // View presentation mode
   Scan, // View capture — 4 disconnected rounded corners
-  Table,
   Anchor,
   ListFilter,
   ArrowUpDown,
   Zap,
   Search,
+  RefreshCw, // Actions-bar Turn into (same glyph as ⋮⋮ block menu)
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
 import { useQueryClient } from '@tanstack/react-query'
 import { useTheme } from './theme-provider'
+import { TidyUpIcon } from './tidy-up-icon' // Layout bar — 2×2 rounded squares
 import { ShareBoardMenu } from './share-board-menu' // Share dropdown: Notion people + role links
+import { CollabPresenceAvatars } from './collab/presence-avatars' // Who's on this board
 import { BoardTopBarShare } from './board-top-bar-share' // Copy link / favorite / More (board actions + Connections)
 import {
   NotionConnectProvider,
   NotionTopBarPin,
-} from './notion-connect-button' // Notion pin left of Share + More → Connections host
+  ConnectionSyncTopBarIndicator,
+} from './notion-connect-button' // Sync glyph + Notion pin left of Share
 import { AutomationsMenu } from './automations-menu' // Actions-bar Automations list popover
+import { BoardFilterSortTriggers } from './board-filter-sort-menu' // Filter/Sort toggle the under-bar strip
+import { setBoardFilterSortOpen, toggleBoardFilterSort } from '@/lib/board-filter-sort-ui' // Strip open/focus
 import { CapturesMenu } from './captures-menu' // View-bar Capture list popover
 import { ToolbarTitle } from './toolbar-title' // Animated icon-adjacent titles
+import { LayoutAlignGlyph, LayoutForkMenuItems, type LayoutForkAlign } from './layout-fork-icon' // Layout dropdown: forked arrows + align
+import {
+  packSelectedFramesTogether,
+  sharedStackGroupId,
+  selectionIsStacked,
+  unlinkSelectedStack,
+  collapseSelectedStack,
+  expandSelectedStack,
+  type StackTogglePatch,
+} from '@/components/use-frame-nest-stack-drag' // Magnet pack + stack/unstack
+import { setSideStackEntry } from '@/lib/frame-side-stacks' // Stamp stack line link without lock
 import { PresentationsMenu } from './presentations-menu' // View-bar Presentation list popover
 import { useBoardAccess } from '@/lib/share/board-access-context' // Owner-only share menu
 import { useSidebarContext } from './sidebar-context' // Wait for chat column restore before measuring titles
 import { usePhoneModeMenu } from './phone-mode-menu-context' // Phone pill drill-in portal host
-import { useAiEditSession } from '@/lib/ai/edit-session' // Top-bar AI content mask toggle
-import { htmlHasAiOrigin } from '@/lib/ai/wrap-ai-html' // Detect AI-origin spans in frame HTML
+import { AiOriginTopBarToggle } from './ai-origin-top-bar-toggle' // Sparkles pin left of Share
+import { useAiEditSession } from '@/lib/ai/edit-session' // AI sparkles width in shareCompact measure
+import {
+  getAiBlockSelection,
+  subscribeAiSelection,
+} from '@/lib/ai/selection-bridge' // Armed ⋮⋮ block → enable Turn into
 import { LegoBrickIcon } from './lego-brick-icon' // Frame-group lock: two bricks, top one stud back
 import { TOOLBAR_MENU_PLACEMENT } from '@/lib/menu-placement' // Actions-style: under the trigger, never over the board path
+import { boardTitleOrDefault } from '@/lib/board-title' // Empty conversation names show New board
+import {
+  TurnIntoMenuItems,
+  applyToolbarTurnInto,
+  readToolbarBlockType,
+} from '@/components/turn-into-menu' // Actions-bar Turn into (Format / Property)
+import type { BlockTypeId, BoardInTarget } from '@/components/block-actions-menu'
+import {
+  MIN_TIP_DIAMETER_PX,
+  MAX_TIP_DIAMETER_PX,
+} from '@/components/freehand/path' // Tip thickness bar range
+import { PenColorColumn } from '@/components/freehand/pen-color-column' // Editable ink row + frame-style picker
 
 interface EditorToolbarProps {
   editor: Editor | null
   conversationId?: string
 }
 
-type DrawInk = 'black' | 'blue' | 'green' | 'red' // Freehand / highlighter ink ids (same four swatches as the old color row)
+/** Thumb diameter (h-3/w-3) — travel pads by half so the dot stays inside the track. */
+const TIP_THUMB_PX = 12
 
-const DRAW_INK: { id: DrawInk; label: string; swatch: string }[] = [ // Swatch class paints the Circle in each tool’s color dropdown
-  { id: 'black', label: 'Black', swatch: 'fill-black text-black' },
-  { id: 'blue', label: 'Blue', swatch: 'fill-blue-600 text-blue-600' },
-  { id: 'green', label: 'Green', swatch: 'fill-green-600 text-green-600' },
-  { id: 'red', label: 'Red', swatch: 'fill-red-600 text-red-600' },
-]
+/** Vertical tip-size scrub for Draw pencil / eraser menus (top = thick, bottom = thin). */
+function TipThicknessBar({
+  value,
+  onChange,
+  label = 'Tip size',
+  fill = false,
+}: {
+  value: number // Current tip diameter (screen px when locked; flow when unlocked)
+  onChange: (size: number) => void // Live scrub
+  label?: string // aria / title
+  fill?: boolean // Take height from the flex row (menu sized by the ink columns) instead of a fixed bar
+}) {
+  const trackRef = useRef<HTMLDivElement>(null) // Bar geometry for click-to-place
+  const thumbR = TIP_THUMB_PX / 2 // Half-thumb pad so min/max sit fully inside the track
+
+  const sizeFromClientY = (clientY: number) => {
+    const track = trackRef.current
+    if (!track) return value
+    const r = track.getBoundingClientRect()
+    const usable = Math.max(1, r.height - TIP_THUMB_PX) // Match thumb travel (not full track height)
+    const t = Math.min(1, Math.max(0, (clientY - (r.top + thumbR)) / usable)) // 0 at top pad
+    const raw = MAX_TIP_DIAMETER_PX - t * (MAX_TIP_DIAMETER_PX - MIN_TIP_DIAMETER_PX) // Up = thicker
+    return Math.round(raw)
+  }
+
+  const handleTrackPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault() // Don’t start a text-select on the bar
+    e.stopPropagation() // Keep the dropdown open while scrubbing
+    onChange(sizeFromClientY(e.clientY)) // Jump thumb to press
+    e.currentTarget.setPointerCapture(e.pointerId) // Drag off the thumb still updates
+  }
+
+  const handleTrackPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+    onChange(sizeFromClientY(e.clientY))
+  }
+
+  const thumbT =
+    (MAX_TIP_DIAMETER_PX - value) / (MAX_TIP_DIAMETER_PX - MIN_TIP_DIAMETER_PX) // 0 = thick top, 1 = thin bottom
+
+  return (
+    <div
+      ref={trackRef}
+      className={cn(
+        'relative w-6 shrink-0 cursor-pointer select-none',
+        fill ? 'min-h-0 flex-1 overflow-hidden' : 'h-[8.5rem]', // fill → remaining space above lock; clip wedge so it can’t cover the lock
+      )}
+      onPointerDown={handleTrackPointerDown}
+      onPointerMove={handleTrackPointerMove}
+      onPointerUp={(e) => {
+        if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+          e.currentTarget.releasePointerCapture(e.pointerId)
+        }
+      }}
+      title={`${label} ${value}px`}
+      aria-label={label}
+      role="slider"
+      aria-valuemin={MIN_TIP_DIAMETER_PX}
+      aria-valuemax={MAX_TIP_DIAMETER_PX}
+      aria-valuenow={value}
+      aria-orientation="vertical"
+    >
+      {/* Rounded taper — thick top / thin bottom (SVG so ends aren’t flat clip-path corners) */}
+      <svg
+        className="pointer-events-none absolute inset-x-1.5 inset-y-1 text-gray-400 dark:text-gray-500"
+        viewBox="0 0 12 100"
+        preserveAspectRatio="none"
+        aria-hidden
+      >
+        <path
+          fill="currentColor"
+          d="M1.8 3.2C1.8 1.4 3.5.4 6 .4s4.2 1 4.2 2.8L7.1 96.5c0 1.5-.5 2.7-1.1 2.7s-1.1-1.2-1.1-2.7Z"
+        />
+      </svg>
+      <div
+        className="pointer-events-none absolute left-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-gray-700 bg-white dark:border-gray-200 dark:bg-gray-900"
+        style={{ top: `calc(${thumbR}px + (100% - ${TIP_THUMB_PX}px) * ${thumbT})` }} // Center stays inside the track
+        aria-hidden
+      />
+    </div>
+  )
+}
+
+/** Tip bar + lock under it — locked = fixed screen tip; unlocked = circle scales with zoom. */
+function TipThicknessColumn({
+  value,
+  onChange,
+  zoomLocked,
+  onZoomLockedChange,
+  label,
+  fill = false,
+}: {
+  value: number
+  onChange: (size: number) => void
+  zoomLocked: boolean
+  onZoomLockedChange: (locked: boolean) => void
+  label: string
+  fill?: boolean // Stretch to the sibling ink columns so the menu is no taller than the swatches
+}) {
+  return (
+    <div
+      className={cn(
+        'flex flex-col items-center gap-1.5',
+        fill && 'h-full min-h-0 self-stretch', // Match ink-column height; min-h-0 lets the bar shrink above the lock
+      )}
+    >
+      <TipThicknessBar value={value} onChange={onChange} label={label} fill={fill} />
+      <button
+        type="button"
+        className={cn(
+          'relative z-[1] flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800',
+          zoomLocked && 'bg-gray-100 dark:bg-gray-800',
+        )}
+        title={
+          zoomLocked
+            ? 'Unlock tip — keep size relative to zoom'
+            : 'Lock tip — keep screen size fixed'
+        }
+        aria-label={zoomLocked ? 'Unlock tip size from zoom' : 'Lock tip size to screen'}
+        aria-pressed={zoomLocked}
+        onPointerDown={(e) => e.preventDefault()} // Keep dropdown open on press
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          onZoomLockedChange(!zoomLocked)
+        }}
+      >
+        {zoomLocked ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
+      </button>
+    </div>
+  )
+}
+
+// Insert-space icons are <img> SVGs, so their "ink" is a CSS filter instead of currentColor
+const SPACE_ICON_FILTER_ON = 'brightness(0) saturate(100%) invert(0%) sepia(0%) saturate(0%) hue-rotate(0deg) brightness(0%) contrast(100%)' // Armed / hovered
+const SPACE_ICON_FILTER_OFF = 'brightness(0) saturate(100%) invert(38%) sepia(0%) saturate(0%) hue-rotate(0deg) brightness(98%) contrast(100%)' // Idle grey
+
+/** Paint an insert-space icon dark (armed or hovered) or grey (idle). */
+function paintSpaceIcon(icon: HTMLImageElement | null, on: boolean) {
+  if (!icon) return // Cluster is in the More menu / not mounted
+  icon.style.filter = on ? SPACE_ICON_FILTER_ON : SPACE_ICON_FILTER_OFF // Match the lucide tools' hover/active ink
+  icon.style.opacity = on ? '1' : '0.8' // Idle icons sit slightly back like the text tools
+}
+
+// Predicate return type (not plain boolean): true implies non-null, so call sites can chain
+// `editor.chain()` in the same branch without a redundant null check.
+function canEditorUndo(editor: Editor | null): editor is Editor {
+  if (!editor || editor.isDestroyed) return false
+  return editor.can().undo()
+}
+
+function canEditorRedo(editor: Editor | null): editor is Editor {
+  if (!editor || editor.isDestroyed) return false
+  return editor.can().redo()
+}
 
 /** Approx icon+title button width (text-sm) so overflow can hide titles before hiding tools. */
 function titledToolWidth(label: string) {
   return 16 + 6 + Math.ceil(label.length * 7.5) + 16 // icon + gap-1.5 + glyph estimate + px-2
-}
-
-/** Slash-free cluster immediately right of undo/redo — never fold into More; phone pill instead. */
-function leftmostGroupIds(mode: string): Set<string> {
-  if (mode === 'insert') return new Set(['smartAlign', 'arrows']) // Tidy up + Layout (no slash between)
-  if (mode === 'view') return new Set(['boardStyle']) // Board, then slash, then Capture/Present
-  if (mode === 'draw') return new Set(['drawGroup2', 'drawGroup3']) // Eraser + ink, then slash, then lasso/spaces
-  return new Set(['lock']) // Anchor + Snap frames, then slash, then Filter cluster
-}
-
-/** Icon-only width of each mode’s furthest-left slash-free cluster. Phone pill uses the widest. */
-const LEFTMOST_ICON_WIDTH: Record<string, number> = {
-  home: 64, // Anchor + Snap
-  insert: 40 + 4 + 40, // Tidy up + Layout (gap-0.5)
-  draw: 28 + 4 + 76, // Eraser + pencil + highlighter
-  view: 40, // Board
 }
 
 /** Phone: mount mode tools in the Actions/Layout/Draw/View pill; desktop: keep them in the top bar. */
@@ -128,7 +296,7 @@ function PhoneModeToolsPortal({
   host,
   children,
 }: {
-  enabled: boolean // phoneTools — leftmost cluster would overflow into More
+  enabled: boolean // phoneTools — icon-only tools no longer fit the top bar
   host: HTMLElement | null // Phone tools row right of the mode dropdown
   children: React.ReactNode // Mode tools (not undo/redo)
 }) {
@@ -155,54 +323,11 @@ function PhoneUndoRedoPortal({
 
 export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
   const { canShare, canEdit, role } = useBoardAccess() // Gate share + show view-only chrome
-  const { isChatSidebarOpen, chatChromeReady } = useSidebarContext() // Measure only after chat column is restored
-  const { toolsHost, undoHost, phoneTools, setPhoneTools } = usePhoneModeMenu() // Pill portal + undo sibling + overflow→phone flag
-  const { reactFlowInstance, isLocked, lineStyle: verticalLineStyle, setLineStyle: setVerticalLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, boardRule: hostBoardRule, setBoardRule: setHostBoardRule, boardStyle: hostBoardStyle, setBoardStyle: setHostBoardStyle, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, isDrawing, setIsDrawing, drawTool: contextDrawTool, setDrawTool: setContextDrawTool, mapUndo, mapRedo, canMapUndo, canMapRedo, getMapTakeSnapshot } = useReactFlowContext()
-  const { showAiOrigin, setShowAiOrigin } = useAiEditSession() // Reddish AI content overlay toggle
-  const queryClientForAi = useQueryClient() // Scan page frames for AI-origin content
-  const [hasAiContent, setHasAiContent] = useState(false)
-  useEffect(() => {
-    if (!conversationId) {
-      setHasAiContent(false)
-      return
-    }
-    const scan = () => {
-      const msgs =
-        (queryClientForAi.getQueryData([
-          'messages-for-panels',
-          conversationId,
-          'full',
-        ]) as Array<{ content?: string; metadata?: Record<string, unknown> }> | undefined) ||
-        (queryClientForAi.getQueryData([
-          'messages-for-panels',
-          conversationId,
-        ]) as Array<{ content?: string; metadata?: Record<string, unknown> }> | undefined) ||
-        []
-      setHasAiContent(
-        msgs.some((m) => {
-          const meta = (m.metadata || {}) as Record<string, unknown>
-          if (meta.hasAiOrigin === true) return true
-          return htmlHasAiOrigin(m.content)
-        })
-      )
-    }
-    scan()
-    const unsub = queryClientForAi.getQueryCache().subscribe((event) => {
-      const key = event?.query?.queryKey
-      if (Array.isArray(key) && key[0] === 'messages-for-panels' && key[1] === conversationId) {
-        scan()
-      }
-    })
-    window.addEventListener('ai-edits-mutated', scan)
-    return () => {
-      unsub()
-      window.removeEventListener('ai-edits-mutated', scan)
-    }
-  }, [conversationId, queryClientForAi])
-  // Turn off the mask when the last AI-origin content is gone
-  useEffect(() => {
-    if (!hasAiContent && showAiOrigin) setShowAiOrigin(false)
-  }, [hasAiContent, showAiOrigin, setShowAiOrigin])
+  const { isChatSidebarOpen, chatChromeReady, isMobileMode } = useSidebarContext() // Measure after chat restore; phone layout forces pill
+  const { toolsHost, undoHost, phoneTools, setPhoneTools, setShareCompact } = usePhoneModeMenu() // Pill + share/AI→More before tools leave
+  const { hasAiContent, aiTopBarPinned } = useAiEditSession() // Pinned sparkles fold with shareCompact
+  const { reactFlowInstance, isLocked, lineStyle: verticalLineStyle, setLineStyle: setVerticalLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, boardRule: hostBoardRule, setBoardRule: setHostBoardRule, boardStyle: hostBoardStyle, setBoardStyle: setHostBoardStyle, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, isDrawing, setIsDrawing, drawTool: contextDrawTool, setDrawTool: setContextDrawTool, eraserMode, setEraserMode, drawTipSize, setDrawTipSize, drawTipZoomLocked, setDrawTipZoomLocked, eraserTipSize, setEraserTipSize, eraserTipZoomLocked, setEraserTipZoomLocked, pencilPalette, pencilColorIndex, setPencilColorIndex, setPencilColorAt, addPencilColor, removePencilColor, mapUndo, mapRedo, canMapUndo, canMapRedo, getMapTakeSnapshot, getSetNodes } = useReactFlowContext()
+  const queryClientForAi = useQueryClient() // Turn into board list + conversations invalidate
   const previewFocus = usePreviewFocus() // When a nested preview chrome is selected, View styles target that page
   // Route Board Style controls to the focused preview page (else the host map)
   const boardRule = previewFocus?.focusedBoardId ? previewFocus.boardRule : hostBoardRule
@@ -269,6 +394,17 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
   
   // Track which dropdown is currently open - only one can be open at a time
   const [openDropdown, setOpenDropdown] = useState<string | null>(null)
+  const [layoutForkAlign, setLayoutForkAlign] = useState<LayoutForkAlign>('center') // Single arrow, or left / center / right fork
+  const [layoutLinkUi, setLayoutLinkUi] = useState({ linked: false, stacked: false }) // Magnet / stack toggles (independent of align/direction)
+  useEffect(() => {
+    const saved = localStorage.getItem('nodnotes-layout-fork-align') // Sticky across reload; UI-only until layout is wired
+    if (saved === 'single' || saved === 'left' || saved === 'center' || saved === 'right') setLayoutForkAlign(saved)
+    // Legacy 'snap' was an align pick — magnet is now a separate toggle; keep default center
+  }, [])
+  const pickLayoutForkAlign = (next: LayoutForkAlign) => {
+    setLayoutForkAlign(next) // Update the open menu + trigger icon
+    localStorage.setItem('nodnotes-layout-fork-align', next) // Remember without waiting on board prefs
+  }
   
   // Handler to manage dropdown open state - closes other dropdowns when one opens
   const handleDropdownOpenChange = (dropdownId: string, isOpen: boolean) => {
@@ -379,52 +515,40 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     }
   }, [])
 
-  // Handlers for insert space icon color changes
+  // Handlers for insert space icon color changes (armed tool stays dark, so hover-out must not grey it)
   const handleInsertVerticalSpaceMouseEnter = () => {
-    const icon = insertVerticalSpaceIconRef.current
-    if (icon) {
-      icon.style.filter = 'brightness(0) saturate(100%) invert(0%) sepia(0%) saturate(0%) hue-rotate(0deg) brightness(0%) contrast(100%)'
-      icon.style.opacity = '1'
-    }
+    paintSpaceIcon(insertVerticalSpaceIconRef.current, true) // Hover → full-black glyph
   }
 
   const handleInsertVerticalSpaceMouseLeave = () => {
-    const icon = insertVerticalSpaceIconRef.current
-    if (icon) {
-      icon.style.filter = 'brightness(0) saturate(100%) invert(38%) sepia(0%) saturate(0%) hue-rotate(0deg) brightness(98%) contrast(100%)'
-      icon.style.opacity = '0.8'
-    }
+    paintSpaceIcon(insertVerticalSpaceIconRef.current, drawTool === 'insert-v') // Keep dark while armed
   }
 
   const handleInsertHorizontalSpaceMouseEnter = () => {
-    const icon = insertHorizontalSpaceIconRef.current
-    if (icon) {
-      icon.style.filter = 'brightness(0) saturate(100%) invert(0%) sepia(0%) saturate(0%) hue-rotate(0deg) brightness(0%) contrast(100%)'
-      icon.style.opacity = '1'
-    }
+    paintSpaceIcon(insertHorizontalSpaceIconRef.current, true) // Hover → full-black glyph
   }
 
   const handleInsertHorizontalSpaceMouseLeave = () => {
-    const icon = insertHorizontalSpaceIconRef.current
-    if (icon) {
-      icon.style.filter = 'brightness(0) saturate(100%) invert(38%) sepia(0%) saturate(0%) hue-rotate(0deg) brightness(98%) contrast(100%)'
-      icon.style.opacity = '0.8'
-    }
+    paintSpaceIcon(insertHorizontalSpaceIconRef.current, drawTool === 'insert-h') // Keep dark while armed
   }
 
   // Hide formatting options (clear formatting to line options) when insert/draw/view mode is selected
   const shouldHideFormattingOptions = true // Text / frame / thread menus own these now
 
   // Initialize with consistent defaults to avoid hydration mismatch, then load from Supabase
-  const [lineStyle, setLineStyle] = useState<ThreadStylePref>('curved')
+  const [lineStyle, setLineStyle] = useState<ThreadStylePref>('curved') // Board default Smooth / Sharp / Linear
   const [editMode, setEditMode] = useState<'editing' | 'suggesting' | 'viewing'>('editing')
   // Use context values for drawTool, with local state as fallback
   const drawTool = contextDrawTool ?? null
   const setDrawTool = setContextDrawTool
-  const [pencilColor, setPencilColor] = useState<DrawInk>('black') // Freehand ink — remembered per tool, not shared with highlighter
-  const [highlighterColor, setHighlighterColor] = useState<DrawInk>('black') // Highlighter ink — independent of freehand so each dropdown keeps its last pick
+  // Insert-space icons are <img>s, so repaint them whenever the armed tool changes without a hover (More menu, reload restore, other tool taking over)
+  useEffect(() => {
+    paintSpaceIcon(insertVerticalSpaceIconRef.current, drawTool === 'insert-v') // Vertical space ink follows its armed state
+    paintSpaceIcon(insertHorizontalSpaceIconRef.current, drawTool === 'insert-h') // Horizontal space ink follows its armed state
+  }, [drawTool])
+
   const [hiddenItems, setHiddenItems] = useState<Set<string>>(new Set())
-  const [hideUndoMoreSlash, setHideUndoMoreSlash] = useState(false) // Folded + truncated path: drop undo|/|More
+  const [hideUndoMoreSlash, setHideUndoMoreSlash] = useState(false) // True when tools left for the pill — drop orphan undo|/| on the bar
   const [compactEarlyLabels, setCompactEarlyLabels] = useState(false) // Filter/sort/automations/eraser cluster — collapses first
   const compactEarlyLabelsRef = useRef(false) // Hysteresis for the first title-collapse stage
   const [compactLabels, setCompactLabels] = useState(false) // Remaining titles after the early cluster
@@ -433,7 +557,8 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
   const toolbarLayoutReadyRef = useRef(false) // Same flag for checkVisibility without a stale closure
   const measuredModeRef = useRef<string | null>(null) // Last fitted pill mode — switch is a first-pass like Actions load
   const phoneToolsRef = useRef(false) // Hysteresis for overflow→pill so it doesn’t thrash at the threshold
-  const hiddenItemsRef = useRef<Set<string>>(new Set()) // Last overflow set — restored cluster when items move
+  const shareCompactRef = useRef(false) // Hysteresis for copy/star → More (runs before phoneTools)
+  const hiddenItemsRef = useRef<Set<string>>(new Set()) // Cleared — tools move to the pill instead of More
   const [toolbarAnimate, setToolbarAnimate] = useState(false) // Enable title transitions only after the first correct layout
   const [boardSearch, setBoardSearch] = useState('') // Actions-bar live search over frame title + body
   const [boardSearchOpen, setBoardSearchOpen] = useState(false) // Icon-only until click; then the field slides out
@@ -448,6 +573,8 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     hasMulti: false,
     locked: false,
   })
+  const [hasArmedBlock, setHasArmedBlock] = useState(false) // ⋮⋮ blue-wash block — gates Turn into
+  const canTurnInto = hasArmedBlock // Turn into needs an armed TipTap block (not frame-only)
   const preferencesLoadedRef = useRef(false) // Track if preferences have been loaded
   const toolbarRef = useRef<HTMLDivElement>(null)
   const leftSectionRef = useRef<HTMLDivElement>(null)
@@ -459,12 +586,12 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     if (typeof window === 'undefined') return
 
     // STEP 1: Load from localStorage FIRST (synchronous, instant) - ensures UI shows saved prefs immediately
-    const savedLineStyle = localStorage.getItem('thinktable-horizontal-line-style') as ThreadStylePref | null
+    const savedLineStyle = localStorage.getItem('nodnotes-horizontal-line-style') as ThreadStylePref | null
     if (savedLineStyle && ['curved', 'boxed', 'linear'].includes(savedLineStyle)) {
       setLineStyle(savedLineStyle)
     }
 
-    const savedEditMode = localStorage.getItem('thinktable-edit-mode') as 'editing' | 'suggesting' | 'viewing' | null
+    const savedEditMode = localStorage.getItem('nodnotes-edit-mode') as 'editing' | 'suggesting' | 'viewing' | null
     if (savedEditMode && ['editing', 'suggesting', 'viewing'].includes(savedEditMode)) {
       setEditMode(savedEditMode)
     }
@@ -491,12 +618,12 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
             // Update from Supabase if values exist (Supabase is source of truth for cross-device sync)
             if (prefs.horizontalLineStyle && ['curved', 'boxed', 'linear'].includes(prefs.horizontalLineStyle)) {
               setLineStyle(prefs.horizontalLineStyle)
-              localStorage.setItem('thinktable-horizontal-line-style', prefs.horizontalLineStyle)
+              localStorage.setItem('nodnotes-horizontal-line-style', prefs.horizontalLineStyle)
             }
 
             if (prefs.editMode && ['editing', 'suggesting', 'viewing'].includes(prefs.editMode)) {
               setEditMode(prefs.editMode)
-              localStorage.setItem('thinktable-edit-mode', prefs.editMode)
+              localStorage.setItem('nodnotes-edit-mode', prefs.editMode)
             }
           }
         }
@@ -511,12 +638,12 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     // Also reload when conversation is created (to maintain selections on new boards)
     const handleConversationCreated = async () => {
       // Load from localStorage first (instant)
-      const savedLineStyle = localStorage.getItem('thinktable-horizontal-line-style') as ThreadStylePref | null
+      const savedLineStyle = localStorage.getItem('nodnotes-horizontal-line-style') as ThreadStylePref | null
       if (savedLineStyle && ['curved', 'boxed', 'linear'].includes(savedLineStyle)) {
         setLineStyle(savedLineStyle)
       }
 
-      const savedEditMode = localStorage.getItem('thinktable-edit-mode') as 'editing' | 'suggesting' | 'viewing' | null
+      const savedEditMode = localStorage.getItem('nodnotes-edit-mode') as 'editing' | 'suggesting' | 'viewing' | null
       if (savedEditMode && ['editing', 'suggesting', 'viewing'].includes(savedEditMode)) {
         setEditMode(savedEditMode)
       }
@@ -541,12 +668,12 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
               // Update from Supabase if values exist
               if (prefs.horizontalLineStyle && ['curved', 'boxed', 'linear'].includes(prefs.horizontalLineStyle)) {
                 setLineStyle(prefs.horizontalLineStyle)
-                localStorage.setItem('thinktable-horizontal-line-style', prefs.horizontalLineStyle)
+                localStorage.setItem('nodnotes-horizontal-line-style', prefs.horizontalLineStyle)
               }
 
               if (prefs.editMode && ['editing', 'suggesting', 'viewing'].includes(prefs.editMode)) {
                 setEditMode(prefs.editMode)
-                localStorage.setItem('thinktable-edit-mode', prefs.editMode)
+                localStorage.setItem('nodnotes-edit-mode', prefs.editMode)
               }
             }
           }
@@ -571,7 +698,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     if (typeof window === 'undefined') return
 
     // Save to localStorage immediately (lightweight, instant)
-    localStorage.setItem('thinktable-horizontal-line-style', lineStyle)
+    localStorage.setItem('nodnotes-horizontal-line-style', lineStyle)
 
     // Save to Supabase in background (for cross-device sync)
     const saveToSupabase = async () => {
@@ -609,7 +736,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     if (typeof window === 'undefined') return
 
     // Save to localStorage immediately (lightweight, instant)
-    localStorage.setItem('thinktable-edit-mode', editMode)
+    localStorage.setItem('nodnotes-edit-mode', editMode)
 
     // Save to Supabase in background (for cross-device sync)
     const saveToSupabase = async () => {
@@ -651,6 +778,29 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     })
   }
 
+  // Checkmark for Actions-bar Turn into Format pane
+  const [turnIntoBlockType, setTurnIntoBlockType] = useState<BlockTypeId>('text')
+
+  // Re-read caret block type when opening Turn into
+  const syncTurnIntoFromEditor = () => {
+    setTurnIntoBlockType(readToolbarBlockType(editor))
+  }
+
+  // Boards available for Turn into → Board in (same list as ⋮⋮ menu)
+  const boardInTargetsForToolbar = (): BoardInTarget[] => {
+    const convs =
+      (queryClientForAi.getQueryData(['conversations']) as
+        | Array<{ id: string; title?: string | null }>
+        | undefined) || []
+    return [
+      { id: conversationId || '', title: 'Current board' },
+      ...convs
+        .filter((c) => c.id !== conversationId)
+        .slice(0, 40)
+        .map((c) => ({ id: c.id, title: boardTitleOrDefault(c.title) })),
+    ]
+  }
+
   // Persist metadata patches for selected frames (board pin / frame-group lock)
   const persistFrameMetaPatches = async (
     nodes: ReturnType<typeof getSelectedFrames>,
@@ -676,12 +826,14 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     if (!reactFlowInstance) {
       setBoardLockUi({ hasSelection: false, locked: false })
       setFrameLockUi({ hasMulti: false, locked: false })
+      setLayoutLinkUi({ linked: false, stacked: false })
       return
     }
     const selected = getSelectedFrames()
     if (selected.length === 0) {
       setBoardLockUi({ hasSelection: false, locked: false })
       setFrameLockUi({ hasMulti: false, locked: false })
+      setLayoutLinkUi({ linked: false, stacked: false })
       return
     }
     const allBoardLocked = selected.every((n) => {
@@ -689,6 +841,11 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       return meta.boardLocked === true
     })
     setBoardLockUi({ hasSelection: true, locked: allBoardLocked })
+    const live = reactFlowInstance.getNodes()
+    setLayoutLinkUi({
+      linked: sharedStackGroupId(selected) != null, // Magnet stays on for a stacked host even if mates are hidden
+      stacked: selectionIsStacked(selected, live),
+    })
     if (selected.length < 2) {
       setFrameLockUi({ hasMulti: false, locked: false })
       return
@@ -713,8 +870,23 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       window.removeEventListener('tt-selection-changed', onSel)
       window.removeEventListener('tt-frame-lock-changed', onSel)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh closes over reactFlowInstance
-  }, [reactFlowInstance])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh closes over reactFlowInstance + clickedEdge
+  }, [reactFlowInstance, clickedEdge])
+
+  // Armed ⋮⋮ block selection (AI bridge) — Turn into stays grey until a block is armed
+  useEffect(() => {
+    const sync = () => {
+      const sel = getAiBlockSelection()
+      setHasArmedBlock(Boolean(sel && sel.count > 0))
+    }
+    sync()
+    return subscribeAiSelection(sync)
+  }, [])
+
+  // Close gated menus if their selection disappears while open
+  useEffect(() => {
+    if (!canTurnInto && openDropdown === 'turnInto') setOpenDropdown(null)
+  }, [canTurnInto, openDropdown])
 
   // Lock selected frames to the board (pin: not draggable)
   const handleToggleBoardLock = () => {
@@ -793,6 +965,133 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       else delete next.frameLockGroupId
       return next
     }).catch((err) => console.error('Failed to persist frame-group lock:', err))
+  }
+
+  // Apply magnet / stack patches to RF + persist metadata
+  const applyStackPatches = (patches: StackTogglePatch[]) => {
+    if (!reactFlowInstance || patches.length === 0) return
+    const byId = new Map(patches.map((p) => [p.id, p]))
+    reactFlowInstance.setNodes((nds) =>
+      nds.map((n) => {
+        const p = byId.get(n.id)
+        if (!p) return n
+        const pm = n.data?.promptMessage
+        return {
+          ...n,
+          ...(p.position ? { position: p.position } : {}),
+          hidden: p.hidden,
+          data: pm ? { ...n.data, promptMessage: { ...pm, metadata: p.metadata } } : n.data,
+        }
+      })
+    )
+    void (async () => {
+      const supabaseClient = createClient()
+      for (const p of patches) {
+        if (!p.messageId) continue
+        const { data: row } = await supabaseClient
+          .from('messages')
+          .select('metadata')
+          .eq('id', p.messageId)
+          .maybeSingle()
+        if (!row) continue
+        const next: Record<string, unknown> = {
+          ...((row.metadata as Record<string, unknown>) || {}),
+          ...p.metadata,
+          isBlock: true,
+        }
+        if (p.abs) next.position = p.abs // Expand/pack writes absolute flow coords
+        await supabaseClient.from('messages').update({ metadata: next }).eq('id', p.messageId)
+      }
+    })().catch((err) => console.error('Failed to persist stack toggle:', err))
+    refreshLockUi()
+  }
+
+  // Thread layout magnet: toggle pack/unlink (does not change alignment)
+  const handleSnapFramesTogether = () => {
+    if (!reactFlowInstance) return
+    const selected = getSelectedFrames()
+    if (selected.length === 0) return
+    if (selected.length < 2 && !sharedStackGroupId(selected)) return // Unlink is allowed from a lone stacked host
+    getMapTakeSnapshot()?.()
+    const live = reactFlowInstance.getNodes()
+    if (sharedStackGroupId(selected)) {
+      applyStackPatches(unlinkSelectedStack(selected, live)) // Magnet off: drop the link
+      return
+    }
+    const packed = packSelectedFramesTogether(
+      selected,
+      live,
+      arrowDirection,
+      layoutForkAlign,
+      reactFlowInstance.getViewport().zoom
+    )
+    if (packed.length === 0) return
+    const byId = new Map(packed.map((p) => [p.id, p]))
+    reactFlowInstance.setNodes((nds) =>
+      nds.map((n) => {
+        const p = byId.get(n.id)
+        if (!p) return n
+        const pm = n.data?.promptMessage
+        if (!pm) return { ...n, position: p.position } // RF only
+        let metadata = { ...(pm.metadata || {}), position: p.abs } as Record<string, unknown>
+        if (p.stack) {
+          metadata = setSideStackEntry(metadata, p.stack.side, {
+            groupId: p.stack.groupId,
+            index: p.stack.index,
+            ...(p.stack.anchor ? { anchor: true } : {}),
+            expanded: true, // Stay visible — stack line only, no collapse / lock
+          })
+        }
+        return {
+          ...n,
+          position: p.position,
+          hidden: false,
+          data: { ...n.data, promptMessage: { ...pm, metadata } },
+        }
+      })
+    )
+    void (async () => {
+      const supabaseClient = createClient()
+      for (const p of packed) {
+        if (!p.messageId) continue
+        const { data: row } = await supabaseClient
+          .from('messages')
+          .select('metadata')
+          .eq('id', p.messageId)
+          .maybeSingle()
+        if (!row) continue
+        let next: Record<string, unknown> = {
+          ...((row.metadata as Record<string, unknown>) || {}),
+          isBlock: true,
+          position: p.abs,
+        }
+        if (p.stack) {
+          next = setSideStackEntry(next, p.stack.side, {
+            groupId: p.stack.groupId,
+            index: p.stack.index,
+            ...(p.stack.anchor ? { anchor: true } : {}),
+            expanded: true, // Persist the line link; do not lock
+          })
+        }
+        await supabaseClient.from('messages').update({ metadata: next }).eq('id', p.messageId)
+      }
+    })().catch((err) => console.error('Failed to persist snap-together:', err))
+    refreshLockUi()
+  }
+
+  // Thread layout collapse: stack / unstack selected frames (does not change direction)
+  const handleStackFramesTogether = () => {
+    if (!reactFlowInstance) return
+    const selected = getSelectedFrames()
+    if (selected.length === 0) return
+    if (selected.length < 2 && !selectionIsStacked(selected, reactFlowInstance.getNodes())) return // Unstack is allowed from a lone stacked host
+    getMapTakeSnapshot()?.()
+    const live = reactFlowInstance.getNodes()
+    if (selectionIsStacked(selected, live)) {
+      applyStackPatches(expandSelectedStack(selected, live, arrowDirection)) // Unstack → pre-stack arrangement
+      return
+    }
+    applyStackPatches(collapseSelectedStack(selected, live, arrowDirection, live)) // Collapse in place — magnet is the pack
   }
 
   // Dim frames that do not match the Actions-bar search query
@@ -938,6 +1237,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
   // Close leftover Filter/Capture/… menus when switching Actions / Layout / Draw / View
   useEffect(() => {
     setOpenDropdown(null) // Don’t leave a previous mode’s panel parked over the path
+    setBoardFilterSortOpen(false) // Hide criteria strip when leaving Actions
   }, [editMenuPillMode])
 
   // Track which items should be hidden based on available space (Google Docs style)
@@ -964,29 +1264,40 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       }
 
       const rightSectionRect = rightSection.getBoundingClientRect()
-      const rightW = rightSectionRect.width // Share / copy / favorite / more / AI
-      const moreMenuWidth = 32 + 8 // Overflow More button (h-7 w-7 + gap) — always reserved so hide/show doesn’t thrash
+      const rightW = rightSectionRect.width // Share / copy / favorite / more / AI (live)
+      const copyStarEl = rightSection.querySelector('[data-top-bar-copy-star]') as HTMLElement | null
+      const COPY_STAR_W = 64 // Two h-7 icons + gaps — used when already collapsed so expand math stays stable
+      const copyStarLive = copyStarEl?.getBoundingClientRect().width ?? 0
+      const aiOriginEl = rightSection.querySelector('[data-top-bar-ai-origin]') as HTMLElement | null
+      const AI_ORIGIN_W = 40 // Sparkles h-7 + px-1 wrapper — fold into More with copy/star
+      const aiOriginLive = aiOriginEl?.getBoundingClientRect().width ?? 0
+      const aiWouldPinOnBar = hasAiContent && aiTopBarPinned
+      const rightExpandedW =
+        rightW +
+        (copyStarLive > 0 ? 0 : COPY_STAR_W) +
+        (aiWouldPinOnBar && aiOriginLive === 0 ? AI_ORIGIN_W : 0) // Simulate pinned sparkles on expand hysteresis
+      const rightCollapsedW = copyStarLive > 0 ? Math.max(0, rightW - copyStarLive) : rightW // After copy/star → More
       const PATH_GAP = 8 // Air between path glyphs and the centered undo cluster
       const hamEl = leftChrome?.querySelector('[data-nav-logo-trigger]') as HTMLElement | null // Menu icon; path starts after it
       const hamRight = hamEl?.getBoundingClientRect().right ?? toolbarRect.left + 40 // Path origin in viewport px
       const hamW = hamEl?.getBoundingClientRect().width ?? 40 // Menu icon only — leftover left chrome is the path
       const pathBox = leftChrome?.querySelector('[data-board-path]') as HTMLElement | null // Live crumbs + hidden full/min rows
-      const pathFull = pathBox?.querySelector('[data-path-full]') as HTMLElement | null // Hidden full-title row
       const pathMin = pathBox?.querySelector('[data-path-min]') as HTMLElement | null // Hidden icon-minimum row (current icon whole)
-      const naturalPath = pathFull?.scrollWidth || pathBox?.scrollWidth || 0 // Uncapped crumbs; simple titles use the live box
       const minPathW = Math.max(64, pathMin?.scrollWidth || 64) // Cutoff-able path: ancestor icons + current icon, never mid-icon clip
       const barCenter = toolbarRect.left + toolbarRect.width / 2 // True board center
       const barW = toolbarRect.width // Map-column width this pass
-      const leftW = hamW + minPathW // Reserve cutoff path on shrink and expand — live crush delayed More; live extend delayed return
-      const sideInset = Math.max(leftW, rightW) // Symmetric inset so the cluster can sit on the board center
-      const availableWidth = barW - 2 * sideInset - moreMenuWidth - 16 // Max cluster width on the true board center
+      const leftW = hamW + minPathW // Reserve cutoff path on shrink and expand — live crush delayed return; live extend delayed return
+      const sideInset = Math.max(leftW, rightW) // Live inset for title collapse (current share chrome)
+      const availableWidth = barW - 2 * sideInset - 16 // Max cluster width on the true board center (no More fold)
+      const availableExpanded = barW - 2 * Math.max(leftW, rightExpandedW) - 16 // Room if copy/star stay on the bar
+      const availableCollapsed = barW - 2 * Math.max(leftW, rightCollapsedW) - 16 // Room after copy/star → board More
 
       // Icon-only widths (after all titles have condensed)
       const iconGroups = editMenuPillMode === 'insert'
         ? [
-          { id: 'insertGroup1', width: 40 }, // Table icon
-          { id: 'arrows', width: 40 }, // Layout arrow
+          { id: 'arrows', width: 40 }, // Thread layout — Layout rightmost, hides first
           { id: 'smartAlign', width: 40 }, // Tidy up
+          { id: 'lock', width: 64 }, // Anchor + Lock frames — Layout leftmost
           { id: 'undoRedo', width: 70 },
         ]
         : editMenuPillMode === 'view'
@@ -999,23 +1310,23 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
           : editMenuPillMode === 'draw'
             ? [
               { id: 'drawGroup1', width: 108 }, // Lasso + insert-space — rightmost, hide first
-              { id: 'drawGroup3', width: 76 }, // Pencil, Highlighter icons
+              { id: 'drawGroup3', width: 28 }, // Pen icon only (highlighter icon)
               { id: 'drawGroup2', width: 28 + 4 + 5 }, // Eraser icon + slash after ink cluster
               { id: 'undoRedo', width: 70 },
             ]
             : [
               { id: 'search', width: boardSearchOpen ? 180 : 40 }, // Icon + field when open; icon when early-collapsed
               { id: 'actions', width: 120 }, // Filter / Sort / Automations icons
+              { id: 'turnInto', width: 40 }, // Turn into — own section left of Filter
               { id: 'undoRedo', width: 70 },
-              { id: 'lock', width: 64 }, // Two lock icons
             ]
 
       // Early cluster icon-only; remaining titles still shown (Filter/ink collapse first)
       const midGroups = editMenuPillMode === 'insert'
         ? [
-          { id: 'insertGroup1', width: titledToolWidth('Table') + 16 },
-          { id: 'arrows', width: titledToolWidth('Layout') },
+          { id: 'arrows', width: titledToolWidth('Threads') },
           { id: 'smartAlign', width: titledToolWidth('Tidy up') },
+          { id: 'lock', width: titledToolWidth('Anchor') + 2 + titledToolWidth('Lock frames') + 12 },
           { id: 'undoRedo', width: 70 },
         ]
         : editMenuPillMode === 'view'
@@ -1027,16 +1338,16 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
           ]
           : editMenuPillMode === 'draw'
             ? [
-              { id: 'drawGroup1', width: titledToolWidth('Lasso') + 4 + titledToolWidth('Vertical space') + 4 + titledToolWidth('Horizontal space') + 16 }, // Rightmost
-              { id: 'drawGroup3', width: 76 }, // Ink titles already collapsed
+              { id: 'drawGroup1', width: titledToolWidth('Lasso') + 4 + titledToolWidth('V-space') + 4 + titledToolWidth('H-space') + 16 }, // Rightmost
+              { id: 'drawGroup3', width: 28 }, // Pen title already collapsed
               { id: 'drawGroup2', width: 28 + 4 + 5 }, // Eraser + slash after ink cluster
               { id: 'undoRedo', width: 70 },
             ]
             : [
               { id: 'search', width: boardSearchOpen ? 180 : 40 }, // Search title already collapsed
               { id: 'actions', width: 120 }, // Filter cluster already collapsed
+              { id: 'turnInto', width: titledToolWidth('Turn into') }, // Title stays until rest-collapse
               { id: 'undoRedo', width: 70 },
-              { id: 'lock', width: titledToolWidth('Anchor') + 2 + titledToolWidth('Snap frames') + 12 },
             ]
 
       // All titles shown
@@ -1046,16 +1357,16 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
           ? midGroups // View has no early cluster
           : editMenuPillMode === 'draw'
             ? [
-              { id: 'drawGroup1', width: titledToolWidth('Lasso') + 4 + titledToolWidth('Vertical space') + 4 + titledToolWidth('Horizontal space') + 16 }, // Rightmost
-              { id: 'drawGroup3', width: titledToolWidth('Pencil') + 4 + titledToolWidth('Highlighter') + 16 }, // Ink titles
+              { id: 'drawGroup1', width: titledToolWidth('Lasso') + 4 + titledToolWidth('V-space') + 4 + titledToolWidth('H-space') + 16 }, // Rightmost
+              { id: 'drawGroup3', width: titledToolWidth('Pen') }, // Pen only (uses highlighter icon)
               { id: 'drawGroup2', width: titledToolWidth('Eraser') + 4 + 5 }, // Eraser + slash after ink cluster
               { id: 'undoRedo', width: 70 },
             ]
             : [
               { id: 'search', width: boardSearchOpen ? 180 : titledToolWidth('Search') }, // Title hides when the field slides out
               { id: 'actions', width: titledToolWidth('Filter') + 2 + titledToolWidth('Sort') + 2 + titledToolWidth('Automations') },
+              { id: 'turnInto', width: titledToolWidth('Turn into') }, // Own section left of Filter
               { id: 'undoRedo', width: 70 },
-              { id: 'lock', width: titledToolWidth('Anchor') + 2 + titledToolWidth('Snap frames') + 12 },
             ]
 
       const sumGroups = (groups: { width: number }[]) => groups.reduce((sum, item) => sum + item.width + 8, 0) // +8 gap/slash
@@ -1083,31 +1394,23 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       compactLabelsRef.current = nextRest
       const itemGroups = nextRest ? iconGroups : nextEarly ? midGroups : fullGroups // Measure the chrome we will actually render
 
-      const leftIds = leftmostGroupIds(editMenuPillMode) // Slash-free cluster right of undo/redo
-      const widestLeftmost = Math.max( // Hungriest left cluster across modes so the pill doesn’t flip on mode change
-        LEFTMOST_ICON_WIDTH.home,
-        LEFTMOST_ICON_WIDTH.insert,
-        LEFTMOST_ICON_WIDTH.draw,
-        LEFTMOST_ICON_WIDTH.view
-      )
-      const keepW = 70 + 8 + widestLeftmost + 8 // Undo/redo + widest left cluster + gaps — below this, phone pill
+      const iconTotal = sumGroups(iconGroups) // After titles collapse, move to the pill instead of folding into More
+      const wasShare = firstPass ? false : shareCompactRef.current // Last copy/star → More decision
       const wasPhone = firstPass ? false : phoneToolsRef.current // Last overflow→pill decision
-      const nextPhone = keepW > availableWidth - (wasPhone ? expandSlop : 0) // Titles already collapsed; left cluster would fold
+      // 1) Collapse board copy/star into More while tools can still stay on the bar
+      const nextShare =
+        isMobileMode ||
+        iconTotal > availableExpanded - (wasShare ? expandSlop : 0)
+      // 2) Only then move tools into the mode pill (never before share compact, except phone chat layout)
+      const nextPhone =
+        isMobileMode ||
+        (nextShare && iconTotal > availableCollapsed - (wasPhone ? expandSlop : 0))
+      shareCompactRef.current = nextShare
       phoneToolsRef.current = nextPhone
+      if (wasShare !== nextShare) setShareCompact(nextShare)
       if (wasPhone !== nextPhone) setPhoneTools(nextPhone) // Skip when unchanged so the pill doesn’t reset
 
-      const newHiddenItems = new Set<string>()
-      if (!nextPhone) {
-        let currentWidth = sumGroups(itemGroups)
-        for (const item of itemGroups) { // Array is right-to-left; hide rightmost first
-      if (item.id === 'undoRedo') continue // Undo/redo never overflow into More; they leave the bar for the pill sibling
-          if (leftIds.has(item.id)) break // Left cluster stays; phone pill takes over instead of More
-          if (currentWidth > availableWidth) {
-            newHiddenItems.add(item.id)
-            currentWidth -= item.width + 8
-          }
-        }
-      }
+      const newHiddenItems = new Set<string>() // Never fold into More — overflow moves to the mode pill
 
       setCompactEarlyLabels((prev) => { // Phone pill uses icon+title from the tools themselves; skip bar collapse
         const next = nextPhone ? true : nextEarly
@@ -1125,7 +1428,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
 
       const shareLeft = rightSectionRect.left // Share cluster; phone path runs to here
       const centerEl = toolbar.querySelector('[data-toolbar-center]') as HTMLElement | null // Board-centered undo/tools
-      if (centerEl) centerEl.style.transform = '' // Clear any leftover slide from before tools stayed centered
+      if (centerEl) centerEl.style.transform = '' // Center cluster — right chrome width is in rightW / sideInset
       const liveClusterW = centerEl?.getBoundingClientRect().width ?? 70 // DOM cluster — still the pre-setState size this pass
       const centeredLeft = barCenter - liveClusterW / 2 // Undo’s left while centered
       if (bar) bar.style.setProperty('--tt-path-min', `${minPathW}px`) // Path box never shrinks through the current icon
@@ -1139,20 +1442,13 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
         return
       }
       const CLUSTER_PAD = 24 // Glyph/padding slack — titledToolWidth undershoots “Tidy up”/etc. and lets the path run under tools
-      const restoredClusterW =
-        sumGroups(itemGroups.filter((item) => !newHiddenItems.has(item.id))) +
-        (newHiddenItems.size > 0 ? moreMenuWidth : 0) +
-        CLUSTER_PAD // Prefer over-truncate vs overlapping the centered cluster
+      const restoredClusterW = sumGroups(itemGroups) + CLUSTER_PAD // Prefer over-truncate vs overlapping the centered cluster
       const restoredLeft = barCenter - restoredClusterW / 2 // Cap against tools that will paint, not the still-stale live cluster
       // Further-left of live vs planned: chat close unhides/expands titles while liveClusterW is still narrow (path would run under Tidy up)
       const capLeft = Math.min(centeredLeft, restoredLeft)
       const pathMax = Math.max(minPathW, Math.floor(capLeft - PATH_GAP - hamRight)) // Floor so overflow-hidden never clips the current icon
       if (bar) bar.style.setProperty('--tt-path-max', `${pathMax}px`)
-      const truncated = naturalPath > pathMax + 1 // Full titles need more than the centered lane
-      const hideable = itemGroups.filter((item) => item.id !== 'undoRedo') // Undo/redo never fold
-      const allFolded = hideable.length > 0 && hideable.every((item) => newHiddenItems.has(item.id)) // Only undo/redo + More remain
-      const nextHideSlash = allFolded && truncated // Desktop: slash goes when colliding
-      setHideUndoMoreSlash((prev) => (prev === nextHideSlash ? prev : nextHideSlash))
+      setHideUndoMoreSlash((prev) => (prev === false ? prev : false)) // Tools still on the bar — keep undo|/|tools
 
       measuredModeRef.current = editMenuPillMode // This mode is fitted — next switch is a fresh first-pass
       toolbarLayoutReadyRef.current = true
@@ -1179,12 +1475,16 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     if (barEl) resizeObserver.observe(barEl)
     const leftEl = barEl?.querySelector('[data-top-bar-left]') // Title path width changes the center inset
     if (leftEl) resizeObserver.observe(leftEl)
+    const rightEl = toolbarRef.current.querySelector('[data-right-section]') as HTMLElement | null
+    if (rightEl) resizeObserver.observe(rightEl) // Sync / Notion pin mount without bar width change
     const attrObserver = leftEl
       ? new MutationObserver(() => checkVisibility()) // Path shimmer → real title may not change width
       : null
     if (attrObserver && leftEl) attrObserver.observe(leftEl, { attributes: true, attributeFilter: ['data-path-ready'] })
 
     window.addEventListener('resize', checkVisibility)
+    const onNotionStatus = () => checkVisibility()
+    window.addEventListener('nodnotes-notion-status', onNotionStatus)
 
     return () => {
       window.cancelAnimationFrame(raf1)
@@ -1193,8 +1493,9 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       resizeObserver.disconnect()
       attrObserver?.disconnect()
       window.removeEventListener('resize', checkVisibility)
+      window.removeEventListener('nodnotes-notion-status', onNotionStatus)
     }
-  }, [editor, editMenuPillMode, boardSearchOpen, chatChromeReady, isChatSidebarOpen, setPhoneTools]) // Re-run when the map column’s final width is known
+  }, [editor, editMenuPillMode, boardSearchOpen, chatChromeReady, isChatSidebarOpen, isMobileMode, hasAiContent, aiTopBarPinned, setPhoneTools, setShareCompact]) // Re-run when the map column’s final width is known
 
   useLayoutEffect(() => {
     if (toolbarLayoutReady && !toolbarAnimate) setToolbarAnimate(true) // After first reveal, allow later collapse/expand animation
@@ -1233,15 +1534,15 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                     activeElement?.closest('[contenteditable="true"]') !== null ||
                     activeElement?.tagName === 'INPUT' ||
                     activeElement?.tagName === 'TEXTAREA'
-                  if (isInEditor && editor?.can().undo()) {
+                  if (isInEditor && canEditorUndo(editor)) {
                     editor.chain().focus().undo().run()
                   } else if (canMapUndo) {
                     mapUndo()
-                  } else if (editor?.can().undo()) {
+                  } else if (canEditorUndo(editor)) {
                     editor.chain().focus().undo().run()
                   }
                 }}
-                disabled={!canMapUndo && (!editor || !editor.can().undo())}
+                disabled={!canMapUndo && !canEditorUndo(editor)}
                 className="h-7 w-7 p-0 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
                 title="Undo (Ctrl+Z)"
               >
@@ -1256,15 +1557,15 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                     activeElement?.closest('[contenteditable="true"]') !== null ||
                     activeElement?.tagName === 'INPUT' ||
                     activeElement?.tagName === 'TEXTAREA'
-                  if (isInEditor && editor?.can().redo()) {
+                  if (isInEditor && canEditorRedo(editor)) {
                     editor.chain().focus().redo().run()
                   } else if (canMapRedo) {
                     mapRedo()
-                  } else if (editor?.can().redo()) {
+                  } else if (canEditorRedo(editor)) {
                     editor.chain().focus().redo().run()
                   }
                 }}
-                disabled={!canMapRedo && (!editor || !editor.can().redo())}
+                disabled={!canMapRedo && !canEditorRedo(editor)}
                 className="h-7 w-7 p-0 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
                 title="Redo (Ctrl+Shift+Z)"
               >
@@ -1272,127 +1573,103 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
               </Button>
             </div>
         </PhoneUndoRedoPortal>
-            {/* Slash before locks / Insert·Draw·View tools — hide when only More remains and path is truncated */}
+            {/* Slash before mode tools — hide when only More remains and path is truncated */}
             {!hideUndoMoreSlash && (
               <span className="flex h-7 items-center text-2xl font-thin text-gray-300 dark:text-gray-500 mx-1 flex-shrink-0 select-none leading-none" aria-hidden>/</span>
             )}
 
         <PhoneModeToolsPortal enabled={phoneTools} host={toolsHost}>
-        {/* Board lock / frame lock — also on the frame right-click menu */}
-        {editMenuPillMode === 'home' && !isItemHidden('lock') && (
+        {/* Turn into — Actions bar, own section left of Filter (same Format/Property as ⋮⋮) */}
+        {editMenuPillMode === 'home' && !isItemHidden('turnInto') && (
           <>
-            <div className="flex items-center gap-0.5 px-1.5 flex-shrink-0">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleToggleBoardLock}
-                className={cn(
-                  'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#1f1f1f] flex-shrink-0 flex items-center',
-                  'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Title condenses to icon on shrink
-                  boardLockUi.hasSelection &&
-                    boardLockUi.locked &&
-                    'bg-gray-100 dark:bg-[#1f1f1f] text-gray-900 dark:text-gray-100'
-                )}
-                disabled={!reactFlowInstance || !boardLockUi.hasSelection}
-                title={
-                  !boardLockUi.hasSelection
-                    ? 'Select a frame to anchor to the board'
-                    : boardLockUi.locked
-                      ? 'Unanchor from board'
-                      : 'Anchor'
-                }
-                aria-label={boardLockUi.locked ? 'Unanchor from board' : 'Anchor'}
+            <div className="flex items-center gap-0.5 flex-shrink-0">
+              <DropdownMenu
+                open={openDropdown === 'turnInto'}
+                onOpenChange={(open) => {
+                  if (open && !canTurnInto) return // Greyed: no armed block
+                  handleDropdownOpenChange('turnInto', open)
+                  if (open) syncTurnIntoFromEditor()
+                }}
               >
-                <Anchor className="h-4 w-4 flex-shrink-0" /> {/* Board lock: pin selected frames */}
-                <ToolbarTitle show={!compactLabels}>Anchor</ToolbarTitle>
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleToggleFrameLock}
-                className={cn(
-                  'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#1f1f1f] flex-shrink-0 flex items-center',
-                  'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Title condenses to icon on shrink
-                  frameLockUi.hasMulti &&
-                    frameLockUi.locked &&
-                    'bg-gray-100 dark:bg-[#1f1f1f] text-gray-900 dark:text-gray-100'
-                )}
-                disabled={!reactFlowInstance || !frameLockUi.hasMulti}
-                title={
-                  !frameLockUi.hasMulti
-                    ? 'Select 2+ frames to snap together'
-                    : frameLockUi.locked
-                      ? 'Unsnap frames'
-                      : 'Snap frames'
-                }
-                aria-label={
-                  frameLockUi.locked ? 'Unsnap frames' : 'Snap frames'
-                }
-              >
-                <LegoBrickIcon className="h-4 w-4 flex-shrink-0" /> {/* Frame-group lock: stacked bricks */}
-                <ToolbarTitle show={!compactLabels}>Snap frames</ToolbarTitle>
-              </Button>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={cn(
+                      'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#1f1f1f] flex-shrink-0 flex items-center',
+                      'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5'
+                    )}
+                    disabled={!canTurnInto}
+                    title={!canTurnInto ? 'Select a block to turn into' : 'Turn into'}
+                    aria-label="Turn into"
+                  >
+                    <RefreshCw className="h-4 w-4 flex-shrink-0" />
+                    <ToolbarTitle show={!compactLabels}>Turn into</ToolbarTitle>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  {...TOOLBAR_MENU_PLACEMENT}
+                  className="p-0 overflow-visible"
+                  onCloseAutoFocus={(e) => e.preventDefault()}
+                >
+                  <TurnIntoMenuItems
+                    editor={editor}
+                    currentBlockType={turnIntoBlockType}
+                    boardInTargets={boardInTargetsForToolbar()}
+                    onPick={(pick) => {
+                      void applyToolbarTurnInto({
+                        editor,
+                        conversationId,
+                        pick,
+                        getSetNodes,
+                        reactFlowInstance,
+                        onDone: () => {
+                          handleDropdownOpenChange('turnInto', false)
+                          syncTurnIntoFromEditor()
+                          if (pick.kind === 'format' && (pick.blockType === 'board' || pick.blockType === 'boardIn')) {
+                            void queryClientForAi.invalidateQueries({ queryKey: ['conversations'] })
+                          }
+                        },
+                      })
+                    }}
+                  />
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
-            {/* Slash before filter/sort/automations (or when that group is hidden) */}
-            <span className="flex h-7 items-center text-2xl font-thin text-gray-300 dark:text-gray-500 mx-1 flex-shrink-0 select-none leading-none" aria-hidden>/</span>
+            {/* Slash before Filter / Sort / Automations */}
+            {!isItemHidden('actions') && (
+              <span className="flex h-7 items-center text-2xl font-thin text-gray-300 dark:text-gray-500 mx-1 flex-shrink-0 select-none leading-none" aria-hidden>/</span>
+            )}
           </>
         )}
 
         {/* Filter / Sort / Automations — Actions bar (Notion-style view chrome) */}
-        {editMenuPillMode === 'home' && !isItemHidden('actions') && (
+        {editMenuPillMode === 'home' && (
           <>
-            <div className="flex items-center gap-0.5 flex-shrink-0">
-              <DropdownMenu open={openDropdown === 'boardFilter'} onOpenChange={(open) => handleDropdownOpenChange('boardFilter', open)}>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className={cn(
-                      'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#1f1f1f] flex-shrink-0 flex items-center',
-                      'transition-[padding,gap] duration-200 ease-out', compactEarlyLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5' // Filter cluster collapses first
-                    )}
-                    title="Filter"
-                  >
-                    <ListFilter className="h-4 w-4 flex-shrink-0" />
-                    <ToolbarTitle show={!compactEarlyLabels}>Filter</ToolbarTitle>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent {...TOOLBAR_MENU_PLACEMENT} className="w-48">
-                  <DropdownMenuLabel className="text-xs font-normal text-gray-500">Filter</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <div className="px-2 py-2 text-xs text-gray-400">No filters yet</div>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <DropdownMenu open={openDropdown === 'boardSort'} onOpenChange={(open) => handleDropdownOpenChange('boardSort', open)}>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className={cn(
-                      'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#1f1f1f] flex-shrink-0 flex items-center',
-                      'transition-[padding,gap] duration-200 ease-out', compactEarlyLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5' // Filter cluster collapses first
-                    )}
-                    title="Sort"
-                  >
-                    <ArrowUpDown className="h-4 w-4 flex-shrink-0" />
-                    <ToolbarTitle show={!compactEarlyLabels}>Sort</ToolbarTitle>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent {...TOOLBAR_MENU_PLACEMENT} className="w-48">
-                  <DropdownMenuLabel className="text-xs font-normal text-gray-500">Sort</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <div className="px-2 py-2 text-xs text-gray-400">No sorts yet</div>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <AutomationsMenu
-                open={openDropdown === 'boardAutomations'}
-                onOpenChange={(open) => handleDropdownOpenChange('boardAutomations', open)}
-                conversationId={conversationId}
-                showLabel={!compactEarlyLabels} // Filter cluster titles collapse first
+            <div
+              className={cn(
+                'flex items-center gap-0.5 flex-shrink-0',
+                // Keep Filter/Sort triggers measurable; strip lives under the top bar
+                isItemHidden('actions') && 'absolute w-0 h-0 overflow-hidden opacity-0 pointer-events-none'
+              )}
+            >
+              <BoardFilterSortTriggers
+                showFilterLabel={!compactEarlyLabels}
+                showSortLabel={!compactEarlyLabels}
+                filterTriggerVisible={!isItemHidden('actions')}
+                sortTriggerVisible={!isItemHidden('actions')}
               />
+              {!isItemHidden('actions') && (
+                <AutomationsMenu
+                  open={openDropdown === 'boardAutomations'}
+                  onOpenChange={(open) => handleDropdownOpenChange('boardAutomations', open)}
+                  conversationId={conversationId}
+                  showLabel={!compactEarlyLabels} // Filter cluster titles collapse first
+                />
+              )}
             </div>
             {/* If search is hidden, slash before More menu */}
-            {isItemHidden('search') && hiddenItems.size > 0 && (
+            {!isItemHidden('actions') && isItemHidden('search') && hiddenItems.size > 0 && (
               <span className="flex h-7 items-center text-2xl font-thin text-gray-300 dark:text-gray-500 mx-1 flex-shrink-0 select-none leading-none" aria-hidden>/</span>
             )}
           </>
@@ -1461,7 +1738,66 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
           </>
         )}
 
-        {/* Smart Align + layout arrow — Layout bar (pill still `insert`) */}
+        {/* Anchor + Lock frames — Layout bar leftmost; slash before Tidy up */}
+        {editMenuPillMode === 'insert' && !isItemHidden('lock') && (
+          <div className="flex items-center gap-0.5 flex-shrink-0">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleToggleBoardLock}
+              className={cn(
+                'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#1f1f1f] flex-shrink-0 flex items-center',
+                'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Title condenses to icon on shrink
+                boardLockUi.hasSelection &&
+                  boardLockUi.locked &&
+                  'bg-gray-100 dark:bg-[#1f1f1f] text-gray-900 dark:text-gray-100'
+              )}
+              disabled={!reactFlowInstance || !boardLockUi.hasSelection}
+              title={
+                !boardLockUi.hasSelection
+                  ? 'Select a frame to anchor to the board'
+                  : boardLockUi.locked
+                    ? 'Unanchor from board'
+                    : 'Anchor'
+              }
+              aria-label={boardLockUi.locked ? 'Unanchor from board' : 'Anchor'}
+            >
+              <Anchor className="h-4 w-4 flex-shrink-0" /> {/* Board lock: pin selected frames */}
+              <ToolbarTitle show={!compactLabels}>Anchor</ToolbarTitle>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleToggleFrameLock}
+              className={cn(
+                'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#1f1f1f] flex-shrink-0 flex items-center',
+                'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Title condenses to icon on shrink
+                frameLockUi.hasMulti &&
+                  frameLockUi.locked &&
+                  'bg-gray-100 dark:bg-[#1f1f1f] text-gray-900 dark:text-gray-100'
+              )}
+              disabled={!reactFlowInstance || !frameLockUi.hasMulti}
+              title={
+                !frameLockUi.hasMulti
+                  ? 'Select 2+ frames to lock together'
+                  : frameLockUi.locked
+                    ? 'Unlock frames'
+                    : 'Lock frames'
+              }
+              aria-label={
+                frameLockUi.locked ? 'Unlock frames' : 'Lock frames'
+              }
+            >
+              <LegoBrickIcon className="h-4 w-4 flex-shrink-0" filled={frameLockUi.locked} /> {/* Outline default; filled when locked */}
+              <ToolbarTitle show={!compactLabels}>Lock frames</ToolbarTitle>
+            </Button>
+          </div>
+        )}
+        {/* Slash between Anchor/Lock frames and Tidy up */}
+        {editMenuPillMode === 'insert' && !isItemHidden('lock') && (!isItemHidden('smartAlign') || !isItemHidden('arrows')) && (
+          <span className="flex h-7 items-center text-2xl font-thin text-gray-300 dark:text-gray-500 mx-1 flex-shrink-0 select-none leading-none" aria-hidden>/</span>
+        )}
+        {/* Tidy up + Thread layout — Layout bar (pill still `insert`) */}
         {editMenuPillMode === 'insert' && (!isItemHidden('smartAlign') || !isItemHidden('arrows')) && (
           <div className="flex items-center gap-0.5 flex-shrink-0">
             {!isItemHidden('smartAlign') && (
@@ -1475,7 +1811,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                 title="Tidy up"
                 aria-label="Tidy up"
               >
-                <Boxes className="h-4 w-4 flex-shrink-0" /> {/* Multi-box: Tidy up (UI until wired) */}
+                <TidyUpIcon className="h-4 w-4 flex-shrink-0" /> {/* 2×2 rounded squares */}
                 <ToolbarTitle show={!compactLabels}>Tidy up</ToolbarTitle>
               </Button>
             )}
@@ -1489,197 +1825,192 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                       'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#1f1f1f] flex-shrink-0 flex items-center',
                       'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5' // Title condenses to icon on shrink
                     )}
-                    title="Layout direction"
-                    aria-label="Layout direction"
+                    title="Threads"
+                    aria-label="Threads"
                   >
-                    {arrowDirection === 'down' && <ArrowDown className="h-4 w-4 flex-shrink-0" />}
-                    {arrowDirection === 'up' && <ArrowUp className="h-4 w-4 flex-shrink-0" />}
-                    {arrowDirection === 'left' && <ArrowLeft className="h-4 w-4 flex-shrink-0" />}
-                    {arrowDirection === 'right' && <ArrowRight className="h-4 w-4 flex-shrink-0" />}
-                    <ToolbarTitle show={!compactLabels}>Layout</ToolbarTitle>
+                    <LayoutAlignGlyph direction={arrowDirection} align={layoutForkAlign} className="h-4 w-4 flex-shrink-0" />
+                    <ToolbarTitle show={!compactLabels}>Threads</ToolbarTitle>
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent {...TOOLBAR_MENU_PLACEMENT} className="min-w-0 w-fit p-1">
-                  <DropdownMenuItem
-                    onClick={() => setArrowDirection('down')}
-                    className={cn('h-7 w-7 p-0 flex items-center justify-center rounded-sm', arrowDirection === 'down' && 'bg-gray-100')}
-                  >
-                    <ArrowDown className="h-4 w-4" />
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => setArrowDirection('right')}
-                    className={cn('h-7 w-7 p-0 flex items-center justify-center rounded-sm', arrowDirection === 'right' && 'bg-gray-100')}
-                  >
-                    <ArrowRight className="h-4 w-4" />
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => setArrowDirection('left')}
-                    className={cn('h-7 w-7 p-0 flex items-center justify-center rounded-sm', arrowDirection === 'left' && 'bg-gray-100')}
-                  >
-                    <ArrowLeft className="h-4 w-4" />
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => setArrowDirection('up')}
-                    className={cn('h-7 w-7 p-0 flex items-center justify-center rounded-sm', arrowDirection === 'up' && 'bg-gray-100')}
-                  >
-                    <ArrowUp className="h-4 w-4" />
-                  </DropdownMenuItem>
+                  <LayoutForkMenuItems
+                    direction={arrowDirection}
+                    align={layoutForkAlign}
+                    onDirectionChange={setArrowDirection}
+                    onAlignChange={pickLayoutForkAlign}
+                    canSnap={frameLockUi.hasMulti || layoutLinkUi.linked}
+                    snapActive={layoutLinkUi.linked}
+                    onSnapFrames={handleSnapFramesTogether}
+                    canStack={frameLockUi.hasMulti || layoutLinkUi.stacked}
+                    stackActive={layoutLinkUi.stacked}
+                    onStackFrames={handleStackFramesTogether}
+                  />
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
           </div>
         )}
-        {/* Slash between layout tools and Table */}
-        {editMenuPillMode === 'insert' && (!isItemHidden('smartAlign') || !isItemHidden('arrows')) && !isItemHidden('insertGroup1') && (
-          <span className="flex h-7 items-center text-2xl font-thin text-gray-300 dark:text-gray-500 mx-1 flex-shrink-0 select-none leading-none" aria-hidden>/</span>
-        )}
-
-        {/* Table — right of Layout */}
-        {editMenuPillMode === 'insert' && !isItemHidden('insertGroup1') && (
-          <div className="flex items-center gap-1 px-2 flex-shrink-0">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                // TODO: Implement table insertion
-              }}
-              className={cn(
-                'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 flex-shrink-0 flex items-center',
-                'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5' // Title condenses to icon on shrink
-              )}
-              title="Table"
-            >
-              <Table className="h-4 w-4 flex-shrink-0" />
-              <ToolbarTitle show={!compactLabels}>Table</ToolbarTitle>
-            </Button>
-          </div>
-        )}
         {/* Slash before More menu when Layout tools overflow */}
-        {editMenuPillMode === 'insert' && (!isItemHidden('smartAlign') || !isItemHidden('arrows') || !isItemHidden('insertGroup1')) && hiddenItems.size > 0 && (
+        {editMenuPillMode === 'insert' && (!isItemHidden('lock') || !isItemHidden('smartAlign') || !isItemHidden('arrows')) && hiddenItems.size > 0 && (
           <span className="flex h-7 items-center text-2xl font-thin text-gray-300 dark:text-gray-500 mx-1 flex-shrink-0 select-none leading-none" aria-hidden>/</span>
         )}
 
-        {/* Draw Mode Buttons - Eraser, Pencil, Highlighter, Lasso, Insert Spaces (ink dropdowns on the tools) */}
+        {/* Draw Mode Buttons - Eraser, Pen, Lasso, Insert Spaces (ink dropdown on Pen) */}
         {editMenuPillMode === 'draw' && (
           <>
-            {/* Eraser + Pencil + Highlighter — one cluster, no slash between eraser and pencil */}
+            {/* Eraser + Pen — one cluster, no slash between eraser and pen */}
             {(!isItemHidden('drawGroup2') || !isItemHidden('drawGroup3')) && (
               <>
                 <div className="flex items-center gap-1 px-2 flex-shrink-0">
                   {!isItemHidden('drawGroup2') && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={(e) => {
-                        // Toggle eraser tool - if already selected, deselect it
-                        if (drawTool === 'eraser') {
-                          setDrawTool(null)
-                          setIsDrawing(false) // Disable drawing mode
-                        } else {
+                    <DropdownMenu
+                      open={openDropdown === 'eraserOptions'}
+                      onOpenChange={(open) => {
+                        if (open && drawTool !== 'eraser') {
+                          // Inactive → arm eraser, keep the menu closed (same as pencil)
                           setDrawTool('eraser')
-                          setIsDrawing(false) // Disable drawing mode when using eraser (if implemented)
+                          setIsDrawing(false)
+                          return
                         }
-                        // Blur the button to remove focus state
-                        e.currentTarget.blur()
+                        handleDropdownOpenChange('eraserOptions', open) // Active → stroke/spot menu
                       }}
-                      className={cn(
-                        'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center',
-                        'transition-[padding,gap] duration-200 ease-out', compactEarlyLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Ink cluster collapses first
-                        drawTool === 'eraser'
-                          ? 'bg-gray-100 dark:bg-gray-800'
-                          : 'hover:bg-gray-100 dark:hover:bg-gray-800'
-                      )}
-                      title={drawTool === 'eraser' ? 'Eraser Active (Click to deselect)' : 'Eraser (Not yet implemented)'}
                     >
-                      <Eraser className="h-4 w-4 flex-shrink-0" />
-                      <ToolbarTitle show={!compactEarlyLabels}>Eraser</ToolbarTitle>
-                    </Button>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={cn(
+                            'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center',
+                            'transition-[padding,gap] duration-200 ease-out', compactEarlyLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5',
+                            drawTool === 'eraser'
+                              ? 'bg-gray-100 dark:bg-gray-800'
+                              : 'hover:bg-gray-100 dark:hover:bg-gray-800'
+                          )}
+                          title={drawTool === 'eraser' ? 'Eraser options' : 'Eraser'}
+                        >
+                          <Eraser className="h-4 w-4 flex-shrink-0" />
+                          <ToolbarTitle show={!compactEarlyLabels}>Eraser</ToolbarTitle>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        {...TOOLBAR_MENU_PLACEMENT}
+                        className="min-w-0 w-fit p-1"
+                        onCloseAutoFocus={(e) => e.preventDefault()}
+                      >
+                        <div className="flex items-stretch gap-1">
+                          <div className="flex flex-col gap-0.5">
+                            <DropdownMenuItem
+                              onClick={() => setEraserMode('stroke')}
+                              className={cn('gap-2', eraserMode === 'stroke' && 'bg-gray-100 dark:bg-gray-800')}
+                            >
+                              <Check className={cn('h-4 w-4', eraserMode === 'stroke' ? 'opacity-100' : 'opacity-0')} />
+                              Stroke eraser
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => setEraserMode('spot')}
+                              className={cn('gap-2', eraserMode === 'spot' && 'bg-gray-100 dark:bg-gray-800')}
+                            >
+                              <Check className={cn('h-4 w-4', eraserMode === 'spot' ? 'opacity-100' : 'opacity-0')} />
+                              Spot eraser
+                            </DropdownMenuItem>
+                          </div>
+                          <div
+                            className="flex items-center border-l border-gray-200 dark:border-gray-700 pl-1"
+                            onPointerDown={(e) => e.preventDefault()}
+                          >
+                            <TipThicknessColumn
+                              value={eraserTipSize}
+                              onChange={setEraserTipSize}
+                              zoomLocked={eraserTipZoomLocked}
+                              onZoomLockedChange={(locked) =>
+                                setEraserTipZoomLocked(locked, reactFlowInstance?.getViewport?.()?.zoom ?? 1)
+                              }
+                              label="Eraser tip size"
+                            />
+                          </div>
+                        </div>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   )}
                   {!isItemHidden('drawGroup3') && (
-                    <>
-                      {/* Freehand: first click toggles on; click again while active opens ink dropdown */}
-                      <DropdownMenu
-                        open={openDropdown === 'pencilColor'}
-                        onOpenChange={(open) => {
-                          if (open && drawTool !== 'pencil') { // Inactive → arm freehand, keep the menu closed
-                            setDrawTool('pencil')
-                            setIsDrawing(true) // Pencil is the drawing tool
+                    /* Freehand: first click arms draw; click again opens ink menu; click while open closes */
+                    <DropdownMenu
+                      modal={false}
+                      open={openDropdown === 'pencilColor'}
+                      onOpenChange={(open) => {
+                        if (open && drawTool !== 'pencil') {
+                          // Selected drawing → open color menu without arming the ink overlay
+                          const hasSelectedFreehand = (reactFlowInstance?.getNodes?.() ?? []).some(
+                            (n) => n.selected && n.type === 'freehand',
+                          )
+                          if (hasSelectedFreehand) {
+                            handleDropdownOpenChange('pencilColor', true)
                             return
                           }
-                          handleDropdownOpenChange('pencilColor', open) // Active → color dropdown; outside click closes
-                        }}
+                          // Inactive → arm freehand for drawing; keep the menu closed
+                          setDrawTool('pencil')
+                          handleDropdownOpenChange('pencilColor', false) // Explicit closed (controlled)
+                          return
+                        }
+                        if (open && drawTool === 'pencil') {
+                          // Already armed → open ink / tip menu
+                          handleDropdownOpenChange('pencilColor', true)
+                          return
+                        }
+                        // Closing the menu (trigger re-click or outside) — stay armed so drawing works
+                        handleDropdownOpenChange('pencilColor', false)
+                      }}
+                    >
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={cn(
+                            'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center',
+                            'transition-[padding,gap] duration-200 ease-out', compactEarlyLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Ink cluster collapses first
+                            drawTool === 'pencil'
+                              ? 'bg-gray-100 dark:bg-gray-800'
+                              : 'hover:bg-gray-100 dark:hover:bg-gray-800'
+                          )}
+                          title={drawTool === 'pencil' ? 'Freehand color' : 'Freehand Drawing'}
+                        >
+                          <Highlighter className="h-4 w-4 flex-shrink-0" />
+                          <ToolbarTitle show={!compactEarlyLabels}>Pen</ToolbarTitle>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        {...TOOLBAR_MENU_PLACEMENT}
+                        className="min-w-0 w-fit overflow-visible p-1"
+                        onCloseAutoFocus={(e) => e.preventDefault()}
                       >
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className={cn(
-                              'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center',
-                              'transition-[padding,gap] duration-200 ease-out', compactEarlyLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Ink cluster collapses first
-                              drawTool === 'pencil'
-                                ? 'bg-gray-100 dark:bg-gray-800'
-                                : 'hover:bg-gray-100 dark:hover:bg-gray-800'
-                            )}
-                            title={drawTool === 'pencil' ? 'Freehand color' : 'Freehand Drawing'}
+                        <div className="flex items-stretch gap-1">
+                          <PenColorColumn
+                            palette={pencilPalette}
+                            selectedIndex={pencilColorIndex}
+                            onSelectIndex={setPencilColorIndex}
+                            onChangeAt={setPencilColorAt}
+                            onAdd={addPencilColor}
+                            onRemove={removePencilColor}
+                            active={openDropdown === 'pencilColor'}
+                          />
+                          <div
+                            className="flex items-stretch border-l border-gray-200 dark:border-gray-700 pl-1"
+                            onPointerDown={(e) => e.preventDefault()}
                           >
-                            <Pencil className="h-4 w-4 flex-shrink-0" />
-                            <ToolbarTitle show={!compactEarlyLabels}>Pencil</ToolbarTitle>
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent {...TOOLBAR_MENU_PLACEMENT} className="min-w-0 w-fit p-1">
-                          {DRAW_INK.map((ink) => (
-                            <DropdownMenuItem
-                              key={ink.id}
-                              onClick={() => setPencilColor(ink.id)} // Pick this tool’s ink; menu closes via Radix
-                              className={pencilColor === ink.id ? 'bg-gray-100 dark:bg-gray-800' : ''}
-                            >
-                              <Circle className={cn('h-4 w-4', ink.swatch)} />
-                            </DropdownMenuItem>
-                          ))}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                      {/* Highlighter: same toggle-then-dropdown pattern as freehand */}
-                      <DropdownMenu
-                        open={openDropdown === 'highlighterColor'}
-                        onOpenChange={(open) => {
-                          if (open && drawTool !== 'highlighter') { // Inactive → arm highlighter, keep the menu closed
-                            setDrawTool('highlighter')
-                            setIsDrawing(false) // Highlighter is not freehand drawing (not yet implemented)
-                            return
-                          }
-                          handleDropdownOpenChange('highlighterColor', open) // Active → color dropdown
-                        }}
-                      >
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className={cn(
-                              'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center',
-                              'transition-[padding,gap] duration-200 ease-out', compactEarlyLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Ink cluster collapses first
-                              drawTool === 'highlighter'
-                                ? 'bg-gray-100 dark:bg-gray-800'
-                                : 'hover:bg-gray-100 dark:hover:bg-gray-800'
-                            )}
-                            title={drawTool === 'highlighter' ? 'Highlighter color' : 'Highlighter'}
-                          >
-                            <Highlighter className="h-4 w-4 flex-shrink-0" />
-                            <ToolbarTitle show={!compactEarlyLabels}>Highlighter</ToolbarTitle>
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent {...TOOLBAR_MENU_PLACEMENT} className="min-w-0 w-fit p-1">
-                          {DRAW_INK.map((ink) => (
-                            <DropdownMenuItem
-                              key={ink.id}
-                              onClick={() => setHighlighterColor(ink.id)} // Pick highlighter ink independently of freehand
-                              className={highlighterColor === ink.id ? 'bg-gray-100 dark:bg-gray-800' : ''}
-                            >
-                              <Circle className={cn('h-4 w-4', ink.swatch)} />
-                            </DropdownMenuItem>
-                          ))}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </>
+                            <TipThicknessColumn
+                              value={drawTipSize}
+                              onChange={setDrawTipSize}
+                              zoomLocked={drawTipZoomLocked}
+                              onZoomLockedChange={(locked) =>
+                                setDrawTipZoomLocked(locked, reactFlowInstance?.getViewport?.()?.zoom ?? 1)
+                              }
+                              label="Drawing tip size"
+                              fill
+                            />
+                          </div>
+                        </div>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   )}
                 </div>
                 <span className="flex h-7 items-center text-2xl font-thin text-gray-300 dark:text-gray-500 mx-1 flex-shrink-0 select-none leading-none" aria-hidden>/</span>
@@ -1720,55 +2051,67 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                       ref={insertVerticalSpaceButtonRef}
                       variant="ghost"
                       size="sm"
-                      onClick={() => {
-                        // TODO: Implement insert vertical space
+                      onClick={(e) => {
+                        // Same toggle contract as the other Draw tools: click arms, click again disarms
+                        setDrawTool(drawTool === 'insert-v' ? null : 'insert-v')
+                        setIsDrawing(false) // Insert space is a pointer tool, not an ink stroke
+                        e.currentTarget.blur() // Drop the focus ring so only the armed wash shows
                       }}
                       onMouseEnter={handleInsertVerticalSpaceMouseEnter}
                       onMouseLeave={handleInsertVerticalSpaceMouseLeave}
                       className={cn(
-                        'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 flex-shrink-0 flex items-center',
-                        'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5' // Title condenses to icon on shrink
+                        'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center',
+                        'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Title condenses to icon on shrink
+                        drawTool === 'insert-v'
+                          ? 'bg-gray-100 dark:bg-gray-800' // Armed wash matches lasso / eraser / ink tools
+                          : 'hover:bg-gray-100 dark:hover:bg-gray-800'
                       )}
-                      title="Insert Vertical Space"
+                      title={drawTool === 'insert-v' ? 'V-space active (click to deselect)' : 'Insert V-space'}
                     >
                       <img 
                         ref={insertVerticalSpaceIconRef}
                         src="/insert%20space%20v%20icon%202.svg" 
-                        alt="Insert Vertical Space" 
+                        alt="V-space" 
                         className="w-4 h-4 flex-shrink-0 transition-all duration-200"
                         style={{ 
                           filter: 'brightness(0) saturate(100%) invert(38%) sepia(0%) saturate(0%) hue-rotate(0deg) brightness(98%) contrast(100%)',
                           opacity: 0.8
                         }}
                       />
-                      <ToolbarTitle show={!compactLabels}>Vertical space</ToolbarTitle>
+                      <ToolbarTitle show={!compactLabels}>V-space</ToolbarTitle>
                     </Button>
                     <Button
                       ref={insertHorizontalSpaceButtonRef}
                       variant="ghost"
                       size="sm"
-                      onClick={() => {
-                        // TODO: Implement insert horizontal space
+                      onClick={(e) => {
+                        // Same toggle contract as the other Draw tools: click arms, click again disarms
+                        setDrawTool(drawTool === 'insert-h' ? null : 'insert-h')
+                        setIsDrawing(false) // Insert space is a pointer tool, not an ink stroke
+                        e.currentTarget.blur() // Drop the focus ring so only the armed wash shows
                       }}
                       onMouseEnter={handleInsertHorizontalSpaceMouseEnter}
                       onMouseLeave={handleInsertHorizontalSpaceMouseLeave}
                       className={cn(
-                        'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 flex-shrink-0 flex items-center',
-                        'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5' // Title condenses to icon on shrink
+                        'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center',
+                        'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Title condenses to icon on shrink
+                        drawTool === 'insert-h'
+                          ? 'bg-gray-100 dark:bg-gray-800' // Armed wash matches lasso / eraser / ink tools
+                          : 'hover:bg-gray-100 dark:hover:bg-gray-800'
                       )}
-                      title="Insert Horizontal Space"
+                      title={drawTool === 'insert-h' ? 'H-space active (click to deselect)' : 'Insert H-space'}
                     >
                       <img 
                         ref={insertHorizontalSpaceIconRef}
                         src="/insert%20space%20h%20icon%201.svg" 
-                        alt="Insert Horizontal Space" 
+                        alt="H-space" 
                         className="w-4 h-4 flex-shrink-0 transition-all duration-200"
                         style={{ 
                           filter: 'brightness(0) saturate(100%) invert(38%) sepia(0%) saturate(0%) hue-rotate(0deg) brightness(98%) contrast(100%)',
                           opacity: 0.8
                         }}
                       />
-                      <ToolbarTitle show={!compactLabels}>Horizontal space</ToolbarTitle>
+                      <ToolbarTitle show={!compactLabels}>H-space</ToolbarTitle>
                     </Button>
                 </div>
               </>
@@ -1851,6 +2194,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
             <PresentationsMenu
               open={openDropdown === 'presentation'}
               onOpenChange={(open) => handleDropdownOpenChange('presentation', open)}
+              conversationId={conversationId}
               triggerVisible={!isItemHidden('presentation')}
               showLabel={!compactLabels} // Title condenses to icon on shrink
             />
@@ -2524,7 +2868,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                     <img 
                       ref={threadStyleIconRef}
                       src="/thread%20style%20icon%208.svg" 
-                      alt="Thread style" 
+                      alt="Thread" 
                       className="w-3.5 h-3.5 transition-all duration-200"
                       style={{ 
                         filter: 'brightness(0) saturate(100%) invert(38%) sepia(0%) saturate(0%) hue-rotate(0deg) brightness(98%) contrast(100%)',
@@ -2643,7 +2987,10 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
 
       {/* More menu button - contains hidden items, left-aligned after collapsible items */}
       {!phoneTools && hiddenItems.size > 0 && (
-        <DropdownMenu open={openDropdown === 'moreMenu'} onOpenChange={(open) => handleDropdownOpenChange('moreMenu', open)}>
+        <DropdownMenu open={openDropdown === 'moreMenu'} onOpenChange={(open) => {
+          handleDropdownOpenChange('moreMenu', open)
+          if (open) syncTurnIntoFromEditor() // Overflow Turn into needs the caret type
+        }}>
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
@@ -2659,11 +3006,30 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
             {/* Show hidden items in more menu - different items based on edit menu mode */}
             {editMenuPillMode === 'insert' ? (
               <>
-                {/* Insert mode items — visual order: Smart Align, arrows, Table */}
+                {/* Layout overflow — visual order: Anchor, Lock frames, Tidy up, Thread layout */}
+                {isItemHidden('lock') && reactFlowInstance && (
+                  <>
+                    <DropdownMenuItem
+                      onClick={handleToggleBoardLock}
+                      disabled={!boardLockUi.hasSelection}
+                    >
+                      <Anchor className="h-4 w-4 mr-2" /> {/* Overflow: same anchor as Layout bar */}
+                      Anchor
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={handleToggleFrameLock}
+                      disabled={!frameLockUi.hasMulti}
+                    >
+                      <LegoBrickIcon className="h-4 w-4 mr-2" filled={frameLockUi.locked} /> {/* Outline default; filled when locked */}
+                      Lock frames
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
                 {isItemHidden('smartAlign') && (
                   <>
                     <DropdownMenuItem>
-                      <Boxes className="h-4 w-4 mr-2" />
+                      <TidyUpIcon className="h-4 w-4 mr-2" />
                       Tidy up
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
@@ -2671,35 +3037,18 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                 )}
                 {isItemHidden('arrows') && (
                   <>
-                    <DropdownMenuItem onClick={() => setArrowDirection('down')}>
-                      <ArrowDown className="h-4 w-4 mr-2" />
-                      Arrow Down
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setArrowDirection('right')}>
-                      <ArrowRight className="h-4 w-4 mr-2" />
-                      Arrow Right
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setArrowDirection('left')}>
-                      <ArrowLeft className="h-4 w-4 mr-2" />
-                      Arrow Left
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setArrowDirection('up')}>
-                      <ArrowUp className="h-4 w-4 mr-2" />
-                      Arrow Up
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                  </>
-                )}
-                {isItemHidden('insertGroup1') && editor && (
-                  <>
-                    <DropdownMenuItem
-                      onClick={() => {
-                        // TODO: Implement table insertion
-                      }}
-                    >
-                      <Table className="h-4 w-4 mr-2" />
-                      Table
-                    </DropdownMenuItem>
+                    <LayoutForkMenuItems
+                      direction={arrowDirection}
+                      align={layoutForkAlign}
+                      onDirectionChange={setArrowDirection}
+                      onAlignChange={pickLayoutForkAlign}
+                      canSnap={frameLockUi.hasMulti || layoutLinkUi.linked}
+                      snapActive={layoutLinkUi.linked}
+                      onSnapFrames={handleSnapFramesTogether}
+                      canStack={frameLockUi.hasMulti || layoutLinkUi.stacked}
+                      stackActive={layoutLinkUi.stacked}
+                      onStackFrames={handleStackFramesTogether}
+                    />
                     <DropdownMenuSeparator />
                   </>
                 )}
@@ -2744,29 +3093,77 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                 {/* Group 2: Eraser — same cluster as pencil (no separator) */}
                 {isItemHidden('drawGroup2') && (
                   <>
-                    <DropdownMenuItem onClick={() => {
-                      if (drawTool === 'eraser') {
-                        setDrawTool(null)
-                        setIsDrawing(false)
-                      } else {
-                        setDrawTool('eraser')
-                        setIsDrawing(false)
-                      }
-                    }}>
-                      <Eraser className="h-4 w-4 mr-2" />
-                      Eraser
-                    </DropdownMenuItem>
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger>
+                        <Eraser className="h-4 w-4 mr-2" />
+                        Eraser
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent className="min-w-0 w-fit p-1">
+                        <DropdownMenuItem onClick={() => {
+                          if (drawTool === 'eraser') {
+                            setDrawTool(null)
+                            setIsDrawing(false)
+                          } else {
+                            setDrawTool('eraser')
+                            setIsDrawing(false)
+                          }
+                        }}>
+                          {drawTool === 'eraser' ? 'Deselect' : 'Select'}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <div className="flex items-stretch gap-1">
+                          <div className="flex flex-col gap-0.5">
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setEraserMode('stroke')
+                                setDrawTool('eraser')
+                                setIsDrawing(false)
+                              }}
+                              className={cn('gap-2', eraserMode === 'stroke' && 'bg-gray-100 dark:bg-gray-800')}
+                            >
+                              <Check className={cn('h-4 w-4', eraserMode === 'stroke' ? 'opacity-100' : 'opacity-0')} />
+                              Stroke eraser
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setEraserMode('spot')
+                                setDrawTool('eraser')
+                                setIsDrawing(false)
+                              }}
+                              className={cn('gap-2', eraserMode === 'spot' && 'bg-gray-100 dark:bg-gray-800')}
+                            >
+                              <Check className={cn('h-4 w-4', eraserMode === 'spot' ? 'opacity-100' : 'opacity-0')} />
+                              Spot eraser
+                            </DropdownMenuItem>
+                          </div>
+                          <div
+                            className="flex items-center border-l border-gray-200 dark:border-gray-700 pl-1"
+                            onPointerDown={(e) => e.preventDefault()}
+                          >
+                            <TipThicknessColumn
+                              value={eraserTipSize}
+                              onChange={setEraserTipSize}
+                              zoomLocked={eraserTipZoomLocked}
+                              onZoomLockedChange={(locked) =>
+                                setEraserTipZoomLocked(locked, reactFlowInstance?.getViewport?.()?.zoom ?? 1)
+                              }
+                              label="Eraser tip size"
+                            />
+                          </div>
+                        </div>
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
                   </>
                 )}
-                {/* Group 3: Pencil, Highlighter — overflow keeps toggle + ink submenu */}
+                {/* Group 3: Pen — overflow keeps toggle + ink submenu */}
                 {isItemHidden('drawGroup3') && (
                   <>
                     <DropdownMenuSub>
                       <DropdownMenuSubTrigger>
-                        <Pencil className="h-4 w-4 mr-2" />
-                        Pencil
+                        <Highlighter className="h-4 w-4 mr-2" />
+                        Pen
                       </DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent className="min-w-0 w-fit p-1">
+                      <DropdownMenuSubContent className="min-w-0 w-fit overflow-visible p-1">
                         <DropdownMenuItem onClick={() => { // Overflow click still toggles freehand on/off
                           if (drawTool === 'pencil') {
                             setDrawTool(null)
@@ -2779,54 +3176,40 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                           {drawTool === 'pencil' ? 'Deselect' : 'Select'}
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        {DRAW_INK.map((ink) => (
-                          <DropdownMenuItem
-                            key={ink.id}
-                            onClick={() => { // Picking ink also arms freehand
-                              setPencilColor(ink.id)
+                        <div className="flex items-stretch gap-1">
+                          <PenColorColumn
+                            palette={pencilPalette}
+                            selectedIndex={pencilColorIndex}
+                            onSelectIndex={(index) => {
+                              setPencilColorIndex(index)
                               setDrawTool('pencil')
                               setIsDrawing(true)
                             }}
-                            className={pencilColor === ink.id ? 'bg-gray-100 dark:bg-gray-800' : ''}
-                          >
-                            <Circle className={cn('h-4 w-4 mr-2', ink.swatch)} />
-                            {ink.label}
-                          </DropdownMenuItem>
-                        ))}
-                      </DropdownMenuSubContent>
-                    </DropdownMenuSub>
-                    <DropdownMenuSub>
-                      <DropdownMenuSubTrigger>
-                        <Highlighter className="h-4 w-4 mr-2" />
-                        Highlighter
-                      </DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent className="min-w-0 w-fit p-1">
-                        <DropdownMenuItem onClick={() => { // Overflow click still toggles highlighter on/off
-                          if (drawTool === 'highlighter') {
-                            setDrawTool(null)
-                            setIsDrawing(false)
-                          } else {
-                            setDrawTool('highlighter')
-                            setIsDrawing(false)
-                          }
-                        }}>
-                          {drawTool === 'highlighter' ? 'Deselect' : 'Select'}
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        {DRAW_INK.map((ink) => (
-                          <DropdownMenuItem
-                            key={ink.id}
-                            onClick={() => { // Picking ink also arms highlighter
-                              setHighlighterColor(ink.id)
-                              setDrawTool('highlighter')
-                              setIsDrawing(false)
+                            onChangeAt={setPencilColorAt}
+                            onAdd={(hex) => {
+                              addPencilColor(hex)
+                              setDrawTool('pencil')
+                              setIsDrawing(true)
                             }}
-                            className={highlighterColor === ink.id ? 'bg-gray-100 dark:bg-gray-800' : ''}
+                            onRemove={removePencilColor}
+                            showLabels
+                          />
+                          <div
+                            className="flex items-stretch border-l border-gray-200 dark:border-gray-700 pl-1"
+                            onPointerDown={(e) => e.preventDefault()}
                           >
-                            <Circle className={cn('h-4 w-4 mr-2', ink.swatch)} />
-                            {ink.label}
-                          </DropdownMenuItem>
-                        ))}
+                            <TipThicknessColumn
+                              value={drawTipSize}
+                              onChange={setDrawTipSize}
+                              zoomLocked={drawTipZoomLocked}
+                              onZoomLockedChange={(locked) =>
+                                setDrawTipZoomLocked(locked, reactFlowInstance?.getViewport?.()?.zoom ?? 1)
+                              }
+                              label="Drawing tip size"
+                              fill
+                            />
+                          </div>
+                        </div>
                       </DropdownMenuSubContent>
                     </DropdownMenuSub>
                     <DropdownMenuSeparator />
@@ -2849,27 +3232,31 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={() => {
-                        // TODO: Implement insert vertical space
+                        setDrawTool(drawTool === 'insert-v' ? null : 'insert-v') // Overflow row toggles the same armed tool
+                        setIsDrawing(false) // Pointer tool, no ink capture
                       }}
+                      className={drawTool === 'insert-v' ? 'bg-gray-100 dark:bg-gray-800' : ''} // Armed row reads like the bar button
                     >
                       <img 
                         src="/insert%20space%20v%20icon%202.svg" 
-                        alt="Insert Vertical Space" 
+                        alt="V-space" 
                         className="h-4 w-4 mr-2"
                       />
-                      Insert Vertical Space
+                      V-space
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={() => {
-                        // TODO: Implement insert horizontal space
+                        setDrawTool(drawTool === 'insert-h' ? null : 'insert-h') // Overflow row toggles the same armed tool
+                        setIsDrawing(false) // Pointer tool, no ink capture
                       }}
+                      className={drawTool === 'insert-h' ? 'bg-gray-100 dark:bg-gray-800' : ''} // Armed row reads like the bar button
                     >
                       <img 
                         src="/insert%20space%20h%20icon%201.svg" 
-                        alt="Insert Horizontal Space" 
+                        alt="H-space" 
                         className="h-4 w-4 mr-2"
                       />
-                      Insert Horizontal Space
+                      H-space
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                   </>
@@ -2878,32 +3265,44 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
             ) : (
               <>
                 {/* Actions mode overflow */}
-                {isItemHidden('lock') && reactFlowInstance && (
+                {isItemHidden('turnInto') && (
                   <>
-                    <DropdownMenuItem
-                      onClick={handleToggleBoardLock}
-                      disabled={!boardLockUi.hasSelection}
-                    >
-                      <Anchor className="h-4 w-4 mr-2" /> {/* Overflow menu: same anchor as Actions bar */}
-                      Anchor
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={handleToggleFrameLock}
-                      disabled={!frameLockUi.hasMulti}
-                    >
-                      <LegoBrickIcon className="h-4 w-4 mr-2" /> {/* Overflow menu: same brick as Actions bar */}
-                      Snap frames
-                    </DropdownMenuItem>
+                    <DropdownMenuLabel className="text-xs font-normal text-gray-500">Turn into</DropdownMenuLabel>
+                    {canTurnInto ? (
+                    <TurnIntoMenuItems
+                      editor={editor}
+                      currentBlockType={turnIntoBlockType}
+                      boardInTargets={boardInTargetsForToolbar()}
+                      onPick={(pick) => {
+                        void applyToolbarTurnInto({
+                          editor,
+                          conversationId,
+                          pick,
+                          getSetNodes,
+                          reactFlowInstance,
+                          onDone: () => {
+                            handleDropdownOpenChange('moreMenu', false)
+                            syncTurnIntoFromEditor()
+                            if (pick.kind === 'format' && (pick.blockType === 'board' || pick.blockType === 'boardIn')) {
+                              void queryClientForAi.invalidateQueries({ queryKey: ['conversations'] })
+                            }
+                          },
+                        })
+                      }}
+                    />
+                    ) : (
+                      <DropdownMenuItem disabled>Select a block to turn into</DropdownMenuItem>
+                    )}
                     <DropdownMenuSeparator />
                   </>
                 )}
                 {isItemHidden('actions') && (
                   <>
-                    <DropdownMenuItem onClick={() => handleDropdownOpenChange('boardFilter', true)}>
+                    <DropdownMenuItem onClick={() => toggleBoardFilterSort('filter')}>
                       <ListFilter className="h-4 w-4 mr-2" />
                       Filter
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => handleDropdownOpenChange('boardSort', true)}>
+                    <DropdownMenuItem onClick={() => toggleBoardFilterSort('sort')}>
                       <ArrowUpDown className="h-4 w-4 mr-2" />
                       Sort
                     </DropdownMenuItem>
@@ -3153,30 +3552,8 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
         </div>
       </div>
 
-      {/* Right Section — AI origin + Share + copy/favorite/more (pinned to the bar’s right, not in the centered cluster) */}
+      {/* Right Section — connections + AI origin + Share + copy/favorite/more */}
       <div className="absolute right-2 inset-y-0 z-20 flex items-center gap-1 pointer-events-auto" data-right-section>
-        {/* Show AI-written content (reddish mask) — only when page has AI-origin spans */}
-        {hasAiContent && (
-          <div className="flex items-center px-1 flex-shrink-0">
-            <Button
-              variant="ghost"
-              size="sm"
-              className={cn(
-                'h-7 w-7 p-0 flex-shrink-0',
-                showAiOrigin
-                  ? 'text-red-600 bg-red-50 hover:bg-red-100 hover:text-red-700'
-                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-              )}
-              title={showAiOrigin ? 'Hide AI content highlight' : 'Show AI-written content'}
-              aria-pressed={showAiOrigin}
-              onClick={() => setShowAiOrigin(!showAiOrigin)}
-            >
-              <Sparkles className="h-4 w-4" />
-            </Button>
-          </div>
-        )}
-
-        {/* Notion pin (when connected) left of Share; then copy / favorite / More */}
         <NotionConnectProvider>
           <div className="flex items-center px-2 flex-shrink-0 gap-1">
             {!canEdit && (
@@ -3184,7 +3561,10 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                 {role === 'comment' ? 'Can comment' : 'View only'}
               </span>
             )}
+            <ConnectionSyncTopBarIndicator conversationId={conversationId} />
             <NotionTopBarPin />
+            <AiOriginTopBarToggle />
+            <CollabPresenceAvatars />
             {canShare && conversationId ? (
               <ShareBoardMenu boardId={conversationId} />
             ) : canShare ? (

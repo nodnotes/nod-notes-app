@@ -1,5 +1,7 @@
 'use client'
 
+import type { CSSProperties } from 'react'
+
 // Absolute SVG silhouette behind frame / nest content — fill + stroke from View colors.
 // Pointer-events none so TipTap / resize chrome stay interactive.
 
@@ -16,6 +18,7 @@ type FrameShapeBackdropProps = {
   stroke?: string // Outline color
   strokeWidth?: number // Outline weight in px
   className?: string // Extra positioning classes
+  style?: CSSProperties // Position inside padded frame chrome (content box)
 }
 
 /** Paints the frame silhouette flush to the parent box (parent must be `relative`). */
@@ -28,6 +31,7 @@ export function FrameShapeBackdrop({
   stroke = '#3F8AE2',
   strokeWidth = 2,
   className,
+  style,
 }: FrameShapeBackdropProps) {
   const w = Math.max(1, Math.round(width)) // Avoid zero SVG viewBox
   const h = Math.max(1, Math.round(height))
@@ -37,8 +41,8 @@ export function FrameShapeBackdrop({
     <div
       aria-hidden
       data-frame-shape-backdrop={type} // Debug / CSS hooks
-      className={cn('pointer-events-none absolute inset-0 z-0 overflow-hidden', className)}
-      style={{ width: '100%', height: '100%' }}
+      className={cn('pointer-events-none absolute z-0 overflow-visible', className)}
+      style={{ left: 0, top: 0, right: 0, bottom: 0, ...style }}
     >
       <Shape
         type={type}

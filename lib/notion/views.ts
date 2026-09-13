@@ -72,7 +72,7 @@ export type NotionViewSummary = {
   name: string
   type: string
   layout: DatabaseLayout
-  /** Notion sub-item mode — seed Thinktable Sub-tasks (nested / flat / off). */
+  /** Notion sub-item mode — seed NodNotes Sub-tasks (nested / flat / off). */
   subtasks?: NotionSubtaskConfig | null
   /** Column widths / visibility / wrap from view configuration. */
   layoutConfig?: NotionViewLayoutConfig | null
@@ -86,7 +86,7 @@ function viewsHeaders(accessToken: string): Record<string, string> {
   }
 }
 
-/** Map Notion view type → Thinktable layout id. */
+/** Map Notion view type → NodNotes layout id. */
 export function notionViewTypeToLayout(type: string): DatabaseLayout {
   const t = (type || '').toLowerCase()
   if (t === 'board' || t === 'list' || t === 'gallery' || t === 'calendar' || t === 'timeline') {

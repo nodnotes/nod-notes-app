@@ -7,6 +7,7 @@ import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { BlockTypeId } from '@/components/block-actions-menu'
 import { looksLikeImageSrc } from '@/lib/tiptap/image-block'
 import type { PropertyTypeId } from '@/lib/blocks/property' // Turn into → Property cell
+import { localToScreen, screenToLocal } from '@/lib/dom-transform' // Rotation-safe block hit bands
 
 const editorsByHostId = new Map<string, Editor>() // host **frame** RF id → TipTap editor (⋮⋮ drop targets)
 
@@ -37,8 +38,11 @@ export function findHostEditorAtPoint(
     if (!(el instanceof HTMLElement)) continue
     if (el.closest('[data-tt-block-drag-ghost], [data-tt-drop-line]')) continue // Ignore drag overlays
     if (el.closest('[data-tt-frame-drop-overlay]')) continue // Ignore stack drop chrome
-    const node = el.closest('.react-flow__node') as HTMLElement | null
-    const id = node?.getAttribute('data-id')
+    // Board frames use RF `.react-flow__node[data-id]`; chat turns use `[data-tt-host-id]`
+    const hostEl = el.closest('[data-tt-host-id], .react-flow__node') as HTMLElement | null
+    if (!hostEl) continue
+    const id =
+      hostEl.getAttribute('data-tt-host-id') || hostEl.getAttribute('data-id') || ''
     if (!id || id === skipHostNodeId) continue
     const editor = editorForHostNode(id)
     if (editor) return { hostNodeId: id, editor }
@@ -71,76 +75,128 @@ export function isHandleBlockType(name: string): boolean {
     name === 'syncedBlock' ||
     name === 'columns' ||
     name === 'boardLink' || // Linked-page block (inline/title) gets the ⋮⋮ grip too
+    name === 'captureLink' || // Saved capture link block
     name === 'databaseBlock' || // Notion database block gets the ⋮⋮ grip too
     name === 'imageBlock' || // Image (placeholder or <img>) gets the ⋮⋮ grip too
+    name === 'videoBlock' ||
+    name === 'audioBlock' ||
+    name === 'fileBlock' ||
+    name === 'bookmarkBlock' ||
     name === 'propertyBlock' // Property cell (icon + Empty) gets the ⋮⋮ grip too
   )
 }
 
-/** Screen Y band for a handle-block — prefer the block’s own DOM rect. */
-function blockScreenYBand(
-  editor: Editor,
-  node: PMNode,
-  pos: number
-): { top: number; bottom: number } | null {
+/** Painted DOM for a handle-block (null when missing / header-only strip). */
+function blockDomEl(editor: Editor, node: PMNode, pos: number): HTMLElement | null {
   try {
     const dom = editor.view.nodeDOM(pos)
-    // Prefer the content element for a reliable painted band
-    let el: HTMLElement | null =
+    const el: HTMLElement | null =
       dom instanceof HTMLElement
         ? dom
         : dom?.parentElement instanceof HTMLElement
           ? dom.parentElement
           : null
-    if (el) {
-      const rect = el.getBoundingClientRect()
-      if (rect.height > 0) return { top: rect.top, bottom: rect.bottom }
+    if (!el) return null
+    if (
+      el.classList.contains('tt-property-block-header-only') ||
+      el.getAttribute('data-header-only') === 'true'
+    ) {
+      return null // Top-strip only — no inline band to hover
     }
-    if (node.isAtom || node.isLeaf) return null
-    const start = editor.view.coordsAtPos(pos + 1)
-    const endPos = Math.max(pos + 1, pos + node.nodeSize - 1)
-    const end = editor.view.coordsAtPos(endPos)
-    return { top: start.top, bottom: Math.max(start.bottom, end.bottom) }
+    return el
   } catch {
     return null
   }
 }
 
 /**
- * Resolve the content block whose vertical band contains clientY (any X — full frame width).
- * Prefers listItem/taskItem; otherwise the **tightest** matching block DOM rect.
+ * Block Y band in `root` local CSS px — not screen AABB.
+ * Screen top/bottom overlap after frame rotate; local stack order stays correct.
  */
-export function findEditorBlockAtClientY(editor: Editor, clientY: number): EditorBlockRef | null {
+function blockLocalYBand(
+  editor: Editor,
+  node: PMNode,
+  pos: number,
+  root: HTMLElement
+): { top: number; bottom: number } | null {
+  try {
+    const el = blockDomEl(editor, node, pos)
+    if (el) {
+      const h = el.offsetHeight
+      if (h <= 0) return null
+      // Local top/bottom edges → root space (survives ancestor CSS rotate)
+      const a = localToScreen(el, 0, 0)
+      const b = localToScreen(el, 0, h)
+      const ya = screenToLocal(root, a.x, a.y).y
+      const yb = screenToLocal(root, b.x, b.y).y
+      return { top: Math.min(ya, yb), bottom: Math.max(ya, yb) }
+    }
+    if (node.isAtom || node.isLeaf) return null
+    const start = editor.view.coordsAtPos(pos + 1)
+    const endPos = Math.max(pos + 1, pos + node.nodeSize - 1)
+    const end = editor.view.coordsAtPos(endPos)
+    const ya = screenToLocal(root, (start.left + start.right) / 2, start.top).y
+    const yb = screenToLocal(
+      root,
+      (end.left + end.right) / 2,
+      Math.max(start.bottom, end.bottom)
+    ).y
+    return { top: Math.min(ya, yb), bottom: Math.max(ya, yb) }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Resolve the content block whose **local** vertical band contains the pointer
+ * (any local X — full frame width). Screen Y alone is wrong under frame rotate.
+ * Prefers listItem/taskItem; otherwise the **tightest** matching band.
+ */
+export function findEditorBlockAtClientPoint(
+  editor: Editor,
+  clientX: number,
+  clientY: number
+): EditorBlockRef | null {
+  const root = editor.view.dom as HTMLElement
+  const localY = screenToLocal(root, clientX, clientY).y
   const { doc } = editor.state
-  let best: { ref: EditorBlockRef; height: number } | null = null
+  // Holder object, not a `let`: TS narrows a captured `let` to its initializer and can't see the
+  // assignment inside `descendants`, which typed the winner as `never` at the return below.
+  const best: { top: { ref: EditorBlockRef; height: number } | null } = { top: null }
 
   doc.descendants((node, pos) => {
     const name = node.type.name
     if (name === 'bulletList' || name === 'orderedList' || name === 'taskList') return true
     if (!isHandleBlockType(name)) return true
 
-    const band = blockScreenYBand(editor, node, pos)
+    const band = blockLocalYBand(editor, node, pos, root)
     if (!band) return true
     const { top, bottom } = band
-    if (clientY < top || clientY > bottom) {
+    if (localY < top || localY > bottom) {
       return name !== 'listItem' && name !== 'taskItem'
     }
     const height = Math.max(1, bottom - top)
     const ref: EditorBlockRef = { from: pos, to: pos + node.nodeSize, node, typeName: name }
     const prefer =
-      !best ||
+      !best.top ||
       name === 'listItem' ||
       name === 'taskItem' ||
-      (best.ref.typeName !== 'listItem' &&
-        best.ref.typeName !== 'taskItem' &&
-        height < best.height) // Strictly tighter — equal height keeps earlier (doc order)
-    if (prefer) best = { ref, height }
+      (best.top.ref.typeName !== 'listItem' &&
+        best.top.ref.typeName !== 'taskItem' &&
+        height < best.top.height) // Strictly tighter — equal height keeps earlier (doc order)
+    if (prefer) best.top = { ref, height }
 
     if (name === 'listItem' || name === 'taskItem') return false
     return true
   })
 
-  return best?.ref ?? null
+  return best.top?.ref ?? null
+}
+
+/** Same as `findEditorBlockAtClientPoint` using the editor’s screen mid-X (upright frames). */
+export function findEditorBlockAtClientY(editor: Editor, clientY: number): EditorBlockRef | null {
+  const r = editor.view.dom.getBoundingClientRect()
+  return findEditorBlockAtClientPoint(editor, (r.left + r.right) / 2, clientY)
 }
 
 /** Resolve the content block for a document position (prefer list/task item over the list). */
@@ -382,7 +438,7 @@ export function turnEditorBlockInto(
     }
     case 'image': {
       clearLists()
-      // If this block is already an image, keep it (Replace lives on the NodeView)
+      // If this block is already an image, keep it (image menu lives on the NodeView)
       if (typeName === 'imageBlock') return true
       const text = editor.state.doc.textBetween(from, to, '\n').trim()
       const src = looksLikeImageSrc(text) ? text : null // URL-only blocks become the image src
@@ -506,25 +562,25 @@ export function turnEditorBlockIntoProperty(
 ): boolean {
   if (!editor || editor.isDestroyed) return false // Unmounted editor — nothing to convert
   const { from, to, typeName, node } = block
-  // Already a property cell — just switch the type (keep any typed value)
+  // Already a property cell — switch type; mark inline so it stays in the body when empty
   if (typeName === 'propertyBlock') {
     return editor
       .chain()
       .focus()
       .command(({ tr }) => {
-        tr.setNodeMarkup(from, undefined, { ...node.attrs, propertyType }) // Same cell, new type glyph
+        tr.setNodeMarkup(from, undefined, { ...node.attrs, propertyType, inline: true })
         return true
       })
       .run()
   }
-  // Replace this block with an empty property cell (placeholder Empty — do not seed from old text)
+  // Replace this block with an empty **inline** property cell (user Turn into — stay in body)
   return editor
     .chain()
     .focus()
     .deleteRange({ from, to })
     .insertContentAt(from, {
       type: 'propertyBlock',
-      attrs: { propertyType, value: '' },
+      attrs: { propertyType, value: '', inline: true },
     } as JSONContent)
     .run()
 }
@@ -637,6 +693,39 @@ export function moveEditorBlockToPos(editor: Editor, from: number, to: number, i
     // keep unwrapped
   }
   return editor.chain().focus().deleteRange({ from, to }).insertContentAt(mapped, payload).run()
+}
+
+/** Move one or more selected blocks to insertPos (doc order preserved). */
+export function moveEditorBlocksToPos(
+  editor: Editor,
+  blocks: EditorBlockRef[],
+  insertPos: number
+): boolean {
+  if (blocks.length === 0) return false
+  const sorted = [...blocks].sort((a, b) => a.from - b.from)
+  if (sorted.length === 1) {
+    return moveEditorBlockToPos(editor, sorted[0].from, sorted[0].to, insertPos)
+  }
+  for (const b of sorted) {
+    if (insertPos > b.from && insertPos < b.to) return false // Inside a selected block
+  }
+  const parts: JSONContent[] = []
+  for (const b of sorted) {
+    const json = jsonForEditorRange(editor, b.from, b.to)
+    parts.push(...json)
+  }
+  if (parts.length === 0) return false
+  // Delete high→low so earlier ranges stay valid, then insert at mapped pos
+  let mapped = insertPos
+  for (const b of sorted) {
+    if (b.to <= insertPos) mapped -= b.to - b.from
+  }
+  let chain = editor.chain().focus()
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    const b = sorted[i]
+    chain = chain.deleteRange({ from: b.from, to: b.to })
+  }
+  return chain.insertContentAt(Math.max(0, mapped), parts).run()
 }
 
 /** Delete a content-block range; leave an empty paragraph if the doc would be empty. */

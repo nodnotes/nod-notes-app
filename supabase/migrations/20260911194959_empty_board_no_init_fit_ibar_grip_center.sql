@@ -1,0 +1,2 @@
+-- Empty-board create: no RF init fitView on first frame; I-bar ⋮⋮ centered on caret.
+-- App/docs marker only; no DDL.

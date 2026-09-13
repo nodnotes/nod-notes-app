@@ -1,8 +1,8 @@
-// Convert a Notion block tree into TipTap HTML for one Thinktable frame
+// Convert a Notion block tree into TipTap HTML for one NodNotes frame
 
 import { richTextToHtml, type NotionBlock, type NotionRichText } from './blocks'
 
-/** Map Notion page id → Thinktable board link attrs (for child_page → boardLink). */
+/** Map Notion page id → NodNotes board link attrs (for child_page → boardLink). */
 export type ChildPageLinkMap = Map<
   string, // Normalized Notion page id (no dashes)
   { boardId: string; title?: string; icon?: string | null }
@@ -102,7 +102,7 @@ function blockToHtml(block: NotionBlock, opts?: NotionHtmlOpts): string {
       return `<p><a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${caption || escapeText(url)}</a></p>`
     }
     case 'child_page': {
-      // Sub-page content lives on its own Thinktable board — emit a boardLink when mapped
+      // Sub-page content lives on its own NodNotes board — emit a boardLink when mapped
       const title = typeof p.title === 'string' ? p.title : 'Untitled'
       const key = block.id.replace(/-/g, '').toLowerCase() // Normalize Notion id
       const link = opts?.childPageLinks?.get(key)

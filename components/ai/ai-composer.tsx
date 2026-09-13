@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { createPortal } from 'react-dom'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
+import { NodNotesIcon } from '@/components/nod-notes-icon'
 import {
   ArrowUp,
   Loader2,
@@ -22,10 +23,11 @@ import {
   Scan,
   Mic,
   Check,
+  PencilLine,
 } from 'lucide-react'
 import { useVoiceDictation } from '@/hooks/use-voice-dictation'
 import type { AiModeId } from '@/lib/ai/modes'
-import { AI_SKILLS, type AiSkill } from '@/lib/ai/skills'
+import { AI_SKILLS, getSkill, type AiSkill } from '@/lib/ai/skills'
 import { AI_CONNECTORS } from '@/lib/ai/connectors'
 import type {
   AiChatBlockDragPayload,
@@ -33,7 +35,7 @@ import type {
   AiMessage,
   AiThread,
 } from '@/lib/ai/types'
-import { AI_CHAT_BLOCK_MIME } from '@/lib/ai/types'
+import { AI_CHAT_BLOCK_MIME, aiChatDragItems } from '@/lib/ai/types'
 import { consumeAiSse } from '@/lib/ai/stream'
 import {
   detachCaptureFromChat,
@@ -50,6 +52,13 @@ import {
   type AiLiveContextPill,
 } from '@/lib/ai/selection-bridge'
 import { createClient } from '@/lib/supabase/client'
+import { parseChatExportJson } from '@/lib/ai/parse-chat-export'
+import {
+  loadAiModelId,
+  saveAiModelId,
+  type AiModelId,
+} from '@/lib/ai/models'
+import { AiModelSelect } from '@/components/ai/ai-model-select'
 import { cn } from '@/lib/utils'
 import { useSidebarContext } from '@/components/sidebar-context'
 
@@ -84,6 +93,12 @@ const MENU_SKILLS: Array<{
     description: 'Quiz yourself and explore answers',
     icon: MessageSquare,
   },
+  {
+    id: 'suggest-edits',
+    name: 'Suggest edits',
+    description: 'Propose inline improvements for selected content',
+    icon: PencilLine,
+  },
 ]
 
 interface AiComposerProps {
@@ -99,8 +114,12 @@ interface AiComposerProps {
   onStreamingId: (id: string | null) => void
   seedPrompt?: string
   onSeedConsumed?: () => void
+  seedSkillIds?: string[]
+  onSeedSkillsConsumed?: () => void
   /** When true, focus the textarea after mount (phone map-dock opens the soft keyboard). */
   autoFocus?: boolean
+  /** ChatGPT export picked from the + menu opens as a new imported thread. */
+  onChatImported?: (thread: AiThread) => void
   onEdits?: (
     edits: Array<{
       kind?: 'update_frame' | 'create_frame' | 'create_thread'
@@ -113,6 +132,11 @@ interface AiComposerProps {
       actionLogId?: string
       originalContent?: string
       replacements?: Array<{ oldText: string; newText: string }>
+      color?: string
+      fillColor?: string
+      borderColor?: string
+      originalFillColor?: string
+      originalBorderColor?: string
     }>
   ) => void | Promise<void>
 }
@@ -248,7 +272,10 @@ export function AiComposer({
   onStreamingId,
   seedPrompt,
   onSeedConsumed,
+  seedSkillIds,
+  onSeedSkillsConsumed,
   autoFocus = false,
+  onChatImported,
   onEdits,
 }: AiComposerProps) {
   const { registerAiComposerFocus } = useSidebarContext()
@@ -260,6 +287,7 @@ export function AiComposer({
   const [menuQuery, setMenuQuery] = useState('')
   const [menuPos, setMenuPos] = useState<{ left: number; bottom: number } | null>(null)
   const [attachedSkills, setAttachedSkills] = useState<AiSkill[]>([])
+  const [modelId, setModelId] = useState<AiModelId>(() => loadAiModelId())
   const chatCaptures = useSyncExternalStore(subscribeChatCaptures, getChatCaptures, getChatCaptures) // Capture-menu attachments
   // Live page/frame/block/text pills from the selection bridge (page on open + selection)
   const [livePills, setLivePills] = useState<AiLiveContextPill[]>(() => getAiLiveContextPills())
@@ -309,7 +337,23 @@ export function AiComposer({
 
   // Subscribe to BoardFlow / TipTap selection → refresh live context pills
   useEffect(() => {
-    const sync = () => setLivePills(getAiLiveContextPills())
+    // Bail on identical pills — the bridge fires for any board selection/viewport publish, and a
+    // fresh array every notify re-runs the pill effects below (update-depth loop).
+    const sync = () =>
+      setLivePills((prev) => {
+        const next = getAiLiveContextPills()
+        const same =
+          next.length === prev.length &&
+          next.every(
+            (p, i) =>
+              p.id === prev[i].id &&
+              p.kind === prev[i].kind &&
+              p.label === prev[i].label &&
+              p.frameId === prev[i].frameId &&
+              p.preview === prev[i].preview
+          )
+        return same ? prev : next
+      })
     sync()
     return subscribeAiSelection(sync)
   }, [])
@@ -362,6 +406,21 @@ export function AiComposer({
       textareaRef.current?.focus()
     }
   }, [seedPrompt, onSeedConsumed])
+
+  useEffect(() => {
+    if (!seedSkillIds?.length) return
+    setAttachedSkills((prev) => {
+      const ids = new Set(prev.map((s) => s.id))
+      const merged = [...prev]
+      for (const id of seedSkillIds) {
+        const skill = getSkill(id)
+        if (skill?.enabled && !ids.has(skill.id)) merged.push(skill)
+      }
+      return merged
+    })
+    onSeedSkillsConsumed?.()
+    textareaRef.current?.focus()
+  }, [seedSkillIds, onSeedSkillsConsumed])
 
   // Phone map-dock: focus in the same open gesture so the soft keyboard appears
   useEffect(() => {
@@ -468,7 +527,16 @@ export function AiComposer({
     if (!payload || payload.source !== 'ai-chat-block' || !payload.messageId) return
     setAttaching(true)
     try {
-      await onAttachChatBlock(payload)
+      // Multi-select drag drops every selected turn as context
+      for (const item of aiChatDragItems(payload)) {
+        await onAttachChatBlock({
+          source: 'ai-chat-block',
+          messageId: item.messageId,
+          plain: item.plain,
+          html: item.html,
+          role: item.role,
+        })
+      }
     } finally {
       setAttaching(false)
     }
@@ -497,6 +565,7 @@ export function AiComposer({
             text: c.text,
           })),
           skillIds: attachedSkills.map((s) => s.id),
+          modelId,
           skipUserInsert: opts?.skipUserInsert === true,
         }),
       })
@@ -594,6 +663,41 @@ export function AiComposer({
     e.target.value = ''
     setPlusOpen(false)
     if (!file) return
+
+    if (/\.zip$/i.test(file.name)) {
+      window.alert('Unzip your ChatGPT export and choose conversations.json')
+      return
+    }
+
+    if (/\.json$/i.test(file.name) && file.size < 50_000_000) {
+      try {
+        const text = await file.text()
+        const parsed = JSON.parse(text) as unknown
+        if (parseChatExportJson(parsed).length > 0) {
+          const res = await fetch('/api/ai/threads/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ boardId, export: parsed }),
+          })
+          const data = (await res.json().catch(() => ({}))) as {
+            thread?: AiThread
+            error?: string
+          }
+          if (res.ok && data.thread) {
+            onChatImported?.(data.thread)
+            textareaRef.current?.focus()
+            return
+          }
+          if (!res.ok) {
+            window.alert(typeof data.error === 'string' ? data.error : 'Import failed')
+            return
+          }
+        }
+      } catch {
+        // Not a chat export — fall through to attach as a file
+      }
+    }
+
     // Text-ish files → drop contents into the draft as context; others name-tag only
     const isText =
       file.type.startsWith('text/') ||
@@ -624,7 +728,7 @@ export function AiComposer({
       btn.click()
       return
     }
-    window.dispatchEvent(new CustomEvent('thinktable-open-notion-connect'))
+    window.dispatchEvent(new CustomEvent('nodnotes-open-notion-connect'))
   }
 
   const selectableMode = mode === 'edit' ? 'edit' : 'ask'
@@ -794,14 +898,23 @@ export function AiComposer({
                     <div className="border-t border-black/5 dark:border-white/10 py-1">
                       {(!menuQuery.trim() ||
                         'file'.includes(menuQuery.trim().toLowerCase()) ||
-                        menuQuery.trim().toLowerCase().includes('file')) && (
+                        menuQuery.trim().toLowerCase().includes('file') ||
+                        menuQuery.trim().toLowerCase().includes('export') ||
+                        menuQuery.trim().toLowerCase().includes('chat')) && (
                         <button
                           type="button"
                           onClick={() => fileInputRef.current?.click()}
-                          className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-800 dark:text-gray-200 hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
+                          className="w-full flex items-start gap-2.5 px-3 py-2 text-left hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
                         >
-                          <Paperclip className="h-4 w-4 text-gray-500" />
-                          File
+                          <Paperclip className="h-4 w-4 mt-0.5 flex-shrink-0 text-gray-500 dark:text-gray-400" />
+                          <span className="min-w-0 flex flex-col gap-0.5">
+                            <span className="text-sm font-medium text-gray-900 dark:text-gray-50">
+                              File
+                            </span>
+                            <span className="text-xs text-gray-500 dark:text-gray-400 leading-snug">
+                              Attach notes, or import a ChatGPT export (conversations.json from the ZIP)
+                            </span>
+                          </span>
                         </button>
                       )}
                       {(!menuQuery.trim() ||
@@ -828,6 +941,7 @@ export function AiComposer({
               <input
                 ref={fileInputRef}
                 type="file"
+                accept=".json,application/json,.zip,application/zip,.md,.txt,.csv,text/*"
                 className="hidden"
                 onChange={(e) => void onFilePicked(e)}
               />
@@ -864,6 +978,21 @@ export function AiComposer({
                 'px-1 py-[6px]'
               )}
             />
+
+            <AiModelSelect
+              value={modelId}
+              onChange={(id) => {
+                setModelId(id)
+                saveAiModelId(id)
+              }}
+            />
+
+            <span
+              className="text-xs text-gray-400 dark:text-gray-500 flex-shrink-0 select-none"
+              aria-hidden
+            >
+              /
+            </span>
 
             <button
               type="button"
@@ -918,7 +1047,7 @@ export function AiComposer({
               )}
             >
               {isLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <NodNotesIcon nodLoop className="h-4 w-auto text-current" />
               ) : (
                 <ArrowUp className="h-4 w-4" />
               )}
@@ -1031,6 +1160,7 @@ export async function regenerateAfterEdit(opts: {
       boardId: opts.boardId || null,
       selectedFrameIds: getAiSelectedFrameIds(),
       snapshotIds: opts.snapshotIds || [],
+      modelId: loadAiModelId(),
       skipUserInsert: true,
     }),
   })

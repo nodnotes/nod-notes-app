@@ -1,0 +1,3 @@
+-- I-bar paneScale tracks live zoom (not navigationZoom freeze) and returns exact 1
+-- in the unclamped place-scale band so size does not snap after pinch/zoom settle.
+-- App/docs marker only; no DDL.

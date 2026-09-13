@@ -6,6 +6,7 @@ export { useIsNearThreadConnection } from './use-is-near-thread-connection'
 export { forwardConnectStartToHandle } from './forward-connect-start'
 export { startThreadFromIndicator } from './start-thread-from-indicator'
 export { ConnectionIndicator } from './ConnectionIndicator'
+export { ChatLinkConnectionCue } from './ChatLinkConnectionCue'
 export {
   normalizeHandleId,
   isConnectionIndicatorId,
@@ -25,6 +26,9 @@ export {
   THREAD_DEFAULT_COLOR,
   THREAD_DEFAULT_STROKE_WIDTH,
   THREAD_SELECTED_COLOR,
+  THREAD_STROKE_COLOR_KEY,
+  THREAD_COLOR_SWATCHES,
+  resolveThreadStrokeColor,
   threadAlgorithmFromStyle,
   threadStyleFromAlgorithm,
   isSharpThreadAlgorithm,

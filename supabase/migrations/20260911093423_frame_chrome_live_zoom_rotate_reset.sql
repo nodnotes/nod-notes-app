@@ -1,0 +1,2 @@
+-- Frame selection chrome: live board-zoom scaling (grips, adjust pads, connection
+-- points, rotate/fit/wrap) + click rotate to reset 0°. App/docs marker only; no DDL.

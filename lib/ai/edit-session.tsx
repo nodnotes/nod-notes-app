@@ -11,12 +11,14 @@ import {
   type ReactNode,
 } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { promotePendingToOrigin } from '@/lib/ai/wrap-ai-html'
+import { htmlHasAiOrigin, htmlHasAiPending, promotePendingToOrigin } from '@/lib/ai/wrap-ai-html'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   buildProposedHtml,
   type AiTextReplacement,
 } from '@/lib/ai/apply-replacements'
 import { generateUUID } from '@/lib/utils'
+import { frameColorMetaPatch } from '@/lib/frame-colors'
 
 /** Input for queueing a pending edit — proposed HTML is built after re-reading DB original. */
 export type AiPendingEditInput = {
@@ -34,6 +36,13 @@ export type AiPendingEditInput = {
   contentHtml?: string
   replacements?: AiTextReplacement[]
   actionLogId?: string
+  /** When set, frame fill/border were changed (or will be applied client-side). */
+  fillColor?: string
+  borderColor?: string
+  originalFillColor?: string
+  originalBorderColor?: string
+  /** True when this edit includes a color change (including clear → default). */
+  colorChanged?: boolean
 }
 
 export type AiPendingEditKind = 'update_frame' | 'create_frame' | 'create_thread' | 'update_thread'
@@ -51,16 +60,27 @@ export interface AiPendingEdit {
   /** Proposed HTML with ai-pending marks (shown on page until save/discard). */
   proposedContent: string
   actionLogId?: string
+  /** Proposed chrome colors (undefined = this edit did not touch color). */
+  fillColor?: string
+  borderColor?: string
+  originalFillColor?: string
+  originalBorderColor?: string
+  colorChanged?: boolean
 }
 
 interface AiEditSessionValue {
   pendingEdits: AiPendingEdit[]
   previewOriginal: boolean
   showAiOrigin: boolean
+  /** Board has persisted AI-origin spans (top-bar toggle only when true). */
+  hasAiContent: boolean
+  /** Sparkles control pinned left of Share; default unpinned → lives in More menu. */
+  aiTopBarPinned: boolean
   focusedEditId: string | null
   /** messageId → original HTML right after Remove (panel consumes once). */
   justRestoredByMessage: Record<string, string>
   setShowAiOrigin: (v: boolean) => void
+  setAiTopBarPinned: (pinned: boolean) => void
   setPreviewOriginal: (v: boolean) => void
   setFocusedEditId: (id: string | null) => void
   consumeRestoredContent: (messageId: string) => void
@@ -77,7 +97,20 @@ interface AiEditSessionValue {
 
 const AiEditSessionContext = createContext<AiEditSessionValue | null>(null)
 
-const SHOW_AI_ORIGIN_KEY = 'thinktable-show-ai-origin'
+const SHOW_AI_ORIGIN_KEY = 'nodnotes-show-ai-origin'
+const AI_TOPBAR_PIN_KEY = 'nodnotes-ai-topbar-pinned'
+
+/** Default unpinned — AI highlight toggle starts in More menu. */
+function readAiTopBarPinned(): boolean {
+  if (typeof window === 'undefined') return false
+  try {
+    const raw = window.localStorage.getItem(AI_TOPBAR_PIN_KEY)
+    if (raw === null) return false
+    return raw !== '0' && raw !== 'false'
+  } catch {
+    return false
+  }
+}
 
 function bumpMessages(detail?: {
   contentUpdates?: Array<{ messageId: string; content: string }>
@@ -95,16 +128,47 @@ async function markActionStatus(actionLogId: string | undefined, status: 'applie
 
 export function AiEditSessionProvider({
   children,
+  conversationId,
   onMessagesMutated,
 }: {
   children: ReactNode
+  conversationId?: string
   onMessagesMutated?: () => void
 }) {
+  const queryClient = useQueryClient()
   const [pendingEdits, setPendingEdits] = useState<AiPendingEdit[]>([])
-  const [previewOriginal, setPreviewOriginal] = useState(false)
+  const [previewOriginal, setPreviewOriginalState] = useState(false)
   const [focusedEditId, setFocusedEditId] = useState<string | null>(null)
   const [showAiOrigin, setShowAiOriginState] = useState(false)
+  const [hasAiContent, setHasAiContent] = useState(false)
+  const [aiTopBarPinned, setAiTopBarPinnedState] = useState(false)
   const [justRestoredByMessage, setJustRestoredByMessage] = useState<Record<string, string>>({})
+
+  const scanHasAiContent = useCallback(() => {
+    if (pendingEdits.length > 0) return true
+    if (!conversationId) return false
+    const msgs =
+      (queryClient.getQueryData([
+        'messages-for-panels',
+        conversationId,
+        'full',
+      ]) as Array<{ content?: string; metadata?: Record<string, unknown> }> | undefined) ||
+      (queryClient.getQueryData([
+        'messages-for-panels',
+        conversationId,
+        'embed',
+      ]) as Array<{ content?: string; metadata?: Record<string, unknown> }> | undefined) ||
+      (queryClient.getQueryData([
+        'messages-for-panels',
+        conversationId,
+      ]) as Array<{ content?: string; metadata?: Record<string, unknown> }> | undefined) ||
+      []
+    return msgs.some((m) => {
+      const meta = (m.metadata || {}) as Record<string, unknown>
+      if (meta.hasAiOrigin === true) return true
+      return htmlHasAiOrigin(m.content) || htmlHasAiPending(m.content)
+    })
+  }, [conversationId, pendingEdits, queryClient])
 
   const consumeRestoredContent = useCallback((messageId: string) => {
     setJustRestoredByMessage((prev) => {
@@ -123,7 +187,32 @@ export function AiEditSessionProvider({
     } catch {
       /* ignore */
     }
+    setAiTopBarPinnedState(readAiTopBarPinned())
   }, [])
+
+  useEffect(() => {
+    if (!conversationId) {
+      setHasAiContent(false)
+      return
+    }
+    const apply = () => setHasAiContent(scanHasAiContent())
+    apply()
+    const unsub = queryClient.getQueryCache().subscribe((event) => {
+      const key = event?.query?.queryKey
+      if (!Array.isArray(key) || key[0] !== 'messages-for-panels' || key[1] !== conversationId) return
+      apply()
+    })
+    window.addEventListener('ai-edits-mutated', apply)
+    // Messages often land after the provider mounts — rescan once the board query settles
+    const t1 = window.setTimeout(apply, 400)
+    const t2 = window.setTimeout(apply, 1200)
+    return () => {
+      unsub()
+      window.removeEventListener('ai-edits-mutated', apply)
+      window.clearTimeout(t1)
+      window.clearTimeout(t2)
+    }
+  }, [conversationId, queryClient, scanHasAiContent])
 
   const setShowAiOrigin = useCallback((v: boolean) => {
     setShowAiOriginState(v)
@@ -133,6 +222,23 @@ export function AiEditSessionProvider({
       /* ignore */
     }
     document.documentElement.classList.toggle('tt-show-ai-origin', v)
+  }, [])
+
+  useEffect(() => {
+    if (!hasAiContent && showAiOrigin) setShowAiOrigin(false)
+  }, [hasAiContent, showAiOrigin, setShowAiOrigin])
+
+  const setAiTopBarPinned = useCallback((pinned: boolean) => {
+    setAiTopBarPinnedState(pinned)
+    try {
+      window.localStorage.setItem(AI_TOPBAR_PIN_KEY, pinned ? '1' : '0')
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  const setPreviewOriginal = useCallback((v: boolean) => {
+    setPreviewOriginalState(v)
   }, [])
 
   const persistFrameContent = useCallback(async (messageId: string, content: string) => {
@@ -164,6 +270,29 @@ export function AiEditSessionProvider({
     // Ignore missing row (cascade already removed it with a create_frame discard)
     await supabase.from('panel_edges').delete().eq('id', edgeId)
   }, [])
+
+  // Eye toggle: swap fill/border between proposed and original for color edits
+  useEffect(() => {
+    const colorEdits = pendingEdits.filter(
+      (e) => e.colorChanged && e.kind === 'update_frame' && e.messageId
+    )
+    if (colorEdits.length === 0) return
+    let cancelled = false
+    void (async () => {
+      for (const edit of colorEdits) {
+        if (cancelled || !edit.messageId) continue
+        const fill = previewOriginal ? (edit.originalFillColor ?? '') : (edit.fillColor ?? '')
+        const border = previewOriginal
+          ? (edit.originalBorderColor ?? '')
+          : (edit.borderColor ?? '')
+        await persistFrameMeta(edit.messageId, frameColorMetaPatch(fill, border))
+      }
+      if (!cancelled) bumpMessages()
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [previewOriginal, pendingEdits, persistFrameMeta])
 
   /** Queue proposals in memory only — DB keeps original until Save (creates already inserted). */
   const addPendingEdits = useCallback(
@@ -197,6 +326,9 @@ export function AiEditSessionProvider({
             originalContent: '',
             proposedContent: proposed,
             actionLogId: e.actionLogId,
+            fillColor: e.fillColor,
+            borderColor: e.borderColor,
+            colorChanged: e.colorChanged,
           })
           continue
         }
@@ -211,16 +343,30 @@ export function AiEditSessionProvider({
             .maybeSingle()
           if (typeof msg?.content === 'string') original = msg.content
           // Soft-flag metadata for chrome without mutating content
-          await persistFrameMeta(e.messageId, { aiPendingEdit: true })
+          const metaPatch: Record<string, unknown> = { aiPendingEdit: true }
+          // Server may have already applied color; client re-applies for race safety
+          if (e.colorChanged) {
+            Object.assign(
+              metaPatch,
+              frameColorMetaPatch(e.fillColor ?? '', e.borderColor ?? '')
+            )
+          }
+          await persistFrameMeta(e.messageId, metaPatch)
         }
         // Build proposal against the live original so eye/remove match DB
+        const hasTextChange =
+          Boolean(e.contentHtml?.trim()) ||
+          Boolean(e.replacements?.some((r) => (r.oldText || '').trim()))
         const proposed =
           e.proposedContent ||
-          buildProposedHtml({
-            originalHtml: original,
-            contentHtml: e.contentHtml,
-            replacements: e.replacements,
-          })
+          // Color-only: keep HTML identical (no full-frame pending wrap)
+          (e.colorChanged && !hasTextChange
+            ? original
+            : buildProposedHtml({
+                originalHtml: original,
+                contentHtml: e.contentHtml,
+                replacements: e.replacements,
+              }))
         withIds.push({
           id: generateUUID(),
           kind: e.kind,
@@ -230,6 +376,11 @@ export function AiEditSessionProvider({
           originalContent: original,
           proposedContent: proposed,
           actionLogId: e.actionLogId,
+          fillColor: e.fillColor,
+          borderColor: e.borderColor,
+          originalFillColor: e.originalFillColor,
+          originalBorderColor: e.originalBorderColor,
+          colorChanged: e.colorChanged,
         })
       }
 
@@ -255,12 +406,21 @@ export function AiEditSessionProvider({
   const applySaveOne = useCallback(
     async (edit: AiPendingEdit): Promise<{ messageId?: string; content?: string }> => {
       if (edit.kind === 'update_frame' && edit.messageId) {
-        const finalHtml = promotePendingToOrigin(edit.proposedContent)
+        const textChanged = edit.proposedContent !== edit.originalContent
+        const finalHtml = textChanged
+          ? promotePendingToOrigin(edit.proposedContent)
+          : edit.originalContent
         await persistFrameContent(edit.messageId, finalHtml)
-        await persistFrameMeta(edit.messageId, {
-          aiPendingEdit: false,
-          hasAiOrigin: true,
-        })
+        const metaPatch: Record<string, unknown> = { aiPendingEdit: false }
+        if (textChanged) metaPatch.hasAiOrigin = true
+        // Eye preview may have restored originals — force proposed colors on Save
+        if (edit.colorChanged) {
+          Object.assign(
+            metaPatch,
+            frameColorMetaPatch(edit.fillColor ?? '', edit.borderColor ?? '')
+          )
+        }
+        await persistFrameMeta(edit.messageId, metaPatch)
         await markActionStatus(edit.actionLogId, 'applied')
         return { messageId: edit.messageId, content: finalHtml }
       }
@@ -285,7 +445,14 @@ export function AiEditSessionProvider({
   const applyDiscardOne = useCallback(
     async (edit: AiPendingEdit): Promise<{ messageId?: string; content?: string; deleted?: boolean }> => {
       if (edit.kind === 'update_frame' && edit.messageId) {
-        await persistFrameMeta(edit.messageId, { aiPendingEdit: false })
+        const metaPatch: Record<string, unknown> = { aiPendingEdit: false }
+        if (edit.colorChanged) {
+          Object.assign(
+            metaPatch,
+            frameColorMetaPatch(edit.originalFillColor ?? '', edit.originalBorderColor ?? '')
+          )
+        }
+        await persistFrameMeta(edit.messageId, metaPatch)
         await persistFrameContent(edit.messageId, edit.originalContent)
         await markActionStatus(edit.actionLogId, 'undone')
         return { messageId: edit.messageId, content: edit.originalContent }
@@ -454,9 +621,12 @@ export function AiEditSessionProvider({
       pendingEdits,
       previewOriginal,
       showAiOrigin,
+      hasAiContent,
+      aiTopBarPinned,
       focusedEditId,
       justRestoredByMessage,
       setShowAiOrigin,
+      setAiTopBarPinned,
       setPreviewOriginal,
       setFocusedEditId,
       consumeRestoredContent,
@@ -474,9 +644,12 @@ export function AiEditSessionProvider({
       pendingEdits,
       previewOriginal,
       showAiOrigin,
+      hasAiContent,
+      aiTopBarPinned,
       focusedEditId,
       justRestoredByMessage,
       setShowAiOrigin,
+      setAiTopBarPinned,
       consumeRestoredContent,
       addPendingEdits,
       saveEdit,
@@ -502,9 +675,12 @@ export function useAiEditSession(): AiEditSessionValue {
       pendingEdits: [],
       previewOriginal: false,
       showAiOrigin: false,
+      hasAiContent: false,
+      aiTopBarPinned: false,
       focusedEditId: null,
       justRestoredByMessage: {},
       setShowAiOrigin: () => {},
+      setAiTopBarPinned: () => {},
       setPreviewOriginal: () => {},
       setFocusedEditId: () => {},
       consumeRestoredContent: () => {},
@@ -530,6 +706,11 @@ export function buildFramePendingEdit(opts: {
   replacements?: AiTextReplacement[]
   summary: string
   actionLogId?: string
+  fillColor?: string
+  borderColor?: string
+  originalFillColor?: string
+  originalBorderColor?: string
+  colorChanged?: boolean
 }): AiPendingEditInput {
   return {
     kind: 'update_frame',
@@ -540,6 +721,11 @@ export function buildFramePendingEdit(opts: {
     contentHtml: opts.contentHtml,
     replacements: opts.replacements,
     actionLogId: opts.actionLogId,
+    fillColor: opts.fillColor,
+    borderColor: opts.borderColor,
+    originalFillColor: opts.originalFillColor,
+    originalBorderColor: opts.originalBorderColor,
+    colorChanged: opts.colorChanged,
   }
 }
 
@@ -548,6 +734,9 @@ export function buildCreateFramePendingEdit(opts: {
   contentHtml: string
   summary: string
   actionLogId?: string
+  fillColor?: string
+  borderColor?: string
+  colorChanged?: boolean
 }): AiPendingEditInput {
   return {
     kind: 'create_frame',
@@ -557,6 +746,9 @@ export function buildCreateFramePendingEdit(opts: {
     proposedContent: opts.contentHtml,
     contentHtml: opts.contentHtml,
     actionLogId: opts.actionLogId,
+    fillColor: opts.fillColor,
+    borderColor: opts.borderColor,
+    colorChanged: opts.colorChanged,
   }
 }
 

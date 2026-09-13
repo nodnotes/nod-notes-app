@@ -13,6 +13,12 @@ import type { Edge, Node } from 'reactflow' // Types only — Node is not a runt
 type UseUndoRedoOptions = {
   maxHistorySize: number // Maximum number of snapshots to keep in history
   enableShortcuts: boolean // Whether to enable Ctrl+Z/Cmd+Shift+Z keyboard shortcuts
+  /** After RF state is applied — sync DB (e.g. restore deleted frames on undo). */
+  onApply?: (detail: {
+    from: HistoryItem
+    to: HistoryItem
+    kind: 'undo' | 'redo'
+  }) => void
 }
 
 // Return type of the useUndoRedo hook
@@ -41,6 +47,7 @@ const defaultOptions: UseUndoRedoOptions = {
 export const useUndoRedo = ({
   maxHistorySize = defaultOptions.maxHistorySize,
   enableShortcuts = defaultOptions.enableShortcuts,
+  onApply,
 } = defaultOptions): UseUndoRedoReturn => {
   // Past states stack - undo pops from here
   const [past, setPast] = useState<HistoryItem[]>([])
@@ -80,6 +87,8 @@ export const useUndoRedo = ({
       // Mark that we're undoing (prevents snapshot during state update)
       isUndoRedoingRef.current = true
 
+      const from = { nodes: getNodes(), edges: getEdges() }
+
       // Remove the state from past stack
       setPast((past) => past.slice(0, past.length - 1))
 
@@ -92,13 +101,14 @@ export const useUndoRedo = ({
       // Restore the past state
       setNodes(pastState.nodes)
       setEdges(pastState.edges)
+      onApply?.({ from, to: pastState, kind: 'undo' })
 
       // Clear the undo/redo flag after state updates
       requestAnimationFrame(() => {
         isUndoRedoingRef.current = false
       })
     }
-  }, [setNodes, setEdges, getNodes, getEdges, past])
+  }, [setNodes, setEdges, getNodes, getEdges, past, onApply])
 
   // Redo: restore next state
   const redo = useCallback(() => {
@@ -109,6 +119,8 @@ export const useUndoRedo = ({
       // Mark that we're redoing (prevents snapshot during state update)
       isUndoRedoingRef.current = true
 
+      const from = { nodes: getNodes(), edges: getEdges() }
+
       // Remove the state from future stack
       setFuture((future) => future.slice(0, future.length - 1))
 
@@ -118,13 +130,14 @@ export const useUndoRedo = ({
       // Restore the future state
       setNodes(futureState.nodes)
       setEdges(futureState.edges)
+      onApply?.({ from, to: futureState, kind: 'redo' })
 
       // Clear the undo/redo flag after state updates
       requestAnimationFrame(() => {
         isUndoRedoingRef.current = false
       })
     }
-  }, [setNodes, setEdges, getNodes, getEdges, future])
+  }, [setNodes, setEdges, getNodes, getEdges, future, onApply])
 
   // Setup keyboard shortcuts if enabled
   // Note: Disabled by default since TipTap handles Ctrl+Z for editor content
