@@ -774,7 +774,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
             size="sm"
             className={cn(
               iconBtn,
-              'h-9 w-9 rounded-xl bg-[#f7f8f9] shadow-sm hover:bg-[#f7f8f9] dark:bg-[#1c1c24] dark:hover:bg-[#1c1c24]' // Same grey shell + height as utility mode pill
+              'h-9 w-9 rounded-xl bg-[var(--nod-chat-prompt)] shadow-sm hover:bg-[var(--nod-chat-prompt)]' // Same grey + height as utility mode pill / Ask prompts
             )}
             title="Show sidebar"
             type="button"

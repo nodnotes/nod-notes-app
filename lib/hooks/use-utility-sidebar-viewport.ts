@@ -6,6 +6,7 @@ import type { ReactFlowInstance, Viewport } from 'reactflow'
 import { useStoreApi } from 'reactflow'
 import { zoomIdentity } from 'd3-zoom'
 import { useSidebarContext } from '@/components/sidebar-context'
+import { SIDEBAR_OPEN_CLOSE_MS } from '@/lib/hooks/use-open-close-presence'
 
 /** Apply width-ratio camera transform from a closed-state baseline (no drift). */
 function viewportForOpenWidth(
@@ -111,20 +112,20 @@ export function useUtilitySidebarViewportAdjust(
       innerId = requestAnimationFrame(() => {
         if (cancelled) return
         if (!wasOpen && isUtilitySidebarOpen) {
-          frameFromBaseline(200)
+          frameFromBaseline(SIDEBAR_OPEN_CLOSE_MS)
           return
         }
         if (wasOpen && !isUtilitySidebarOpen) {
           const baseline = closedBaselineRef.current
           if (!baseline) return
-          reactFlowInstance.setViewport(baseline, { duration: 200 })
+          reactFlowInstance.setViewport(baseline, { duration: SIDEBAR_OPEN_CLOSE_MS })
           lastFrameKeyRef.current = null
           closedPaneWidthRef.current = null
           if (clearTimerRef.current) clearTimeout(clearTimerRef.current)
           clearTimerRef.current = setTimeout(() => {
             closedBaselineRef.current = null
             clearTimerRef.current = null
-          }, 220)
+          }, SIDEBAR_OPEN_CLOSE_MS + 20)
         }
       })
     })

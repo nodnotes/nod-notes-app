@@ -34,9 +34,9 @@
     --ring: 222.2 84% 4.9%;
     --radius: 0.5rem;
     --nod-blue: #3b82f6; /* Wordmark + selection chrome (Tailwind blue-500) */
-    --nod-selected: rgba(0, 0, 0, 0.06); /* Selected tab / menu hover wash — grey, not nod-blue */
-    --nod-tab-hover: #f3f4f6; /* Boards-nav row hover (gray-100) — light grey chip, visible on gray-50 chat */
-    --nod-chat-prompt: #f4f5f6; /* Chat Ask box + user prompt frames — barely lighter than tab hover */
+    --nod-chat-prompt: #f4f5f6; /* Shared chrome grey — Ask prompts, brand disc, utility, tabs */
+    --nod-tab-hover: var(--nod-chat-prompt); /* Board/chat row hover — same as prompts */
+    --nod-selected: var(--nod-chat-prompt); /* Current board/chat tab + menu selected/hover */
   }
 
   .dark {
@@ -59,9 +59,9 @@
     --border: 0 0% 20%; /* Subtle borders */
     --input: 0 0% 15%; /* Input backgrounds */
     --ring: 0 0% 40%; /* Focus rings */
-    --nod-selected: rgba(255, 255, 255, 0.10); /* Grey selected wash on dark chrome */
-    --nod-tab-hover: #1f1f1f; /* Same as boards-nav row hover on dark */
-    --nod-chat-prompt: #212121; /* Chat Ask + user frames — barely lighter than #1f1f1f */
+    --nod-chat-prompt: #222222; /* Shared chrome grey — Ask prompts, brand disc, utility, tabs */
+    --nod-tab-hover: var(--nod-chat-prompt); /* Board/chat row hover — same as prompts */
+    --nod-selected: var(--nod-chat-prompt); /* Current board/chat tab + menu selected/hover */
   }
 }
 
@@ -2156,15 +2156,15 @@ span[data-added="true"] {
   .dark .tt-menu-surface {
     background-color: rgba(31, 31, 31, 0.64); /* #1f1f1f, a touch denser so light text holds */
   }
-  /* Selected tab / current menu row — grey wash (not nod-blue). */
+  /* Current board / chat tab — shared chrome grey (not nod-blue). */
   .tt-selected {
     background-color: var(--nod-selected);
   }
-  /* Chat Ask box + user prompt frames — slightly lighter than boards-nav tab hover. */
+  /* Ask box, user prompts, hovered board/chat rows — same shared chrome grey. */
   .tt-tab-hover {
     background-color: var(--nod-chat-prompt);
   }
-  /* Board / frame / block / thread menu hover — same grey wash as selected tabs. Beats ghost hover:bg-accent. */
+  /* Board / frame / block / thread menu hover — same shared chrome grey. Beats ghost hover:bg-accent. */
   .tt-menu-surface button:hover:not(:disabled) {
     background-color: var(--nod-selected);
   }

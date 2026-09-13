@@ -280,7 +280,7 @@ export function AiThreadPicker({
               zIndex: 10000, // Above board drag overlays so pointermove can hit rows
               pointerEvents: 'auto',
             }}
-            className="flex flex-col max-h-[min(24rem,70vh)] overflow-hidden rounded-2xl border border-gray-200 dark:border-[#2f2f2f] bg-white dark:bg-[#171717] shadow-xl"
+            className="flex flex-col max-h-[min(24rem,70vh)] overflow-hidden rounded-2xl bg-[var(--nod-chat-prompt)] shadow-xl" // Same chrome grey as boards nav / Ask
           >
             <div className="px-4 pt-2 pb-2 flex-shrink-0">
               <div className="flex items-center gap-2">
@@ -299,9 +299,9 @@ export function AiThreadPicker({
                     variant="outline"
                     size="icon"
                     className={cn(
-                      'h-8 w-8 rounded-lg bg-transparent border-0 hover:bg-gray-100 dark:hover:bg-gray-800 group',
+                      'h-8 w-8 rounded-lg bg-transparent border-0 hover:bg-[var(--nod-tab-hover)] group',
                       (filterOpen || filter === 'board') &&
-                        'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100'
+                        'bg-[var(--nod-selected)] text-gray-900 dark:text-gray-100'
                     )}
                     title="Filter chats"
                     aria-label="Filter chats"
@@ -319,7 +319,7 @@ export function AiThreadPicker({
                       <button
                         type="button"
                         className={cn(
-                          'flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-gray-50 dark:hover:bg-[#1f1f1f]',
+                          'flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-[var(--nod-tab-hover)]',
                           filter === 'all' && 'font-medium text-gray-900 dark:text-gray-100'
                         )}
                         onPointerDown={(e) => e.stopPropagation()}
@@ -336,7 +336,7 @@ export function AiThreadPicker({
                         type="button"
                         disabled={!boardId}
                         className={cn(
-                          'flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-gray-50 dark:hover:bg-[#1f1f1f] disabled:opacity-40',
+                          'flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-[var(--nod-tab-hover)] disabled:opacity-40',
                           filter === 'board' && 'font-medium text-gray-900 dark:text-gray-100'
                         )}
                         onPointerDown={(e) => e.stopPropagation()}
@@ -390,9 +390,9 @@ export function AiThreadPicker({
                         className={cn(
                           'group relative flex w-full items-center gap-0.5 pr-1 h-8 rounded-lg border border-transparent text-sm transition-colors',
                           isActive
-                            ? 'tt-selected'
+                            ? 'bg-white dark:bg-white' // Current chat — white chip on grey shell
                             : isHovered &&
-                                '[@media(hover:hover)]:bg-[var(--nod-tab-hover)]'
+                                '[@media(hover:hover)]:bg-white/70 dark:[@media(hover:hover)]:bg-white/15'
                         )}
                         onContextMenu={(e) => {
                           // Right-click = same as hold: reveal + open options

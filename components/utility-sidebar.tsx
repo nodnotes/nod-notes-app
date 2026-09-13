@@ -7,6 +7,10 @@ import { useParams } from 'next/navigation' // Board id for Capture panel
 import { ChevronsRight, Layers, Scan, SquareStack } from 'lucide-react' // Mode icons + header close
 import { cn } from '@/lib/utils' // Class merge
 import { useSidebarContext, type UtilitySidebarMode } from './sidebar-context' // Open state + live width
+import {
+  SIDEBAR_OPEN_CLOSE_MS,
+  useOpenClosePresence,
+} from '@/lib/hooks/use-open-close-presence' // Keep overlay mounted through open/close slide
 import { LayersTouchingList } from './layers-touching-list' // Preview list of touching selection
 import { CapturesPanel } from './captures-menu' // Capture list (same as View-bar menu)
 import {
@@ -174,27 +178,43 @@ export function UtilitySidebar() {
     typeof params?.conversationId === 'string' ? params.conversationId : undefined
   // Brand mark only mounts while chat is closed — clear it then; full height when chat owns the right
   const clearBrand = !isChatSidebarOpen
+  // Slide in/out from the right; stay mounted until the close tween finishes
+  const {
+    mounted,
+    shown,
+    transitionOn,
+    onTransitionEnd,
+  } = useOpenClosePresence(isUtilitySidebarOpen && !isMobileMode, SIDEBAR_OPEN_CLOSE_MS)
 
-  if (isMobileMode || !isUtilitySidebarOpen) return null // Phone: no column; desktop closed: unmount
+  if (isMobileMode || !mounted) return null // Phone: no column; desktop: unmount after close tween
 
   return (
     <aside
       data-utility-sidebar
       className={cn(
         'pointer-events-none absolute inset-y-0 right-0 z-20 flex flex-col', // Empty / brand clearance pass through to map + chat icon
-        'bg-transparent' // Board paints through; chrome is tabs / list only
+        'bg-transparent', // Board paints through; chrome is tabs / list only
+        transitionOn && 'transition-transform duration-200 ease-out' // Match RF viewport open/close; off while seam-resizing
       )}
       style={{
         width: utilitySidebarWidth, // Live width from seam drag
         paddingBottom: clearBrand ? UTILITY_BRAND_CLEARANCE_PX : 0, // Only pad when the map brand mark is showing
+        transform: shown ? 'translateX(0)' : 'translateX(100%)', // Slide off the right edge when closing
       }}
+      onTransitionEnd={onTransitionEnd}
+      aria-hidden={!shown}
     >
-      <UtilitySidebarSeam />
-      <header className="pointer-events-auto relative z-10 flex h-[52px] flex-shrink-0 items-center gap-0.5 px-1.5">
+      {shown ? <UtilitySidebarSeam /> : null}
+      <header
+        className={cn(
+          'relative z-10 flex h-[52px] flex-shrink-0 items-center gap-0.5 px-1.5',
+          shown ? 'pointer-events-auto' : 'pointer-events-none' // Pass through to the map while sliding off
+        )}
+      >
         {/* Mode tabs — left edge matches the content card (same px-1.5) */}
         <div className="flex min-w-0 flex-1 items-center">
           <div
-            className="flex items-center gap-0.5 rounded-xl bg-[#f7f8f9] px-1 py-1 shadow-sm dark:bg-[#1c1c24]"
+            className="flex items-center gap-0.5 rounded-xl bg-[var(--nod-chat-prompt)] px-1 py-1 shadow-sm" // Same grey as Ask prompts
             role="tablist"
             aria-label="Utility modes"
           >
@@ -225,7 +245,7 @@ export function UtilitySidebar() {
         <button
           type="button"
           onClick={() => setUtilitySidebarOpen(false)}
-          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-[#f7f8f9] text-gray-500 shadow-sm transition-colors hover:text-gray-900 dark:bg-[#1c1c24] dark:text-gray-400 dark:hover:text-gray-100" // h-9 = mode pill (py-1 + h-7)
+          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-[var(--nod-chat-prompt)] text-gray-500 shadow-sm transition-colors hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100" // h-9 = mode pill; grey = Ask prompts
           title="Hide sidebar"
           aria-label="Hide utility sidebar"
         >
@@ -233,11 +253,16 @@ export function UtilitySidebar() {
         </button>
       </header>
 
-      <div className="pointer-events-auto relative z-10 flex min-h-0 flex-1 flex-col px-1.5 pb-1.5">
+      <div
+        className={cn(
+          'relative z-10 flex min-h-0 flex-1 flex-col px-1.5 pb-3', // pb-3 matches chat prompt bottom gap
+          shown ? 'pointer-events-auto' : 'pointer-events-none' // Pass through to the map while sliding off
+        )}
+      >
         {/* Content card — same fill as Actions/Layout/Draw pill; tabs stay outside */}
         <div
           className={cn(
-            'flex min-h-0 flex-1 flex-col rounded-xl bg-[#f7f8f9] shadow-md dark:bg-[#1c1c24] dark:shadow-black/40', // Same grey as mode toggle shell — no border
+            'flex min-h-0 flex-1 flex-col rounded-xl bg-[var(--nod-chat-prompt)] shadow-md dark:shadow-black/40', // Same grey as Ask prompts / mode toggle — no border
             'overflow-hidden' // Search stays put; body scrolls inside
           )}
         >

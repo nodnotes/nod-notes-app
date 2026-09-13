@@ -254,6 +254,8 @@ type NodNotesBrandMarkProps = {
   showAiStar?: boolean
   /** Default mark only: T hinges on the table-dot once (board open / load) */
   nod?: boolean
+  /** Soft elevation on the disc (map open-chat toggle) */
+  discShadow?: boolean
 }
 
 /** Custom drawing as a CSS mask so strokes follow board colors (positive like the default SVG). */
@@ -312,6 +314,7 @@ export function NodNotesBrandMark({
   discVariant = 'board',
   showAiStar = true,
   nod = false,
+  discShadow = false,
 }: NodNotesBrandMarkProps) {
   const badgeSize = Math.max(14, Math.round(size * 0.34)) // Scales with logo
   const onBoard = discVariant === 'board'
@@ -321,15 +324,15 @@ export function NodNotesBrandMark({
       className={cn('relative flex-shrink-0', className)}
       style={{ width: size, height: size }}
     >
-      {/* Logo disc — board fill + border by default; legacy grey on personalize canvas */}
+      {/* Logo disc — prompt grey fill + border by default; legacy solid grey on personalize canvas */}
       <div
         className={cn(
-          'h-full w-full overflow-hidden rounded-full border-[1.5px]',
-          onBoard
-            ? 'bg-gray-50 dark:bg-[#0f0f0f] border-gray-500 dark:border-gray-400'
-            : 'border-gray-500 dark:border-gray-400'
+          'h-full w-full overflow-hidden rounded-full border-[1.5px] border-gray-500 dark:border-gray-400',
+          discShadow && 'shadow-md' // Map open-chat toggle elevation
         )}
-        style={onBoard ? undefined : { backgroundColor: LOGO_CIRCLE_COLOR }}
+        style={{
+          backgroundColor: onBoard ? 'var(--nod-chat-prompt)' : LOGO_CIRCLE_COLOR, // Match Ask / user prompt grey on board
+        }}
       >
         {drawingUrl ? (
           <LogoInkMask drawingUrl={drawingUrl} onBoard={onBoard} />

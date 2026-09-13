@@ -11281,6 +11281,7 @@ function BoardFlowInner({
             drawingUrl={logoDrawing}
             size={42}
             nod={!logoDrawing}
+            discShadow
           />
         </button>
       )}

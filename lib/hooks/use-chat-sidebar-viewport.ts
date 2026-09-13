@@ -6,6 +6,7 @@ import type { ReactFlowInstance, Viewport } from 'reactflow'
 import { useStoreApi } from 'reactflow'
 import { zoomIdentity } from 'd3-zoom'
 import { useSidebarContext } from '@/components/sidebar-context'
+import { SIDEBAR_OPEN_CLOSE_MS } from '@/lib/hooks/use-open-close-presence'
 
 /** Apply width-ratio camera transform from a closed-state baseline (no drift). */
 function viewportForOpenWidth(
@@ -24,8 +25,9 @@ function viewportForOpenWidth(
 
 /**
  * Scales the React Flow viewport when the chat sidebar toggles or resizes.
- * Open/close: setViewport 200ms tween from a real closed-camera snapshot.
- * Resize: same math with measured pane width; instant d3Zoom.transform (no transition).
+ * Open: lock closed pane while the column is still width 0, then RO tracks the 200ms CSS width tween (instant d3).
+ * Close: setViewport 200ms restore to the closed-camera snapshot (matches column shrink).
+ * Seam resize: same math with measured pane width; instant d3Zoom.transform (no transition).
  */
 export function useChatSidebarViewportAdjust(
   reactFlowInstance: ReactFlowInstance | null, // Active flow instance (null until mounted)
@@ -74,7 +76,7 @@ export function useChatSidebarViewportAdjust(
     if (openWidth <= 0 || height <= 0) return
 
     const sidebarW = widthRef.current
-    // Lock full width once from a settled pane + column pair
+    // Fallback only — open path locks the true closed pane before the column grows
     if (closedPaneWidthRef.current == null) {
       closedPaneWidthRef.current = openWidth + sidebarW
     }
@@ -90,7 +92,7 @@ export function useChatSidebarViewportAdjust(
     lastFrameKeyRef.current = frameKey
   }
 
-  // Open / close — snapshot real closed camera, then animate
+  // Open / close — snapshot real closed camera; open tracks CSS width via RO, close tweens back
   useEffect(() => {
     if (!reactFlowInstance) return
     if (prevOpenRef.current === isChatSidebarOpen) return
@@ -106,7 +108,9 @@ export function useChatSidebarViewportAdjust(
       // Always refresh baseline from the pre-adjust camera on open (don’t keep a synthetic one)
       closedBaselineRef.current = reactFlowInstance.getViewport()
       lastFrameKeyRef.current = null
-      closedPaneWidthRef.current = null
+      const pane = storeApi.getState().domNode as HTMLElement | null
+      // Presence opens the column at width 0 first — pane is still the full closed width
+      closedPaneWidthRef.current = pane && pane.clientWidth > 0 ? pane.clientWidth : null
     }
 
     let cancelled = false
@@ -115,20 +119,20 @@ export function useChatSidebarViewportAdjust(
       innerId = requestAnimationFrame(() => {
         if (cancelled) return
         if (!wasOpen && isChatSidebarOpen) {
-          frameFromBaseline(200)
+          frameFromBaseline() // Instant seed; RO follows the 200ms CSS width tween
           return
         }
         if (wasOpen && !isChatSidebarOpen) {
           const baseline = closedBaselineRef.current
           if (!baseline) return
-          reactFlowInstance.setViewport(baseline, { duration: 200 })
+          reactFlowInstance.setViewport(baseline, { duration: SIDEBAR_OPEN_CLOSE_MS })
           lastFrameKeyRef.current = null
           closedPaneWidthRef.current = null
           if (clearTimerRef.current) clearTimeout(clearTimerRef.current)
           clearTimerRef.current = setTimeout(() => {
             closedBaselineRef.current = null
             clearTimerRef.current = null
-          }, 220)
+          }, SIDEBAR_OPEN_CLOSE_MS + 20)
         }
       })
     })
@@ -139,7 +143,7 @@ export function useChatSidebarViewportAdjust(
       if (innerId) cancelAnimationFrame(innerId)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isChatSidebarOpen, reactFlowInstance])
+  }, [isChatSidebarOpen, reactFlowInstance, storeApi])
 
   // Resize: only after a real open baseline exists (don’t invent one in layout — that broke end pose)
   useLayoutEffect(() => {

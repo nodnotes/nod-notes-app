@@ -52,6 +52,10 @@ import {
   getChatTurnSelected,
 } from '@/lib/ai/chat-turn-selected' // Selected turn survives phone↔sidebar remount
 import {
+  SIDEBAR_OPEN_CLOSE_MS,
+  useOpenClosePresence,
+} from '@/lib/hooks/use-open-close-presence' // Keep column mounted through open/close width tween
+import {
   ArrowDown,
   ChevronsRight,
   MessageSquarePlus,
@@ -216,6 +220,13 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
     setPhoneDockTight,
     closeSidebar,
   } = useSidebarContext()
+  // Desktop column stays mounted while width tweens closed (phone dock uses opacity, not this)
+  const {
+    mounted: desktopMounted,
+    shown: desktopShown,
+    transitionOn: desktopWidthTransition,
+    onTransitionEnd: onDesktopWidthTransitionEnd,
+  } = useOpenClosePresence(isChatSidebarOpen && !isMobileMode, SIDEBAR_OPEN_CLOSE_MS)
   const { addPendingEdits } = useAiEditSession()
   const [personalizeOpen, setPersonalizeOpen] = useState(false) // Logo draw modal
   const [personalizeDraftId, setPersonalizeDraftId] = useState<string | null>(null) // Which agent gets the icon
@@ -969,7 +980,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
     scrollSelectedTurnIntoView,
   ])
 
-  if (!isChatSidebarOpen && !isMobileMode) return null // Desktop: unmount when closed; phone: keep dock mounted for same-tap focus
+  if (!desktopMounted && !isMobileMode) return null // Desktop: keep mounted through close tween; phone: dock always for same-tap focus
 
   const promptBarProps = {
     boardId: conversationId,
@@ -1214,7 +1225,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
             )}
             <div
               data-chat-prompt
-              className="rounded-xl overflow-hidden tt-tab-hover border border-black/10 dark:border-white/10" // Shadow from .tt-tab-hover (utility-card elevation)
+              className="rounded-xl overflow-hidden tt-tab-hover border border-black/10 dark:border-white/10" // Shared chrome grey + hairline — no shadow
             >
               <div className="px-1 pt-1">{composer}</div>
             </div>
@@ -1236,10 +1247,17 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
     return createPortal(dock, host) // Paint on the map — not as a clipped main flex sibling
   }
 
-  if (!isChatSidebarOpen) return null // Desktop closed (belt-and-suspenders after early return)
+  if (!desktopMounted) return null // Desktop closed after close tween (belt-and-suspenders)
 
   return (
-    <div className="relative h-full flex flex-shrink-0 z-20">
+    <div
+      className={cn(
+        'relative h-full flex flex-shrink-0 z-20 overflow-hidden', // Clip inner full-width aside while the column grows/shrinks
+        desktopWidthTransition && 'transition-[width] duration-200 ease-out' // Match RF viewport open/close tween; off while seam-resizing
+      )}
+      style={{ width: desktopShown ? chatSidebarWidth : 0 }} // 0 ↔ preferred width drives the slide
+      onTransitionEnd={onDesktopWidthTransitionEnd}
+    >
       <aside
         data-chat-sidebar
         className={cn(
@@ -1247,7 +1265,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
           'bg-gray-50 dark:bg-[#0f0f0f]'
           // Left edge is ChatSidebarSeam (gapped where threads cross) — not CSS border-l
         )}
-        style={{ width: chatSidebarWidth }}
+        style={{ width: chatSidebarWidth, minWidth: chatSidebarWidth }} // Fixed content width so text does not reflow mid-tween
       >
         <ChatSidebarSeam />
         {customizeOpen ? (
@@ -1431,7 +1449,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
         <div className="relative z-10 flex-shrink-0 px-3 pb-3 pt-1 pointer-events-auto">
           <div
             data-chat-prompt
-            className="rounded-xl overflow-hidden tt-tab-hover border border-black/10 dark:border-white/10" // Shadow from .tt-tab-hover (utility-card elevation)
+            className="rounded-xl overflow-hidden tt-tab-hover border border-black/10 dark:border-white/10" // Shared chrome grey + hairline — no shadow
           >
             <div className="px-1 pt-1">{composer}</div>
           </div>

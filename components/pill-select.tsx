@@ -53,7 +53,7 @@ export function PillSelect({ options, value, onChange, className }: PillSelectPr
         data-edit-menu-pill // Mode toggle shell; Filter/Sort aligns to [data-edit-menu-select] inside
         className={cn(
           // Same rounded-xl grey shell as utility mode toggles
-          'relative z-10 flex items-center gap-0.5 px-1 py-1 rounded-xl bg-[#f7f8f9] dark:bg-[#1c1c24] shadow-sm',
+          'relative z-10 flex items-center gap-0.5 px-1 py-1 rounded-xl bg-[var(--nod-chat-prompt)] shadow-sm', // Same grey as Ask prompts / utility
           className
         )}
       >

@@ -96,7 +96,7 @@ export function UtilityFilterOption({
       type="button"
       disabled={disabled}
       className={cn(
-        'flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-gray-50 dark:hover:bg-[#1f1f1f] disabled:opacity-40',
+        'flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-[var(--nod-tab-hover)] disabled:opacity-40',
         active && 'font-medium text-gray-900 dark:text-gray-100'
       )}
       onPointerDown={(e) => e.preventDefault()}

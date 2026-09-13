@@ -5312,7 +5312,7 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
           title="Show chat"
           aria-label="Show chat sidebar"
         >
-          <NodNotesBrandMark drawingUrl={logoDrawing} size={42} />
+          <NodNotesBrandMark drawingUrl={logoDrawing} size={42} discShadow />
         </button>
       )}
 
