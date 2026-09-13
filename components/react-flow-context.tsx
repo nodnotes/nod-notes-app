@@ -14,8 +14,10 @@ import {
   DEFAULT_PENCIL_PALETTE,
   DRAW_INK_HEX,
   HIGHLIGHTER_INK_HEX,
+  HIGHLIGHTER_OPACITY,
   MAX_DRAW_PALETTE_LEN,
   normalizeInkHex,
+  withInkAlpha,
   type DrawInkId,
 } from '@/components/freehand/ink' // Pencil / highlighter palettes + legacy id migrate
 import {
@@ -163,7 +165,36 @@ function getStoredDrawPalette(key: string, fallback: string[]): string[] {
       .filter((v): v is string => typeof v === 'string')
       .map((v) => (!(v || '').trim() ? '' : normalizeInkHex(v, fallback[0])))
       .slice(0, MAX_DRAW_PALETTE_LEN)
-    return hexes.length > 0 ? hexes : fallback
+    if (hexes.length === 0) return fallback
+    // Prior stock rows (4-/5-/9-swatch) → current 8-slot pen default (3 | 3 | 2+“+”) without a manual clear
+    if (key === NN_PENCIL_PALETTE_KEY) {
+      const sig = hexes.map((h) => h.toLowerCase()).join(',')
+      const legacyFour = [DRAW_INK_HEX.black, DRAW_INK_HEX.blue, DRAW_INK_HEX.green, DRAW_INK_HEX.red]
+        .map((h) => h.toLowerCase())
+        .join(',')
+      const legacyFive = `${legacyFour},#9333ea`
+      const redHl = withInkAlpha(HIGHLIGHTER_INK_HEX.red, HIGHLIGHTER_OPACITY).toLowerCase()
+      const yellowHl = withInkAlpha(HIGHLIGHTER_INK_HEX.black, HIGHLIGHTER_OPACITY).toLowerCase()
+      // Prior 9-slot: black + markers first, then blue…gray
+      const legacyNine = [
+        DRAW_INK_HEX.black,
+        redHl,
+        yellowHl,
+        DRAW_INK_HEX.blue,
+        DRAW_INK_HEX.green,
+        '#9333ea',
+        '#ea580c',
+        '#db2777',
+        '#6b7280',
+      ]
+        .map((h) => h.toLowerCase())
+        .join(',')
+      if (sig === legacyFour || sig === legacyFive || sig === legacyNine) {
+        persistDrawPalette(key, fallback)
+        return fallback
+      }
+    }
+    return hexes
   } catch {
     return fallback
   }

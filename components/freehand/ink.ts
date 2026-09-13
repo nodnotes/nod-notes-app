@@ -88,17 +88,25 @@ export function isInkHex(raw: string | null | undefined): boolean {
   )
 }
 
-/** Fifth stock swatch (no legacy id) so the default row is 5 → a 3-column plus 2-then-“+”. */
+/** Extra opaque stock swatches (no legacy ids) so the default pen menu fills 3 | 3 | 2+“+”. */
 const DRAW_INK_PURPLE = '#9333ea' // Tailwind purple-600
+const DRAW_INK_ORANGE = '#ea580c' // Tailwind orange-600
+const DRAW_INK_PINK = '#db2777' // Tailwind pink-600
 const HIGHLIGHTER_INK_PURPLE = '#c084fc' // Soft purple marker
 
-/** Default pencil row — the four legacy Draw colors plus purple (opaque). */
+/**
+ * Default pen menu — 8 slots → columns of 3 | 3 | 2+“+”.
+ * Origin column (right): translucent red + yellow highlighters above “+”.
+ */
 export const DEFAULT_PENCIL_PALETTE: string[] = [
-  DRAW_INK_HEX.black,
+  DRAW_INK_HEX.black, // Left column — default opaque pen (selected index 0)
   DRAW_INK_HEX.blue,
   DRAW_INK_HEX.green,
-  DRAW_INK_HEX.red,
-  DRAW_INK_PURPLE,
+  DRAW_INK_PURPLE, // Middle column
+  DRAW_INK_ORANGE,
+  DRAW_INK_PINK,
+  withInkAlpha(HIGHLIGHTER_INK_HEX.red, HIGHLIGHTER_OPACITY), // Origin: red highlighter
+  withInkAlpha(HIGHLIGHTER_INK_HEX.black, HIGHLIGHTER_OPACITY), // Origin: yellow highlighter
 ]
 
 /** Default highlighter row — marker colors at classic translucency (~45%). */
@@ -151,6 +159,21 @@ export function resolveStrokeSizeFromZoom(
   if (!zoomLocked) return tip // Unlocked — bar value is flow-space width
   const z = Math.max(0.01, zoom)
   return tip / z // Locked — constant on-screen thickness
+}
+
+/**
+ * Inverse of resolveStrokeSizeFromZoom — bar thumb from an authored flow strokeSize.
+ * Highlighter divides out HIGHLIGHTER_SIZE_MULT so the shared tip bar stays consistent.
+ */
+export function tipDiameterFromStrokeSize(
+  kind: FreehandInkKind,
+  strokeSize: number,
+  zoom: number,
+  zoomLocked = true,
+): number {
+  const painted = zoomLocked ? strokeSize * Math.max(0.01, zoom) : strokeSize // Flow → tip units
+  const tip = kind === 'highlighter' ? painted / HIGHLIGHTER_SIZE_MULT : painted // Undo marker widen
+  return Math.round(tip)
 }
 
 /**

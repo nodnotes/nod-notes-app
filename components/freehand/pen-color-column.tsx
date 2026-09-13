@@ -26,17 +26,29 @@ const ORIGIN_COLUMN_LEN = 2
 const OVERFLOW_COLUMN_LEN = 3
 
 /**
- * Chunk palette indexes into columns: chunk 0 = origin column (2 + “+”), later chunks = 3 each.
- * Colors always pack from the front, so a delete pulls later swatches up while “+” stays put.
+ * Chunk palette indexes into columns: last ≤2 go in the origin (right + “+”);
+ * earlier colors pack left→right in columns of 3 (stock 8 → 3 | 3 | 2+“+”).
+ * Delete pulls later swatches forward; “+” stays on the origin column.
  */
 function paletteColumns(length: number): number[][] {
-  const columns: number[][] = [[]] // Origin column always exists so “+” has a home
-  for (let index = 0; index < length; index += 1) {
-    const cap = columns.length === 1 ? ORIGIN_COLUMN_LEN : OVERFLOW_COLUMN_LEN // First column reserves a row for “+”
-    if (columns[columns.length - 1].length >= cap) columns.push([]) // Full → start a new column
-    columns[columns.length - 1].push(index)
+  const originCount = Math.min(ORIGIN_COLUMN_LEN, length) // Cap origin at 2 (room for “+”)
+  const overflowLen = length - originCount // Everything before the origin pair
+  const overflowCols: number[][] = [] // Left/middle columns of up to 3
+  let current: number[] = [] // Column being filled left→right
+  for (let index = 0; index < overflowLen; index += 1) {
+    if (current.length >= OVERFLOW_COLUMN_LEN) {
+      overflowCols.push(current) // Full column of 3 → park it and start another
+      current = []
+    }
+    current.push(index)
   }
-  return columns
+  if (current.length > 0) overflowCols.push(current) // Trailing partial overflow column
+  const origin: number[] = [] // Rightmost column (highlighters by default)
+  for (let index = overflowLen; index < length; index += 1) {
+    origin.push(index)
+  }
+  // [origin, …overflow] so reverse render puts origin rightmost and overflow growing left
+  return [origin, ...overflowCols]
 }
 
 export type PenColorColumnProps = {

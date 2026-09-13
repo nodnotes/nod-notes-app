@@ -1,21 +1,38 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-12T18:00:12Z`
-- Source: local `supabase/migrations/` + remote applied tops (Nod Notes) + `.temp` service versions
+- Snapped at: `2026-09-13T14:52:00Z`
+- Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
-- CLI: `supabase` `2.90.0` (link refreshed; `db dump` / `migration list` blocked on remote login — marker + version snapshot only; cli-latest reports `v2.117.0`)
-- Remote applied tops out at `20260811225342_conversations_owner_select_for_insert_returning`
+- CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`; versions from `.temp` + Management API list; cli-latest reports `v2.117.0`)
+- Remote applied tops out at `20260912192948_panel_edges_canvas_endpoints` (local file `20260912192642_…`)
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260913145200_pen_palette_tip_scrub_capture_view.sql`.
+- **Pen palette**: default 8 swatches → columns `3 | 3 | 2+“+”`; origin (right) holds translucent red + yellow highlighters; packing puts last ≤2 in origin.
+- **Translucent pen paint**: alpha < 1 on the Pen tool paints as highlighter wash while the tool stays Pen.
+- **Tip scrub**: with drawings selected, tip bar remaps `strokeSize` live (undo once per scrub, debounced `canvas_nodes` persist); opening the pen menu syncs the bar from the first selected stroke.
+- **Captures**: drop “Capture selected”; Capture view only.
+- **Docs**: early-access allowlist notes `meghanapandit18@gmail.com`, `katiesayani@gmail.com`.
+- Schema unchanged; remote DDL top remains `20260912192948_panel_edges_canvas_endpoints`.
+
+## Prior: I-bar collab defer + select/freehand + canvas threads
+
+- DDL: `20260912192642_panel_edges_canvas_endpoints` (remote `20260912192948`). Marker `20260912223626_ibar_collab_defer_select_freehand_canvas_threads.sql`.
+- **I-bar create**: defer Yjs for in-session frames so fast typing does not split the last character.
+- **Select / freehand**: drag-select probe-safe; freehand + canvas-thread endpoints.
+- Remote applied tops at `20260912192948_panel_edges_canvas_endpoints`.
+
+## Prior: freehand tip chrome + spot erase holes
 
 - DDL: none. Marker `20260912180012_freehand_spot_erase_holes_tip_chrome.sql`.
 - **Freehand tip chrome**: pencil + eraser vertical tip-size bars; tip circle tracks bar; flow thickness = tip ÷ zoom.
 - **Paint stamp**: `thinning: 0` so tip diameter fills the circle (not a pressure ribbon); densified samples on fast moves.
 - **Spot erase**: punches tip-sized circular holes (`data.eraseHoles` + SVG mask) instead of centerline split / V-notch; drag densifies overlapping disks; fully covered strokes delete.
 - **Selection / resize**: frame-like freehand chrome; aspect-locked resize scales ink + thickness from live RF box.
-- Schema unchanged; remote applied still tops out at `20260811225342`.
+- Schema unchanged at that save; remote then topped at `20260811225342` (canvas endpoints applied later).
 
 ## Prior: board collab Hocuspocus + early-access invite
 

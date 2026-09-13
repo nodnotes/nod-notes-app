@@ -116,9 +116,16 @@ import {
 } from '@/components/turn-into-menu' // Actions-bar Turn into (Format / Property)
 import type { BlockTypeId, BoardInTarget } from '@/components/block-actions-menu'
 import {
+  DEFAULT_STROKE_SIZE,
   MIN_TIP_DIAMETER_PX,
   MAX_TIP_DIAMETER_PX,
-} from '@/components/freehand/path' // Tip thickness bar range
+} from '@/components/freehand/path' // Tip thickness bar range + legacy stroke default
+import {
+  resolveStrokeSizeFromZoom,
+  tipDiameterFromStrokeSize,
+  type FreehandInkKind,
+} from '@/components/freehand/ink' // Tip ↔ authored strokeSize (zoom lock + highlighter)
+import type { FreehandNodeData } from '@/components/freehand/FreehandNode' // Patch strokeSize on selected drawings
 import { PenColorColumn } from '@/components/freehand/pen-color-column' // Editable ink row + frame-style picker
 
 interface EditorToolbarProps {
@@ -546,6 +553,97 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     paintSpaceIcon(insertVerticalSpaceIconRef.current, drawTool === 'insert-v') // Vertical space ink follows its armed state
     paintSpaceIcon(insertHorizontalSpaceIconRef.current, drawTool === 'insert-h') // Horizontal space ink follows its armed state
   }, [drawTool])
+
+  const tipSizeUndoArmedRef = useRef(false) // One map snapshot per thickness scrub gesture
+  const tipSizePersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null) // Debounce canvas_nodes writes while scrubbing
+  const pendingTipPatchesRef = useRef<Map<string, FreehandNodeData>>(new Map()) // Latest data per id for the debounced persist
+
+  /** Clamp tip bar value into the Draw thickness range. */
+  const clampTipBar = (n: number) =>
+    Math.min(MAX_TIP_DIAMETER_PX, Math.max(MIN_TIP_DIAMETER_PX, Math.round(n)))
+
+  /** Ink kind on a freehand node (missing → pencil). */
+  const freehandInkKind = (data: FreehandNodeData): FreehandInkKind =>
+    data.inkKind === 'highlighter' ? 'highlighter' : 'pencil'
+
+  /** Update tool tip; when freehand drawings are selected, rewrite their strokeSize too. */
+  const applyDrawTipSize = (size: number) => {
+    const nextTip = clampTipBar(size)
+    setDrawTipSize(nextTip) // New strokes + bar thumb
+    const setNodes = getSetNodes()
+    const nodes = reactFlowInstance?.getNodes?.() ?? []
+    const selected = nodes.filter((n) => n.selected && n.type === 'freehand')
+    if (selected.length === 0 || !setNodes) return // Nothing selected — tool default only
+    const zoom = reactFlowInstance?.getViewport?.()?.zoom ?? 1
+    const idSet = new Set(selected.map((n) => n.id))
+    let changed = false
+    for (const n of selected) {
+      const data = (n.data || {}) as FreehandNodeData
+      const kind = freehandInkKind(data)
+      const nextStroke = resolveStrokeSizeFromZoom(kind, nextTip, zoom, drawTipZoomLocked)
+      const old = typeof data.strokeSize === 'number' ? data.strokeSize : DEFAULT_STROKE_SIZE
+      if (Math.abs(old - nextStroke) > 0.01) {
+        changed = true
+        break
+      }
+    }
+    if (!changed) return
+    if (!tipSizeUndoArmedRef.current) {
+      getMapTakeSnapshot()?.() // One undo step for this scrub
+      tipSizeUndoArmedRef.current = true
+    }
+    setNodes((prev: typeof nodes) =>
+      prev.map((node) => {
+        if (!idSet.has(node.id) || node.type !== 'freehand') return node
+        const data = (node.data || {}) as FreehandNodeData
+        const kind = freehandInkKind(data)
+        const nextStroke = resolveStrokeSizeFromZoom(kind, nextTip, zoom, drawTipZoomLocked)
+        const nextData = { ...data, strokeSize: nextStroke }
+        pendingTipPatchesRef.current.set(node.id, nextData) // Latest for debounce
+        return { ...node, data: nextData }
+      }),
+    )
+    // Debounce DB so a continuous scrub isn’t one write per pixel
+    if (tipSizePersistTimerRef.current) clearTimeout(tipSizePersistTimerRef.current)
+    tipSizePersistTimerRef.current = setTimeout(() => {
+      const patches = Array.from(pendingTipPatchesRef.current.entries()) // Snapshot then clear
+      pendingTipPatchesRef.current.clear()
+      void (async () => {
+        try {
+          const supabaseClient = createClient()
+          const {
+            data: { user },
+          } = await supabaseClient.auth.getUser()
+          if (!user) return
+          for (const [id, data] of patches) {
+            const { error } = await supabaseClient
+              .from('canvas_nodes')
+              .update({ data })
+              .eq('id', id)
+              .eq('user_id', user.id)
+            if (error) console.error('🎨 Error saving freehand thickness:', error)
+          }
+        } catch (err) {
+          console.error('🎨 Error saving freehand thickness:', err)
+        }
+      })()
+    }, 250)
+  }
+
+  /** When opening the pen menu with drawings selected, sync the bar to the first selected stroke. */
+  const syncThicknessFromSelection = () => {
+    tipSizeUndoArmedRef.current = false // Next scrub gets a fresh undo snapshot
+    const nodes = reactFlowInstance?.getNodes?.() ?? []
+    const selected = nodes.find((n) => n.selected && n.type === 'freehand')
+    if (!selected) return
+    const data = (selected.data || {}) as FreehandNodeData
+    const stroke = typeof data.strokeSize === 'number' ? data.strokeSize : DEFAULT_STROKE_SIZE
+    const zoom = reactFlowInstance?.getViewport?.()?.zoom ?? 1
+    const tip = clampTipBar(
+      tipDiameterFromStrokeSize(freehandInkKind(data), stroke, zoom, drawTipZoomLocked),
+    )
+    if (tip !== drawTipSize) setDrawTipSize(tip)
+  }
 
   const [hiddenItems, setHiddenItems] = useState<Set<string>>(new Set())
   const [hideUndoMoreSlash, setHideUndoMoreSlash] = useState(false) // True when tools left for the pill — drop orphan undo|/| on the bar
@@ -1944,6 +2042,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                             (n) => n.selected && n.type === 'freehand',
                           )
                           if (hasSelectedFreehand) {
+                            syncThicknessFromSelection() // Bar matches the selected stroke
                             handleDropdownOpenChange('pencilColor', true)
                             return
                           }
@@ -1954,10 +2053,12 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                         }
                         if (open && drawTool === 'pencil') {
                           // Already armed → open ink / tip menu
+                          syncThicknessFromSelection() // Selected drawing → bar shows its width
                           handleDropdownOpenChange('pencilColor', true)
                           return
                         }
                         // Closing the menu (trigger re-click or outside) — stay armed so drawing works
+                        tipSizeUndoArmedRef.current = false // Next open starts a fresh undo scrub
                         handleDropdownOpenChange('pencilColor', false)
                       }}
                     >
@@ -1999,7 +2100,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                           >
                             <TipThicknessColumn
                               value={drawTipSize}
-                              onChange={setDrawTipSize}
+                              onChange={applyDrawTipSize}
                               zoomLocked={drawTipZoomLocked}
                               onZoomLockedChange={(locked) =>
                                 setDrawTipZoomLocked(locked, reactFlowInstance?.getViewport?.()?.zoom ?? 1)
@@ -3200,7 +3301,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                           >
                             <TipThicknessColumn
                               value={drawTipSize}
-                              onChange={setDrawTipSize}
+                              onChange={applyDrawTipSize}
                               zoomLocked={drawTipZoomLocked}
                               onZoomLockedChange={(locked) =>
                                 setDrawTipZoomLocked(locked, reactFlowInstance?.getViewport?.()?.zoom ?? 1)

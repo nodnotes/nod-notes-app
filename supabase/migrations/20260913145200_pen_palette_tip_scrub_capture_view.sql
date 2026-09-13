@@ -1,0 +1,2 @@
+-- Pen palette 8-slot + translucent markers; tip scrub updates selected ink; Capture view only.
+-- App/docs marker only; no DDL. Remote DDL top: 20260912192948_panel_edges_canvas_endpoints (local 20260912192642).

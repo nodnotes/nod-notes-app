@@ -9,6 +9,7 @@ import { useReactFlowContext } from '@/components/react-flow-context'; // Disarm
 
 import { DEFAULT_STROKE_SIZE, DRAW_TIP_DIAMETER_PX, pointsToPath } from './path' // Path generation + fixed tip
 import {
+  inkAlpha, // Translucent pen swatches → highlighter paint path
   resolveStrokeHex, // Swatch → fill hex for pencil / highlighter
   strokePaintStyle, // RGB fill + opacity from authored alpha
   resolveStrokeSizeFromZoom, // Tip ÷ zoom (locked) or tip as flow (unlocked)
@@ -226,8 +227,11 @@ export function Freehand({ conversationId, onBeforeCreate }: { conversationId?: 
   const store = useStoreApi() // panBy lives on the RF store (same as thread connect auto-pan)
   const { setDrawTool, setIsDrawing, drawTool, drawTipSize, drawTipZoomLocked, pencilColor, highlighterColor } =
     useReactFlowContext() // Click-select disarms ink; tip + color from Draw bar
-  const inkKind: FreehandInkKind = drawTool === 'highlighter' ? 'highlighter' : 'pencil' // Armed tool → stroke kind
-  const strokeColor = resolveStrokeHex(inkKind, inkKind === 'highlighter' ? highlighterColor : pencilColor) // Hex (or legacy id) → fill
+  // Pen menu translucent swatches (red/yellow markers) paint as highlighters while tool stays Pen
+  const rawInk = drawTool === 'highlighter' ? highlighterColor : pencilColor
+  const strokeColor = resolveStrokeHex(drawTool === 'highlighter' ? 'highlighter' : 'pencil', rawInk) // Hex (+ alpha) from swatch
+  const inkKind: FreehandInkKind =
+    drawTool === 'highlighter' || inkAlpha(strokeColor) < 0.999 ? 'highlighter' : 'pencil' // Alpha < 1 → marker wash
   const strokePaint = strokePaintStyle(strokeColor) // RGB + opacity from transparency slider
   const pointRef = useRef<Points>([]) // Absolute flow-space samples for the active stroke
   const [points, setPoints] = useState<Points>([]) // Overlay-local preview (reprojected from flow)
