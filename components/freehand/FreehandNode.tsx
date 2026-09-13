@@ -44,8 +44,8 @@ const ROTATE_CLICK_SLOP_PX = 4 // Below this travel → click resets; above → 
 function readNodeBox(
   node:
     | {
-        width?: number
-        height?: number
+        width?: number | null // RF Node allows null measured width
+        height?: number | null // RF Node allows null measured height
         style?: { width?: number | string; height?: number | string }
       }
     | undefined,
