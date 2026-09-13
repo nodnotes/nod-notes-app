@@ -13,6 +13,9 @@ export const ACCOUNT_CHANGED_EVENT = 'nodnotes-account-changed'
 /** Same cookie name as sidebar-context (avoid importing that module here). */
 const CHAT_SIDEBAR_COOKIE = 'nodnotes-chat-sidebar-open'
 
+/** Same cookie name as sidebar-context utility open flag. */
+const UTILITY_SIDEBAR_COOKIE = 'nodnotes-utility-sidebar-open'
+
 /** Exact keys that hold account-private data (not device chrome like theme). */
 const IDENTITY_EXACT_KEYS = [
   'nodnotes-ai-agent-drafts',
@@ -28,6 +31,9 @@ const IDENTITY_EXACT_KEYS = [
   'nodnotes-chat-thread-id',
   'nodnotes-chat-sidebar-open',
   'nodnotes-chat-sidebar-width',
+  'nodnotes-utility-sidebar-open',
+  'nodnotes-utility-sidebar-mode',
+  'nodnotes-utility-sidebar-width',
   'nodnotes-pinned-ai-threads',
   'nodnotes-board-captures',
   'nodnotes-board-presentations',
@@ -70,6 +76,7 @@ export function clearIdentityLocalState(): void {
   }
   try {
     document.cookie = `${CHAT_SIDEBAR_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`
+    document.cookie = `${UTILITY_SIDEBAR_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`
   } catch {
     // Ignore
   }

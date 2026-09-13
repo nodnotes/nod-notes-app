@@ -46,8 +46,8 @@ interface ReactFlowContextType {
   setLineStyle: (style: 'solid' | 'dotted') => void // Function to set line style
   arrowDirection: 'down' | 'up' | 'left' | 'right' // Arrow direction state
   setArrowDirection: (direction: 'down' | 'up' | 'left' | 'right') => void // Function to set arrow direction
-  editMenuPillMode: 'home' | 'insert' | 'draw' | 'view' // Edit menu pill mode state
-  setEditMenuPillMode: (mode: 'home' | 'insert' | 'draw' | 'view') => void // Function to set edit menu pill mode
+  editMenuPillMode: 'home' | 'insert' | 'draw' // Edit menu pill mode state
+  setEditMenuPillMode: (mode: 'home' | 'insert' | 'draw') => void // Function to set edit menu pill mode
   viewMode: 'linear' | 'canvas' // View mode state (linear or canvas)
   boardRule: 'wide' | 'college' | 'narrow' // Board rule state (paper rule type)
   setBoardRule: (rule: 'wide' | 'college' | 'narrow') => void // Function to set board rule
@@ -138,7 +138,7 @@ const NN_PENCIL_PALETTE_KEY = 'nodnotes-pencil-palette'
 /** localStorage — highlighter row hex list JSON. */
 const NN_HIGHLIGHTER_PALETTE_KEY = 'nodnotes-highlighter-palette'
 
-const PILL_MODES = ['home', 'insert', 'draw', 'view'] as const // Valid pill values (Actions = home, Layout = insert)
+const PILL_MODES = ['home', 'insert', 'draw'] as const // Valid pill values (Actions = home, Layout = insert)
 type EditMenuPillMode = (typeof PILL_MODES)[number] // Matches context editMenuPillMode
 const DRAW_TOOLS = ['lasso', 'pencil', 'highlighter', 'eraser', 'insert-v', 'insert-h'] as const // Valid Draw tools (null = none); insert-v/h = insert space
 export type DrawTool = (typeof DRAW_TOOLS)[number] // Armed Draw tool (also the persisted value)
@@ -243,6 +243,7 @@ function persistDrawInkIndex(key: string, index: number) {
 function getStoredPillMode(): EditMenuPillMode {
   if (typeof window === 'undefined') return 'home' // Server HTML always starts on Actions
   const saved = localStorage.getItem(NN_PILL_MODE_KEY) // Last mode the user picked
+  if (saved === 'view') return 'home' // Legacy View bar removed — Capture lives in utility
   return PILL_MODES.includes(saved as EditMenuPillMode) ? (saved as EditMenuPillMode) : 'home' // Ignore junk
 }
 
@@ -340,7 +341,7 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
   // Initialize with consistent defaults to avoid hydration mismatch, then load from Supabase
   const [lineStyle, setLineStyle] = useState<'solid' | 'dotted'>('solid')
   const [arrowDirection, setArrowDirection] = useState<'down' | 'up' | 'left' | 'right'>('down')
-  const [editMenuPillMode, setEditMenuPillModeState] = useState<'home' | 'insert' | 'draw' | 'view'>('home') // SSR: Actions; layout restore before paint
+  const [editMenuPillMode, setEditMenuPillModeState] = useState<'home' | 'insert' | 'draw'>('home') // SSR: Actions; layout restore before paint
   const [viewMode, setViewMode] = useState<'linear' | 'canvas'>('canvas') // View mode state
   const [boardRule, setBoardRule] = useState<'wide' | 'college' | 'narrow'>('college') // Board rule state (default: college)
   const [boardStyle, setBoardStyle] = useState<'none' | 'dotted' | 'lined' | 'grid'>('dotted') // Board style state (default: college dotted)

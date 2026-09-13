@@ -52,8 +52,8 @@ export function PillSelect({ options, value, onChange, className }: PillSelectPr
       <div
         data-edit-menu-pill // Mode toggle shell; Filter/Sort aligns to [data-edit-menu-select] inside
         className={cn(
-          // Solid soft grey (matches former translucent look over the board, without transparency)
-          'relative z-10 flex items-center gap-0.5 px-1 py-1 rounded-full bg-[#f7f8f9] dark:bg-[#1c1c24] shadow-sm', // Both ends rounded; sits above undo so the right cap covers the tucked fill
+          // Same rounded-xl grey shell as utility mode toggles
+          'relative z-10 flex items-center gap-0.5 px-1 py-1 rounded-xl bg-[#f7f8f9] dark:bg-[#1c1c24] shadow-sm',
           className
         )}
       >
@@ -64,7 +64,7 @@ export function PillSelect({ options, value, onChange, className }: PillSelectPr
                 <button
                   type="button"
                   data-edit-menu-select // Phone Filter/Sort left-aligns to this mode chip
-                  className="inline-flex flex-shrink-0 items-center gap-0.5 px-3 py-1.5 rounded-full bg-white dark:bg-white text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-white dark:hover:bg-white" // Current mode; white chip like desktop selected
+                  className="inline-flex flex-shrink-0 items-center gap-0.5 px-3 py-1.5 rounded-lg bg-white dark:bg-white text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-white dark:hover:bg-white" // Current mode; white chip like desktop selected
                   aria-label="Mode"
                 >
                   {selectedLabel}
@@ -97,7 +97,7 @@ export function PillSelect({ options, value, onChange, className }: PillSelectPr
                 data-edit-menu-select={isSelected ? '' : undefined} // Filter/Sort strip left-aligns to the selected mode chip
                 onClick={() => handleSelect(option.value)}
                 className={cn(
-                  'inline-flex items-center px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200',
+                  'inline-flex items-center px-4 py-1.5 rounded-lg text-sm font-medium transition-all duration-200',
                   isSelected
                     ? 'bg-white dark:bg-white text-gray-700 dark:text-gray-300' // White background when selected (desktop only)
                     : 'bg-transparent text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100'
@@ -113,7 +113,7 @@ export function PillSelect({ options, value, onChange, className }: PillSelectPr
         <div
           ref={setUndoHost} // Toolbar portals undo/redo here — right of the toggle, outside it
           data-phone-undo
-          className="relative z-0 flex items-center gap-0.5 py-1 flex-shrink-0 empty:hidden rounded-r-full bg-gray-50 dark:bg-[#0f0f0f]" // Board fill under the tools cap; padding/overlap in CSS so the arrows don’t move
+          className="relative z-0 flex items-center gap-0.5 py-1 flex-shrink-0 empty:hidden rounded-r-xl bg-gray-50 dark:bg-[#0f0f0f]" // Board fill under the tools cap; padding/overlap in CSS so the arrows don’t move
         />
       ) : null}
     </div>

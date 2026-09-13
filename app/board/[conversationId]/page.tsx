@@ -6,6 +6,7 @@ import { headers } from 'next/headers'
 import { BoardFlow } from '@/components/board-flow'
 import { InputAreaWithStickyPrompt } from '@/components/input-area-with-sticky-prompt'
 import { ChatSidebar } from '@/components/chat-sidebar'
+import { UtilitySidebar } from '@/components/utility-sidebar'
 import { WelcomeText } from '@/components/welcome-text-overlay' // Empty-board Virgil hints
 import { EditorProvider } from '@/components/editor-context'
 import { ReactFlowContextProvider } from '@/components/react-flow-context'
@@ -88,6 +89,7 @@ export default async function ConversationPage({
                     {editable ? <WelcomeText /> : null} {/* Empty-board hints — hide for view/comment */}
                     {/* Top bar stays for all roles; write tools gate via BoardAccess */}
                     <InputAreaWithStickyPrompt conversationId={conversationId} />
+                    <UtilitySidebar /> {/* Transparent overlay on map — left of chat */}
                   </div>
                   {/* AI sidebar is an edit surface — hide for view/comment */}
                   {editable ? <ChatSidebar conversationId={conversationId} /> : null}

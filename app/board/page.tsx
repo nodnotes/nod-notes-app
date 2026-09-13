@@ -4,6 +4,7 @@
 import { BoardFlow } from '@/components/board-flow'
 import { InputAreaWithStickyPrompt } from '@/components/input-area-with-sticky-prompt'
 import { ChatSidebar } from '@/components/chat-sidebar'
+import { UtilitySidebar } from '@/components/utility-sidebar'
 import { EditorProvider } from '@/components/editor-context'
 import { ReactFlowContextProvider } from '@/components/react-flow-context'
 import { PreviewFocusProvider } from '@/lib/preview-focus-context' // Nested preview style selection
@@ -73,6 +74,7 @@ export default function BoardPage() {
                 <WelcomeText />
               </Suspense>
               <InputAreaWithStickyPrompt conversationId={conversationId} />
+              <UtilitySidebar /> {/* Transparent overlay on map — left of chat */}
             </div>
             <ChatSidebar conversationId={conversationId} />
           </div>

@@ -7,6 +7,7 @@ import { useReactFlowContext } from './react-flow-context' // Empty = no frames 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react' // Poll nodes + measure chrome
 import { NodNotesIcon } from '@/components/nod-notes-icon' // Same mark as the home top bar
 import { createClient } from '@/lib/supabase/client' // Count boards so returning users skip chrome hints
+import { useSidebarContext } from './sidebar-context' // Utility overlay inset for empty-board center
 
 type HintId = 'nav' | 'move' | 'notion' | 'more' | 'chat' // One callout per chrome cluster
 type BowSide = 'left' | 'right' | 'up' | 'down' // Which way the quadratic bows off the chord
@@ -132,6 +133,9 @@ function shortenAlong(
 /** Empty-board hints: nav / pan / Notion / chat. Same Virgil + gray arrows as mindmap.so. */
 export function WelcomeText() {
   const { reactFlowInstance, editMenuPillMode } = useReactFlowContext() // Empty board + Draw tools change hint Y
+  const { isMobileMode, isUtilitySidebarOpen, utilitySidebarWidth } = useSidebarContext() // Overlay inset for center brand
+  const utilityCenterInset =
+    !isMobileMode && isUtilitySidebarOpen ? utilitySidebarWidth : 0 // Same usable strip as the mode pill
   const rootRef = useRef<HTMLDivElement>(null) // Overlay = local origin for measures
   const measureRefs = useRef<Record<HintId, HTMLDivElement | null>>({
     nav: null,
@@ -403,7 +407,8 @@ export function WelcomeText() {
     <div
       ref={rootRef}
       aria-hidden
-      className="absolute inset-0 z-[6] pointer-events-none select-none overflow-visible"
+      className="absolute inset-y-0 left-0 z-[6] pointer-events-none select-none overflow-visible"
+      style={{ right: utilityCenterInset }} // Center Nod + “Click the board…” in the strip left of utility
     >
       {/* Home top-bar brand, centered — clicks pass through so the board still adds a frame */}
       <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center animate-in fade-in duration-500">

@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation'
 import { StudySetFlow } from '@/components/study-set-flow'
 import { InputAreaWithStickyPrompt } from '@/components/input-area-with-sticky-prompt'
 import { ChatSidebar } from '@/components/chat-sidebar'
+import { UtilitySidebar } from '@/components/utility-sidebar'
 import { EditorProvider } from '@/components/editor-context'
 import { ReactFlowContextProvider } from '@/components/react-flow-context'
 
@@ -48,6 +49,7 @@ export default async function StudySetPage({
           <div className="flex-1 relative min-w-0 h-full">
             <StudySetFlow studySetId={studySetId} />
             <InputAreaWithStickyPrompt />
+            <UtilitySidebar /> {/* Transparent overlay on map — left of chat */}
           </div>
           <ChatSidebar />
         </div>

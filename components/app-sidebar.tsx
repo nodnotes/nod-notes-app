@@ -1222,7 +1222,7 @@ async function fetchProjects(userId: string): Promise<Project[]> {
   })
 }
 
-const NAV_POPUP_TOP = 52 // Flush under top bar so hover can bridge from the menu icon
+const NAV_POPUP_TOP = 60 // Flush under top-bar island (8px inset + 52px bar) so hover can bridge from the menu icon
 const NAV_POPUP_MAX_CAP = 720 // Desktop tall-screen cap when fully avoiding bottom chrome
 const NAV_POPUP_CHROME_GAP = 8 // Air between the popup bottom and Free nav / minimap
 const NAV_POPUP_MIN_H = 160 // Search + a few boards still usable if chrome is tall
@@ -2898,7 +2898,7 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
       {isSidebarOpen && isMobileMode && (
         <div
           className="fixed inset-x-0 bottom-0 bg-black/20 z-40 transition-opacity"
-          style={{ top: NAV_POPUP_TOP }} // Leave the 52px top bar (hamburger) above the scrim
+          style={{ top: NAV_POPUP_TOP }} // Leave the top-bar island (hamburger) above the scrim
           onClick={closeSidebar}
         />
       )}

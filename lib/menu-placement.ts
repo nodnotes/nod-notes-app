@@ -56,7 +56,7 @@ export function getMenuSafeRect(): MenuRect {
   let right = window.innerWidth - PAD // Start inset from the window
   let bottom = window.innerHeight - PAD // Start inset from the window
 
-  const topBar = document.querySelector('[data-edit-top-bar]') as HTMLElement | null // Actions / Layout / Draw / View bar
+  const topBar = document.querySelector('[data-edit-top-bar]') as HTMLElement | null // Actions / Layout / Draw bar
   if (topBar) {
     const r = topBar.getBoundingClientRect() // Current bar box
     if (r.height > 1) top = Math.max(top, r.bottom + PAD) // Sit fully below the bar (toggle + title + tools)
@@ -85,6 +85,12 @@ export function getMenuSafeRect(): MenuRect {
   if (sidebar) {
     const r = sidebar.getBoundingClientRect() // Column box
     if (r.width > 1 && r.left > window.innerWidth * 0.4) right = Math.min(right, r.left - PAD) // Don't spill into the chat column
+  }
+
+  const utility = document.querySelector('[data-utility-sidebar]') as HTMLElement | null // Thin layers / study / present column
+  if (utility) {
+    const r = utility.getBoundingClientRect() // Column box
+    if (r.width > 1 && r.left > window.innerWidth * 0.35) right = Math.min(right, r.left - PAD) // Don't spill into utility (left of chat)
   }
 
   const toggle = document.querySelector('[data-chat-sidebar-toggle]') as HTMLElement | null // Brand mark that opens chat

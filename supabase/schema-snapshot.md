@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-13T14:52:00Z`
+- Snapped at: `2026-09-13T20:23:23Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`; versions from `.temp` + Management API list; cli-latest reports `v2.117.0`)
@@ -9,6 +9,14 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260913202323_utility_sidebar_layers_study_capture.sql`.
+- **Utility sidebar**: transparent right overlay (Layers / Study / Capture); viewport + top-bar inset; AI-chat-style search header; grey content card matching mode toggle.
+- **Layers**: frames touching the viewport; Capture panel moved into utility Capture tab; presentations menu removed.
+- **Chrome**: Actions/Layout/Draw + utility shells `rounded-xl`; chat Ask/user prompts use `--nod-chat-prompt` (`#f4f5f6` / dark `#212121`).
+- Schema unchanged; remote DDL top remains `20260912192948_panel_edges_canvas_endpoints`.
+
+## Prior: pen palette + tip scrub + Capture view
 
 - DDL: none. Marker `20260913145200_pen_palette_tip_scrub_capture_view.sql`.
 - **Pen palette**: default 8 swatches → columns `3 | 3 | 2+“+”`; origin (right) holds translucent red + yellow highlighters; packing puts last ≤2 in origin.

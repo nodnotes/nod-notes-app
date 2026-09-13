@@ -9,7 +9,6 @@ import {
   threadAlgorithmFromStyle,
   type ThreadStylePref,
 } from '@/components/threads' // Board default Smooth / Sharp / Linear + path algorithm
-import { usePreviewFocus } from '@/lib/preview-focus-context' // Nested preview View-style targeting
 import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { createPortal } from 'react-dom' // Phone: mode tools inside the pill; undo/redo to its right
 import {
@@ -57,9 +56,6 @@ import {
   GripVertical,
   GripHorizontal,
   Check,
-  Grid3x3,
-  Presentation, // View presentation mode
-  Scan, // View capture — 4 disconnected rounded corners
   Anchor,
   ListFilter,
   ArrowUpDown,
@@ -83,7 +79,6 @@ import {
 import { AutomationsMenu } from './automations-menu' // Actions-bar Automations list popover
 import { BoardFilterSortTriggers } from './board-filter-sort-menu' // Filter/Sort toggle the under-bar strip
 import { setBoardFilterSortOpen, toggleBoardFilterSort } from '@/lib/board-filter-sort-ui' // Strip open/focus
-import { CapturesMenu } from './captures-menu' // View-bar Capture list popover
 import { ToolbarTitle } from './toolbar-title' // Animated icon-adjacent titles
 import { LayoutAlignGlyph, LayoutForkMenuItems, type LayoutForkAlign } from './layout-fork-icon' // Layout dropdown: forked arrows + align
 import {
@@ -96,7 +91,6 @@ import {
   type StackTogglePatch,
 } from '@/components/use-frame-nest-stack-drag' // Magnet pack + stack/unstack
 import { setSideStackEntry } from '@/lib/frame-side-stacks' // Stamp stack line link without lock
-import { PresentationsMenu } from './presentations-menu' // View-bar Presentation list popover
 import { useBoardAccess } from '@/lib/share/board-access-context' // Owner-only share menu
 import { useSidebarContext } from './sidebar-context' // Wait for chat column restore before measuring titles
 import { usePhoneModeMenu } from './phone-mode-menu-context' // Phone pill drill-in portal host
@@ -330,17 +324,15 @@ function PhoneUndoRedoPortal({
 
 export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
   const { canShare, canEdit, role } = useBoardAccess() // Gate share + show view-only chrome
-  const { isChatSidebarOpen, chatChromeReady, isMobileMode } = useSidebarContext() // Measure after chat restore; phone layout forces pill
+  const { isChatSidebarOpen, chatChromeReady, isMobileMode, isUtilitySidebarOpen, utilitySidebarWidth } =
+    useSidebarContext() // Measure after chat restore; phone layout; utility overlay inset
+  const utilityTopBarInset =
+    !isMobileMode && isUtilitySidebarOpen ? utilitySidebarWidth : 0 // Overlay does not shrink the bar — inset chrome instead
   const { toolsHost, undoHost, phoneTools, setPhoneTools, setShareCompact } = usePhoneModeMenu() // Pill + share/AI→More before tools leave
   const { hasAiContent, aiTopBarPinned } = useAiEditSession() // Pinned sparkles fold with shareCompact
-  const { reactFlowInstance, isLocked, lineStyle: verticalLineStyle, setLineStyle: setVerticalLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, boardRule: hostBoardRule, setBoardRule: setHostBoardRule, boardStyle: hostBoardStyle, setBoardStyle: setHostBoardStyle, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, isDrawing, setIsDrawing, drawTool: contextDrawTool, setDrawTool: setContextDrawTool, eraserMode, setEraserMode, drawTipSize, setDrawTipSize, drawTipZoomLocked, setDrawTipZoomLocked, eraserTipSize, setEraserTipSize, eraserTipZoomLocked, setEraserTipZoomLocked, pencilPalette, pencilColorIndex, setPencilColorIndex, setPencilColorAt, addPencilColor, removePencilColor, mapUndo, mapRedo, canMapUndo, canMapRedo, getMapTakeSnapshot, getSetNodes } = useReactFlowContext()
+  const { reactFlowInstance, isLocked, lineStyle: verticalLineStyle, setLineStyle: setVerticalLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, isDrawing, setIsDrawing, drawTool: contextDrawTool, setDrawTool: setContextDrawTool, eraserMode, setEraserMode, drawTipSize, setDrawTipSize, drawTipZoomLocked, setDrawTipZoomLocked, eraserTipSize, setEraserTipSize, eraserTipZoomLocked, setEraserTipZoomLocked, pencilPalette, pencilColorIndex, setPencilColorIndex, setPencilColorAt, addPencilColor, removePencilColor, mapUndo, mapRedo, canMapUndo, canMapRedo, getMapTakeSnapshot, getSetNodes } = useReactFlowContext()
   const queryClientForAi = useQueryClient() // Turn into board list + conversations invalidate
-  const previewFocus = usePreviewFocus() // When a nested preview chrome is selected, View styles target that page
-  // Route Board Style controls to the focused preview page (else the host map)
-  const boardRule = previewFocus?.focusedBoardId ? previewFocus.boardRule : hostBoardRule
-  const setBoardRule = previewFocus?.focusedBoardId ? previewFocus.setBoardRule : setHostBoardRule
-  const boardStyle = previewFocus?.focusedBoardId ? previewFocus.boardStyle : hostBoardStyle
-  const setBoardStyle = previewFocus?.focusedBoardId ? previewFocus.setBoardStyle : setHostBoardStyle
+  // Board rule/style live in top-bar More (BoardTopBarShare), not the View toolbar
   const { resolvedTheme } = useTheme() // Get theme for panel-matching opacity values
   const borderStyleButtonRef = useRef<HTMLButtonElement>(null)
   const borderStyleIconRef = useRef<HTMLImageElement>(null)
@@ -1382,8 +1374,9 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       const pathBox = leftChrome?.querySelector('[data-board-path]') as HTMLElement | null // Live crumbs + hidden full/min rows
       const pathMin = pathBox?.querySelector('[data-path-min]') as HTMLElement | null // Hidden icon-minimum row (current icon whole)
       const minPathW = Math.max(64, pathMin?.scrollWidth || 64) // Cutoff-able path: ancestor icons + current icon, never mid-icon clip
-      const barCenter = toolbarRect.left + toolbarRect.width / 2 // True board center
-      const barW = toolbarRect.width // Map-column width this pass
+      // Overlay utility does not shrink the DOM bar — usable width matches the old flex-sibling map column
+      const barW = toolbarRect.width - utilityTopBarInset
+      const barCenter = toolbarRect.left + barW / 2 // Center of the usable strip (left of utility)
       const leftW = hamW + minPathW // Reserve cutoff path on shrink and expand — live crush delayed return; live extend delayed return
       const sideInset = Math.max(leftW, rightW) // Live inset for title collapse (current share chrome)
       const availableWidth = barW - 2 * sideInset - 16 // Max cluster width on the true board center (no More fold)
@@ -1398,26 +1391,19 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
           { id: 'lock', width: 64 }, // Anchor + Lock frames — Layout leftmost
           { id: 'undoRedo', width: 70 },
         ]
-        : editMenuPillMode === 'view'
+        : editMenuPillMode === 'draw'
           ? [
-            { id: 'presentation', width: 40 }, // Present icon (hides first — rightmost)
-            { id: 'capture', width: 40 }, // Capture icon
-            { id: 'boardStyle', width: 40 }, // Board icon
+            { id: 'drawGroup1', width: 108 }, // Lasso + insert-space — rightmost, hide first
+            { id: 'drawGroup3', width: 28 }, // Pen icon only (highlighter icon)
+            { id: 'drawGroup2', width: 28 + 4 + 5 }, // Eraser icon + slash after ink cluster
             { id: 'undoRedo', width: 70 },
           ]
-          : editMenuPillMode === 'draw'
-            ? [
-              { id: 'drawGroup1', width: 108 }, // Lasso + insert-space — rightmost, hide first
-              { id: 'drawGroup3', width: 28 }, // Pen icon only (highlighter icon)
-              { id: 'drawGroup2', width: 28 + 4 + 5 }, // Eraser icon + slash after ink cluster
-              { id: 'undoRedo', width: 70 },
-            ]
-            : [
-              { id: 'search', width: boardSearchOpen ? 180 : 40 }, // Icon + field when open; icon when early-collapsed
-              { id: 'actions', width: 120 }, // Filter / Sort / Automations icons
-              { id: 'turnInto', width: 40 }, // Turn into — own section left of Filter
-              { id: 'undoRedo', width: 70 },
-            ]
+          : [
+            { id: 'search', width: boardSearchOpen ? 180 : 40 }, // Icon + field when open; icon when early-collapsed
+            { id: 'actions', width: 120 }, // Filter / Sort / Automations icons
+            { id: 'turnInto', width: 40 }, // Turn into — own section left of Filter
+            { id: 'undoRedo', width: 70 },
+          ]
 
       // Early cluster icon-only; remaining titles still shown (Filter/ink collapse first)
       const midGroups = editMenuPillMode === 'insert'
@@ -1427,50 +1413,41 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
           { id: 'lock', width: titledToolWidth('Anchor') + 2 + titledToolWidth('Lock frames') + 12 },
           { id: 'undoRedo', width: 70 },
         ]
-        : editMenuPillMode === 'view'
+        : editMenuPillMode === 'draw'
           ? [
-            { id: 'presentation', width: titledToolWidth('Present') },
-            { id: 'capture', width: titledToolWidth('Capture') },
-            { id: 'boardStyle', width: titledToolWidth('Board') },
+            { id: 'drawGroup1', width: titledToolWidth('Lasso') + 4 + titledToolWidth('V-space') + 4 + titledToolWidth('H-space') + 16 }, // Rightmost
+            { id: 'drawGroup3', width: 28 }, // Pen title already collapsed
+            { id: 'drawGroup2', width: 28 + 4 + 5 }, // Eraser + slash after ink cluster
             { id: 'undoRedo', width: 70 },
           ]
-          : editMenuPillMode === 'draw'
-            ? [
-              { id: 'drawGroup1', width: titledToolWidth('Lasso') + 4 + titledToolWidth('V-space') + 4 + titledToolWidth('H-space') + 16 }, // Rightmost
-              { id: 'drawGroup3', width: 28 }, // Pen title already collapsed
-              { id: 'drawGroup2', width: 28 + 4 + 5 }, // Eraser + slash after ink cluster
-              { id: 'undoRedo', width: 70 },
-            ]
-            : [
-              { id: 'search', width: boardSearchOpen ? 180 : 40 }, // Search title already collapsed
-              { id: 'actions', width: 120 }, // Filter cluster already collapsed
-              { id: 'turnInto', width: titledToolWidth('Turn into') }, // Title stays until rest-collapse
-              { id: 'undoRedo', width: 70 },
-            ]
+          : [
+            { id: 'search', width: boardSearchOpen ? 180 : 40 }, // Search title already collapsed
+            { id: 'actions', width: 120 }, // Filter cluster already collapsed
+            { id: 'turnInto', width: titledToolWidth('Turn into') }, // Title stays until rest-collapse
+            { id: 'undoRedo', width: 70 },
+          ]
 
       // All titles shown
       const fullGroups = editMenuPillMode === 'insert'
         ? midGroups // Layout has no early cluster
-        : editMenuPillMode === 'view'
-          ? midGroups // View has no early cluster
-          : editMenuPillMode === 'draw'
-            ? [
-              { id: 'drawGroup1', width: titledToolWidth('Lasso') + 4 + titledToolWidth('V-space') + 4 + titledToolWidth('H-space') + 16 }, // Rightmost
-              { id: 'drawGroup3', width: titledToolWidth('Pen') }, // Pen only (uses highlighter icon)
-              { id: 'drawGroup2', width: titledToolWidth('Eraser') + 4 + 5 }, // Eraser + slash after ink cluster
-              { id: 'undoRedo', width: 70 },
-            ]
-            : [
-              { id: 'search', width: boardSearchOpen ? 180 : titledToolWidth('Search') }, // Title hides when the field slides out
-              { id: 'actions', width: titledToolWidth('Filter') + 2 + titledToolWidth('Sort') + 2 + titledToolWidth('Automations') },
-              { id: 'turnInto', width: titledToolWidth('Turn into') }, // Own section left of Filter
-              { id: 'undoRedo', width: 70 },
-            ]
+        : editMenuPillMode === 'draw'
+          ? [
+            { id: 'drawGroup1', width: titledToolWidth('Lasso') + 4 + titledToolWidth('V-space') + 4 + titledToolWidth('H-space') + 16 }, // Rightmost
+            { id: 'drawGroup3', width: titledToolWidth('Pen') }, // Pen only (uses highlighter icon)
+            { id: 'drawGroup2', width: titledToolWidth('Eraser') + 4 + 5 }, // Eraser + slash after ink cluster
+            { id: 'undoRedo', width: 70 },
+          ]
+          : [
+            { id: 'search', width: boardSearchOpen ? 180 : titledToolWidth('Search') }, // Title hides when the field slides out
+            { id: 'actions', width: titledToolWidth('Filter') + 2 + titledToolWidth('Sort') + 2 + titledToolWidth('Automations') },
+            { id: 'turnInto', width: titledToolWidth('Turn into') }, // Own section left of Filter
+            { id: 'undoRedo', width: 70 },
+          ]
 
       const sumGroups = (groups: { width: number }[]) => groups.reduce((sum, item) => sum + item.width + 8, 0) // +8 gap/slash
       const fullTotal = sumGroups(fullGroups) // Filter/ink + remaining titles
       const midTotal = sumGroups(midGroups) // Filter/ink icons; remaining titles
-      const modeSwitch = measuredModeRef.current !== null && measuredModeRef.current !== editMenuPillMode // Layout/Draw/View must fit like Actions, not inherit Actions’ titles
+      const modeSwitch = measuredModeRef.current !== null && measuredModeRef.current !== editMenuPillMode // Layout/Draw must fit like Actions, not inherit Actions’ titles
       const firstPass = !toolbarLayoutReadyRef.current || modeSwitch // Mode change: no hysteresis from the previous bar
       if (modeSwitch) setToolbarAnimate(false) // Skip 0fr↔1fr tween so new titles don’t paint expanded then collapse
       const expandSlop = firstPass ? 0 : 24 // Extra room before titles expand again — keeps later animation from flickering
@@ -1593,7 +1570,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       window.removeEventListener('resize', checkVisibility)
       window.removeEventListener('nodnotes-notion-status', onNotionStatus)
     }
-  }, [editor, editMenuPillMode, boardSearchOpen, chatChromeReady, isChatSidebarOpen, isMobileMode, hasAiContent, aiTopBarPinned, setPhoneTools, setShareCompact]) // Re-run when the map column’s final width is known
+  }, [editor, editMenuPillMode, boardSearchOpen, chatChromeReady, isChatSidebarOpen, isMobileMode, utilityTopBarInset, hasAiContent, aiTopBarPinned, setPhoneTools, setShareCompact]) // Re-run when map / utility usable width is known
 
   useLayoutEffect(() => {
     if (toolbarLayoutReady && !toolbarAnimate) setToolbarAnimate(true) // After first reveal, allow later collapse/expand animation
@@ -1607,9 +1584,11 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       data-preview-style-chrome // Clicks here keep nested preview style-focus alive
       className="absolute inset-0 pointer-events-none" // Fill the map-column bar so tools can board-center
     >
-      {/* Tools — true center of the board bar, independent of title / Share cluster */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <div
+      {/* Tools — center of the usable bar (left of utility overlay when open) */}
+      <div
+        className="absolute inset-0 flex items-center justify-center pointer-events-none"
+        style={utilityTopBarInset ? { right: utilityTopBarInset } : undefined} // Match old map-column center when utility overlays
+      >        <div
           data-toolbar-center
           data-toolbar-ready={toolbarLayoutReady ? 'true' : undefined} // Mode pill waits for this so it doesn’t paint before tools
           data-toolbar-animate={toolbarAnimate ? 'true' : undefined}
@@ -2218,92 +2197,6 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
               </>
             )}
           </>
-        )}
-
-        {/* Board Style Dropdown - View Mode Only */}
-        {editMenuPillMode === 'view' && !isItemHidden('boardStyle') && (
-          <>
-            <DropdownMenu open={openDropdown === 'boardStyle'} onOpenChange={(open) => handleDropdownOpenChange('boardStyle', open)}>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={cn(
-                    'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 flex-shrink-0 flex items-center',
-                    'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5' // Title condenses to icon on shrink
-                  )}
-                  title="Board"
-                >
-                  <Grid3x3 className="h-4 w-4 flex-shrink-0" />
-                  <ToolbarTitle show={!compactLabels}>Board</ToolbarTitle>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent {...TOOLBAR_MENU_PLACEMENT} className="w-40">
-                {/* Rule Header Section */}
-                <DropdownMenuLabel className="px-2 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400">
-                  Rule
-                </DropdownMenuLabel>
-                <DropdownMenuRadioGroup value={boardRule} onValueChange={(value) => setBoardRule(value as 'wide' | 'college' | 'narrow')}>
-                  <DropdownMenuRadioItem value="wide" className="pl-8">
-                    Wide
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="college" className="pl-8">
-                    College
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="narrow" className="pl-8">
-                    Narrow
-                  </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-                <DropdownMenuSeparator className="mx-2 my-1" />
-                {/* Style Header Section */}
-                <DropdownMenuLabel className="px-2 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400">
-                  Style
-                </DropdownMenuLabel>
-                <DropdownMenuRadioGroup value={boardStyle} onValueChange={(value) => setBoardStyle(value as 'none' | 'dotted' | 'lined' | 'grid')}>
-                  <DropdownMenuRadioItem value="none" className="pl-8">
-                    None
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="dotted" className="pl-8">
-                    Dotted
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="lined" className="pl-8">
-                    Lined
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="grid" className="pl-8">
-                    Grid
-                  </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            {/* Slash before capture/presentation cluster or More menu */}
-            {(!isItemHidden('presentation') || !isItemHidden('capture') || hiddenItems.size > 0) && (
-              <span className="flex h-7 items-center text-2xl font-thin text-gray-300 dark:text-gray-500 mx-1 flex-shrink-0 select-none leading-none" aria-hidden>/</span>
-            )}
-          </>
-        )}
-
-        {/* Capture + Presentation — View bar cluster, no slash between */}
-        {editMenuPillMode === 'view' && (
-          <div className="flex items-center gap-0.5 flex-shrink-0">
-            <CapturesMenu
-              open={openDropdown === 'capture'}
-              onOpenChange={(open) => handleDropdownOpenChange('capture', open)}
-              conversationId={conversationId}
-              triggerVisible={!isItemHidden('capture')}
-              showLabel={!compactLabels} // Title condenses to icon on shrink
-            />
-            <PresentationsMenu
-              open={openDropdown === 'presentation'}
-              onOpenChange={(open) => handleDropdownOpenChange('presentation', open)}
-              conversationId={conversationId}
-              triggerVisible={!isItemHidden('presentation')}
-              showLabel={!compactLabels} // Title condenses to icon on shrink
-            />
-          </div>
-        )}
-        {/* Slash before More menu when capture/presentation stay visible but other View tools overflow */}
-        {editMenuPillMode === 'view' && (!isItemHidden('presentation') || !isItemHidden('capture')) && hiddenItems.size > 0 && (
-          <span className="flex h-7 items-center text-2xl font-thin text-gray-300 dark:text-gray-500 mx-1 flex-shrink-0 select-none leading-none" aria-hidden>/</span>
         )}
 
         {/* Paint Format / Clear Formatting Button */}
@@ -3154,40 +3047,6 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                   </>
                 )}
               </>
-            ) : editMenuPillMode === 'view' ? (
-              <>
-                {/* View mode items */}
-                {isItemHidden('boardStyle') && (
-                  <>
-                    <DropdownMenuItem
-                      onClick={() => {
-                        // Board style dropdown - no action needed, just show in menu
-                      }}
-                    >
-                      <Grid3x3 className="h-4 w-4 mr-2" />
-                      Board Style
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                  </>
-                )}
-                {(isItemHidden('presentation') || isItemHidden('capture')) && (
-                  <>
-                    {isItemHidden('capture') && (
-                      <DropdownMenuItem onClick={() => handleDropdownOpenChange('capture', true)}>
-                        <Scan className="h-4 w-4 mr-2" />
-                        Capture
-                      </DropdownMenuItem>
-                    )}
-                    {isItemHidden('presentation') && (
-                      <DropdownMenuItem onClick={() => handleDropdownOpenChange('presentation', true)}>
-                        <Presentation className="h-4 w-4 mr-2" />
-                        Present
-                      </DropdownMenuItem>
-                    )}
-                    <DropdownMenuSeparator />
-                  </>
-                )}
-              </>
             ) : editMenuPillMode === 'draw' ? (
               <>
                 {/* Draw mode items — same left-to-right order as the bar */}
@@ -3654,8 +3513,11 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       </div>
 
       {/* Right Section — connections + AI origin + Share + copy/favorite/more */}
-      <div className="absolute right-2 inset-y-0 z-20 flex items-center gap-1 pointer-events-auto" data-right-section>
-        <NotionConnectProvider>
+      <div
+        className="absolute inset-y-0 z-20 flex items-center gap-1 pointer-events-auto"
+        style={{ right: 8 + utilityTopBarInset }} // right-2 + utility overlay so Share sits left of the panel
+        data-right-section
+      >        <NotionConnectProvider>
           <div className="flex items-center px-2 flex-shrink-0 gap-1">
             {!canEdit && (
               <span className="hidden sm:inline text-[11px] text-gray-500 px-1.5 py-0.5 rounded bg-gray-100">

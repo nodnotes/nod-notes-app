@@ -102,6 +102,7 @@ import { ArrowDown, GripVertical, MousePointer2, Hand, Plus, Minus } from 'lucid
 import { useReactFlowContext } from './react-flow-context'
 import { useSidebarContext, PHONE_LAYOUT_MAX_WIDTH } from './sidebar-context'
 import { useChatSidebarViewportAdjust } from '@/lib/hooks/use-chat-sidebar-viewport'
+import { useUtilitySidebarViewportAdjust } from '@/lib/hooks/use-utility-sidebar-viewport'
 import { setAiSelectedFrames, setAiViewportCenter } from '@/lib/ai/selection-bridge' // Bridge RF selection + viewport → AI context
 import {
   beginBoardNavigating,
@@ -142,6 +143,7 @@ import {
 import { markHtmlWithAiOrigin } from '@/lib/ai/wrap-ai-html' // Persist AI provenance on chat-drop
 import { markdownToTipTapHtml } from '@/lib/ai/markdown-to-tiptap' // Chat drop → TipTap blocks (lists as listItems)
 import { AiEditReviewBar } from '@/components/ai/ai-edit-review-bar' // Pending edit review chrome
+import { LayersTouchingPublisher } from '@/components/layers-touching-publisher' // Utility Layers list cluster
 import { useAiEditSession } from '@/lib/ai/edit-session' // Frame pending glow / focus
 import {
   BLOCK_GROUP_PADDING,
@@ -2023,14 +2025,17 @@ function BoardFlowInner({
     if (boardStyle === 'grid') return BackgroundVariant.Lines // Grid pattern (both horizontal and vertical lines)
     return null // Default to none
   }, [boardStyle])
-  const { setIsMobileMode, isMobileMode, isChatSidebarOpen, toggleChatSidebar, logoDrawing, aiMapDockLiftPx, aiMapDockLeftPx, aiChatHasTranscript } =
+  const { setIsMobileMode, isMobileMode, isChatSidebarOpen, isUtilitySidebarOpen, toggleChatSidebar, logoDrawing, aiMapDockLiftPx, aiMapDockLeftPx, aiChatHasTranscript } =
     useSidebarContext()
   useChatSidebarViewportAdjust(reactFlowInstance, isChatSidebarOpen && !isMobileMode) // No column shrink on phone dock
+  useUtilitySidebarViewportAdjust(reactFlowInstance, isUtilitySidebarOpen && !isMobileMode) // Overlay: frame usable width as pane − utility
   // Phone AI dock lift — Free nav / brand jump above the composer
   const mapChromeBottomPad = isMobileMode && isChatSidebarOpen ? aiMapDockLiftPx : 0
   // Phone AI open: align Free nav (+ minimap chrome) to the chat card’s left edge
   const mapChromeLeft =
     isMobileMode && isChatSidebarOpen && aiMapDockLeftPx != null ? aiMapDockLeftPx : MINIMAP_LEFT
+  // Brand stays on the map bottom-right (under the transparent utility overlay when open)
+  const brandRight = BRAND_RIGHT
   // Desktop: always board fill (incl. chat open). Phone: white only for input-only chat.
   const freeNavBoardFill =
     isMobileMode && isChatSidebarOpen && !aiChatHasTranscript
@@ -4143,6 +4148,10 @@ function BoardFlowInner({
     if (!nodes || !Array.isArray(nodes) || nodes.length === 0) return
 
     const handleResize = () => {
+      // Chat/utility hooks own usable-width camera framing — this prompt-box X nudge was winning on
+      // seam-drag *stop* (our frame no-ops when pane width is unchanged) and left the board wrong.
+      if (isChatSidebarOpen || isUtilitySidebarOpen) return
+
       // Apply push/center logic in both Linear and Canvas modes to keep panels aligned with prompt box
 
       const reactFlowElement = document.querySelector('.react-flow')
@@ -4299,7 +4308,7 @@ function BoardFlowInner({
       if (minimapResizeObserver) minimapResizeObserver.disconnect()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes?.length ?? 0, isPromptBoxCentered, contextPanelWidth]) // Re-run when nodes change, prompt box centering changes, or panel width changes
+  }, [nodes?.length ?? 0, isPromptBoxCentered, contextPanelWidth, isChatSidebarOpen, isUtilitySidebarOpen]) // Skip while chat/utility own framing
 
   // Structural key only (ids + roles) — do NOT include content; content edits must not remount panels mid-typing
   const messagesKey = useMemo(() => {
@@ -10059,6 +10068,7 @@ function BoardFlowInner({
       onDoubleClick={embedded ? undefined : handlePaneDoubleClick}
     >
       {!embedded && <AiEditReviewBar />}
+      <LayersTouchingPublisher />
       <FrameNestStackOverlay ui={frameNestStackUi} />
       <ReactFlow
         // Hide React Flow watermark; Pro license by launch
@@ -11258,7 +11268,7 @@ function BoardFlowInner({
           )}
           style={{
             bottom: `${MINIMAP_BOTTOM + mapChromeBottomPad}px`,
-            right: `${BRAND_RIGHT}px`,
+            right: `${brandRight}px`,
             transition: 'none',
             // Above phone map-dock shell (z-30) so taps always hit the brand when closed
             pointerEvents: 'auto',

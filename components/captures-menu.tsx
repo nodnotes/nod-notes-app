@@ -1,18 +1,36 @@
 'use client'
 
-// View-bar Capture popover — search / filter / Capture view + selectable list + add to presentation/chat
+// Capture list — utility-sidebar Capture tab (reorder + insert gaps, same as old Present)
 
-import { useMemo, useState, useSyncExternalStore } from 'react' // Search, selection, store
+import { useMemo, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { useQueryClient } from '@tanstack/react-query' // Board path + frame text
-import { useRouter } from 'next/navigation' // Client-side board / capture nav
 import {
-  ListFilter, // Filter control
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core' // Capture reorder
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable' // Vertical list + slide transitions
+import { CSS } from '@dnd-kit/utilities' // Translate while dragging
+import {
+  ListFilter, // Filter control (dropdown menu chrome)
   MessageSquare, // Add to chat
+  Plus, // Insert capture between rows
   Presentation, // Add to presentation
   Scan, // Capture view (4 disconnected rounded corners)
-  Search, // Search field glyph
+  Search, // Search field glyph (non-sidebar layout)
 } from 'lucide-react'
-import { Button } from '@/components/ui/button' // Ghost icon trigger
+import {
+  UtilityFilterOption,
+  UtilitySearchHeader,
+} from '@/components/utility-search-header' // Sidebar: AI-chat-style search
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,7 +39,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu' // Anchored panel under the Scan control
+} from '@/components/ui/dropdown-menu' // Add-to-presentation menu
 import { useReactFlowContext } from '@/components/react-flow-context' // Current viewport
 import { useSidebarContext } from '@/components/sidebar-context' // Open chat on add-to-chat
 import {
@@ -32,43 +50,168 @@ import {
   formatCaptureTimestamp,
   getCaptures,
   getPresentations,
+  insertNewCaptureAt,
   readCaptureCameraInput,
+  setCaptureOrder,
   subscribeCaptures,
   takeBoardCapture,
+  type BoardCapture,
 } from '@/lib/captures' // Local capture/presentation store
-import { navigateToCapture } from '@/lib/capture-link' // In-tab camera nav (no full reload)
 import { cn } from '@/lib/utils' // Class merge
-import { TOOLBAR_MENU_PLACEMENT } from '@/lib/menu-placement' // Under the trigger, never over the board path
-import { CaptureRowMoreMenu } from './capture-row-more-menu' // Row hover ⋯ — copy link
-import { ToolbarTitle } from './toolbar-title' // Animated icon-adjacent title
+import { CaptureRowMoreMenu } from './capture-row-more-menu' // Row hover ⋯ — go to / copy link
 
-type CapturesMenuProps = {
-  open: boolean // Controlled by editor-toolbar openDropdown
-  onOpenChange: (open: boolean) => void // Keep only one toolbar dropdown open
+type CapturesPanelProps = {
   conversationId?: string // Current board — Capture view + this-board filter
-  triggerVisible?: boolean // false when overflowed into More (still mount for controlled open)
-  showLabel?: boolean // false when the top bar has condensed titles to icons
+  variant?: 'popover' | 'sidebar' // Popover = fixed width; sidebar = fill utility column
+  onRequestClose?: () => void // Popover: dismiss after navigate / add-to-chat
 }
 
-export function CapturesMenu({
-  open,
-  onOpenChange,
+/** Hairline between captures: + takes a new capture and inserts at this index. */
+function InsertGap({ onAdd, disabled }: { onAdd: () => void; disabled?: boolean }) {
+  return (
+    <div className="relative flex h-5 items-center justify-center">
+      <div className="absolute inset-x-4 h-px bg-gray-200 dark:bg-white/10" /> {/* Gap line */}
+      <button
+        type="button"
+        className={cn(
+          'relative z-[1] flex h-5 w-5 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 hover:text-gray-800 dark:border-white/15 dark:bg-[#1a1a1a] dark:text-gray-400 dark:hover:bg-white/[0.06] dark:hover:text-gray-100',
+          disabled && 'pointer-events-none opacity-40'
+        )}
+        aria-label="Capture view and insert here"
+        disabled={disabled}
+        onPointerDown={(e) => e.preventDefault()}
+        onClick={onAdd}
+      >
+        <Plus className="h-3 w-3" />
+      </button>
+    </div>
+  )
+}
+
+/** One capture thumb — drag to reorder (neighbors slide); click selects; double-click expands. */
+function SortableCaptureRow({
+  capture,
+  index,
+  selected,
   conversationId,
-  triggerVisible = true,
-  showLabel = true, // Icon+title until the top bar condenses
-}: CapturesMenuProps) {
+  canReorder,
+  tags,
+  onToggle,
+  onPreview,
+  onAddAt,
+  onNavigate,
+}: {
+  capture: BoardCapture
+  index: number
+  selected: boolean
+  conversationId?: string
+  canReorder: boolean // Off while search/filter is active
+  tags: { id: string; name: string }[]
+  onToggle: (id: string) => void
+  onPreview: (id: string) => void
+  onAddAt: (index: number) => void
+  onNavigate?: () => void
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: capture.id,
+    disabled: !canReorder,
+  })
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform), // Follow pointer
+    transition: transition || 'transform 200ms ease', // Slide neighbors into place
+    zIndex: isDragging ? 2 : undefined,
+    opacity: isDragging ? 0.85 : 1,
+  }
+  const stamp = formatCaptureTimestamp(capture.createdAt) // Title / a11y only
+
+  return (
+    <div ref={setNodeRef} style={style} className="group/capture flex flex-col">
+      {canReorder && <InsertGap onAdd={() => onAddAt(index)} />}
+      <div className="relative">
+        <button
+          type="button"
+          className={cn(
+            'w-full text-left',
+            canReorder && 'cursor-grab active:cursor-grabbing'
+          )}
+          title={canReorder ? `${stamp} — drag to reorder` : stamp}
+          aria-label={selected ? `Deselect capture ${stamp}` : `Select capture ${stamp}`}
+          aria-pressed={selected}
+          {...(canReorder ? { ...attributes, ...listeners } : {})}
+          onClick={() => onToggle(capture.id)}
+          onDoubleClick={() => {
+            if (capture.imageDataUrl) onPreview(capture.id)
+          }}
+        >
+          <div
+            className={cn(
+              'relative aspect-[4/3] w-full overflow-hidden rounded-md bg-gray-50 dark:bg-[#1a1a1a]',
+              selected
+                ? 'border-2 border-blue-500'
+                : 'border border-gray-200/80 dark:border-white/10'
+            )}
+          >
+            {capture.imageDataUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element -- local data URL
+              <img
+                src={capture.imageDataUrl}
+                alt=""
+                className="pointer-events-none absolute inset-0 h-full w-full object-contain"
+                draggable={false}
+              />
+            ) : (
+              <span className="absolute inset-0 flex items-center justify-center text-gray-300">
+                <Scan className="h-4 w-4" />
+              </span>
+            )}
+          </div>
+        </button>
+        <CaptureRowMoreMenu
+          capture={capture}
+          conversationId={conversationId}
+          onNavigate={onNavigate}
+          className={cn(
+            'absolute right-0.5 top-0.5 z-10 bg-white/90 shadow-sm dark:bg-[#1a1a1a]/90',
+            'opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/capture:opacity-100'
+          )}
+        />
+      </div>
+      {tags.length > 0 && (
+        <div className="mt-1 flex flex-wrap gap-1 px-0.5">
+          {tags.map((tag) => (
+            <span
+              key={tag.id}
+              className="inline-flex max-w-full items-center gap-0.5 truncate rounded-md bg-gray-200/80 px-1.5 py-0.5 text-[10px] font-medium text-gray-700 dark:bg-white/10 dark:text-gray-300"
+              title={tag.name}
+            >
+              <Presentation className="h-2.5 w-2.5 flex-shrink-0 text-gray-500" />
+              <span className="truncate">{tag.name}</span>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Captures list body — utility Capture tab (reorder + + insert). */
+export function CapturesPanel({
+  conversationId,
+  variant = 'popover',
+  onRequestClose,
+}: CapturesPanelProps) {
   const queryClient = useQueryClient() // Path + messages cache
-  const router = useRouter() // Cross-board capture nav stays in-tab
   const { reactFlowInstance } = useReactFlowContext() // Viewport at Capture view
   const { setChatSidebarOpen } = useSidebarContext() // Reveal chat when attaching
   const captures = useSyncExternalStore(subscribeCaptures, getCaptures, getCaptures) // List
-  const presentations = useSyncExternalStore(subscribeCaptures, getPresentations, getPresentations) // Select list
+  const presentations = useSyncExternalStore(subscribeCaptures, getPresentations, getPresentations)
   const [query, setQuery] = useState('') // Search: board / date / words
   const [thisBoardOnly, setThisBoardOnly] = useState(false) // Filter: this board vs all
   const [filterOpen, setFilterOpen] = useState(false) // Filter panel
   const [selected, setSelected] = useState<Set<string>>(() => new Set()) // Row selection
   const [previewId, setPreviewId] = useState<string | null>(null) // Expanded JPEG overlay
   const [capturing, setCapturing] = useState(false) // Capture view in flight
+  const sidebar = variant === 'sidebar' // Narrow column layout
 
   const items = useMemo(
     () =>
@@ -80,7 +223,7 @@ export function CapturesMenu({
   )
 
   const presentationsByCapture = useMemo(() => {
-    const map = new Map<string, { id: string; name: string }[]>() // capture id → presentations
+    const map = new Map<string, { id: string; name: string }[]>()
     for (const p of presentations) {
       for (const captureId of p.captureIds) {
         const list = map.get(captureId) || []
@@ -91,20 +234,29 @@ export function CapturesMenu({
     return map
   }, [presentations])
 
-  const hasSelection = selected.size > 0 // Footer actions need at least one
-  const previewItem = previewId ? items.find((c) => c.id === previewId) : undefined // Overlay target
+  // Reorder / + gaps only on the full unfiltered list (order is global)
+  const canReorder = !query.trim() && !thisBoardOnly
+  const hasSelection = selected.size > 0
+  const previewItem = previewId ? items.find((c) => c.id === previewId) : undefined
 
-  const captureView = async () => {
-    if (!conversationId || capturing) return // Need a board; ignore double-clicks
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }) // Click selects; drag reorders
+  )
+
+  const captureAt = async (index: number | null) => {
+    if (!conversationId || capturing) return
     setCapturing(true)
     try {
-      const vp = reactFlowInstance?.getViewport() || { x: 0, y: 0, zoom: 1 } // Current camera
+      const vp = reactFlowInstance?.getViewport() || { x: 0, y: 0, zoom: 1 }
       const created = await takeBoardCapture(
         (key) => queryClient.getQueryData(key),
         conversationId,
         readCaptureCameraInput(vp)
       )
-      setSelected((prev) => new Set(prev).add(created.id)) // Select the new row
+      if (index !== null && canReorder) {
+        insertNewCaptureAt(created, index) // Place at the + gap (takeBoardCapture prepended first)
+      }
+      setSelected((prev) => new Set(prev).add(created.id))
     } finally {
       setCapturing(false)
     }
@@ -119,51 +271,82 @@ export function CapturesMenu({
     })
   }
 
-  const selectedIds = () => [...selected] // Selected capture ids (not only currently visible rows)
+  const selectedIds = () => [...selected]
+
+  const onDragEnd = (event: DragEndEvent) => {
+    if (!canReorder) return
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const ids = items.map((c) => c.id)
+    const oldIndex = ids.indexOf(String(active.id))
+    const newIndex = ids.indexOf(String(over.id))
+    if (oldIndex < 0 || newIndex < 0) return
+    setCaptureOrder(arrayMove(ids, oldIndex, newIndex))
+  }
 
   return (
-    <DropdownMenu
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) {
-          setQuery('')
-          setFilterOpen(false)
-          setPreviewId(null)
-        }
-        onOpenChange(next)
-      }}
+    <div
+      className={cn(
+        'relative flex flex-col overflow-hidden',
+        sidebar ? 'h-full min-h-0' : 'w-full'
+      )}
     >
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          className={cn(
-            'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#1f1f1f] flex-shrink-0 flex items-center',
-            'transition-[padding,gap] duration-200 ease-out', // Pad/gap tween with the title width
-            showLabel ? 'px-2 gap-1.5' : 'px-1.5 gap-0', // Title condenses to icon on shrink
-            !triggerVisible && 'hidden' // Overflow: keep mounted, hide the glyph
-          )}
-          title="Capture"
-          aria-label="Capture"
-        >
-          <Scan className="h-4 w-4 flex-shrink-0" /> {/* Four disconnected rounded corners */}
-          <ToolbarTitle show={showLabel}>Capture</ToolbarTitle>
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        {...TOOLBAR_MENU_PLACEMENT} // Match Automations — start/bottom so a 340px panel doesn’t cover the path
-        className="relative w-[340px] rounded-xl border-gray-200 p-0 shadow-md overflow-hidden"
-        onCloseAutoFocus={(e) => e.preventDefault()}
-        onKeyDown={(e) => e.stopPropagation()} // Don't let board shortcuts eat typing
-      >
-        {/* Filter left of search · Capture view top right */}
-        <div className="flex items-center gap-1 px-2 pt-2 pb-1.5">
+      {sidebar ? (
+        <>
+          <UtilitySearchHeader
+            query={query}
+            onQueryChange={setQuery}
+            filterOpen={filterOpen}
+            onFilterOpenChange={setFilterOpen}
+            filterActive={thisBoardOnly}
+            filterTitle="Filter captures"
+            filterMenu={
+              <>
+                <UtilityFilterOption
+                  label="All boards"
+                  active={!thisBoardOnly}
+                  onSelect={() => {
+                    setThisBoardOnly(false)
+                    setFilterOpen(false)
+                  }}
+                />
+                <UtilityFilterOption
+                  label="This board"
+                  active={thisBoardOnly}
+                  disabled={!conversationId}
+                  onSelect={() => {
+                    if (!conversationId) return
+                    setThisBoardOnly(true)
+                    setFilterOpen(false)
+                  }}
+                />
+              </>
+            }
+          />
+          <div className="flex-shrink-0 px-2 pb-1.5 pt-2">
+            <button
+              type="button"
+              className="flex h-8 w-full flex-shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium text-gray-700 hover:bg-black/[0.04] disabled:opacity-40 dark:text-gray-200 dark:hover:bg-white/[0.06]"
+              title="Capture view"
+              aria-label="Capture view"
+              disabled={!conversationId || capturing}
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => void captureAt(null)}
+            >
+              <Scan className="h-3.5 w-3.5" />
+              Capture view
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="flex flex-shrink-0 items-center gap-1 px-2 pb-1.5 pt-2">
           <div className="relative flex-shrink-0">
             <button
               type="button"
               className={cn(
-                'flex h-8 w-8 items-center justify-center rounded-md text-gray-600 hover:bg-gray-100',
-                (filterOpen || thisBoardOnly) && 'bg-gray-100 text-gray-900'
+                'flex h-8 w-8 items-center justify-center rounded-md text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-white/[0.06]',
+                (filterOpen || thisBoardOnly) &&
+                  'bg-gray-100 text-gray-900 dark:bg-white/[0.08] dark:text-gray-100'
               )}
               title="Filter"
               aria-label="Filter"
@@ -173,12 +356,12 @@ export function CapturesMenu({
               <ListFilter className="h-4 w-4" />
             </button>
             {filterOpen && (
-              <div className="absolute left-0 top-full z-10 mt-1 w-40 rounded-md border border-gray-200 bg-white py-1 shadow-md">
+              <div className="absolute left-0 top-full z-10 mt-1 w-40 rounded-md border border-gray-200 bg-white py-1 shadow-md dark:border-white/10 dark:bg-[#1a1a1a]">
                 <button
                   type="button"
                   className={cn(
-                    'flex w-full px-2.5 py-1.5 text-left text-sm hover:bg-gray-50',
-                    !thisBoardOnly && 'font-medium text-gray-900'
+                    'flex w-full px-2.5 py-1.5 text-left text-sm hover:bg-gray-50 dark:hover:bg-white/[0.06]',
+                    !thisBoardOnly && 'font-medium text-gray-900 dark:text-gray-100'
                   )}
                   onPointerDown={(e) => e.preventDefault()}
                   onClick={() => {
@@ -191,8 +374,8 @@ export function CapturesMenu({
                 <button
                   type="button"
                   className={cn(
-                    'flex w-full px-2.5 py-1.5 text-left text-sm hover:bg-gray-50',
-                    thisBoardOnly && 'font-medium text-gray-900',
+                    'flex w-full px-2.5 py-1.5 text-left text-sm hover:bg-gray-50 dark:hover:bg-white/[0.06]',
+                    thisBoardOnly && 'font-medium text-gray-900 dark:text-gray-100',
                     !conversationId && 'opacity-40'
                   )}
                   disabled={!conversationId}
@@ -215,167 +398,129 @@ export function CapturesMenu({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search captures..."
-              className="h-8 w-full rounded-md border border-gray-200 bg-white pl-7 pr-2 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300"
+              className="h-8 w-full rounded-md border border-gray-200 bg-white pl-7 pr-2 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 dark:border-white/10 dark:bg-[#1a1a1a] dark:text-gray-100 dark:placeholder:text-gray-500"
               onKeyDown={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
             />
           </div>
           <button
             type="button"
-            className="flex h-8 flex-shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-40"
+            className="flex h-8 flex-shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-40 dark:text-gray-200 dark:hover:bg-white/[0.06]"
             title="Capture view"
             aria-label="Capture view"
             disabled={!conversationId || capturing}
             onPointerDown={(e) => e.preventDefault()}
-            onClick={() => void captureView()}
+            onClick={() => void captureAt(null)}
           >
             <Scan className="h-3.5 w-3.5" />
             Capture view
           </button>
         </div>
+      )}
 
-        <div className="flex max-h-72 flex-col gap-0.5 overflow-y-auto px-2 pb-1">
-          {items.length === 0 ? (
-            <div className="px-1 py-8 text-center text-xs text-gray-400">
-              {captures.length === 0 ? 'No captures yet' : 'No captures match'}
-            </div>
-          ) : (
-            items.map((item) => {
-              const on = selected.has(item.id)
-              const tags = presentationsByCapture.get(item.id) || []
-              return (
-                <div
+      <div
+        className={cn(
+          'relative flex min-h-0 flex-col overflow-y-auto px-1.5 pb-1',
+          sidebar ? 'flex-1' : 'max-h-72'
+        )}
+      >
+        {items.length === 0 ? (
+          <div className="px-1 py-8 text-center text-xs text-gray-400">
+            {captures.length === 0 ? 'No captures yet' : 'No captures match'}
+          </div>
+        ) : (
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+            <SortableContext items={items.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+              {items.map((item, index) => (
+                <SortableCaptureRow
                   key={item.id}
-                  className={cn(
-                    'group/capture flex w-full flex-col rounded-lg px-2 py-2 hover:bg-gray-50',
-                    on && 'bg-gray-100 hover:bg-gray-100'
-                  )}
-                >
-                  <div className="flex w-full items-start gap-2">
-                    <button
-                      type="button"
-                      className={cn(
-                        'mt-1 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border',
-                        on ? 'border-gray-900 bg-gray-900' : 'border-gray-300 bg-white'
-                      )}
-                      aria-label={on ? 'Deselect capture' : 'Select capture'}
-                      onPointerDown={(e) => e.preventDefault()}
-                      onClick={() => toggleRow(item.id)}
-                    >
-                      {on && <span className="h-1.5 w-1.5 rounded-sm bg-white" />}
-                    </button>
-                    <button
-                      type="button"
-                      className="h-11 w-[4.5rem] flex-shrink-0 overflow-hidden rounded-md border border-gray-200 bg-gray-50"
-                      title="Preview capture"
-                      aria-label="Preview capture"
-                      onPointerDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        if (item.imageDataUrl) setPreviewId(item.id)
-                      }}
-                    >
-                      {item.imageDataUrl ? (
-                        <img
-                          src={item.imageDataUrl}
-                          alt=""
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <span className="flex h-full w-full items-center justify-center text-gray-300">
-                          <Scan className="h-4 w-4" />
-                        </span>
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      className="min-w-0 flex-1 text-left"
-                      onPointerDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        navigateToCapture(item, conversationId, router)
-                        onOpenChange(false)
-                      }}
-                    >
-                      <span className="block text-[13px] font-medium text-gray-900">
-                        {formatCaptureTimestamp(item.createdAt)}
-                      </span>
-                      <span className="mt-0.5 block truncate text-[12px] text-gray-500">
-                        {item.boardPath}
-                      </span>
-                    </button>
-                    <CaptureRowMoreMenu
-                      capture={item}
-                      conversationId={conversationId}
-                      onNavigate={() => onOpenChange(false)}
-                      className={cn(
-                        'mt-0.5 opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/capture:opacity-100'
-                      )}
-                    />
-                  </div>
-                  {tags.length > 0 && (
-                    <div className="mt-1.5 flex flex-wrap gap-1">
-                      {tags.map((tag) => (
-                        <span
-                          key={tag.id}
-                          className="inline-flex max-w-full items-center gap-0.5 truncate rounded-md bg-gray-200/80 px-1.5 py-0.5 text-[10px] font-medium text-gray-700"
-                          title={tag.name}
-                        >
-                          <Presentation className="h-2.5 w-2.5 flex-shrink-0 text-gray-500" />
-                          <span className="truncate">{tag.name}</span>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            })
-          )}
-        </div>
-
-        {previewItem?.imageDataUrl && (
-          <button
-            type="button"
-            className="absolute inset-0 z-20 flex flex-col bg-white p-2 text-left"
-            aria-label="Close preview"
-            onPointerDown={(e) => e.preventDefault()}
-            onClick={() => setPreviewId(null)}
-          >
-            <img
-              src={previewItem.imageDataUrl}
-              alt=""
-              className="min-h-0 w-full flex-1 rounded-md object-contain bg-gray-50"
-            />
-            <span className="mt-1.5 text-[12px] font-medium text-gray-900">
-              {formatCaptureTimestamp(previewItem.createdAt)}
-            </span>
-            <span className="truncate text-[11px] text-gray-500">{previewItem.boardPath}</span>
-          </button>
+                  capture={item}
+                  index={index}
+                  selected={selected.has(item.id)}
+                  conversationId={conversationId}
+                  canReorder={canReorder}
+                  tags={presentationsByCapture.get(item.id) || []}
+                  onToggle={toggleRow}
+                  onPreview={setPreviewId}
+                  onAddAt={(i) => void captureAt(i)}
+                  onNavigate={onRequestClose}
+                />
+              ))}
+            </SortableContext>
+            {canReorder && (
+              <InsertGap
+                onAdd={() => void captureAt(items.length)}
+                disabled={!conversationId || capturing}
+              />
+            )}
+          </DndContext>
         )}
 
-        <div className="flex items-center justify-between gap-2 border-t border-gray-100 px-2 py-2">
-          <button
-            type="button"
-            className={cn(
-              'flex h-8 items-center gap-1 rounded-md px-2 text-sm font-medium',
-              hasSelection ? 'text-gray-800 hover:bg-gray-100' : 'pointer-events-none opacity-40'
-            )}
-            disabled={!hasSelection}
-            onPointerDown={(e) => e.preventDefault()}
-            onClick={() => {
-              if (!hasSelection) return
-              attachCapturesToChat(selectedIds())
-              setChatSidebarOpen(true)
-              onOpenChange(false)
-            }}
-          >
-            <MessageSquare className="h-3.5 w-3.5" />
-            Add to chat
-          </button>
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger
+        {/* Empty list still gets a trailing + so the first capture can land here */}
+        {items.length === 0 && canReorder && conversationId && (
+          <InsertGap onAdd={() => void captureAt(0)} disabled={capturing} />
+        )}
+      </div>
+
+      {previewItem?.imageDataUrl && (
+        <button
+          type="button"
+          className="absolute inset-0 z-20 flex flex-col bg-white p-2 text-left dark:bg-[#0f0f0f]"
+          aria-label="Close preview"
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => setPreviewId(null)}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element -- local data URL */}
+          <img
+            src={previewItem.imageDataUrl}
+            alt=""
+            className="min-h-0 w-full flex-1 rounded-md bg-gray-50 object-contain dark:bg-[#1a1a1a]"
+          />
+          <span className="mt-1.5 text-[12px] font-medium text-gray-900 dark:text-gray-100">
+            {formatCaptureTimestamp(previewItem.createdAt)}
+          </span>
+          <span className="truncate text-[11px] text-gray-500 dark:text-gray-400">
+            {previewItem.boardPath}
+          </span>
+        </button>
+      )}
+
+      <div
+        className={cn(
+          'flex flex-shrink-0 items-center gap-1 border-t border-gray-100 px-2 py-2 dark:border-white/10',
+          sidebar ? 'flex-col' : 'justify-between'
+        )}
+      >
+        <button
+          type="button"
+          className={cn(
+            'flex h-8 items-center gap-1 rounded-md px-2 text-sm font-medium',
+            sidebar && 'w-full justify-center',
+            hasSelection
+              ? 'text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-white/[0.06]'
+              : 'pointer-events-none opacity-40'
+          )}
+          disabled={!hasSelection}
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => {
+            if (!hasSelection) return
+            attachCapturesToChat(selectedIds())
+            setChatSidebarOpen(true)
+            onRequestClose?.()
+          }}
+        >
+          <MessageSquare className="h-3.5 w-3.5" />
+          Add to chat
+        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
               className={cn(
                 'flex h-8 items-center gap-1 rounded-md px-2 text-sm font-medium',
+                sidebar && 'w-full justify-center',
                 hasSelection
-                  ? 'text-gray-800 hover:bg-gray-100'
+                  ? 'text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-white/[0.06]'
                   : 'pointer-events-none opacity-40'
               )}
               disabled={!hasSelection}
@@ -385,41 +530,40 @@ export function CapturesMenu({
             >
               <Presentation className="h-3.5 w-3.5" />
               Add to presentation
-            </DropdownMenuSubTrigger>
-            {/* No `side`: Radix omits it on SubContent — submenu side comes from collision detection */}
-            <DropdownMenuSubContent className="w-44 p-1" sideOffset={6}>
-              <DropdownMenuItem
-                onSelect={() => {
-                  createPresentation(selectedIds())
-                }}
-              >
-                Create new
-              </DropdownMenuItem>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger disabled={presentations.length === 0}>
-                  Select
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="max-h-56 w-48 overflow-y-auto p-1" sideOffset={6}>
-                  {presentations.length === 0 ? (
-                    <div className="px-2 py-2 text-xs text-gray-400">No presentations yet</div>
-                  ) : (
-                    presentations.map((p) => (
-                      <DropdownMenuItem
-                        key={p.id}
-                        onSelect={() => {
-                          addCapturesToPresentation(p.id, selectedIds())
-                        }}
-                      >
-                        {p.name}
-                      </DropdownMenuItem>
-                    ))
-                  )}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-        </div>
-      </DropdownMenuContent>
-    </DropdownMenu>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="w-44 p-1" side={sidebar ? 'left' : 'top'} align="end">
+            <DropdownMenuItem
+              onSelect={() => {
+                createPresentation(selectedIds())
+              }}
+            >
+              Create new
+            </DropdownMenuItem>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger disabled={presentations.length === 0}>
+                Select
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="max-h-56 w-48 overflow-y-auto p-1" sideOffset={6}>
+                {presentations.length === 0 ? (
+                  <div className="px-2 py-2 text-xs text-gray-400">No presentations yet</div>
+                ) : (
+                  presentations.map((p) => (
+                    <DropdownMenuItem
+                      key={p.id}
+                      onSelect={() => {
+                        addCapturesToPresentation(p.id, selectedIds())
+                      }}
+                    >
+                      {p.name}
+                    </DropdownMenuItem>
+                  ))
+                )}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
   )
 }

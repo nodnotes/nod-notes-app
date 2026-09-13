@@ -1,0 +1,2 @@
+-- Utility sidebar (Layers / Study / Capture) overlay; chat prompt grey token.
+-- App/docs marker only; no DDL. Remote DDL top: 20260912192948_panel_edges_canvas_endpoints (local 20260912192642).

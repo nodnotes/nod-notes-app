@@ -671,7 +671,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
       setPhoneDockTight(false) // Restore the top bar / mode pill
       return
     }
-    const TOP_CHROME_H = 96 // 52px top bar + mode pill at 56px — both sit in the same short landscape strip
+    const TOP_CHROME_H = 104 // Island ends ~60px + mode pill under it — short landscape strip
     const COMPOSER_FLOOR = 72 // Ask row + padding — keep this fully on screen or iOS yanks it over the tools
     const DOCK_GAP = 8 // Air between the top chrome and the dock
     const EXTRAS_MIN = 148 // Transcript + thread chrome + composer
@@ -1214,7 +1214,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
             )}
             <div
               data-chat-prompt
-              className="rounded-xl overflow-hidden tt-tab-hover border border-black/10 dark:border-white/10 shadow-lg"
+              className="rounded-xl overflow-hidden tt-tab-hover border border-black/10 dark:border-white/10" // Shadow from .tt-tab-hover (utility-card elevation)
             >
               <div className="px-1 pt-1">{composer}</div>
             </div>
@@ -1431,7 +1431,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
         <div className="relative z-10 flex-shrink-0 px-3 pb-3 pt-1 pointer-events-auto">
           <div
             data-chat-prompt
-            className="rounded-xl overflow-hidden tt-tab-hover border border-black/10 dark:border-white/10 shadow-sm"
+            className="rounded-xl overflow-hidden tt-tab-hover border border-black/10 dark:border-white/10" // Shadow from .tt-tab-hover (utility-card elevation)
           >
             <div className="px-1 pt-1">{composer}</div>
           </div>

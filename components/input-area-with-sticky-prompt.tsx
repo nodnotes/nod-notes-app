@@ -13,7 +13,16 @@ import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
 
 export function InputAreaWithStickyPrompt({ conversationId, projectId }: { conversationId?: string; projectId?: string }) {
-  const { phoneDockTight, chatChromeReady } = useSidebarContext() // Wait for chat column restore before measuring map width
+  const {
+    phoneDockTight,
+    chatChromeReady,
+    isMobileMode,
+    isUtilitySidebarOpen,
+    utilitySidebarWidth,
+  } = useSidebarContext() // Wait for chat column restore; utility overlay inset for centering
+  // Overlay does not shrink the map — pad centered chrome as if the usable width excluded utility
+  const utilityCenterInset =
+    !isMobileMode && isUtilitySidebarOpen ? utilitySidebarWidth : 0
   const [inputHeight, setInputHeight] = useState(52) // Default height
   const [maxWidth, setMaxWidth] = useState(768) // Default max-w-3xl (768px)
   const [isCentered, setIsCentered] = useState(false) // Whether input should be centered
@@ -353,6 +362,7 @@ export function InputAreaWithStickyPrompt({ conversationId, projectId }: { conve
         style={{
           // 52px top bar + 4px gap; env() is 0 in browsers without a notch
           top: 'calc(56px + env(safe-area-inset-top, 0px))',
+          paddingRight: utilityCenterInset, // Center Actions/Layout/Draw in the usable strip (left of utility)
         }}
       >
         <PillSelect
@@ -360,12 +370,11 @@ export function InputAreaWithStickyPrompt({ conversationId, projectId }: { conve
             { value: 'home', label: 'Actions' },
             { value: 'insert', label: 'Layout' },
             { value: 'draw', label: 'Draw' },
-            { value: 'view', label: 'View' },
           ]}
           value={editMenuPillMode}
           onChange={(value) => {
             // Update mode when pill select changes - updates context shared with EditorToolbar
-            setEditMenuPillMode(value as 'home' | 'insert' | 'draw' | 'view')
+            setEditMenuPillMode(value as 'home' | 'insert' | 'draw')
           }}
         />
         {/* Filter/Sort criteria — under the mode pill, no divider */}

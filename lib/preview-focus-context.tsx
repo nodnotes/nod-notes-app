@@ -1,6 +1,6 @@
 'use client'
 
-// When a nested page preview’s top bar is selected, the parent map’s View toolbar
+// When a nested page preview’s top bar is selected, the parent map’s More → Board style
 // edits that preview page’s board rule/style (not the host map’s).
 // Style live-updates reach the iframe via postMessage (PREVIEW_STYLE_MESSAGE).
 
@@ -24,7 +24,7 @@ type BoardStyle = 'none' | 'dotted' | 'lined' | 'grid'
 type PreviewFocusContextValue = {
   focusedBoardId: string | null // Linked page whose preview is style-selected
   focusedTitle: string | null
-  boardRule: BoardRule // Styles shown/edited in the parent View toolbar while focused
+  boardRule: BoardRule // Styles shown/edited in More → Board style while focused
   boardStyle: BoardStyle
   selectPreview: (opts: {
     pageId: string

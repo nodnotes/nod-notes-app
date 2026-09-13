@@ -27,11 +27,13 @@ export default async function BoardLayout({
   // Always render the layout - handle all errors gracefully
   // Get user safely - if it fails, just render without sidebar
   const user = await getSafeUser()
-  const initialChatOpen = (await cookies()).get('nodnotes-chat-sidebar-open')?.value === 'true' // Column already in first HTML
+  const cookieStore = await cookies()
+  const initialChatOpen = cookieStore.get('nodnotes-chat-sidebar-open')?.value === 'true' // Column already in first HTML
+  const initialUtilityOpen = cookieStore.get('nodnotes-utility-sidebar-open')?.value === 'true' // Thin utility column already in first HTML
 
   // Always render - never throw errors
   return (
-    <SidebarContextProvider initialChatOpen={initialChatOpen}>
+    <SidebarContextProvider initialChatOpen={initialChatOpen} initialUtilityOpen={initialUtilityOpen}>
       <div className="flex flex-col" style={{ height: 'calc(var(--vh, 1vh) * 100)' }}>
         <div className="flex-1 flex overflow-hidden relative">
           {/* Client shell recovers when SSR cookies lag after sign-in */}

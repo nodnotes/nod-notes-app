@@ -1,6 +1,6 @@
 'use client'
 
-// Context for board nav popup + right chat sidebar chrome
+// Context for board nav popup + right chat sidebar + thin utility sidebar chrome
 import {
   createContext,
   useContext,
@@ -71,6 +71,80 @@ function persistChatSidebarOpen(open: boolean) {
   document.cookie = `${NN_CHAT_SIDEBAR_COOKIE}=${open ? 'true' : 'false'}; Path=/; Max-Age=31536000; SameSite=Lax` // First HTML paint
 }
 
+/** Default / minimum width of the thin right utility column (layers / study / capture). */
+export const UTILITY_SIDEBAR_WIDTH = 152
+
+/** localStorage — preferred utility column width. */
+export const NN_UTILITY_SIDEBAR_WIDTH_KEY = 'nodnotes-utility-sidebar-width'
+
+/** Max utility width — stay thinner than chat; never below the min. */
+export function utilitySidebarMaxWidth(windowWidth = typeof window !== 'undefined' ? window.innerWidth : 1200) {
+  return Math.max(UTILITY_SIDEBAR_WIDTH, Math.min(280, Math.floor(windowWidth / 3)))
+}
+
+/** Clamp a preferred utility width into [min, max] for the live column. */
+export function clampUtilitySidebarWidth(width: number, windowWidth?: number) {
+  const max = utilitySidebarMaxWidth(windowWidth)
+  return Math.min(max, Math.max(UTILITY_SIDEBAR_WIDTH, Math.round(width)))
+}
+
+function getStoredUtilitySidebarWidth(): number {
+  if (typeof window === 'undefined') return UTILITY_SIDEBAR_WIDTH
+  const raw = localStorage.getItem(NN_UTILITY_SIDEBAR_WIDTH_KEY)
+  const n = raw ? Number(raw) : NaN
+  if (!Number.isFinite(n)) return UTILITY_SIDEBAR_WIDTH
+  return Math.max(UTILITY_SIDEBAR_WIDTH, Math.round(n)) // Floor only — clamp to this window on display
+}
+
+function persistUtilitySidebarWidth(width: number) {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(NN_UTILITY_SIDEBAR_WIDTH_KEY, String(Math.max(UTILITY_SIDEBAR_WIDTH, Math.round(width))))
+}
+
+/** Which menu the utility column shows — layers by default; study / capture later. */
+export type UtilitySidebarMode = 'layers' | 'flashcards' | 'capture'
+
+/** localStorage + cookie — reopen utility column after reload when it was open. */
+export const NN_UTILITY_SIDEBAR_OPEN_KEY = 'nodnotes-utility-sidebar-open'
+
+/** Cookie twin so SSR can paint the thin column already open (avoids top-bar measure jump). */
+export const NN_UTILITY_SIDEBAR_COOKIE = 'nodnotes-utility-sidebar-open'
+
+/** localStorage — last utility menu (layers / flashcards / capture). */
+export const NN_UTILITY_SIDEBAR_MODE_KEY = 'nodnotes-utility-sidebar-mode'
+
+/** Read whether the utility column was open last session (SSR-safe → false). */
+function getStoredUtilitySidebarOpen(): boolean {
+  if (typeof window === 'undefined') return false // SSR: stay closed until client
+  return localStorage.getItem(NN_UTILITY_SIDEBAR_OPEN_KEY) === 'true' // Persist open across reload
+}
+
+/** Persist utility open/closed (localStorage + cookie for SSR first paint). */
+function persistUtilitySidebarOpen(open: boolean) {
+  if (typeof window === 'undefined') return // No storage on server
+  localStorage.setItem(NN_UTILITY_SIDEBAR_OPEN_KEY, open ? 'true' : 'false') // Client restore
+  document.cookie = `${NN_UTILITY_SIDEBAR_COOKIE}=${open ? 'true' : 'false'}; Path=/; Max-Age=31536000; SameSite=Lax` // First HTML paint
+}
+
+/** Normalize a stored mode string to a known utility menu. */
+function parseUtilitySidebarMode(raw: string | null | undefined): UtilitySidebarMode {
+  if (raw === 'present') return 'capture' // Legacy tab id → Capture
+  if (raw === 'flashcards' || raw === 'capture' || raw === 'layers') return raw // Known menus only
+  return 'layers' // Default: layers sidebar
+}
+
+/** Read last utility menu (SSR-safe → layers). */
+function getStoredUtilitySidebarMode(): UtilitySidebarMode {
+  if (typeof window === 'undefined') return 'layers' // Server default
+  return parseUtilitySidebarMode(localStorage.getItem(NN_UTILITY_SIDEBAR_MODE_KEY)) // Persist across reload
+}
+
+/** Remember which utility menu was active. */
+function persistUtilitySidebarMode(mode: UtilitySidebarMode) {
+  if (typeof window === 'undefined') return // No storage on server
+  localStorage.setItem(NN_UTILITY_SIDEBAR_MODE_KEY, mode) // Client restore
+}
+
 /** localStorage key — restore the same AI thread after reload. */
 export const NN_CHAT_THREAD_ID_KEY = 'nodnotes-chat-thread-id'
 
@@ -105,6 +179,13 @@ interface SidebarContextType {
   chatChromeReady: boolean // True after storage restore so the top bar can measure the final column
   toggleChatSidebar: () => void // Toggle right chat sidebar (logo by minimap)
   setChatSidebarOpen: (open: boolean) => void // Explicit open/close for chat sidebar
+  isUtilitySidebarOpen: boolean // True when thin right utility column (left of chat) is visible
+  utilitySidebarWidth: number // Live utility column width (preferred clamped to this window)
+  setUtilitySidebarWidth: (width: number) => void // Seam drag-resize; preferred persisted, display clamped
+  utilitySidebarMode: UtilitySidebarMode // layers (default) | flashcards | capture
+  toggleUtilitySidebar: () => void // Top-bar toggle right of More (open only — close via seam / header)
+  setUtilitySidebarOpen: (open: boolean) => void // Explicit open/close for utility column
+  setUtilitySidebarMode: (mode: UtilitySidebarMode) => void // Switch layers / study / capture menus
   logoDrawing: string | null // Custom logo PNG data URL (shared by chat + map open icon)
   setLogoDrawing: (url: string | null) => void // Persist + sync custom logo across chrome
   /** Phone: AiComposer registers focus so brand tap can open the soft keyboard in the same gesture. */
@@ -128,10 +209,12 @@ const SidebarContext = createContext<SidebarContextType | undefined>(undefined)
 export function SidebarContextProvider({
   children,
   initialChatOpen = false,
+  initialUtilityOpen = false,
   previewMode = false, // Homepage showcase: force desktop AI column; never touch board cookies
 }: {
   children: ReactNode
   initialChatOpen?: boolean // Cookie from the server so the column exists in the first HTML
+  initialUtilityOpen?: boolean // Cookie from the server so the thin utility column exists in the first HTML
   previewMode?: boolean // Marketing preview — open column only, no persist / phone dock
 }) {
   const [isMobileMode, setIsMobileMode] = useState(false) // Compact layout flag from board flows
@@ -140,6 +223,9 @@ export function SidebarContextProvider({
   const [isChatSidebarOpen, setIsChatSidebarOpen] = useState(initialChatOpen || previewMode) // Cookie/SSR: already open when it was last time
   const [chatSidebarWidth, setChatSidebarWidthState] = useState(CHAT_SIDEBAR_WIDTH) // SSR default; restore from storage before paint
   const [chatChromeReady, setChatChromeReady] = useState(false) // False until this layout effect restores open/closed
+  const [isUtilitySidebarOpen, setIsUtilitySidebarOpen] = useState(initialUtilityOpen && !previewMode) // Cookie/SSR: thin column already open
+  const [utilitySidebarWidth, setUtilitySidebarWidthState] = useState(UTILITY_SIDEBAR_WIDTH) // SSR default; restore from storage before paint
+  const [utilitySidebarMode, setUtilitySidebarModeState] = useState<UtilitySidebarMode>('layers') // Default layers until storage restore
   const [logoDrawing, setLogoDrawingState] = useState<string | null>(null) // Shared custom logo drawing
   const [aiMapDockLiftPx, setAiMapDockLiftPx] = useState(0) // Phone: lift Free nav above AI dock
   const [aiMapDockLeftPx, setAiMapDockLeftPx] = useState<number | null>(null) // Phone: align Free nav to dock left
@@ -149,6 +235,8 @@ export function SidebarContextProvider({
   const isSidebarPinnedRef = useRef(false) // Latest pin for scheduleClose without stale closure
   const isMobileModeRef = useRef(false) // Latest mobile flag for sync focus in toggle
   const isChatOpenRef = useRef(initialChatOpen || previewMode) // Latest chat open for sync focus in toggle
+  const isUtilityOpenRef = useRef(initialUtilityOpen && !previewMode) // Latest utility open for sync toggle
+  const preferredUtilityWidthRef = useRef(UTILITY_SIDEBAR_WIDTH) // User’s utility width across shrink/expand
   const previewModeRef = useRef(previewMode) // Persist / phone path must skip on homepage showcase
   const aiComposerFocusRef = useRef<(() => void) | null>(null) // Phone composer.focus (same-tap keyboard)
   const closedAtRef = useRef(0) // Timestamp of last close — ignore ghost click reopen on the hamburger
@@ -162,6 +250,14 @@ export function SidebarContextProvider({
 
   useEffect(() => {
     isMobileModeRef.current = isMobileMode
+  }, [isMobileMode])
+
+  // Phone layout has no thin right column — close if the viewport shrinks into phone mode
+  useEffect(() => {
+    if (!isMobileMode || !isUtilityOpenRef.current) return
+    isUtilityOpenRef.current = false
+    setIsUtilitySidebarOpen(false)
+    if (!previewModeRef.current) persistUtilitySidebarOpen(false)
   }, [isMobileMode])
 
   useEffect(() => {
@@ -182,6 +278,11 @@ export function SidebarContextProvider({
       setChatSidebarWidthState(CHAT_SIDEBAR_WIDTH)
       isChatOpenRef.current = true
       setIsChatSidebarOpen(true)
+      isUtilityOpenRef.current = false // Marketing preview never shows the utility column
+      setIsUtilitySidebarOpen(false)
+      preferredUtilityWidthRef.current = UTILITY_SIDEBAR_WIDTH
+      setUtilitySidebarWidthState(UTILITY_SIDEBAR_WIDTH)
+      setUtilitySidebarModeState('layers')
       setLogoDrawingState(getStoredLogoDrawing())
       setChatChromeReady(true)
       return
@@ -196,6 +297,15 @@ export function SidebarContextProvider({
     isChatOpenRef.current = nextOpen // Sync before children measure on the next commit
     setIsChatSidebarOpen(nextOpen)
     if (!narrow) persistChatSidebarOpen(storedOpen) // Backfill cookie so the next SSR already has the column
+    const preferredUtility = getStoredUtilitySidebarWidth() // Last utility drag preference
+    preferredUtilityWidthRef.current = preferredUtility
+    setUtilitySidebarWidthState(clampUtilitySidebarWidth(preferredUtility)) // Live column for this window
+    const storedUtilityOpen = getStoredUtilitySidebarOpen() // Last utility open flag
+    const nextUtilityOpen = narrow ? false : storedUtilityOpen // Phone: no thin right column
+    isUtilityOpenRef.current = nextUtilityOpen
+    setIsUtilitySidebarOpen(nextUtilityOpen)
+    if (!narrow) persistUtilitySidebarOpen(storedUtilityOpen) // Backfill utility cookie for next SSR
+    setUtilitySidebarModeState(getStoredUtilitySidebarMode()) // Restore layers / study / capture
     const storedPinned = getStoredBoardsNavPinned() // Last click-pin on the boards menu
     if (storedPinned) {
       isSidebarPinnedRef.current = true // scheduleClose must see pin before paint
@@ -213,6 +323,11 @@ export function SidebarContextProvider({
       setLogoDrawingState(getStoredLogoDrawing()) // Cleared key → null brand mark
       isChatOpenRef.current = false
       setIsChatSidebarOpen(false) // Closed until this user opens chat
+      isUtilityOpenRef.current = false
+      setIsUtilitySidebarOpen(false) // Closed until this user opens utility
+      setUtilitySidebarModeState('layers') // Default menu after account switch
+      preferredUtilityWidthRef.current = UTILITY_SIDEBAR_WIDTH
+      setUtilitySidebarWidthState(UTILITY_SIDEBAR_WIDTH)
       isSidebarPinnedRef.current = false
       setIsSidebarPinned(false)
       setIsSidebarOpen(false)
@@ -228,6 +343,7 @@ export function SidebarContextProvider({
   useEffect(() => {
     const onResize = () => {
       setChatSidebarWidthState(clampChatSidebarWidth(preferredChatWidthRef.current))
+      setUtilitySidebarWidthState(clampUtilitySidebarWidth(preferredUtilityWidthRef.current))
     }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
@@ -238,6 +354,13 @@ export function SidebarContextProvider({
     preferredChatWidthRef.current = display // Last intentional width — restore after shrink/expand
     if (!previewModeRef.current) persistChatSidebarWidth(display) // Floor only in storage; do not half-clamp on write
     setChatSidebarWidthState(display)
+  }, [])
+
+  const setUtilitySidebarWidth = useCallback((width: number) => {
+    const display = clampUtilitySidebarWidth(width) // Live column for this window
+    preferredUtilityWidthRef.current = display // Last intentional width
+    if (!previewModeRef.current) persistUtilitySidebarWidth(display)
+    setUtilitySidebarWidthState(display)
   }, [])
 
   // BoardFlow sets mobile from window width — keep showcase on the desktop AI column
@@ -378,6 +501,30 @@ export function SidebarContextProvider({
     setIsChatSidebarOpen(open)
   }, [])
 
+  const toggleUtilitySidebar = useCallback(() => {
+    if (previewModeRef.current) return // Showcase never shows the utility column
+    if (isMobileModeRef.current) return // Phone: no thin right column yet
+    setIsUtilitySidebarOpen((prev) => {
+      const next = !prev // Top-bar toggle right of More
+      isUtilityOpenRef.current = next
+      persistUtilitySidebarOpen(next) // Remember for reload
+      return next
+    })
+  }, [])
+
+  const setUtilitySidebarOpen = useCallback((open: boolean) => {
+    if (previewModeRef.current) return // Showcase never shows the utility column
+    if (isMobileModeRef.current && open) return // Phone: keep closed
+    isUtilityOpenRef.current = open
+    persistUtilitySidebarOpen(open) // Remember for reload
+    setIsUtilitySidebarOpen(open)
+  }, [])
+
+  const setUtilitySidebarMode = useCallback((mode: UtilitySidebarMode) => {
+    setUtilitySidebarModeState(mode) // Switch layers / flashcards / capture
+    if (!previewModeRef.current) persistUtilitySidebarMode(mode) // Remember across reload
+  }, [])
+
   // Notion-style ⌘/; — toggle chat (Close on the seam tip when open)
   useEffect(() => {
     if (previewMode) return // Homepage showcase owns the column; don’t steal ⌘/;
@@ -408,6 +555,13 @@ export function SidebarContextProvider({
         chatChromeReady,
         toggleChatSidebar,
         setChatSidebarOpen,
+        isUtilitySidebarOpen,
+        utilitySidebarWidth,
+        setUtilitySidebarWidth,
+        utilitySidebarMode,
+        toggleUtilitySidebar,
+        setUtilitySidebarOpen,
+        setUtilitySidebarMode,
         logoDrawing,
         setLogoDrawing,
         registerAiComposerFocus,
@@ -446,6 +600,13 @@ export function useSidebarContext() {
       chatChromeReady: true, // No provider — nothing to restore; measure immediately
       toggleChatSidebar: () => {},
       setChatSidebarOpen: () => {},
+      isUtilitySidebarOpen: false,
+      utilitySidebarWidth: UTILITY_SIDEBAR_WIDTH,
+      setUtilitySidebarWidth: () => {},
+      utilitySidebarMode: 'layers' as UtilitySidebarMode,
+      toggleUtilitySidebar: () => {},
+      setUtilitySidebarOpen: () => {},
+      setUtilitySidebarMode: () => {},
       logoDrawing: null as string | null,
       setLogoDrawing: () => {},
       registerAiComposerFocus: () => {},

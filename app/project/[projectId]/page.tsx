@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation'
 import { ProjectFlow } from '@/components/project-flow'
 import { InputAreaWithStickyPrompt } from '@/components/input-area-with-sticky-prompt'
 import { ChatSidebar } from '@/components/chat-sidebar'
+import { UtilitySidebar } from '@/components/utility-sidebar'
 import { EditorProvider } from '@/components/editor-context'
 import { ReactFlowContextProvider } from '@/components/react-flow-context'
 
@@ -41,6 +42,7 @@ export default async function ProjectPage({
           <div className="flex-1 relative min-w-0 h-full">
             <ProjectFlow projectId={projectId} />
             <InputAreaWithStickyPrompt projectId={projectId} />
+            <UtilitySidebar /> {/* Transparent overlay on map — left of chat */}
           </div>
           <ChatSidebar projectId={projectId} />
         </div>

@@ -36,6 +36,7 @@
     --nod-blue: #3b82f6; /* Wordmark + selection chrome (Tailwind blue-500) */
     --nod-selected: rgba(0, 0, 0, 0.06); /* Selected tab / menu hover wash — grey, not nod-blue */
     --nod-tab-hover: #f3f4f6; /* Boards-nav row hover (gray-100) — light grey chip, visible on gray-50 chat */
+    --nod-chat-prompt: #f4f5f6; /* Chat Ask box + user prompt frames — barely lighter than tab hover */
   }
 
   .dark {
@@ -60,6 +61,7 @@
     --ring: 0 0% 40%; /* Focus rings */
     --nod-selected: rgba(255, 255, 255, 0.10); /* Grey selected wash on dark chrome */
     --nod-tab-hover: #1f1f1f; /* Same as boards-nav row hover on dark */
+    --nod-chat-prompt: #212121; /* Chat Ask + user frames — barely lighter than #1f1f1f */
   }
 }
 
@@ -2158,9 +2160,9 @@ span[data-added="true"] {
   .tt-selected {
     background-color: var(--nod-selected);
   }
-  /* Hovered board tab / chat user-prompt frame — solid light grey (not the composer). */
+  /* Chat Ask box + user prompt frames — slightly lighter than boards-nav tab hover. */
   .tt-tab-hover {
-    background-color: var(--nod-tab-hover);
+    background-color: var(--nod-chat-prompt);
   }
   /* Board / frame / block / thread menu hover — same grey wash as selected tabs. Beats ghost hover:bg-accent. */
   .tt-menu-surface button:hover:not(:disabled) {

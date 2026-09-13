@@ -69,7 +69,7 @@ export function NestedBoardPreview({
   hostNodeId,
 }: NestedBoardPreviewProps) {
   const previewFocus = usePreviewFocus()
-  const { setEditMenuPillMode, getSetNodes, reactFlowInstance } = useReactFlowContext()
+  const { getSetNodes, reactFlowInstance } = useReactFlowContext()
   const { getNode } = useReactFlow() // Host node position for chrome-drag
   const router = useRouter()
   const iframeRef = useRef<HTMLIFrameElement>(null)
@@ -276,14 +276,12 @@ export function NestedBoardPreview({
       boardRule: loadedRule,
       boardStyle: loadedStyle,
     })
-    setEditMenuPillMode('view')
   }, [
     conversationId,
     title,
     loadedRule,
     loadedStyle,
     previewFocus,
-    setEditMenuPillMode,
   ])
 
   // Portaled preview sits outside RF — drag moves the host frame like an unselected frame (no select on drag)

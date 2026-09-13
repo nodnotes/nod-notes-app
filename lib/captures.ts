@@ -314,6 +314,66 @@ async function captureFlowPaneImage(clip?: FlowClip): Promise<string | undefined
   }
 }
 
+/**
+ * Preview of one frame/drawing/shape alone — that RF node’s DOM only (no board/neighbors).
+ * Must override RF `transform: translate(...)` on the clone or the canvas is empty.
+ * Light fill so transparent ink isn’t black.
+ */
+export async function captureNodePreviewImage(nodeId: string): Promise<string | undefined> {
+  if (typeof document === 'undefined') return undefined
+  const safeId = nodeId.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+  const el = document.querySelector(`.react-flow__node[data-id="${safeId}"]`) as HTMLElement | null
+  if (!el || el.clientWidth < 4 || el.clientHeight < 4) return undefined
+  const w = el.clientWidth
+  const h = el.clientHeight
+  // Upscale small on-screen boxes; never shrink below 1 (keep sharpness when zoomed in)
+  const scale = Math.min(VIEW_JPEG_MAX_W / Math.max(w, 1), Math.max(1, 320 / Math.max(w, 1)))
+  const outW = Math.max(1, Math.round(w * scale))
+  const outH = Math.max(1, Math.round(h * scale))
+  const filter = (node: globalThis.Node) => {
+    if (!(node instanceof HTMLElement)) return true
+    const cls = node.classList
+    if (cls.contains('react-flow__handle')) return false
+    if (cls.contains('react-flow__resize-control')) return false
+    if (node.getAttribute('data-tt-connection-indicator') != null) return false
+    if (node.getAttribute('data-frame-chrome') != null) return false
+    if (node.getAttribute('data-tt-adjust-ring') != null) return false // Blue select/adjust box — not part of the item
+    if (node.getAttribute('data-tt-block-handle') != null) return false
+    if (node.getAttribute('data-tt-insert-line') != null) return false
+    return true
+  }
+  const style = {
+    // Replace RF translate — leaving it paints the node off-canvas (blank thumb)
+    transform: `scale(${scale})`,
+    transformOrigin: 'top left',
+    width: `${w}px`,
+    height: `${h}px`,
+    backgroundColor: '#f9fafb',
+  }
+  try {
+    const { toPng, toJpeg } = await import('html-to-image')
+    const base = {
+      cacheBust: true,
+      pixelRatio: 1,
+      width: outW,
+      height: outH,
+      backgroundColor: '#f9fafb',
+      style,
+      filter,
+    }
+    try {
+      const png = await toPng(el, base)
+      if (png) return png
+    } catch {
+      // Fall through
+    }
+    const jpeg = await toJpeg(el, { ...base, quality: 0.85 })
+    return jpeg || undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** JPEG of the visible board (current camera), scaled for storage. */
 export async function captureBoardViewImage(): Promise<string | undefined> {
   return captureFlowPaneImage()
@@ -385,6 +445,25 @@ export function addCapture(input: Omit<BoardCapture, 'id' | 'createdAt'>): Board
   }
   setCaptures([capture, ...getCaptures()])
   return capture
+}
+
+/** Replace capture list order (ids must cover the current list). */
+export function setCaptureOrder(captureIds: string[]): void {
+  const byId = new Map(getCaptures().map((c) => [c.id, c]))
+  const next = captureIds.map((id) => byId.get(id)).filter((c): c is BoardCapture => Boolean(c))
+  // Keep any ids missing from the payload at the end (safety if UI was filtered)
+  for (const c of getCaptures()) {
+    if (!captureIds.includes(c.id)) next.push(c)
+  }
+  setCaptures(next)
+}
+
+/** Insert a newly created capture at index instead of leaving it prepended. */
+export function insertNewCaptureAt(capture: BoardCapture, index: number): void {
+  const list = getCaptures().filter((c) => c.id !== capture.id) // Drop if already stored
+  const i = Math.max(0, Math.min(index, list.length))
+  list.splice(i, 0, capture)
+  setCaptures(list)
 }
 
 /** Create a presentation seeded with the given capture ids. */

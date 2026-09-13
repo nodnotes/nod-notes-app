@@ -48,6 +48,7 @@ import { ChevronDown, ArrowDown, Trash2 } from 'lucide-react'
 import { useReactFlowContext } from './react-flow-context'
 import { useSidebarContext, PHONE_LAYOUT_MAX_WIDTH } from './sidebar-context'
 import { useChatSidebarViewportAdjust } from '@/lib/hooks/use-chat-sidebar-viewport'
+import { useUtilitySidebarViewportAdjust } from '@/lib/hooks/use-utility-sidebar-viewport'
 import { NodNotesBrandMark } from './personalize-ai-modal'
 import { LeftVerticalMenu } from './left-vertical-menu'
 
@@ -573,8 +574,9 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
     if (boardStyle === 'grid') return BackgroundVariant.Lines // Grid pattern (both horizontal and vertical lines)
     return null // Default to none
   }, [boardStyle])
-  const { setIsMobileMode, isMobileMode, isChatSidebarOpen, toggleChatSidebar, logoDrawing } = useSidebarContext()
+  const { setIsMobileMode, isMobileMode, isChatSidebarOpen, isUtilitySidebarOpen, toggleChatSidebar, logoDrawing } = useSidebarContext()
   useChatSidebarViewportAdjust(reactFlowInstance, isChatSidebarOpen && !isMobileMode) // No column shrink on phone dock
+  useUtilitySidebarViewportAdjust(reactFlowInstance, isUtilitySidebarOpen && !isMobileMode) // Overlay: frame usable width as pane − utility
   const originalPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map()) // Store original positions for Linear mode
   const isLinearModeRef = useRef(false) // Track if we're currently in Linear mode
 
@@ -1938,6 +1940,9 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
     if (!nodes || !Array.isArray(nodes) || nodes.length === 0) return
 
     const handleResize = () => {
+      // Chat/utility hooks own usable-width framing — don't overwrite X on seam-drag stop
+      if (isChatSidebarOpen || isUtilitySidebarOpen) return
+
       // Apply push/center logic in both Linear and Canvas modes to keep panels aligned with prompt box
 
       const reactFlowElement = document.querySelector('.react-flow')
@@ -2094,7 +2099,7 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
       if (minimapResizeObserver) minimapResizeObserver.disconnect()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes?.length ?? 0, isPromptBoxCentered, contextPanelWidth]) // Re-run when nodes change, prompt box centering changes, or panel width changes
+  }, [nodes?.length ?? 0, isPromptBoxCentered, contextPanelWidth, isChatSidebarOpen, isUtilitySidebarOpen]) // Skip while chat/utility own framing
 
   // Create a stable key from message IDs
   const messagesKey = useMemo(() => {

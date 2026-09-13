@@ -12,6 +12,7 @@ import {
   Copy,
   Download,
   FolderInput,
+  Grid3x3,
   History,
   Languages,
   Link2,
@@ -19,6 +20,7 @@ import {
   Maximize2,
   MessageSquarePlus,
   MoreHorizontal,
+  PanelRight,
   Play,
   Pin,
   PinOff,
@@ -30,12 +32,15 @@ import {
   Trash2,
   Type,
   Upload,
-} from 'lucide-react' // Share cluster + More-menu row icons
+} from 'lucide-react' // Share cluster + More-menu row icons + utility toggle
 import { Button } from '@/components/ui/button' // Ghost icon buttons
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuShortcut,
   DropdownMenuSub,
@@ -46,7 +51,8 @@ import {
 import { createClient } from '@/lib/supabase/client' // Persist favorite; word count / last edited
 import { useQueryClient } from '@tanstack/react-query' // Keep Boards list in sync; reuse frame cache
 import { cn } from '@/lib/utils' // Class merge
-import { useReactFlowContext } from './react-flow-context' // Present switches to View mode
+import { useReactFlowContext } from './react-flow-context' // Font + board background (More menu)
+import { usePreviewFocus } from '@/lib/preview-focus-context' // Nested preview → style that page, not host
 import { useSidebarContext } from './sidebar-context' // Phone layout forces share compact
 import { usePhoneModeMenu } from './phone-mode-menu-context' // shareCompact from toolbar measure (before phoneTools)
 import { NotionConnectMenuItems } from './notion-connect-button' // Connections → Notion (provider wraps share cluster)
@@ -115,8 +121,26 @@ function MenuToggle({ on, className }: { on: boolean; className?: string }) {
 
 export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
   const queryClient = useQueryClient() // Patch conversations cache after favorite
-  const { setEditMenuPillMode, boardFont, setBoardFont } = useReactFlowContext() // Present → View bar; board font
-  const { isMobileMode } = useSidebarContext() // Phone chat layout always collapses copy/star
+  const {
+    boardFont,
+    setBoardFont,
+    boardRule: hostBoardRule,
+    setBoardRule: setHostBoardRule,
+    boardStyle: hostBoardStyle,
+    setBoardStyle: setHostBoardStyle,
+  } = useReactFlowContext() // Font + board background (More menu)
+  const previewFocus = usePreviewFocus() // When nested preview chrome is selected, style that page
+  const boardRule = previewFocus?.focusedBoardId ? previewFocus.boardRule : hostBoardRule
+  const setBoardRule = previewFocus?.focusedBoardId ? previewFocus.setBoardRule : setHostBoardRule
+  const boardStyle = previewFocus?.focusedBoardId ? previewFocus.boardStyle : hostBoardStyle
+  const setBoardStyle = previewFocus?.focusedBoardId ? previewFocus.setBoardStyle : setHostBoardStyle
+  const {
+    isMobileMode,
+    isUtilitySidebarOpen,
+    toggleUtilitySidebar,
+    setUtilitySidebarOpen,
+    setUtilitySidebarMode,
+  } = useSidebarContext() // Phone layout; open utility right of More (close lives in column)
   const { shareCompact } = usePhoneModeMenu() // Toolbar collapses copy/star before tools leave for the pill
   const collapseShare = isMobileMode || shareCompact // Hide copy/star into More ahead of phoneTools
   const [isDesktopApp, setIsDesktopApp] = useState(false) // Electron shell → hide "Download desktop app"
@@ -253,8 +277,9 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
   }, [conversationId, queryClient])
 
   const presentBoard = useCallback(() => {
-    setEditMenuPillMode('view') // View bar owns Present / captures
-  }, [setEditMenuPillMode])
+    setUtilitySidebarMode('capture') // Presentations / captures live in utility Capture
+    setUtilitySidebarOpen(true) // Open the column if it was closed
+  }, [setUtilitySidebarMode, setUtilitySidebarOpen])
 
   const toggleFavorite = useCallback(async () => {
     if (!conversationId) return
@@ -287,6 +312,8 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
   }, [conversationId, favorited, queryClient])
 
   const showFont = !q || matchesQuery('font default serif mono', q) // Keep font row unless search misses
+  const showBoardStyle =
+    !q || matchesQuery('board style rule wide college narrow none dotted lined grid', q) // Background rule + style submenu
   const showFooter = !q // Metadata stays at the bottom when not filtering
   const showConnections = !q || matchesQuery('connections notion', q) // Same hay as Connections row
   const showAiHighlightMenu =
@@ -294,6 +321,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
   const hasSearchHit =
     !q ||
     showFont ||
+    showBoardStyle ||
     showConnections ||
     showAiHighlightMenu ||
     [
@@ -377,6 +405,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
             align="end"
             className="w-[280px] p-0 max-h-[min(72vh,640px)] flex flex-col overflow-hidden"
             onCloseAutoFocus={(e) => e.preventDefault()}
+
             onKeyDown={(e) => e.stopPropagation()}
           >
             <div className="px-1.5 pt-1.5 pb-1 flex-shrink-0">
@@ -418,6 +447,57 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
                     )
                   })}
                 </div>
+              )}
+
+              {showBoardStyle && (
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <Grid3x3 className="h-4 w-4 mr-2" />
+                    Board style
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="w-40">
+                    <DropdownMenuLabel className="px-2 py-1.5 text-xs font-semibold text-gray-500">
+                      Rule
+                    </DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={boardRule}
+                      onValueChange={(value) => setBoardRule(value as 'wide' | 'college' | 'narrow')}
+                    >
+                      <DropdownMenuRadioItem value="wide" className="pl-8">
+                        Wide
+                      </DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="college" className="pl-8">
+                        College
+                      </DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="narrow" className="pl-8">
+                        Narrow
+                      </DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                    <DropdownMenuSeparator className="mx-2 my-1" />
+                    <DropdownMenuLabel className="px-2 py-1.5 text-xs font-semibold text-gray-500">
+                      Style
+                    </DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={boardStyle}
+                      onValueChange={(value) =>
+                        setBoardStyle(value as 'none' | 'dotted' | 'lined' | 'grid')
+                      }
+                    >
+                      <DropdownMenuRadioItem value="none" className="pl-8">
+                        None
+                      </DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="dotted" className="pl-8">
+                        Dotted
+                      </DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="lined" className="pl-8">
+                        Lined
+                      </DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="grid" className="pl-8">
+                        Grid
+                      </DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
               )}
 
               {matchesQuery('Copy link', q) && (
@@ -688,6 +768,22 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
             )}
           </DropdownMenuContent>
         </DropdownMenu>
+        {!isMobileMode && !isUtilitySidebarOpen && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn(
+              iconBtn,
+              'h-9 w-9 rounded-xl bg-[#f7f8f9] shadow-sm hover:bg-[#f7f8f9] dark:bg-[#1c1c24] dark:hover:bg-[#1c1c24]' // Same grey shell + height as utility mode pill
+            )}
+            title="Show sidebar"
+            type="button"
+            data-utility-sidebar-toggle
+            onClick={toggleUtilitySidebar}
+          >
+            <PanelRight className="h-4 w-4" />
+          </Button>
+        )}
       </div>
   )
 }
