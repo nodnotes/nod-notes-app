@@ -12,6 +12,7 @@ import {
 } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { htmlHasAiOrigin, htmlHasAiPending, promotePendingToOrigin } from '@/lib/ai/wrap-ai-html'
+import { unwrapNotionSync } from '@/lib/notion/wrap-notion-sync-html'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   buildProposedHtml,
@@ -43,6 +44,12 @@ export type AiPendingEditInput = {
   originalBorderColor?: string
   /** True when this edit includes a color change (including clear → default). */
   colorChanged?: boolean
+  /** Origin of the pending review — AI (rainbow) vs Notion sync (grey). */
+  source?: 'ai' | 'notion'
+  /** Notion page id when source is notion (seed push baseline after save). */
+  notionPageId?: string
+  /** Remote last_edited_time to store when accepting/rejecting a Notion sync. */
+  notionLastEditedTime?: string
 }
 
 export type AiPendingEditKind = 'update_frame' | 'create_frame' | 'create_thread' | 'update_thread'
@@ -57,7 +64,7 @@ export interface AiPendingEdit {
   summary: string
   /** Exact page content before the proposal (never written over until discard/save resolves). */
   originalContent: string
-  /** Proposed HTML with ai-pending marks (shown on page until save/discard). */
+  /** Proposed HTML with ai-pending or notion-sync marks (shown until save/discard). */
   proposedContent: string
   actionLogId?: string
   /** Proposed chrome colors (undefined = this edit did not touch color). */
@@ -66,6 +73,9 @@ export interface AiPendingEdit {
   originalFillColor?: string
   originalBorderColor?: string
   colorChanged?: boolean
+  source?: 'ai' | 'notion'
+  notionPageId?: string
+  notionLastEditedTime?: string
 }
 
 interface AiEditSessionValue {
@@ -343,7 +353,10 @@ export function AiEditSessionProvider({
             .maybeSingle()
           if (typeof msg?.content === 'string') original = msg.content
           // Soft-flag metadata for chrome without mutating content
-          const metaPatch: Record<string, unknown> = { aiPendingEdit: true }
+          const metaPatch: Record<string, unknown> =
+            e.source === 'notion'
+              ? { notionSyncReview: true, notionUpdatesPending: true }
+              : { aiPendingEdit: true }
           // Server may have already applied color; client re-applies for race safety
           if (e.colorChanged) {
             Object.assign(
@@ -352,6 +365,22 @@ export function AiEditSessionProvider({
             )
           }
           await persistFrameMeta(e.messageId, metaPatch)
+        }
+        // Notion sync: proposedContent is pre-marked; skip AI rebuild
+        if (e.source === 'notion' && e.proposedContent) {
+          withIds.push({
+            id: generateUUID(),
+            kind: e.kind,
+            messageId: e.messageId,
+            summary: e.summary,
+            originalContent: original || e.originalContent || '',
+            proposedContent: e.proposedContent,
+            actionLogId: e.actionLogId,
+            source: 'notion',
+            notionPageId: e.notionPageId,
+            notionLastEditedTime: e.notionLastEditedTime,
+          })
+          continue
         }
         // Build proposal against the live original so eye/remove match DB
         const hasTextChange =
@@ -381,6 +410,7 @@ export function AiEditSessionProvider({
           originalFillColor: e.originalFillColor,
           originalBorderColor: e.originalBorderColor,
           colorChanged: e.colorChanged,
+          source: e.source || 'ai',
         })
       }
 
@@ -406,6 +436,36 @@ export function AiEditSessionProvider({
   const applySaveOne = useCallback(
     async (edit: AiPendingEdit): Promise<{ messageId?: string; content?: string }> => {
       if (edit.kind === 'update_frame' && edit.messageId) {
+        if (edit.source === 'notion') {
+          const finalHtml = unwrapNotionSync(edit.proposedContent)
+          await persistFrameContent(edit.messageId, finalHtml)
+          const metaPatch: Record<string, unknown> = {
+            notionSyncReview: false,
+            notionUpdatesPending: false,
+            aiPendingEdit: false,
+          }
+          if (edit.notionLastEditedTime) {
+            metaPatch.notionLastEditedTime = edit.notionLastEditedTime
+            metaPatch.notionRemoteLastEditedTime = edit.notionLastEditedTime
+          }
+          await persistFrameMeta(edit.messageId, metaPatch)
+          if (edit.notionPageId) {
+            window.dispatchEvent(
+              new CustomEvent('notion-pages-applied', {
+                detail: {
+                  contentUpdates: [
+                    {
+                      messageId: edit.messageId,
+                      pageId: edit.notionPageId,
+                      content: finalHtml,
+                    },
+                  ],
+                },
+              })
+            )
+          }
+          return { messageId: edit.messageId, content: finalHtml }
+        }
         const textChanged = edit.proposedContent !== edit.originalContent
         const finalHtml = textChanged
           ? promotePendingToOrigin(edit.proposedContent)
@@ -445,6 +505,20 @@ export function AiEditSessionProvider({
   const applyDiscardOne = useCallback(
     async (edit: AiPendingEdit): Promise<{ messageId?: string; content?: string; deleted?: boolean }> => {
       if (edit.kind === 'update_frame' && edit.messageId) {
+        if (edit.source === 'notion') {
+          // Keep local content; advance baseline so background poll stops re-flagging
+          const metaPatch: Record<string, unknown> = {
+            notionSyncReview: false,
+            notionUpdatesPending: false,
+            aiPendingEdit: false,
+          }
+          if (edit.notionLastEditedTime) {
+            metaPatch.notionLastEditedTime = edit.notionLastEditedTime
+          }
+          await persistFrameMeta(edit.messageId, metaPatch)
+          await persistFrameContent(edit.messageId, edit.originalContent)
+          return { messageId: edit.messageId, content: edit.originalContent }
+        }
         const metaPatch: Record<string, unknown> = { aiPendingEdit: false }
         if (edit.colorChanged) {
           Object.assign(

@@ -83,16 +83,14 @@ function splitListItems(listHtml: string): string[] {
   return items
 }
 
-/** Skip or stub TipTap atoms that have no Notion block equivalent. */
+/**
+ * TipTap atoms that already exist as protected Notion blocks (child_page /
+ * child_database). Emitting stubs would duplicate them after a push that
+ * intentionally leaves those blocks in place — skip entirely.
+ */
 function atomToParagraph(outer: string): NotionBlockCreate | null {
-  if (/data-type=["']boardLink["']/i.test(outer)) {
-    const title = outer.match(/data-title=["']([^"']*)["']/i)?.[1] || 'Linked page'
-    return paragraphBlock(`[Page: ${plainFromHtml(title)}]`)
-  }
-  if (/data-type=["']databaseBlock["']/i.test(outer)) {
-    const title = outer.match(/data-title=["']([^"']*)["']/i)?.[1] || 'Database'
-    return paragraphBlock(`[Database: ${plainFromHtml(title)}]`)
-  }
+  if (/data-type=["']boardLink["']/i.test(outer)) return null // Preserved as child_page on Notion
+  if (/data-type=["']databaseBlock["']/i.test(outer)) return null // Preserved as child_database
   if (/data-type=["'](?:propertyBlock|imageBlock)["']/i.test(outer)) return null
   return null
 }

@@ -29,13 +29,23 @@ async function prepareNotionAuthorize(request: NextRequest): Promise<
     error: userError,
   } = await supabase.auth.getUser() // Require signed-in NodNotes user
 
+  // Prefer the board path the client passed; never default to marketing `/`
+  const rawReturnTo = request.nextUrl.searchParams.get('returnTo') || '/board'
+  const returnTo =
+    rawReturnTo.startsWith('/') && !rawReturnTo.startsWith('//') && !rawReturnTo.includes('://')
+      ? rawReturnTo.split('?')[0] || '/board' // Relative path only
+      : '/board'
+
   if (userError || !user) {
     const loginUrl = new URL('/login', request.url) // Send anonymous users to login
-    loginUrl.searchParams.set('next', '/api/notion/auth') // Resume Notion connect after login
+    // Resume OAuth with the same returnTo so post-login lands back on that board
+    loginUrl.searchParams.set(
+      'next',
+      `/api/notion/auth?returnTo=${encodeURIComponent(returnTo)}`
+    )
     return { ok: false, response: NextResponse.redirect(loginUrl) }
   }
 
-  const returnTo = request.nextUrl.searchParams.get('returnTo') || '/' // Where to land after connect
   const nonce = randomBytes(16).toString('hex') // CSRF nonce
   const state = Buffer.from(JSON.stringify({ nonce, returnTo, userId: user.id })).toString(
     'base64url'

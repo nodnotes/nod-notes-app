@@ -35,13 +35,34 @@ export async function fetchNotionPageLastEdited(
   return typeof payload.last_edited_time === 'string' ? payload.last_edited_time : null
 }
 
-/** Archive every top-level child block on a page (prepare for replace). */
-async function archivePageChildren(accessToken: string, pageId: string): Promise<void> {
-  const children = await fetchBlockChildren(accessToken, pageId)
+/**
+ * Block types we must NEVER DELETE on push.
+ * Notion DELETE on child_page / child_database moves the entire page/DB to Trash
+ * (not just the embed block) — that is what made “authorize / import” look like
+ * it trashed authorized pages.
+ */
+const PROTECTED_BLOCK_TYPES = new Set([
+  'child_page', // Nested page — DELETE trashes the page itself
+  'child_database', // Nested DB — DELETE trashes the database itself
+  'link_to_page', // Reference to another page; do not remove
+])
+
+/** True when this top-level block is safe to remove before re-appending TipTap content. */
+function isReplaceableBodyBlock(type: string): boolean {
+  return !PROTECTED_BLOCK_TYPES.has(type) // Keep nested pages/DBs and page links intact
+}
+
+/** Archive replaceable top-level body blocks only (never child_page / child_database). */
+async function archiveReplaceablePageChildren(
+  accessToken: string,
+  pageId: string
+): Promise<void> {
+  const children = await fetchBlockChildren(accessToken, pageId) // Current Notion body
+  const toRemove = children.filter((block) => isReplaceableBodyBlock(block.type)) // Skip protected
   await Promise.all(
-    children.map(async (block) => {
+    toRemove.map(async (block) => {
       const res = await fetch(`${NOTION_API}/blocks/${block.id}`, {
-        method: 'DELETE',
+        method: 'DELETE', // Soft-trash this content block only
         headers: notionHeaders(accessToken),
       })
       if (!res.ok) {
@@ -74,15 +95,15 @@ async function appendPageChildren(
   }
 }
 
-/** Replace page body in Notion with HTML from NodNotes. */
+/** Replace page body in Notion with HTML from NodNotes (preserves nested pages/DBs). */
 export async function pushNotionPageBody(
   accessToken: string,
   pageId: string,
   html: string
 ): Promise<{ lastEditedTime: string | null }> {
-  const children = htmlToNotionBlocks(html)
-  await archivePageChildren(accessToken, pageId)
-  await appendPageChildren(accessToken, pageId, children)
+  const children = htmlToNotionBlocks(html) // TipTap → Notion blocks (no child_page stubs)
+  await archiveReplaceablePageChildren(accessToken, pageId) // Never trash nested pages/DBs
+  await appendPageChildren(accessToken, pageId, children) // Append text/structure blocks
   const lastEditedTime = await fetchNotionPageLastEdited(accessToken, pageId)
   return { lastEditedTime }
 }

@@ -98,7 +98,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { ArrowDown, GripVertical, MousePointer2, Hand, ChevronsUp, ChevronsDown } from 'lucide-react' // ChevronsUp/Down = minimap toggle (same double-caret family as chat ChevronsRight)
+import { ArrowDown, GripVertical, SquareDashedMousePointer, Move, ChevronsUp, ChevronsDown } from 'lucide-react' // Move = pan (NSEW); SquareDashedMousePointer = select/marquee; ChevronsUp/Down = minimap
 import { useReactFlowContext } from './react-flow-context'
 import { useSidebarContext, PHONE_LAYOUT_MAX_WIDTH } from './sidebar-context'
 import { useChatSidebarViewportAdjust } from '@/lib/hooks/use-chat-sidebar-viewport'
@@ -6207,10 +6207,16 @@ function BoardFlowInner({
 
     const handleWheel = (e: WheelEvent) => {
       const target = e.target as HTMLElement
-      // Pre-frame I-bar chrome is positioned outside `.react-flow` — still board zoom/pan, not browser zoom
+      // I-bar + Free nav / minimap sit outside `.react-flow` — still board zoom/pan, not browser zoom
       let reactFlowElement = target.closest('.react-flow') as HTMLElement | null
-      if (!reactFlowElement && target.closest('[data-tt-ibar-grip], [data-tt-ibar-chrome]')) {
-        reactFlowElement = document.querySelector('[data-board-root] .react-flow') as HTMLElement | null
+      const EXTERNAL_MAP_CHROME =
+        '[data-tt-ibar-grip], [data-tt-ibar-chrome], [data-minimap-toggle-context], [data-minimap-context], [data-minimap-pill-context]'
+      const overExternalMapChrome = !reactFlowElement && !!target.closest(EXTERNAL_MAP_CHROME)
+      if (overExternalMapChrome) {
+        // Prefer this board’s pane (homepage can mount several BoardFlows)
+        reactFlowElement =
+          (boardRootRef.current?.querySelector('.react-flow') as HTMLElement | null) ??
+          (document.querySelector('[data-board-root] .react-flow') as HTMLElement | null)
       }
       if (!reactFlowElement) {
         return
@@ -6351,8 +6357,8 @@ function BoardFlowInner({
       if (!navScrollMode) {
         const pinch = isMacTrackpadPinch(e)
         const alternate = isWheelAlternateMod(e)
-        // Ink overlay covers ZoomPane — own pinch/plain zoom here (else browser window zooms)
-        if (inkOverlay && (pinch || !alternate)) {
+        // Ink overlay / Free-nav chrome sit above or outside ZoomPane — own pinch/plain zoom (else browser zooms)
+        if ((inkOverlay || overExternalMapChrome) && (pinch || !alternate)) {
           if (
             pinch &&
             typeof window !== 'undefined' &&
@@ -6975,6 +6981,17 @@ function BoardFlowInner({
           return true
         }
 
+        // Fresh I-bar + ⋮⋮ live outside `.react-flow` — treat as empty board, not browser menu
+        if (el.closest('[data-tt-ibar-chrome], [data-tt-ibar-grip]')) {
+          openBoardMenuAt(point.clientX, point.clientY, { forceBoard: true })
+          clearDomSelection()
+          requestAnimationFrame(() => {
+            clearDomSelection()
+            requestAnimationFrame(clearDomSelection)
+          })
+          return true
+        }
+
         return false
       },
     })
@@ -6997,6 +7014,12 @@ function BoardFlowInner({
       return null
     }
 
+    // I-bar chrome is a boardRoot overlay (not RF pane) — right-click / hold → board menu
+    const iBarChromeFromEvent = (e: Event): boolean => {
+      const el = eventElement(e.target)
+      return !!el?.closest('[data-tt-ibar-chrome], [data-tt-ibar-grip]')
+    }
+
     const onDown = (e: PointerEvent) => {
       // Desktop right-press: open the frame menu here. RF panOnDrag includes 2, so
       // contextmenu is often preventDefault'd and never reaches onNodeContextMenu.
@@ -7007,6 +7030,13 @@ function BoardFlowInner({
           e.stopPropagation()
           markFrameMenuRightPress(node.id)
           openFrameMenuAt(e.clientX, e.clientY, node)
+          return
+        }
+        // Fresh I-bar / ⋮⋮ — same as empty-pane board menu (not the browser menu)
+        if (iBarChromeFromEvent(e)) {
+          e.preventDefault()
+          e.stopPropagation()
+          openBoardMenuAt(e.clientX, e.clientY, { forceBoard: true })
         }
         return
       }
@@ -7097,6 +7127,13 @@ function BoardFlowInner({
         e.preventDefault()
         e.stopPropagation()
         openFrameMenuAt(mouseEvent.clientX, mouseEvent.clientY, node, { fromContextMenu: true })
+        return
+      }
+      // I-bar overlay never hits RF onPaneContextMenu — open board menu here
+      if (iBarChromeFromEvent(e)) {
+        e.preventDefault()
+        e.stopPropagation()
+        openBoardMenuAt(mouseEvent.clientX, mouseEvent.clientY, { forceBoard: true })
       }
     }
     const onClickCapture = (e: MouseEvent) => {
@@ -11137,9 +11174,9 @@ function BoardFlowInner({
                 onClick={() => setMapPointerTool((t) => (t === 'select' ? 'pan' : 'select'))}
               >
                 {mapPointerTool === 'select' ? (
-                  <MousePointer2 className="h-3.5 w-3.5" />
+                  <SquareDashedMousePointer className="h-3.5 w-3.5" /> // Dashed marquee + pointer — select tool
                 ) : (
-                  <Hand className="h-3.5 w-3.5" />
+                  <Move className="h-3.5 w-3.5" /> // Four-way arrows — pan / move, not a hand
                 )}
               </Button>
             </div>
@@ -11305,6 +11342,12 @@ function BoardFlowInner({
             transform: `translateX(-${gripW + gripGap}px)`, // Grip + gap → caret sits on the flow click
             gap: `${gripGap}px`,
           }}
+          onContextMenu={(e) => {
+            // Overlay is outside RF pane — still board menu, never the browser menu
+            e.preventDefault()
+            e.stopPropagation()
+            openBoardMenuAt(e.clientX, e.clientY, { forceBoard: true })
+          }}
         >
           <button
             type="button"
@@ -11320,6 +11363,12 @@ function BoardFlowInner({
             onMouseDown={(e) => {
               e.stopPropagation()
               e.preventDefault()
+            }}
+            onContextMenu={(e) => {
+              // ⋮⋮ is a button — without this, browsers show the native menu
+              e.preventDefault()
+              e.stopPropagation()
+              openBoardMenuAt(e.clientX, e.clientY, { forceBoard: true })
             }}
             onClick={(e) => {
               e.stopPropagation()

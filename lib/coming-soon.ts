@@ -39,6 +39,9 @@ export function isComingSoonPublicPath(pathname: string): boolean {
   if (pathname === '/access') return true // Early-access sign-in
   if (pathname.startsWith('/auth/')) return true // Supabase callback + verify flows
   if (pathname.startsWith('/api/early-access')) return true // OTP + session gate APIs
+  if (pathname.startsWith('/api/notion/auth') || pathname.startsWith('/api/notion/callback')) {
+    return true // OAuth start/return must run so callback can send users back to their board
+  }
   if (pathname.startsWith('/api/public-board')) return true // Homepage showcase master snapshots
   if (pathname.startsWith('/api/homepage-board')) return true // Legacy homepage board fetch
   if (pathname.startsWith('/api/webhooks/stripe')) return true // Stripe signs these; no session

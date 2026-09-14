@@ -5,7 +5,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { useQueryClient } from '@tanstack/react-query'
-import { LayoutGrid, Sparkles } from 'lucide-react' // Connections + import
+import { LayoutGrid, Sparkles, Loader2 } from 'lucide-react' // Connections + import + sync spinner
 import {
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -16,8 +16,12 @@ import {
 import { NotionImportModal } from './notion-import-modal'
 import { NotionMarkIcon } from './notion-mark-icon' // Monochrome — matches other top-bar icons
 import { SyncIcon } from './sync-icon' // Unsynced connection updates (left of Connections)
+import { NotionSyncNoticeHost } from './notion-sync-notice' // Checking / success / updates toast
 import { cn } from '@/lib/utils'
 import { useConnectionSyncPending } from '@/lib/notion/use-connection-sync-pending'
+import { checkBoardNotionPages } from '@/lib/notion/check-board-notion-pages'
+import { showNotionSyncNotice } from '@/lib/notion/sync-notice'
+import { useAiEditSession } from '@/lib/ai/edit-session'
 import { ACCOUNT_CHANGED_EVENT } from '@/lib/auth-session-isolation'
 
 /** localStorage — whether the connected Notion mark stays left of Share. */
@@ -94,9 +98,17 @@ function writeActiveWorkspaceId(workspaceId: string) {
   }
 }
 
-/** Build the OAuth start URL for the current board path. */
-function buildAuthHref(pathname: string | null): string {
-  const returnTo = pathname && pathname.startsWith('/') ? pathname : '/board'
+/** Build the OAuth start URL so callback returns to this board (not the homepage). */
+function buildAuthHref(pathname: string | null, conversationId?: string | null): string {
+  // Prefer explicit board id from the top bar — more reliable than pathname alone
+  const returnTo =
+    conversationId && /^[0-9a-f-]{36}$/i.test(conversationId)
+      ? `/board/${conversationId}`
+      : pathname && pathname.startsWith('/board')
+        ? pathname
+        : pathname && pathname.startsWith('/')
+          ? pathname
+          : '/board'
   return `/api/notion/auth?returnTo=${encodeURIComponent(returnTo)}`
 }
 
@@ -127,8 +139,14 @@ function NotionConnectedActions() {
 }
 
 /** Fetch status, own the import modal, and listen for AI-composer connect events. */
-export function NotionConnectProvider({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname() // Current board path for returnTo
+export function NotionConnectProvider({
+  children,
+  conversationId,
+}: {
+  children: React.ReactNode
+  conversationId?: string // Board that should receive the user after OAuth
+}) {
+  const pathname = usePathname() // Fallback path when conversationId is missing
   const router = useRouter() // Navigate after import
   const queryClient = useQueryClient() // Refresh note panels after import
   const [status, setStatus] = useState<NotionStatus | null>(null) // Connection state from API
@@ -138,7 +156,10 @@ export function NotionConnectProvider({ children }: { children: React.ReactNode 
   const [workspaces, setWorkspaces] = useState<NotionWorkspaceSummary[]>([])
   const [activeWorkspaceId, setActiveWorkspaceIdState] = useState<string | null>(null)
 
-  const authHref = useMemo(() => buildAuthHref(pathname), [pathname])
+  const authHref = useMemo(
+    () => buildAuthHref(pathname, conversationId),
+    [pathname, conversationId]
+  )
 
   useEffect(() => {
     setTopBarPinnedState(readNotionTopBarPinned()) // Client-only preference
@@ -214,15 +235,18 @@ export function NotionConnectProvider({ children }: { children: React.ReactNode 
       return
     }
     // Hard navigation — first-time connect / same path as Edit permissions <a>
-    window.location.assign(buildAuthHref(pathname))
-  }, [status?.configured, pathname])
+    window.location.assign(buildAuthHref(pathname, conversationId))
+  }, [status?.configured, pathname, conversationId])
 
   const handleImport = async (opts: { pageIds: string[]; mode: 'card' | 'mindmap'; signal?: AbortSignal }) => {
     const res = await fetch('/api/notion/import', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        returnTo: pathname || '/board',
+        returnTo:
+          conversationId && /^[0-9a-f-]{36}$/i.test(conversationId)
+            ? `/board/${conversationId}`
+            : pathname || '/board',
         pageIds: opts.pageIds,
         mode: opts.mode,
         workspaceId: activeWorkspaceId,
@@ -378,6 +402,7 @@ export function NotionConnectProvider({ children }: { children: React.ReactNode 
         }}
       />
       {children}
+      <NotionSyncNoticeHost />
       <NotionImportModal
         open={pickerOpen}
         onOpenChange={setPickerOpen}
@@ -454,27 +479,94 @@ export function NotionConnectMenuItems({ filterQuery = '' }: { filterQuery?: str
 }
 
 /**
- * Top-bar sync glyph — left of the Notion (Connections) pin; blue when updates are pending.
+ * Top-bar sync glyph — left of the Notion pin.
+ * Blue = detected Notion→NodNotes updates; normal = manual check; light grey = not applicable.
  */
 export function ConnectionSyncTopBarIndicator({ conversationId }: { conversationId?: string }) {
   const api = useNotionConnect()
-  const pending = useConnectionSyncPending(conversationId)
+  const queryClient = useQueryClient() // Board messages cache for a mount-independent check
+  const { addPendingEdits } = useAiEditSession() // Grey Notion proposals use the same review bar as AI
+  const { pending, applicable } = useConnectionSyncPending(conversationId)
+  const [checking, setChecking] = useState(false) // In-flight manual check
   if (!api?.status?.connected) return null
 
+  const title = checking
+    ? 'Syncing from Notion…'
+    : pending
+      ? 'Sync updates from Notion'
+      : applicable
+        ? 'Sync from Notion'
+        : 'No Notion page sync on this board'
+
+  const colorClass = pending
+    ? 'text-[#2383e2]' // Detected remote changes
+    : applicable
+      ? 'text-gray-700 hover:text-gray-900' // Manual check — same weight as other top-bar icons
+      : 'text-gray-300 dark:text-gray-600' // Not applicable
+
+  const runCheck = async () => {
+    if ((!applicable && !pending) || checking || !conversationId) return
+    setChecking(true)
+    showNotionSyncNotice('Syncing from Notion…', 'progress')
+    try {
+      const summary = await checkBoardNotionPages(queryClient, conversationId, { apply: true })
+      if (summary.proposals.length > 0) {
+        await addPendingEdits(
+          summary.proposals.map((p) => ({
+            kind: 'update_frame' as const,
+            messageId: p.messageId,
+            summary: 'Notion sync',
+            originalContent: p.originalContent,
+            proposedContent: p.proposedContent,
+            source: 'notion' as const,
+            notionPageId: p.pageId,
+            notionLastEditedTime: p.lastEditedTime,
+          }))
+        )
+        showNotionSyncNotice(
+          summary.proposals.length === 1
+            ? 'Review Notion updates'
+            : `Review ${summary.proposals.length} Notion updates`,
+          'info'
+        )
+      } else if (summary.checked === 0) {
+        showNotionSyncNotice('Nothing to sync on this board', 'info')
+      } else if (summary.errors > 0 && summary.errors === summary.checked) {
+        showNotionSyncNotice('Couldn’t sync from Notion', 'error')
+      } else if (summary.errors > 0) {
+        showNotionSyncNotice('Checked Notion — some pages failed', 'error')
+      } else {
+        showNotionSyncNotice('Up to date with Notion', 'success')
+      }
+    } catch {
+      showNotionSyncNotice('Couldn’t sync from Notion', 'error')
+    } finally {
+      setChecking(false)
+    }
+  }
+
   return (
-    <span
+    <button
+      type="button"
       data-top-bar-connection-sync
-      className="h-7 w-7 inline-flex items-center justify-center flex-shrink-0"
-      title={pending ? 'Connection updates available' : 'Connections in sync'}
-      aria-label={pending ? 'Connection updates available' : 'Connections in sync'}
+      title={title}
+      aria-label={title}
+      disabled={(!applicable && !pending) || checking}
+      onClick={() => {
+        void runCheck()
+      }}
+      className={cn(
+        'h-7 w-7 inline-flex items-center justify-center flex-shrink-0 rounded-md',
+        applicable || pending ? 'hover:bg-gray-100' : 'cursor-default',
+        'disabled:opacity-100'
+      )}
     >
-      <SyncIcon
-        className={cn(
-          'h-4 w-4',
-          pending ? 'text-[#2383e2]' : 'text-gray-300 dark:text-gray-600'
-        )}
-      />
-    </span>
+      {checking ? (
+        <Loader2 className={cn('h-4 w-4 animate-spin', colorClass)} aria-hidden />
+      ) : (
+        <SyncIcon className={cn('h-4 w-4', colorClass)} />
+      )}
+    </button>
   )
 }
 

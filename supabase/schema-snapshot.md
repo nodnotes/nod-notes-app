@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-14T01:20:29Z`
+- Snapped at: `2026-09-14T11:23:20Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`; versions from `.temp` + Management API list; cli-latest reports `v2.117.0`)
@@ -9,6 +9,15 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260914112320_notion_page_sync_review_oauth_return.sql`.
+- **Notion → NodNotes review**: top-bar sync queues grey `data-notion-sync` marks on changed text/blocks only; Accept / Keep mine; Syncing… → Review / Up to date toast.
+- **Detect**: first `last_edited_time` is baseline only; blue icon only when remote is newer; sync icon grey when connected with no page-body targets.
+- **OAuth**: callback returns to the board that started connect (`returnTo`); coming-soon allowlists `/api/notion/auth` + `/api/notion/callback`.
+- **Safety**: push never `DELETE`s `child_page` / `child_database` / `link_to_page`; skip boardLink/databaseBlock on HTML→Notion.
+- Schema unchanged; remote DDL top remains `20260912192948_panel_edges_canvas_endpoints`.
+
+## Prior: free nav minimap double caret
 
 - DDL: none. Marker `20260914012029_free_nav_minimap_double_caret.sql`.
 - **Minimap toggle**: chat-style double caret (`ChevronsUp`/`ChevronsDown`) inside Free nav on the left.

@@ -14,6 +14,7 @@ import type { HocuspocusProvider } from '@hocuspocus/provider'
 import type * as Y from 'yjs'
 import { Haze } from '@/lib/tiptap/haze'
 import { AiPending, AiOrigin } from '@/lib/tiptap/ai-marks' // AI edit review + provenance
+import { NotionSyncPending } from '@/lib/tiptap/notion-sync-mark' // Notion sync review (grey)
 import {
   BlockEquation,
   Callout,
@@ -82,6 +83,7 @@ export function createPanelExtensions(
     Haze,
     AiPending, // Rainbow pending AI edits
     AiOrigin, // Persisted AI-written spans (toggleable reddish mask)
+    NotionSyncPending, // Grey pending Notion→NodNotes sync review
     TextStyle,
     Color,
     TextAlign.configure({ types: ['heading', 'paragraph'] }),

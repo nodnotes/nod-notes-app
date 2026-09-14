@@ -1,0 +1,2 @@
+-- Notion page body sync: review proposals (grey marks) + toast; OAuth returnTo board; never DELETE child_page/DB.
+-- App/docs marker only; no DDL. Remote DDL top: 20260912192948_panel_edges_canvas_endpoints (local 20260912192642).

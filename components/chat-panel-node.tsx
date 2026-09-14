@@ -4853,9 +4853,53 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const { schedulePush: scheduleNotionPagePush } = useNotionPageBodySync({
     pageId: notionPageSyncTarget?.pageId ?? null,
     lastEditedTime: notionLastEditedTime,
+    // Seed so TipTap remount/normalize after import does not immediately wipe Notion
+    initialHtml: notionPageSyncTarget ? promptContent : null,
     onNotionUpdatesAvailable: handleNotionUpdatesAvailable,
     onLastEditedTime: handleNotionLastEditedTime,
   })
+
+  // Manual sync applied Notion HTML into this frame — force TipTap + RF node data to match
+  useEffect(() => {
+    if (!promptMessage?.id || !conversationId) return
+    const onApplied = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        conversationId?: string
+        contentUpdates?: Array<{ messageId: string; content: string }>
+      }>).detail
+      if (detail?.conversationId && detail.conversationId !== conversationId) return
+      const hit = detail?.contentUpdates?.find((u) => u.messageId === promptMessage.id)
+      if (!hit) return
+      setPromptContent(hit.content)
+      setPromptHasChanges(false)
+      setAiForceSyncKey((k) => k + 1) // setContent even if caret is in the frame
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== id || !n.data?.promptMessage) return n
+          const pm = n.data.promptMessage as {
+            content?: string
+            metadata?: Record<string, unknown>
+          }
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              promptMessage: {
+                ...pm,
+                content: hit.content,
+                metadata: {
+                  ...(pm.metadata || {}),
+                  notionUpdatesPending: false,
+                },
+              },
+            },
+          }
+        })
+      )
+    }
+    window.addEventListener('notion-pages-applied', onApplied)
+    return () => window.removeEventListener('notion-pages-applied', onApplied)
+  }, [promptMessage?.id, conversationId, setNodes, id])
 
   // Paint the latest corner-drag sample (one React update per frame, not per touchmove)
   const flushPendingResize = useCallback(() => {
@@ -7594,7 +7638,19 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         data-clip-preview={showClipPreview ? 'true' : undefined} // Unlocked hover: full-content peek
         data-frame-shape={frameShape || undefined} // Silhouette id when frames act as shapes
         data-ai-pending-frame={
-          !isProjectBoard && promptMessage?.id && isFramePending(promptMessage.id) ? 'true' : undefined
+          !isProjectBoard &&
+          promptMessage?.id &&
+          isFramePending(promptMessage.id) &&
+          pendingForMessage(promptMessage.id)?.source !== 'notion'
+            ? 'true'
+            : undefined
+        }
+        data-notion-sync-frame={
+          !isProjectBoard &&
+          promptMessage?.id &&
+          pendingForMessage(promptMessage.id)?.source === 'notion'
+            ? 'true'
+            : undefined
         }
         className={cn(
           'group nopan border relative cursor-grab active:cursor-grabbing overflow-visible transition-[opacity,box-shadow,background-color,border-color] duration-300', // overflow-visible: ⋮⋮ in left chrome; nopan: right-click opens frame menu
@@ -7621,7 +7677,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           !isProjectBoard &&
             promptMessage?.id &&
             isFramePending(promptMessage.id) &&
-            'tt-ai-pending-frame'
+            (pendingForMessage(promptMessage.id)?.source === 'notion'
+              ? 'tt-notion-sync-frame'
+              : 'tt-ai-pending-frame')
         )}
       style={{
         // L/R gutters: select-frozen pad (live zoom must not shove the fill / threads)
@@ -7780,9 +7838,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         setIsFrameHovering(false)
       }}
       onClick={(e) => {
-        // Click rainbow pending span → focus that edit in the review bar
+        // Click pending span → focus that edit in the review bar
         const pendingSpan = (e.target as HTMLElement | null)?.closest?.(
-          '[data-ai-pending="true"]'
+          '[data-ai-pending="true"], [data-notion-sync="true"]'
         )
         if (pendingSpan && promptMessage?.id) {
           const edit = pendingForMessage(promptMessage.id)

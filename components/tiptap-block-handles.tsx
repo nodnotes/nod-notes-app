@@ -233,7 +233,7 @@ function gripLayoutRoot(editor: Editor): HTMLElement | null {
   return flow ? positionedAncestor(flow) : null
 }
 
-/** True when a TipTap block range contains an aiPending mark (violet ⋮⋮ when that grip is shown). */
+/** True when a TipTap block range contains an aiPending or notionSyncPending mark. */
 function blockHasAiPending(editor: Editor, block: EditorBlockRef): boolean {
   if (!editor || editor.isDestroyed) return false
   const doc = editor.state.doc
@@ -246,7 +246,10 @@ function blockHasAiPending(editor: Editor, block: EditorBlockRef): boolean {
   try {
     doc.nodesBetween(from, to, (node) => {
       if (found) return false
-      if (node.isText && node.marks.some((m) => m.type.name === 'aiPending')) {
+      if (
+        node.isText &&
+        node.marks.some((m) => m.type.name === 'aiPending' || m.type.name === 'notionSyncPending')
+      ) {
         found = true
         return false
       }
@@ -254,6 +257,30 @@ function blockHasAiPending(editor: Editor, block: EditorBlockRef): boolean {
     })
   } catch {
     return false // Doc mutated mid-walk — treat as no pending marks
+  }
+  return found
+}
+
+/** True when the block’s pending mark is Notion sync (grey grip) rather than AI (violet). */
+function blockHasNotionSyncPending(editor: Editor, block: EditorBlockRef): boolean {
+  if (!editor || editor.isDestroyed) return false
+  const doc = editor.state.doc
+  const size = doc.content.size
+  const from = Math.max(0, Math.min(block.from, size))
+  const to = Math.max(from, Math.min(block.to, size))
+  if (from >= to) return false
+  let found = false
+  try {
+    doc.nodesBetween(from, to, (node) => {
+      if (found) return false
+      if (node.isText && node.marks.some((m) => m.type.name === 'notionSyncPending')) {
+        found = true
+        return false
+      }
+      return true
+    })
+  } catch {
+    return false
   }
   return found
 }
@@ -1627,6 +1654,10 @@ export function TipTapBlockHandles({
               ? propertyHeaderArmed
               : isBlockArmed(gl.block))
         const aiPending = gl.connectionsHeader ? false : blockHasAiPending(editor, gl.block)
+        const notionPending =
+          gl.connectionsHeader || !aiPending
+            ? false
+            : blockHasNotionSyncPending(editor, gl.block)
         // gripChromeScale set above from zoom×frameScale (big text → screen-constant ⋮⋮)
         // Layout ⋮⋮ hit box stays GRIP_H; insert Y uses the *visual* extent after counter-scale
         // so hairlines keep distance proportional to the grip.
@@ -1738,13 +1769,16 @@ export function TipTapBlockHandles({
               tabIndex={0}
               data-tt-block-handle
               data-tt-block-armed={armed ? 'true' : undefined} // Chat HTML5 turn-drag skips only armed grips
-              data-ai-pending-handle={aiPending ? 'true' : undefined}
+              data-ai-pending-handle={aiPending && !notionPending ? 'true' : undefined}
+              data-notion-sync-handle={notionPending ? 'true' : undefined}
               className={cn(
                 'absolute left-0 z-[2] flex h-4 w-3.5 items-center justify-center rounded outline-none', // No focus ring — Shift multi-select left :focus blue
                 armed ? 'nodrag nopan' : 'nopan',
-                aiPending
-                  ? 'tt-ai-pending-handle text-violet-600 dark:text-violet-300'
-                  : 'text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-black/5 dark:hover:bg-white/10',
+                notionPending
+                  ? 'tt-notion-sync-handle text-gray-600 dark:text-gray-300'
+                  : aiPending
+                    ? 'tt-ai-pending-handle text-violet-600 dark:text-violet-300'
+                    : 'text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-black/5 dark:hover:bg-white/10',
                 'pointer-events-auto cursor-grab active:cursor-grabbing select-none'
               )}
               style={{

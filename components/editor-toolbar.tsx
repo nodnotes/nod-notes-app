@@ -3518,7 +3518,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
         className="absolute inset-y-0 z-20 flex items-center gap-1 pointer-events-auto"
         style={{ right: (utilityTopBarInset ? 8 : 0) + utilityTopBarInset }} // Closed: 0 so open’s px-2 = 8px (matches close); open: 8px left of overlay
         data-right-section
-      >        <NotionConnectProvider>
+      >        <NotionConnectProvider conversationId={conversationId}>
           <div className="flex items-center px-2 flex-shrink-0 gap-1">
             {!canEdit && (
               <span className="hidden sm:inline text-[11px] text-gray-500 px-1.5 py-0.5 rounded bg-gray-100">

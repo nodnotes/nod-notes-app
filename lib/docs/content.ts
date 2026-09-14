@@ -732,7 +732,7 @@ export const DOCS_CATEGORIES: DocsCategory[] = [
         body: [
           {
             type: 'p',
-            text: 'Imported Notion pages on a board-body frame live-sync Nod Notes → Notion (debounced). Notion → Nod Notes is detected in the background about every 60 seconds; a sync icon turns blue when updates are pending.',
+            text: 'Imported Notion pages on a board-body frame live-sync Nod Notes → Notion (debounced). Notion → Nod Notes is checked in the background about every 60 seconds (or via the top-bar sync icon). The icon is blue only when a newer Notion edit is detected; normal when you can check manually; light grey when page sync does not apply on that board.',
           },
           {
             type: 'ul',

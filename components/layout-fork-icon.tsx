@@ -22,8 +22,8 @@ const Y0 = 3 // Stem top
 const YB = 10 // Crossbar Y
 const YT = 20 // Prong tips
 const CR = 4 // Fillet radius so T-corners read as curves, not squares
-const AH = 1.25 // Arrowhead half-width (old chevron was 3)
-const AD = 1.6 // Arrowhead depth (old chevron was 3.5)
+const AH = 2.1 // Arrowhead half-width (was 1.6; old chevron was 3)
+const AD = 2.6 // Arrowhead depth (was 2.0; old chevron was 3.5)
 
 const ITEM = 'h-7 w-7 p-0 flex items-center justify-center rounded-sm' // Match the old 28px arrow cells
 const ITEM_ON = 'bg-gray-100 dark:bg-[#1f1f1f]' // Selected wash (same as other toolbar icon menus)

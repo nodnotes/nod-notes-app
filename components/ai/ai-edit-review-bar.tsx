@@ -1,6 +1,6 @@
 'use client'
 
-// Bottom-of-page AI edit review bar (Excel Copilot-style)
+// Bottom-of-page edit review bar (AI rainbow + Notion sync grey)
 import { Eye, EyeOff, Trash2, Check, Loader2 } from 'lucide-react'
 import { useState } from 'react'
 import { useAiEditSession } from '@/lib/ai/edit-session'
@@ -26,6 +26,15 @@ export function AiEditReviewBar() {
     ? pendingEdits.find((e) => e.id === focusedEditId)
     : null
 
+  const notionCount = pendingEdits.filter((e) => e.source === 'notion').length
+  const aiCount = pendingEdits.length - notionCount
+  const notionOnly = notionCount > 0 && aiCount === 0
+  const label = notionOnly
+    ? `${notionCount} Notion sync${notionCount === 1 ? '' : 's'}`
+    : aiCount > 0 && notionCount > 0
+      ? `${pendingEdits.length} changes`
+      : `${pendingEdits.length} AI edit${pendingEdits.length === 1 ? '' : 's'}`
+
   const run = async (fn: () => Promise<void>) => {
     setBusy(true)
     try {
@@ -43,9 +52,16 @@ export function AiEditReviewBar() {
       )}
     >
       {focused && (
-        <div className="flex items-center gap-1 rounded-full bg-white/95 dark:bg-[#1a1a1a]/95 border border-black/10 dark:border-white/10 shadow-lg px-2 py-1.5 text-xs">
+        <div
+          className={cn(
+            'flex items-center gap-1 rounded-full bg-white/95 dark:bg-[#1a1a1a]/95 border shadow-lg px-2 py-1.5 text-xs',
+            focused.source === 'notion'
+              ? 'border-gray-300 dark:border-gray-600'
+              : 'border-black/10 dark:border-white/10'
+          )}
+        >
           <span className="px-2 text-gray-600 dark:text-gray-300 max-w-[200px] truncate">
-            {focused.summary || 'Edit'}
+            {focused.summary || (focused.source === 'notion' ? 'Notion sync' : 'Edit')}
           </span>
           <button
             type="button"
@@ -59,21 +75,24 @@ export function AiEditReviewBar() {
             type="button"
             disabled={busy}
             className="h-7 px-2 rounded-full flex items-center gap-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40"
-            title="Remove this change"
+            title={focused.source === 'notion' ? 'Keep my version' : 'Remove this change'}
             onClick={() => void run(() => discardEdit(focused.id))}
           >
             <Trash2 className="h-3.5 w-3.5" />
-            Remove
+            {focused.source === 'notion' ? 'Keep mine' : 'Remove'}
           </button>
           <button
             type="button"
             disabled={busy}
-            className="h-7 px-2 rounded-full flex items-center gap-1 text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
-            title="Save this change"
+            className={cn(
+              'h-7 px-2 rounded-full flex items-center gap-1 hover:bg-emerald-50 dark:hover:bg-emerald-950/40',
+              focused.source === 'notion' ? 'text-gray-800' : 'text-emerald-700'
+            )}
+            title={focused.source === 'notion' ? 'Accept Notion version' : 'Save this change'}
             onClick={() => void run(() => saveEdit(focused.id))}
           >
             <Check className="h-3.5 w-3.5" />
-            Save
+            {focused.source === 'notion' ? 'Accept' : 'Save'}
           </button>
           <button
             type="button"
@@ -89,13 +108,13 @@ export function AiEditReviewBar() {
         className={cn(
           'flex items-center gap-1 rounded-full',
           'bg-white/95 dark:bg-[#1a1a1a]/95 backdrop-blur',
-          'border border-black/10 dark:border-white/10 shadow-xl',
-          'px-2 py-1.5'
+          'shadow-xl px-2 py-1.5',
+          notionOnly
+            ? 'border border-gray-300 dark:border-gray-600'
+            : 'border border-black/10 dark:border-white/10'
         )}
       >
-        <span className="px-2 text-xs font-medium text-gray-700 dark:text-gray-200">
-          {pendingEdits.length} AI edit{pendingEdits.length === 1 ? '' : 's'}
-        </span>
+        <span className="px-2 text-xs font-medium text-gray-700 dark:text-gray-200">{label}</span>
         <button
           type="button"
           className={cn(
@@ -113,20 +132,25 @@ export function AiEditReviewBar() {
           type="button"
           disabled={busy}
           className="h-8 px-3 rounded-full text-xs font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-50"
-          title="Remove all AI changes"
+          title={notionOnly ? 'Keep all local versions' : 'Remove all AI changes'}
           onClick={() => void run(() => discardAll())}
         >
-          Remove changes
+          {notionOnly ? 'Keep mine' : 'Remove changes'}
         </button>
         <button
           type="button"
           disabled={busy}
-          className="h-8 px-3 rounded-full text-xs font-medium bg-[#2383e2] text-white hover:bg-[#1a6fc9] disabled:opacity-50 flex items-center gap-1.5"
-          title="Save all AI changes"
+          className={cn(
+            'h-8 px-3 rounded-full text-xs font-medium text-white disabled:opacity-50 flex items-center gap-1.5',
+            notionOnly
+              ? 'bg-gray-700 hover:bg-gray-800 dark:bg-gray-600 dark:hover:bg-gray-500'
+              : 'bg-[#2383e2] hover:bg-[#1a6fc9]'
+          )}
+          title={notionOnly ? 'Accept all Notion updates' : 'Save all AI changes'}
           onClick={() => void run(() => saveAll())}
         >
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-          Save changes
+          {notionOnly ? 'Accept all' : 'Save changes'}
         </button>
       </div>
     </div>
