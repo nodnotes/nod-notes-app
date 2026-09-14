@@ -136,8 +136,8 @@ function SortableCaptureRow({
           )}
           title={canReorder ? `${stamp} — drag to reorder` : stamp}
           aria-label={selected ? `Deselect capture ${stamp}` : `Select capture ${stamp}`}
-          aria-pressed={selected}
           {...(canReorder ? { ...attributes, ...listeners } : {})}
+          aria-pressed={selected} // After dnd-kit attrs so selected wins (sortable also sets aria-pressed)
           onClick={() => onToggle(capture.id)}
           onDoubleClick={() => {
             if (capture.imageDataUrl) onPreview(capture.id)
