@@ -639,6 +639,10 @@ import { migrateSoleDatabaseBlockToBoardLink, ensureNotionMapFrameIsBoardLink, i
 import { COMPACT_PREVIEW_ROWS } from '@/lib/notion/database' // Table rows Reset floor / snapshot split
 import { useNotionPageBodySync } from '@/lib/notion/use-notion-page-sync' // Imported page body ↔ Notion
 import { patchBoardMessageMetadata } from '@/lib/notion/connection-sync-pending'
+import {
+  htmlHasNotionSync,
+  sanitizeNotionSyncHtml,
+} from '@/lib/notion/wrap-notion-sync-html' // Strip orphan review marks before persist
 
 interface Message {
   id: string
@@ -2847,6 +2851,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   } = useAiEditSession() // AI edit review session
   const warmFrameContentMount = useWarmFrameContentMount() // Prefetch TipTap before pan-in
   const wasAiPendingRef = useRef(false) // Detect pending → cleared (Remove / Save)
+  const healedNotionMarksRef = useRef<string | null>(null) // Dedupe orphan mark heal writes
   const [aiForceSyncKey, setAiForceSyncKey] = useState(0) // Bump to setContent even while focused
   const { reactFlowInstance, panelWidth, getSetNodes, flashcardMode, setFlashcardMode, selectedTag } = useReactFlowContext() // Get zoom, panel width, setNodes function, flashcard study mode, and selected tag
   const { setNodes, getNodes } = useReactFlow() // Get setNodes and getNodes for NodeToolbar actions
@@ -6738,6 +6743,47 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         // Sticky Save/Remove content — ignore stale cache until it catches up
         const sticky = justRestoredByMessage[promptMessage.id]
         if (sticky !== promptContent) setPromptContent(sticky)
+      } else if (htmlHasNotionSync(merged) && promptMessage?.id) {
+        // Orphan grey marks from a raced Keep mine — heal UI; persist at most once per dirty blob
+        const cleaned = sanitizeNotionSyncHtml(merged)
+        if (cleaned !== promptContent) setPromptContent(cleaned)
+        const healKey = `${promptMessage.id}:${cleaned.length}:${cleaned.slice(0, 48)}`
+        if (healedNotionMarksRef.current !== healKey) {
+          healedNotionMarksRef.current = healKey
+          const mid = promptMessage.id
+          const patchContent = (old: unknown) => {
+            if (!Array.isArray(old)) return old
+            return old.map(
+              (m: { id?: string; content?: string; metadata?: Record<string, unknown> }) =>
+                m?.id === mid
+                  ? {
+                      ...m,
+                      content: cleaned,
+                      metadata: {
+                        ...(m.metadata || {}),
+                        notionSyncReview: false,
+                        notionUpdatesPending: false,
+                      },
+                    }
+                  : m
+            )
+          }
+          if (conversationId) {
+            queryClient.setQueriesData(
+              { queryKey: ['messages-for-panels', conversationId] },
+              patchContent
+            )
+            queryClient.setQueriesData(
+              { queryKey: ['messages-for-panels', conversationId, 'full'] },
+              patchContent
+            )
+          }
+          void supabase.from('messages').update({ content: cleaned }).eq('id', mid)
+          void persistFrameMetaRef.current({
+            notionSyncReview: false,
+            notionUpdatesPending: false,
+          })
+        }
       } else if (
         merged !== promptContent &&
         (!promptHasChanges || blockTypeChanged || wasAiPendingRef.current)
@@ -6915,24 +6961,34 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     } else {
       // For regular panels, update message in database
       if (promptMessage) {
-        // While an AI proposal is pending, keep DB at the original so eye/remove stay correct
+        // While an AI / Notion proposal is pending, keep DB at the original
         if (isFramePending(promptMessage.id)) {
           return
         }
+        // Keep mine / Accept sticky restore — TipTap may still hold marked proposal HTML;
+        // never let that overwrite the restored baseline (stale undone/accepted content).
+        if (justRestoredByMessage[promptMessage.id] !== undefined) {
+          return
+        }
+        // Orphan review marks after a raced discard — strip before persist
+        let toSave = newContent
+        if (htmlHasNotionSync(toSave)) {
+          toSave = sanitizeNotionSyncHtml(toSave)
+        }
         // Visitor sandbox: keep the clone in sync; never write the showcase master
         if (isEphemeralMessageId(promptMessage.id)) {
-          patchEphemeralMessage(promptMessage.id, { content: newContent })
+          patchEphemeralMessage(promptMessage.id, { content: toSave })
           return
         }
         const { error } = await supabase
           .from('messages')
-          .update({ content: newContent })
+          .update({ content: toSave })
           .eq('id', promptMessage.id)
 
         if (error) {
           console.error('Error updating prompt:', error)
         } else {
-          scheduleNotionPagePush(newContent)
+          scheduleNotionPagePush(toSave)
         }
       }
     }

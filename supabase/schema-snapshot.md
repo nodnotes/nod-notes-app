@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-14T11:23:20Z`
+- Snapped at: `2026-09-14T23:23:32Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`; versions from `.temp` + Management API list; cli-latest reports `v2.117.0`)
@@ -9,6 +9,14 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260914232332_notion_sync_review_heal_resync.sql`.
+- **Re-sync after Keep mine**: manual sync still opens review when Notion body text differs (timestamp advanced).
+- **Highlights**: prefer structural TipTap-safe grey marks; never wrap block-level Notion HTML in a mark span.
+- **Stale undo heal**: sticky restore before clearing pending; block TipTap from re-saving marked proposal HTML; strip orphan `data-notion-sync` on load/save/sync.
+- Schema unchanged; remote DDL top remains `20260912192948_panel_edges_canvas_endpoints`.
+
+## Prior: Notion page sync review + OAuth return
 
 - DDL: none. Marker `20260914112320_notion_page_sync_review_oauth_return.sql`.
 - **Notion → NodNotes review**: top-bar sync queues grey `data-notion-sync` marks on changed text/blocks only; Accept / Keep mine; Syncing… → Review / Up to date toast.

@@ -1,0 +1,2 @@
+-- Notion sync review: re-sync after Keep mine; heal stale marks; TipTap-safe highlights.
+-- App/docs marker only; no DDL. Remote DDL top: 20260912192948_panel_edges_canvas_endpoints (local 20260912192642).

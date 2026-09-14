@@ -2,12 +2,24 @@
 
 import type { QueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
+import { htmlToPlainLoose } from '@/lib/ai/apply-replacements'
 import { notionPageBodySyncTarget } from '@/lib/blocks'
 import {
   boardHasNotionPageSyncTargets,
   patchBoardMessageMetadata,
 } from './connection-sync-pending'
-import { buildNotionSyncProposedHtml } from './wrap-notion-sync-html'
+import {
+  buildNotionSyncProposedHtml,
+  sanitizeNotionSyncHtml,
+} from './wrap-notion-sync-html'
+
+/** True when local vs Notion body text still differs (ignores markup noise). */
+function notionBodiesVisiblyDiffer(localHtml: string, remoteHtml: string): boolean {
+  // Unwrap review marks so a mid-review cache hit doesn’t look “equal” to Notion
+  const norm = (h: string) =>
+    htmlToPlainLoose(sanitizeNotionSyncHtml(h || '')).replace(/\s+/g, ' ').trim()
+  return norm(localHtml) !== norm(remoteHtml)
+}
 
 type PanelMessage = {
   id: string
@@ -57,6 +69,32 @@ async function persistMessageMeta(messageId: string, patch: Record<string, unkno
     .from('messages')
     .update({ metadata: { ...existing, ...patch } })
     .eq('id', messageId)
+}
+
+/** Write cleaned frame HTML (heals leftover review marks). */
+async function persistMessageContent(messageId: string, content: string): Promise<void> {
+  const supabase = createClient()
+  await supabase.from('messages').update({ content }).eq('id', messageId)
+}
+
+/** Optimistic content patch alongside metadata helpers. */
+function patchBoardMessageContent(
+  queryClient: QueryClient,
+  conversationId: string,
+  messageId: string,
+  content: string
+): void {
+  const upd = (list: unknown) => {
+    if (!Array.isArray(list)) return list
+    return list.map((m) => {
+      const row = m as PanelMessage
+      if (row?.id !== messageId) return m
+      return { ...row, content }
+    })
+  }
+  queryClient.setQueriesData({ queryKey: ['messages-for-panels', conversationId] }, upd)
+  queryClient.setQueriesData({ queryKey: ['messages-for-panels', conversationId, 'full'] }, upd)
+  queryClient.setQueriesData({ queryKey: ['messages-for-panels', conversationId, 'embed'] }, upd)
 }
 
 export type CheckBoardNotionPagesOpts = {
@@ -117,17 +155,50 @@ export async function checkBoardNotionPages(
         }
 
         const remoteNewer = remoteTime > local
-        if (!remoteNewer && !wasPending) return
-        if (!remoteNewer && wasPending) {
-          const patch = { notionUpdatesPending: false }
-          patchBoardMessageMetadata(queryClient, conversationId, msg.id, patch)
-          void persistMessageMeta(msg.id, patch)
+        const rawContent = typeof msg.content === 'string' ? msg.content : ''
+        // Heal leftover grey marks from a prior Keep mine / cancel that didn’t unwrap
+        const originalContent = sanitizeNotionSyncHtml(rawContent)
+        if (originalContent !== rawContent || meta.notionSyncReview === true) {
+          if (originalContent !== rawContent) {
+            patchBoardMessageContent(queryClient, conversationId, msg.id, originalContent)
+            void persistMessageContent(msg.id, originalContent)
+          }
+          // Clear orphan review flags when content is healed (no active proposal yet)
+          if (meta.notionSyncReview === true && !apply) {
+            const clearReview = { notionSyncReview: false, notionUpdatesPending: false }
+            patchBoardMessageMetadata(queryClient, conversationId, msg.id, clearReview)
+            void persistMessageMeta(msg.id, clearReview)
+          } else if (
+            originalContent !== rawContent &&
+            meta.notionSyncReview === true &&
+            meta.notionUpdatesPending !== true
+          ) {
+            const clearReview = { notionSyncReview: false }
+            patchBoardMessageMetadata(queryClient, conversationId, msg.id, clearReview)
+            void persistMessageMeta(msg.id, clearReview)
+          }
+        }
+        // Keep mine advances lastEditedTime so background poll stays quiet; manual
+        // sync still re-opens review when the Notion body text still differs.
+        const bodyDiffers =
+          apply && typeof json.html === 'string'
+            ? notionBodiesVisiblyDiffer(originalContent, json.html)
+            : false
+
+        if (!remoteNewer && !bodyDiffers) {
+          if (wasPending) {
+            const patch = { notionUpdatesPending: false, notionSyncReview: false }
+            patchBoardMessageMetadata(queryClient, conversationId, msg.id, patch)
+            void persistMessageMeta(msg.id, patch)
+          }
           return
         }
 
         updates += 1
 
         if (!apply || typeof json.html !== 'string') {
+          // Detect-only (or missing html): flag pending only when Notion is newer
+          if (!remoteNewer) return
           const patch = {
             notionUpdatesPending: true,
             notionRemoteLastEditedTime: remoteTime,
@@ -137,9 +208,20 @@ export async function checkBoardNotionPages(
           return
         }
 
-        // Review proposal — keep DB content as original until Save
-        const originalContent =
-          typeof msg.content === 'string' ? msg.content : ''
+        // Remote newer but body text matches — advance baseline, no review UI
+        if (!bodyDiffers) {
+          const patch = {
+            notionLastEditedTime: remoteTime,
+            notionUpdatesPending: false,
+            notionSyncReview: false,
+            notionRemoteLastEditedTime: remoteTime,
+          }
+          patchBoardMessageMetadata(queryClient, conversationId, msg.id, patch)
+          void persistMessageMeta(msg.id, patch)
+          return
+        }
+
+        // Review proposal — keep DB content as original until Accept / Keep mine
         proposals.push({
           messageId: msg.id,
           pageId: target.pageId,

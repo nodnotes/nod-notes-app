@@ -11,8 +11,12 @@ import {
   type ReactNode,
 } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { htmlHasAiOrigin, htmlHasAiPending, promotePendingToOrigin } from '@/lib/ai/wrap-ai-html'
-import { unwrapNotionSync } from '@/lib/notion/wrap-notion-sync-html'
+import { htmlHasAiOrigin, htmlHasAiPending, promotePendingToOrigin, unwrapAiPending } from '@/lib/ai/wrap-ai-html'
+import {
+  sanitizeNotionSyncHtml,
+  unwrapNotionSync,
+} from '@/lib/notion/wrap-notion-sync-html'
+import { patchBoardMessageMetadata } from '@/lib/notion/connection-sync-pending'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   buildProposedHtml,
@@ -373,7 +377,8 @@ export function AiEditSessionProvider({
             kind: e.kind,
             messageId: e.messageId,
             summary: e.summary,
-            originalContent: original || e.originalContent || '',
+            // Never keep stale review marks as the Keep mine baseline
+            originalContent: sanitizeNotionSyncHtml(original || e.originalContent || ''),
             proposedContent: e.proposedContent,
             actionLogId: e.actionLogId,
             source: 'notion',
@@ -426,6 +431,16 @@ export function AiEditSessionProvider({
         )
         return [...withoutDupes, ...withIds]
       })
+      // Drop sticky Keep mine / Accept HTML so TipTap must paint the new marked proposal
+      setJustRestoredByMessage((prev) => {
+        let next = prev
+        for (const e of withIds) {
+          if (!e.messageId || !(e.messageId in next)) continue
+          if (next === prev) next = { ...prev }
+          delete next[e.messageId]
+        }
+        return next
+      })
       setPreviewOriginal(false)
       onMessagesMutated?.()
       bumpMessages()
@@ -437,7 +452,7 @@ export function AiEditSessionProvider({
     async (edit: AiPendingEdit): Promise<{ messageId?: string; content?: string }> => {
       if (edit.kind === 'update_frame' && edit.messageId) {
         if (edit.source === 'notion') {
-          const finalHtml = unwrapNotionSync(edit.proposedContent)
+          const finalHtml = sanitizeNotionSyncHtml(unwrapNotionSync(edit.proposedContent))
           await persistFrameContent(edit.messageId, finalHtml)
           const metaPatch: Record<string, unknown> = {
             notionSyncReview: false,
@@ -449,6 +464,9 @@ export function AiEditSessionProvider({
             metaPatch.notionRemoteLastEditedTime = edit.notionLastEditedTime
           }
           await persistFrameMeta(edit.messageId, metaPatch)
+          if (conversationId) {
+            patchBoardMessageMetadata(queryClient, conversationId, edit.messageId, metaPatch)
+          }
           if (edit.notionPageId) {
             window.dispatchEvent(
               new CustomEvent('notion-pages-applied', {
@@ -499,14 +517,15 @@ export function AiEditSessionProvider({
       }
       return {}
     },
-    [persistFrameContent, persistFrameMeta]
+    [persistFrameContent, persistFrameMeta, conversationId, queryClient]
   )
 
   const applyDiscardOne = useCallback(
     async (edit: AiPendingEdit): Promise<{ messageId?: string; content?: string; deleted?: boolean }> => {
       if (edit.kind === 'update_frame' && edit.messageId) {
         if (edit.source === 'notion') {
-          // Keep local content; advance baseline so background poll stops re-flagging
+          // Keep local content; advance baseline so background poll stops re-flagging.
+          // Manual sync still re-opens review via body-text compare when Notion differs.
           const metaPatch: Record<string, unknown> = {
             notionSyncReview: false,
             notionUpdatesPending: false,
@@ -516,8 +535,13 @@ export function AiEditSessionProvider({
             metaPatch.notionLastEditedTime = edit.notionLastEditedTime
           }
           await persistFrameMeta(edit.messageId, metaPatch)
-          await persistFrameContent(edit.messageId, edit.originalContent)
-          return { messageId: edit.messageId, content: edit.originalContent }
+          if (conversationId) {
+            patchBoardMessageMetadata(queryClient, conversationId, edit.messageId, metaPatch)
+          }
+          // Always restore a clean original — stale grey marks look like broken formatting
+          const cleaned = sanitizeNotionSyncHtml(edit.originalContent)
+          await persistFrameContent(edit.messageId, cleaned)
+          return { messageId: edit.messageId, content: cleaned }
         }
         const metaPatch: Record<string, unknown> = { aiPendingEdit: false }
         if (edit.colorChanged) {
@@ -527,9 +551,11 @@ export function AiEditSessionProvider({
           )
         }
         await persistFrameMeta(edit.messageId, metaPatch)
-        await persistFrameContent(edit.messageId, edit.originalContent)
+        // Strip leftover pending marks so undo doesn’t leave rainbow/grey spans in DB
+        const cleaned = unwrapAiPending(edit.originalContent || '')
+        await persistFrameContent(edit.messageId, cleaned)
         await markActionStatus(edit.actionLogId, 'undone')
-        return { messageId: edit.messageId, content: edit.originalContent }
+        return { messageId: edit.messageId, content: cleaned }
       }
       if (edit.kind === 'create_frame' && edit.messageId) {
         await deleteFrame(edit.messageId)
@@ -542,7 +568,7 @@ export function AiEditSessionProvider({
       }
       return {}
     },
-    [persistFrameContent, persistFrameMeta, deleteFrame, deleteEdge]
+    [persistFrameContent, persistFrameMeta, deleteFrame, deleteEdge, conversationId, queryClient]
   )
 
   const saveEdit = useCallback(
@@ -550,14 +576,15 @@ export function AiEditSessionProvider({
       const edit = pendingEdits.find((e) => e.id === id)
       if (!edit) return
       const result = await applySaveOne(edit)
-      setPendingEdits((prev) => prev.filter((e) => e.id !== id))
-      if (focusedEditId === id) setFocusedEditId(null)
+      // Sticky before clear — block TipTap from writing still-proposed HTML
       if (result.messageId && result.content) {
         setJustRestoredByMessage((prev) => ({
           ...prev,
           [result.messageId!]: result.content!,
         }))
       }
+      setPendingEdits((prev) => prev.filter((e) => e.id !== id))
+      if (focusedEditId === id) setFocusedEditId(null)
       onMessagesMutated?.()
       bumpMessages(
         result.messageId && result.content
@@ -590,18 +617,20 @@ export function AiEditSessionProvider({
         }
       }
 
-      setPendingEdits((prev) =>
-        prev.filter((e) => e.id !== id && !orphanThreadIds.includes(e.id))
-      )
-
-      if (focusedEditId === id) setFocusedEditId(null)
-      setPreviewOriginal(false)
+      // Sticky restore BEFORE clearing pending — same React batch so TipTap never
+      // saves still-proposed (marked) HTML once isFramePending flips false.
       if (result.messageId && result.content && !result.deleted) {
         setJustRestoredByMessage((prev) => ({
           ...prev,
           [result.messageId!]: result.content!,
         }))
       }
+      setPendingEdits((prev) =>
+        prev.filter((e) => e.id !== id && !orphanThreadIds.includes(e.id))
+      )
+
+      if (focusedEditId === id) setFocusedEditId(null)
+      setPreviewOriginal(false)
       onMessagesMutated?.()
       bumpMessages(
         result.messageId && result.content && !result.deleted
@@ -621,6 +650,7 @@ export function AiEditSessionProvider({
         restored[result.messageId] = result.content
       }
     }
+    // Sticky before clear — same race guard as discard
     setJustRestoredByMessage((prev) => ({ ...prev, ...restored }))
     setPendingEdits([])
     setFocusedEditId(null)
