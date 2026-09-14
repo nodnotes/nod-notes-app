@@ -22,7 +22,7 @@ export function InputAreaWithStickyPrompt({ conversationId, projectId }: { conve
   } = useSidebarContext() // Wait for chat column restore; utility overlay inset for centering
   // Overlay does not shrink the map — pad centered chrome as if the usable width excluded utility
   const utilityCenterInset =
-    isUtilitySidebarOpen ? utilityOccupiedWidth(utilitySidebarWidth) : 0
+    isUtilitySidebarOpen && !isMobileMode ? utilityOccupiedWidth(utilitySidebarWidth) : 0
   const [inputHeight, setInputHeight] = useState(52) // Default height
   const [maxWidth, setMaxWidth] = useState(768) // Default max-w-3xl (768px)
   const [isCentered, setIsCentered] = useState(false) // Whether input should be centered

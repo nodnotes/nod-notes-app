@@ -576,7 +576,7 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
   }, [boardStyle])
   const { setIsMobileMode, isMobileMode, isChatSidebarOpen, isUtilitySidebarOpen, toggleChatSidebar, logoDrawing } = useSidebarContext()
   useChatSidebarViewportAdjust(reactFlowInstance, isChatSidebarOpen && !isMobileMode) // No column shrink on phone dock
-  useUtilitySidebarViewportAdjust(reactFlowInstance, isUtilitySidebarOpen) // Overlay: frame usable width as pane − utility
+  useUtilitySidebarViewportAdjust(reactFlowInstance, isUtilitySidebarOpen && !isMobileMode) // Phone: overlay chrome; don’t reframe the board
   const originalPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map()) // Store original positions for Linear mode
   const isLinearModeRef = useRef(false) // Track if we're currently in Linear mode
 

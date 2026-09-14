@@ -327,7 +327,8 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
   const { isChatSidebarOpen, chatChromeReady, isMobileMode, isUtilitySidebarOpen, utilitySidebarWidth } =
     useSidebarContext() // Measure after chat restore; phone layout; utility overlay inset
   const utilityTopBarInset =
-    isUtilitySidebarOpen ? utilityOccupiedWidth(utilitySidebarWidth) : 0 // Overlay + right air — inset chrome instead
+    isUtilitySidebarOpen && !isMobileMode ? utilityOccupiedWidth(utilitySidebarWidth) : 0 // Phone: overlap chrome; don’t shrink the island
+  const hideShareMore = isMobileMode && isUtilitySidebarOpen // Phone: Share + More yield the right edge to the overlay
   const { toolsHost, undoHost, phoneTools, setPhoneTools, setShareCompact } = usePhoneModeMenu() // Pill + share/AI→More before tools leave
   const { hasAiContent, aiTopBarPinned } = useAiEditSession() // Pinned sparkles fold with shareCompact
   const { reactFlowInstance, isLocked, lineStyle: verticalLineStyle, setLineStyle: setVerticalLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, isDrawing, setIsDrawing, drawTool: contextDrawTool, setDrawTool: setContextDrawTool, eraserMode, setEraserMode, drawTipSize, setDrawTipSize, drawTipZoomLocked, setDrawTipZoomLocked, eraserTipSize, setEraserTipSize, eraserTipZoomLocked, setEraserTipZoomLocked, pencilPalette, pencilColorIndex, setPencilColorIndex, setPencilColorAt, addPencilColor, removePencilColor, mapUndo, mapRedo, canMapUndo, canMapRedo, getMapTakeSnapshot, getSetNodes } = useReactFlowContext()
@@ -3528,9 +3529,9 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
             <NotionTopBarPin />
             <AiOriginTopBarToggle />
             <CollabPresenceAvatars />
-            {canShare && conversationId ? (
+            {hideShareMore ? null : canShare && conversationId ? (
               <ShareBoardMenu boardId={conversationId} />
-            ) : canShare ? (
+            ) : !hideShareMore && canShare ? (
               <Button
                 variant="ghost"
                 size="sm"

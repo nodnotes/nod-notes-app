@@ -1,0 +1,2 @@
+-- Phone utility overlays chrome; hide grey body while any soft keyboard is up.
+-- App/docs marker only; no DDL. Remote DDL top: 20260912192948_panel_edges_canvas_endpoints (local 20260912192642).

@@ -28,6 +28,9 @@ const NOD_ORIGIN_STYLE = {
 /** Full brand mark viewBox (`Nod notes icon 3.svg`). */
 export const NN_ICON_VIEWBOX = '0 0 54.62 62.98'
 
+/** Homepage brand icon ink (`HomeTopNav` / footer `NodNotesIcon`) — not `--nod-blue`. */
+export const NN_BRAND_INK_CLASS = 'text-gray-700 dark:text-gray-200'
+
 /** Hand-drawn T / table-leg — connection cues use this alone (blue simulator = the disc). */
 export const NN_CONNECTION_T_PATH =
   'M34.34,52.91l-.76,9.15c-.05.55-.52.96-1.06.92-3.23-.22-7.63-.41-10.46-1.34-7.13-2.35-11.55-8.44-11.57-15.95,0-.05,0-.11.01-.17.23-1.61,3.01-27.4,4.08-33.85.13-.76-.47-1.45-1.24-1.44l-12.33.23c-.59,0-1.06-.5-1.01-1.09L.7.92c.04-.52.48-.92,1-.92h21.74c1.84,0,3.26,1.6,3.04,3.43l-4.94,41.31c-.2,2.38,1.98,6.4,4.59,6.62l7.27.47c.56.04.98.52.94,1.08Z'

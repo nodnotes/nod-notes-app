@@ -143,6 +143,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
   } = useSidebarContext() // Phone layout; open utility right of More (close lives in column)
   const { shareCompact } = usePhoneModeMenu() // Toolbar collapses copy/star before tools leave for the pill
   const collapseShare = isMobileMode || shareCompact // Hide copy/star into More ahead of phoneTools
+  const hideMore = isMobileMode && isUtilitySidebarOpen // Phone: More yields the right edge to the overlay
   const [isDesktopApp, setIsDesktopApp] = useState(false) // Electron shell → hide "Download desktop app"
 
   useEffect(() => {
@@ -192,6 +193,10 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
       cancelled = true
     }
   }, [conversationId])
+
+  useEffect(() => {
+    if (isMobileMode && isUtilitySidebarOpen) setMenuOpen(false) // Don’t leave More open under the overlay
+  }, [isMobileMode, isUtilitySidebarOpen])
 
   useEffect(() => {
     if (!menuOpen) {
@@ -388,6 +393,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
             </Button>
           </div>
         )}
+        {!hideMore && (
         <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
           <DropdownMenuTrigger asChild>
             <Button
@@ -768,6 +774,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
             )}
           </DropdownMenuContent>
         </DropdownMenu>
+        )}
         {!isUtilitySidebarOpen && (
           <Button
             variant="ghost"

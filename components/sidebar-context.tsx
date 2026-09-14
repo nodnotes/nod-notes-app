@@ -204,9 +204,15 @@ interface SidebarContextType {
   /** Phone: px to lift Free nav / minimap chrome above the map-docked AI composer (+ keyboard). */
   aiMapDockLiftPx: number
   setAiMapDockLiftPx: (px: number) => void
+  /** Phone: chrome + Ask only (+ keyboard) — utility body stops here so it can overlap the transcript. */
+  aiMapDockComposerLiftPx: number
+  setAiMapDockComposerLiftPx: (px: number) => void
   /** Phone: left inset so Free nav aligns with the AI dock’s left edge when jumped. */
   aiMapDockLeftPx: number | null
   setAiMapDockLeftPx: (px: number | null) => void
+  /** Phone: soft keyboard is up (visualViewport inset ≥ 80) — chat, I-bar, or any field. */
+  aiKeyboardOpen: boolean
+  setAiKeyboardOpen: (value: boolean) => void
   /** Phone landscape + keyboard: visual viewport is too short for top bar + composer — hide tools while typing. */
   phoneDockTight: boolean
   setPhoneDockTight: (value: boolean) => void
@@ -236,8 +242,10 @@ export function SidebarContextProvider({
   const [utilitySidebarMode, setUtilitySidebarModeState] = useState<UtilitySidebarMode>('layers') // Default layers until storage restore
   const [logoDrawing, setLogoDrawingState] = useState<string | null>(null) // Shared custom logo drawing
   const [aiMapDockLiftPx, setAiMapDockLiftPx] = useState(0) // Phone: lift Free nav above AI dock
+  const [aiMapDockComposerLiftPx, setAiMapDockComposerLiftPx] = useState(0) // Phone: utility overlap floor (chrome + Ask)
   const [aiMapDockLeftPx, setAiMapDockLeftPx] = useState<number | null>(null) // Phone: align Free nav to dock left
   const [aiChatHasTranscript, setAiChatHasTranscript] = useState(false) // Chat box has messages (vs input-only)
+  const [aiKeyboardOpen, setAiKeyboardOpen] = useState(false) // Phone: visualViewport keyboard inset (any field)
   const [phoneDockTight, setPhoneDockTight] = useState(false) // Hide top bar / mode pill when landscape keyboard leaves no strip
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null) // Delayed-close handle for left nav
   const isSidebarPinnedRef = useRef(false) // Latest pin for scheduleClose without stale closure
@@ -259,6 +267,34 @@ export function SidebarContextProvider({
   useEffect(() => {
     isMobileModeRef.current = isMobileMode
   }, [isMobileMode])
+
+  // Phone: any soft keyboard (chat, I-bar, search) — inset ≥ 80 ignores address-bar jitter
+  useEffect(() => {
+    if (previewMode) return // Showcase stays desktop; don’t hide utility on a fake inset
+    const KEYBOARD_OPEN_PX = 80
+    const update = () => {
+      if (!isMobileModeRef.current) {
+        setAiKeyboardOpen(false) // Desktop / wide: hardware keyboard doesn’t shrink visualViewport
+        return
+      }
+      const vv = window.visualViewport
+      const vvHeight = vv?.height ?? window.innerHeight // Visible strip (keyboard excluded)
+      const vvTop = vv?.offsetTop ?? 0 // Layout Y of the visual viewport top
+      const inset = Math.max(0, window.innerHeight - vvHeight - vvTop) // Keyboard / chrome below the visual viewport
+      setAiKeyboardOpen(inset >= KEYBOARD_OPEN_PX)
+    }
+    update()
+    const vv = window.visualViewport
+    vv?.addEventListener('resize', update)
+    vv?.addEventListener('scroll', update)
+    window.addEventListener('resize', update)
+    return () => {
+      vv?.removeEventListener('resize', update)
+      vv?.removeEventListener('scroll', update)
+      window.removeEventListener('resize', update)
+      setAiKeyboardOpen(false)
+    }
+  }, [previewMode, isMobileMode])
 
   useEffect(() => {
     isChatOpenRef.current = isChatSidebarOpen
@@ -567,8 +603,12 @@ export function SidebarContextProvider({
         setAiChatHasTranscript,
         aiMapDockLiftPx,
         setAiMapDockLiftPx,
+        aiMapDockComposerLiftPx,
+        setAiMapDockComposerLiftPx,
         aiMapDockLeftPx,
         setAiMapDockLeftPx,
+        aiKeyboardOpen,
+        setAiKeyboardOpen,
         phoneDockTight,
         setPhoneDockTight,
       }}
@@ -612,8 +652,12 @@ export function useSidebarContext() {
       setAiChatHasTranscript: () => {},
       aiMapDockLiftPx: 0,
       setAiMapDockLiftPx: () => {},
+      aiMapDockComposerLiftPx: 0,
+      setAiMapDockComposerLiftPx: () => {},
       aiMapDockLeftPx: null as number | null,
       setAiMapDockLeftPx: () => {},
+      aiKeyboardOpen: false,
+      setAiKeyboardOpen: () => {},
       phoneDockTight: false,
       setPhoneDockTight: () => {},
     }

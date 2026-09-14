@@ -215,6 +215,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
     logoDrawing,
     setLogoDrawing,
     setAiMapDockLiftPx,
+    setAiMapDockComposerLiftPx,
     setAiMapDockLeftPx,
     setAiChatHasTranscript,
     setPhoneDockTight,
@@ -720,6 +721,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
   useLayoutEffect(() => {
     if (!isMobileMode || !isChatSidebarOpen) {
       setAiMapDockLiftPx(0) // No lift when closed / desktop
+      setAiMapDockComposerLiftPx(0) // Utility overlap floor follows the dock
       setAiMapDockLeftPx(null) // Restore default MINIMAP_LEFT
       return
     }
@@ -735,11 +737,15 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
     if (!shell || !content) {
       // Closed-opacity dock still mounted — estimate composer height until next open paint
       setAiMapDockLiftPx(Math.round(72 + keyboardInset + 2)) // Tight to chat when estimate only
+      setAiMapDockComposerLiftPx(Math.round(72 + keyboardInset + 2)) // Same until the floor node measures
       return
     }
     const publish = () => {
       const h = shell.offsetHeight // Composer (+ transcript / chrome) height
       setAiMapDockLiftPx(Math.round(h + keyboardInset + 2)) // + keyboard + small gap to chat
+      const floor = content.querySelector('[data-chat-map-dock-floor]') as HTMLElement | null // Chrome + Ask (no transcript)
+      const floorH = floor?.offsetHeight ?? 72 // Empty-chat extent so utility can overlap the transcript
+      setAiMapDockComposerLiftPx(Math.round(floorH + keyboardInset + 2)) // Utility body stops above Ask
       // Prefer measured left (safe-area / subpixel) over geometric
       setAiMapDockLeftPx(Math.round(content.getBoundingClientRect().left))
     }
@@ -756,6 +762,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
       ro.disconnect()
       window.removeEventListener('resize', onResize)
       setAiMapDockLiftPx(0)
+      setAiMapDockComposerLiftPx(0)
       setAiMapDockLeftPx(null)
     }
   }, [
@@ -764,6 +771,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
     keyboardInset,
     dockCompact,
     setAiMapDockLiftPx,
+    setAiMapDockComposerLiftPx,
     setAiMapDockLeftPx,
     messages.length,
   ])
@@ -1172,6 +1180,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                 )}
               </div>
             )}
+            <div data-chat-map-dock-floor className="flex flex-col gap-1.5">
             {isChatSidebarOpen && !dockCompact && (
               // Mid chrome: own rounded board-fill card — not fused to transcript or prompt
               <div
@@ -1228,6 +1237,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
               className="rounded-xl overflow-hidden border border-black/10 dark:border-white/10" // Chat-bar grey via [data-chat-prompt]; hairline — no shadow
             >
               <div className="px-1 pt-1">{composer}</div>
+            </div>
             </div>
               </>
             )}

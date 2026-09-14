@@ -16,7 +16,7 @@ import { createPortal } from 'react-dom'
 import { useEditor, EditorContent, type Editor } from '@tiptap/react'
 import { ReactFlowProvider } from 'reactflow'
 import { GripVertical } from 'lucide-react'
-import { NodNotesIcon, NN_BLOB_CY_FRAC, NN_CONNECTION_T_PATH, NN_CONNECTION_T_VIEWBOX } from '@/components/nod-notes-icon'
+import { NodNotesIcon, NN_BLOB_CY_FRAC, NN_BRAND_INK_CLASS, NN_CONNECTION_T_PATH, NN_CONNECTION_T_VIEWBOX } from '@/components/nod-notes-icon'
 import type { AiMessage, AiChatBlockDragPayload, AiChatBlockDragItem } from '@/lib/ai/types'
 import { AI_CHAT_BLOCK_MIME } from '@/lib/ai/types'
 import { markdownToTipTapHtml } from '@/lib/ai/markdown-to-tiptap'
@@ -1257,7 +1257,7 @@ export function AiChatTurn({
                 ? 'top-[9px] w-auto min-w-5 items-start px-0.5' // First-line glyphs (pad 4 + text-sm/1.75 half-leading)
                 : 'top-1 h-5 w-5 items-center', // Compact ⋮⋮-sized grip
               showLinkedGrip
-                ? null // Blue mark — no gray icon tint
+                ? null // Brand T uses NN_BRAND_INK_CLASS; disc stays blue
                 : 'text-gray-400 hover:text-gray-700 dark:hover:text-gray-200',
               'cursor-grab active:cursor-grabbing',
               // Linked mark stays visible; unlinked grip: hover devices hide until turn hover
@@ -1278,10 +1278,10 @@ export function AiChatTurn({
                 <svg
                   viewBox={NN_CONNECTION_T_VIEWBOX}
                   preserveAspectRatio="xMinYMin meet"
-                  className="shrink-0 block"
+                  className={cn('shrink-0 block', NN_BRAND_INK_CLASS)} // Same ink as the homepage brand icon
                   style={{ width: 8, height: 8 / LINK_T_ASPECT, marginRight: 0.5 }}
                 >
-                  <path fill="#3b82f6" d={NN_CONNECTION_T_PATH} />
+                  <path fill="currentColor" d={NN_CONNECTION_T_PATH} />
                 </svg>
                 {/* Disc center matches table-blob on Nod notes icon 3 */}
                 <span

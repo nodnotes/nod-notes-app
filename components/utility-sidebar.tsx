@@ -173,15 +173,22 @@ export function UtilitySidebar() {
     isMobileMode,
     isChatSidebarOpen,
     aiMapDockLiftPx,
+    aiMapDockComposerLiftPx,
+    aiKeyboardOpen,
   } = useSidebarContext()
   const params = useParams<{ conversationId?: string }>() // Board id when on /board/{id}
   const conversationId =
     typeof params?.conversationId === 'string' ? params.conversationId : undefined
   // Brand mark only mounts while chat is closed — clear it then; full height when chat owns the right
   const clearBrand = !isChatSidebarOpen
+  // Phone + keyboard: keep the mode tabs, hide the grey body until the keyboard drops (chat, I-bar, any field)
+  const hideUtilityBody = isMobileMode && aiKeyboardOpen
+  const composerPad = aiMapDockComposerLiftPx || aiMapDockLiftPx // Empty-chat floor (chrome + Ask + keyboard)
   const bottomPad =
     isMobileMode && isChatSidebarOpen
-      ? aiMapDockLiftPx // Phone AI dock sits above the utility body
+      ? hideUtilityBody
+        ? 0 // Header-only while the keyboard is up
+        : composerPad // Overlap the transcript; stop above Ask like a new chat
       : clearBrand
         ? UTILITY_BRAND_CLEARANCE_PX
         : 0
@@ -198,14 +205,15 @@ export function UtilitySidebar() {
     <aside
       data-utility-sidebar
       className={cn(
-        'pointer-events-none absolute inset-y-0 right-0 z-20 flex flex-col isolate', // isolate: under-thread SVG (z-0) stacks under chrome
+        'pointer-events-none absolute inset-y-0 right-0 flex flex-col isolate', // isolate: under-thread SVG (z-0) stacks under chrome
+        isMobileMode ? 'z-[46]' : 'z-20', // Phone: above the map-docked chat (z-45) so the body can overlap the transcript
         'bg-transparent', // Board paints through; chrome is tabs / list only
         transitionOn && 'transition-transform duration-200 ease-out' // Match RF viewport open/close; off while seam-resizing
       )}
       style={{
         width: utilitySidebarWidth + UTILITY_RIGHT_GAP_PX, // Chrome width + right air so close matches top-bar open
         paddingRight: UTILITY_RIGHT_GAP_PX, // Pass-through; + header px-1.5 = 8px, same as mode-pill → close
-        paddingBottom: bottomPad, // Brand disc when chat is closed; phone dock when chat is open
+        paddingBottom: bottomPad, // Brand disc when chat is closed; phone Ask/chrome floor when chat is open
         transform: shown ? 'translateX(0)' : 'translateX(100%)', // Slide off the right edge when closing (includes the gap)
       }}
       onTransitionEnd={onTransitionEnd}
@@ -260,6 +268,7 @@ export function UtilitySidebar() {
         </button>
       </header>
 
+      {!hideUtilityBody ? (
       <div
         className={cn(
           'relative z-10 flex min-h-0 flex-1 flex-col px-1.5 pb-3', // pb-3 matches chat prompt bottom gap
@@ -276,6 +285,7 @@ export function UtilitySidebar() {
           <UtilityModeBody mode={utilitySidebarMode} conversationId={conversationId} />
         </div>
       </div>
+      ) : null}
     </aside>
   )
 }

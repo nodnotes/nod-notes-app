@@ -135,7 +135,7 @@ export function WelcomeText() {
   const { reactFlowInstance, editMenuPillMode } = useReactFlowContext() // Empty board + Draw tools change hint Y
   const { isMobileMode, isUtilitySidebarOpen, utilitySidebarWidth } = useSidebarContext() // Overlay inset for center brand
   const utilityCenterInset =
-    isUtilitySidebarOpen ? utilityOccupiedWidth(utilitySidebarWidth) : 0 // Same usable strip as the mode pill
+    isUtilitySidebarOpen && !isMobileMode ? utilityOccupiedWidth(utilitySidebarWidth) : 0 // Phone: overlay the brand; don’t shift it
   const rootRef = useRef<HTMLDivElement>(null) // Overlay = local origin for measures
   const measureRefs = useRef<Record<HintId, HTMLDivElement | null>>({
     nav: null,

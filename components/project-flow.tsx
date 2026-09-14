@@ -242,9 +242,9 @@ function ProjectFlowInner({ projectId }: { projectId?: string }) {
 
   const reactFlowInstance = useReactFlow()
   const { setReactFlowInstance, registerSetNodes, isLocked, layoutMode, setLayoutMode, setIsDeterministicMapping, panelWidth: contextPanelWidth, isPromptBoxCentered, lineStyle, setLineStyle, arrowDirection, setArrowDirection } = useReactFlowContext()
-  const { setIsMobileMode, isChatSidebarOpen, isUtilitySidebarOpen } = useSidebarContext()
+  const { setIsMobileMode, isMobileMode, isChatSidebarOpen, isUtilitySidebarOpen } = useSidebarContext()
   useChatSidebarViewportAdjust(reactFlowInstance, isChatSidebarOpen) // Shrink/grow map zoom with chat column
-  useUtilitySidebarViewportAdjust(reactFlowInstance, isUtilitySidebarOpen) // Overlay: frame usable width as pane − utility
+  useUtilitySidebarViewportAdjust(reactFlowInstance, isUtilitySidebarOpen && !isMobileMode) // Phone: overlay chrome; don’t reframe the board
   const originalPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map())
   const isLinearModeRef = useRef(false)
   const isSwitchingToLinearRef = useRef(false) // Track when switching to Linear mode

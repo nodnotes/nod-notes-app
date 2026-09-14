@@ -7,6 +7,7 @@
 import { ConnectionIndicator } from '@/components/threads/ConnectionIndicator'
 import {
   NN_BLOB_CY_FRAC,
+  NN_BRAND_INK_CLASS,
   NN_CONNECTION_T_PATH,
   NN_CONNECTION_T_VIEWBOX,
 } from '@/components/nod-notes-icon' // Same T + blob height as empty-board / chat brand mark
@@ -66,11 +67,11 @@ export function ChatLinkConnectionCue({
         {/* Brand T — left of the disc (simulator replaces the table-dot at blob height) */}
         <svg
           aria-hidden
-          className="pointer-events-none shrink-0"
+          className={cn('pointer-events-none shrink-0', NN_BRAND_INK_CLASS)} // Brand ink, not selection blue
           viewBox={NN_CONNECTION_T_VIEWBOX}
           style={{ width: lineW, height: lineH, marginRight: gap }}
         >
-          <path fill="#3b82f6" d={NN_CONNECTION_T_PATH} />
+          <path fill="currentColor" d={NN_CONNECTION_T_PATH} />
         </svg>
         {/* Dot slot — center of this box is the connection point */}
         <div
