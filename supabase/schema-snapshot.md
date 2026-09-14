@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-14T00:49:11Z`
+- Snapped at: `2026-09-14T01:20:29Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`; versions from `.temp` + Management API list; cli-latest reports `v2.117.0`)
@@ -9,6 +9,13 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260914012029_free_nav_minimap_double_caret.sql`.
+- **Minimap toggle**: chat-style double caret (`ChevronsUp`/`ChevronsDown`) inside Free nav on the left.
+- **Layout**: content-sized left cells; zoom % grows with digit count; rotate + pan stay right (`ml-auto`); column **196px**.
+- Schema unchanged; remote DDL top remains `20260912192948_panel_edges_canvas_endpoints`.
+
+## Prior: phone utility overlay + keyboard hide
 
 - DDL: none. Marker `20260914004911_phone_utility_overlay_keyboard_hide.sql`.
 - **Phone utility**: overlay does not inset the top bar or mode pill; Share/More hide while open; body overlaps the transcript down to the empty-chat Ask floor.

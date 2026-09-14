@@ -1,0 +1,2 @@
+-- Free nav: double-caret minimap toggle inside the bar; 196px column; zoom % grows; rotate/pan stay right.
+-- App/docs marker only; no DDL. Remote DDL top: 20260912192948_panel_edges_canvas_endpoints (local 20260912192642).

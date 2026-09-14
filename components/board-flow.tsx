@@ -98,7 +98,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { ArrowDown, GripVertical, MousePointer2, Hand, Plus, Minus } from 'lucide-react'
+import { ArrowDown, GripVertical, MousePointer2, Hand, ChevronsUp, ChevronsDown } from 'lucide-react' // ChevronsUp/Down = minimap toggle (same double-caret family as chat ChevronsRight)
 import { useReactFlowContext } from './react-flow-context'
 import { useSidebarContext, PHONE_LAYOUT_MAX_WIDTH } from './sidebar-context'
 import { useChatSidebarViewportAdjust } from '@/lib/hooks/use-chat-sidebar-viewport'
@@ -305,7 +305,7 @@ interface ChatPanelNodeData {
 }
 
 const MINIMAP_HEIGHT = 120 // Keep in sync with .minimap-custom-size height in globals.css
-const MINIMAP_WIDTH = 179 // Keep in sync with .minimap-custom-size width in globals.css
+const MINIMAP_WIDTH = 196 // Keep in sync with .minimap-custom-size width in globals.css — fits caret + Zoom + 1000% + rotate + pan
 const MINIMAP_BOTTOM = 8 // Inset from map column bottom edge
 const MINIMAP_LEFT = 8 // Match top-bar menu button (sticky-prompt-panel paddingLeft 0.5rem)
 const MINIMAP_NAV_GAP = 6 // Air between Free nav and minimap in the column stack
@@ -2306,7 +2306,7 @@ function BoardFlowInner({
   const [aiDockMinimapOpen, setAiDockMinimapOpen] = useState(false) // Visible while jumped
   const [aiDockMinimapPinned, setAiDockMinimapPinned] = useState(false) // Click-to-keep-open (no auto-close)
   const aiDockMinimapPinnedRef = useRef(false) // Latest pin for leave-timeout (avoid stale close)
-  // Frames/drawings MiniMap can paint — empty / load-shimmer boards stay collapsed with no +/- 
+  // Frames/drawings MiniMap can paint — empty / load-shimmer boards stay collapsed with no caret 
   const hasRealMapNodes = (nodes || []).some((n) => n.type !== 'frameShimmer' && n.type !== 'placeholder')
   // Collapse = empty board, OR preference hidden, OR jumped without an active peek/pin
   const minimapCollapsed =
@@ -2316,7 +2316,7 @@ function BoardFlowInner({
   const [boardLoadPhase, setBoardLoadPhase] = useState<'cold' | 'reveal' | 'done'>('cold') // Crossfade shells → contents once
   const boardLoadPhaseRef = useRef(boardLoadPhase) // Panel merge reads phase without adding it to effect deps
   boardLoadPhaseRef.current = boardLoadPhase
-  const minimapExpanded = minimapLoadReady && !minimapCollapsed && !isScrollingToBottom // One flag for +/- and the height tween
+  const minimapExpanded = minimapLoadReady && !minimapCollapsed && !isScrollingToBottom // One flag for the caret and the height tween
   // RF's MiniMap selector runs `getNodes()` + `getNodesBounds()` on **every** store tick (zoom,
   // pan, every drag position change) even while clipped to 0 height — O(nodes) per frame for a
   // panel nobody can see. Mount it with the reveal; unmount trails the collapse tween so the
@@ -2869,7 +2869,7 @@ function BoardFlowInner({
   }, [boardLoadPhase, setNodes])
 
   const hasFrameShimmer = (nodes || []).some((n) => n.type === 'frameShimmer') // Load shells still on the board
-  // Clip the minimap until prefs + frames are in, then expand-up (same tween as +/-)
+  // Clip the minimap until prefs + frames are in, then expand-up (same tween as the caret)
   useEffect(() => {
     if (embedded || minimapLoadReady) return // Embeds have no minimap; only arm once
     if (isLoadingMinimapMode) return // Don't expand until shown/hidden/hover is known
@@ -2889,7 +2889,7 @@ function BoardFlowInner({
     }
   }, [embedded, minimapLoadReady, isLoadingMinimapMode, reactFlowInstance, conversationId, isMessagesPending, hasFrameShimmer, hasRealMapNodes, messages.length])
 
-  // Empty board settled → first frame: expand minimap + restore +/- (doesn’t fire on contentful loads)
+  // Empty board settled → first frame: expand minimap + restore caret (doesn’t fire on contentful loads)
   const settledEmptyBoardRef = useRef(false)
   useEffect(() => {
     settledEmptyBoardRef.current = false // New board — wait until this one settles empty
@@ -7100,7 +7100,7 @@ function BoardFlowInner({
       }
     }
     const onClickCapture = (e: MouseEvent) => {
-      // Swallow the click that follows a successful long-press (I-bar, +/- toggle, select)
+      // Swallow the click that follows a successful long-press (I-bar, caret toggle, select)
       if (controller.consumeFired()) {
         e.preventDefault()
         e.stopPropagation()
@@ -11036,20 +11036,21 @@ function BoardFlowInner({
             checkAndHideMinimap(e.relatedTarget as HTMLElement)
           }}
         >
-          {/* Minimap +/- — only once the board has frames; empty boards stay collapsed with no toggle */}
+          <div
+            className={cn(
+              // Zoom % grows/shrinks on the left; rotate + pan stay right (ml-auto)
+              'px-0.5 py-1 flex items-center gap-0 relative w-full border-0 shadow-sm rounded-lg',
+              freeNavBoardFill // Board fill on desktop even with chat open; phone keeps input-only white
+            )}
+          >
+          {/* Double caret — leftmost inside Free nav; empty boards stay collapsed with no toggle */}
           {hasRealMapNodes && (
           <Button
             type="button"
             variant="ghost"
             size="sm"
             data-minimap-pill-context
-            className={cn(
-              'absolute -top-1 -left-1 z-20 h-5 w-5 p-0 rounded-full border-0 shadow-sm focus-visible:ring-0 focus-visible:ring-offset-0',
-              freeNavBoardFill, // Same fill as Free nav bar
-              !minimapExpanded
-                ? 'text-gray-500 dark:text-gray-400 hover:opacity-90'
-                : 'text-gray-900 dark:text-gray-100 hover:opacity-90'
-            )}
+            className="h-7 w-5 p-0 shrink-0 rounded-md text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-200/60 dark:hover:bg-gray-700/60 focus-visible:ring-0 focus-visible:ring-offset-0"
             title={!minimapExpanded ? 'Show minimap' : 'Hide minimap'}
             aria-label={!minimapExpanded ? 'Show minimap' : 'Hide minimap'}
             aria-pressed={minimapExpanded}
@@ -11088,25 +11089,17 @@ function BoardFlowInner({
             }}
           >
             {!minimapExpanded ? (
-              <Plus className="h-2.5 w-2.5" strokeWidth={2.5} />
+              <ChevronsUp className="h-3.5 w-3.5" />
             ) : (
-              <Minus className="h-2.5 w-2.5" strokeWidth={2.5} />
+              <ChevronsDown className="h-3.5 w-3.5" />
             )}
           </Button>
           )}
-          <div
-            className={cn(
-              // w-full = column width (minimap); gap-0 — slashes carry the visual gap so 179px fits
-              'px-0.5 py-1 flex items-center gap-0 relative w-full border-0 shadow-sm rounded-lg',
-              freeNavBoardFill // Board fill on desktop even with chat open; phone keeps input-only white
-            )}
-          >
-            <div className="flex-[1.25] basis-0 min-w-0 flex items-center justify-center">
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="w-full h-auto py-1 px-0 text-xs rounded-lg bg-transparent text-gray-900 dark:text-gray-100 hover:bg-gray-200/60 dark:hover:bg-gray-700/60 focus-visible:ring-0 focus-visible:ring-offset-0 justify-center"
+                className="h-auto py-1 px-1 shrink-0 text-xs rounded-lg bg-transparent text-gray-900 dark:text-gray-100 hover:bg-gray-200/60 dark:hover:bg-gray-700/60 focus-visible:ring-0 focus-visible:ring-offset-0"
                 title={
                   isScrollMode
                     ? 'Scroll — Cmd/Ctrl+wheel zooms; click for Zoom'
@@ -11120,16 +11113,14 @@ function BoardFlowInner({
               >
                 <span>{isScrollMode ? 'Scroll' : 'Zoom'}</span>
               </Button>
-            </div>
             {/* Thin slash — Scroll/Zoom | zoom% */}
             <span className="flex h-7 items-center text-xl font-thin text-gray-300 dark:text-gray-500 mx-0.5 flex-shrink-0 select-none leading-none" aria-hidden>/</span>
-            <div className="flex-1 basis-0 flex items-center justify-center min-w-0">
+            <div className="flex items-center shrink-0 min-w-0">
               <NavZoomControl />
             </div>
-            <div className="flex items-center shrink-0">
+            {/* Rotate + pan stay right when zoom % shrinks */}
+            <div className="ml-auto flex items-center shrink-0">
               <NavRotateControl />
-            </div>
-            <div className="flex items-center shrink-0">
               {/* Thin slash — rotate | select/pan */}
               <span className="flex h-7 items-center text-xl font-thin text-gray-300 dark:text-gray-500 mx-0.5 flex-shrink-0 select-none leading-none" aria-hidden>/</span>
               <Button
@@ -11155,7 +11146,7 @@ function BoardFlowInner({
           </div>
         </div>
 
-        {/* Minimap — always mounted, height-clipped so load and +/- share an expand-up tween */}
+        {/* Minimap — always mounted, height-clipped so load and caret share an expand-up tween */}
         <div
           data-minimap-context
           className="relative"

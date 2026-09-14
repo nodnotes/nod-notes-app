@@ -256,11 +256,10 @@ export function NavZoomControl({ className }: { className?: string }) {
           variant="ghost"
           size="sm"
           className={cn(
-            'h-6 px-1 text-xs text-gray-900 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-[#2a2a2a] cursor-ns-resize',
+            'h-6 px-1.5 text-xs text-gray-900 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-[#2a2a2a] cursor-ns-resize',
             isDraggingZoom && 'bg-gray-200 dark:bg-[#2a2a2a]',
             className
           )}
-          style={{ minWidth: '36px' }} // Compact so Free nav can match the 179px minimap
           onPointerDown={handleZoomPointerDown}
           onPointerMove={handleZoomPointerMove}
           onPointerUp={handleZoomPointerUp}
@@ -281,7 +280,8 @@ export function NavZoomControl({ className }: { className?: string }) {
           }}
           title="Zoom — drag up/down to adjust, click for presets, double-click to type"
         >
-          <span className="inline-block text-center" style={{ width: '28px' }}>
+          {/* Grow with digit count (10% → 1000%); tabular so width doesn’t jump mid-scrub */}
+          <span className="inline-block text-center tabular-nums whitespace-nowrap">
             {Math.round(zoom * 100)}%
           </span>
         </Button>

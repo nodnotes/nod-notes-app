@@ -1142,7 +1142,7 @@ span[data-added="true"] {
   .minimap-custom-size.react-flow__panel,
   .minimap-custom-size {
     margin: 0 !important;
-    width: 179px !important;
+    width: 196px !important;
     height: 120px !important;
     overflow: hidden !important;
     border: none !important;
@@ -1157,7 +1157,7 @@ span[data-added="true"] {
     background-color: #171717 !important; /* Dark background matching sidebar */
   }
 
-  /* Mask is an SVG evenodd <path> in flow units — never CSS-size it (179×120 clips the overlay to the origin). Never stroke it (the viewport hole would get a second border). */
+  /* Mask is an SVG evenodd <path> in flow units — never CSS-size it (196×120 clips the overlay to the origin). Never stroke it (the viewport hole would get a second border). */
   .minimap-custom-size .react-flow__minimap-mask {
     stroke: none; /* Fill-only overlay; stroke draws both outer bounds and the inner window */
   }
@@ -1172,7 +1172,7 @@ span[data-added="true"] {
   .minimap-custom-size svg {
     width: 100% !important;
     height: 100% !important;
-    max-width: 179px !important;
+    max-width: 196px !important;
     max-height: 120px !important;
     background-color: white !important; /* Light mode background */
   }

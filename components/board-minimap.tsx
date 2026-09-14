@@ -105,7 +105,7 @@ function BoardMiniMapInner({
   const nodes = useStore(selectMinimapNodes, shallow)
   const nodeOrigin = useStore(selectNodeOrigin)
 
-  const elementWidth = typeof style?.width === 'number' ? style.width : 179
+  const elementWidth = typeof style?.width === 'number' ? style.width : 196
   const elementHeight = typeof style?.height === 'number' ? style.height : 120
   const geometry = computeMinimapGeometry(
     viewBB,
