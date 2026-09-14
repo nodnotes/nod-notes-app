@@ -6,7 +6,7 @@ import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useParams } from 'next/navigation' // Board id for Capture panel
 import { ChevronsRight, Layers, Scan, SquareStack } from 'lucide-react' // Mode icons + header close
 import { cn } from '@/lib/utils' // Class merge
-import { useSidebarContext, type UtilitySidebarMode } from './sidebar-context' // Open state + live width
+import { useSidebarContext, UTILITY_RIGHT_GAP_PX, type UtilitySidebarMode } from './sidebar-context' // Open state + live width + right air gap
 import {
   SIDEBAR_OPEN_CLOSE_MS,
   useOpenClosePresence,
@@ -30,7 +30,7 @@ const MODE_TABS: { id: UtilitySidebarMode; label: string; icon: typeof Layers }[
 
 /**
  * Left-edge divider — same Notion-style Close/Resize as chat (click closes, drag resizes).
- * No thread-gap punches (utility has no chat↔board threads).
+ * No seam-gap punches — prompt↔board threads clip at this left edge and paint under the bar.
  */
 function UtilitySidebarSeam() {
   const { setUtilitySidebarOpen, utilitySidebarWidth, setUtilitySidebarWidth } = useSidebarContext()
@@ -172,34 +172,41 @@ export function UtilitySidebar() {
     setUtilitySidebarOpen,
     isMobileMode,
     isChatSidebarOpen,
+    aiMapDockLiftPx,
   } = useSidebarContext()
   const params = useParams<{ conversationId?: string }>() // Board id when on /board/{id}
   const conversationId =
     typeof params?.conversationId === 'string' ? params.conversationId : undefined
   // Brand mark only mounts while chat is closed — clear it then; full height when chat owns the right
   const clearBrand = !isChatSidebarOpen
-  // Slide in/out from the right; stay mounted until the close tween finishes
+  const bottomPad =
+    isMobileMode && isChatSidebarOpen
+      ? aiMapDockLiftPx // Phone AI dock sits above the utility body
+      : clearBrand
+        ? UTILITY_BRAND_CLEARANCE_PX
+        : 0
   const {
     mounted,
     shown,
     transitionOn,
     onTransitionEnd,
-  } = useOpenClosePresence(isUtilitySidebarOpen && !isMobileMode, SIDEBAR_OPEN_CLOSE_MS)
+  } = useOpenClosePresence(isUtilitySidebarOpen, SIDEBAR_OPEN_CLOSE_MS)
 
-  if (isMobileMode || !mounted) return null // Phone: no column; desktop: unmount after close tween
+  if (!mounted) return null // Stay mounted through the close tween on desktop and phone
 
   return (
     <aside
       data-utility-sidebar
       className={cn(
-        'pointer-events-none absolute inset-y-0 right-0 z-20 flex flex-col', // Empty / brand clearance pass through to map + chat icon
+        'pointer-events-none absolute inset-y-0 right-0 z-20 flex flex-col isolate', // isolate: under-thread SVG (z-0) stacks under chrome
         'bg-transparent', // Board paints through; chrome is tabs / list only
         transitionOn && 'transition-transform duration-200 ease-out' // Match RF viewport open/close; off while seam-resizing
       )}
       style={{
-        width: utilitySidebarWidth, // Live width from seam drag
-        paddingBottom: clearBrand ? UTILITY_BRAND_CLEARANCE_PX : 0, // Only pad when the map brand mark is showing
-        transform: shown ? 'translateX(0)' : 'translateX(100%)', // Slide off the right edge when closing
+        width: utilitySidebarWidth + UTILITY_RIGHT_GAP_PX, // Chrome width + right air so close matches top-bar open
+        paddingRight: UTILITY_RIGHT_GAP_PX, // Pass-through; + header px-1.5 = 8px, same as mode-pill → close
+        paddingBottom: bottomPad, // Brand disc when chat is closed; phone dock when chat is open
+        transform: shown ? 'translateX(0)' : 'translateX(100%)', // Slide off the right edge when closing (includes the gap)
       }}
       onTransitionEnd={onTransitionEnd}
       aria-hidden={!shown}

@@ -26,6 +26,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260914000027_utility_open_icon_phone_overlay_chat_prompt_clip` — Utility Layers+Scan open glyph; phone overlay; ice-blue user prompts; clip threads behind the bar
 - `20260913212144_sidebar_open_close_presence_prompt_border` — Sidebar open/close presence tween; chat prompt hairline border (no shadow)
 - `20260913202323_utility_sidebar_layers_study_capture` — Utility sidebar Layers/Study/Capture overlay; chat prompt grey token
 - `20260913145200_pen_palette_tip_scrub_capture_view` — Pen 8-slot palette + translucent markers; tip scrub on selected ink; Capture view only

@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useRef } from 'react'
 import type { ReactFlowInstance, Viewport } from 'reactflow'
 import { useStoreApi } from 'reactflow'
 import { zoomIdentity } from 'd3-zoom'
-import { useSidebarContext } from '@/components/sidebar-context'
+import { useSidebarContext, utilityOccupiedWidth } from '@/components/sidebar-context'
 import { SIDEBAR_OPEN_CLOSE_MS } from '@/lib/hooks/use-open-close-presence'
 
 /** Apply width-ratio camera transform from a closed-state baseline (no drift). */
@@ -31,11 +31,11 @@ export function useUtilitySidebarViewportAdjust(
   reactFlowInstance: ReactFlowInstance | null, // Active flow instance (null until mounted)
   isUtilitySidebarOpen: boolean // Overlay visibility from sidebar context
 ) {
-  const { utilitySidebarWidth } = useSidebarContext() // Live overlay width (drag-resized)
+  const { utilitySidebarWidth } = useSidebarContext() // Live overlay chrome width (drag-resized)
   const storeApi = useStoreApi() // This board’s RF store — d3Zoom + correct pane
 
-  const widthRef = useRef(utilitySidebarWidth) // Always-current overlay width
-  widthRef.current = utilitySidebarWidth
+  const widthRef = useRef(utilityOccupiedWidth(utilitySidebarWidth)) // Occupied strip including right air gap
+  widthRef.current = utilityOccupiedWidth(utilitySidebarWidth)
 
   const prevOpenRef = useRef(isUtilitySidebarOpen) // Skip initial mount; only react to toggles
   const closedBaselineRef = useRef<Viewport | null>(null) // Exact camera to restore on close

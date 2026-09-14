@@ -74,6 +74,14 @@ function persistChatSidebarOpen(open: boolean) {
 /** Default / minimum width of the thin right utility column (layers / study / capture). */
 export const UTILITY_SIDEBAR_WIDTH = 152
 
+/** Air to the right of utility chrome so close/open sit 8px from the map/chat edge — same as the header gap between the mode pill and close (`flex-1` leftover + `gap-0.5`). Header already has `px-1.5` (6), so aside pad is 2. */
+export const UTILITY_RIGHT_GAP_PX = 2
+
+/** Overlay DOM width including the right air gap (chrome width is `utilitySidebarWidth`). */
+export function utilityOccupiedWidth(chromeWidth: number) {
+  return chromeWidth + UTILITY_RIGHT_GAP_PX // Occupied strip Share/tools/viewport treat as covered
+}
+
 /** localStorage — preferred utility column width. */
 export const NN_UTILITY_SIDEBAR_WIDTH_KEY = 'nodnotes-utility-sidebar-width'
 
@@ -252,14 +260,6 @@ export function SidebarContextProvider({
     isMobileModeRef.current = isMobileMode
   }, [isMobileMode])
 
-  // Phone layout has no thin right column — close if the viewport shrinks into phone mode
-  useEffect(() => {
-    if (!isMobileMode || !isUtilityOpenRef.current) return
-    isUtilityOpenRef.current = false
-    setIsUtilitySidebarOpen(false)
-    if (!previewModeRef.current) persistUtilitySidebarOpen(false)
-  }, [isMobileMode])
-
   useEffect(() => {
     isChatOpenRef.current = isChatSidebarOpen
   }, [isChatSidebarOpen])
@@ -301,7 +301,7 @@ export function SidebarContextProvider({
     preferredUtilityWidthRef.current = preferredUtility
     setUtilitySidebarWidthState(clampUtilitySidebarWidth(preferredUtility)) // Live column for this window
     const storedUtilityOpen = getStoredUtilitySidebarOpen() // Last utility open flag
-    const nextUtilityOpen = narrow ? false : storedUtilityOpen // Phone: no thin right column
+    const nextUtilityOpen = narrow ? false : storedUtilityOpen // Phone: start closed (same as chat); toggle still opens it
     isUtilityOpenRef.current = nextUtilityOpen
     setIsUtilitySidebarOpen(nextUtilityOpen)
     if (!narrow) persistUtilitySidebarOpen(storedUtilityOpen) // Backfill utility cookie for next SSR
@@ -503,18 +503,16 @@ export function SidebarContextProvider({
 
   const toggleUtilitySidebar = useCallback(() => {
     if (previewModeRef.current) return // Showcase never shows the utility column
-    if (isMobileModeRef.current) return // Phone: no thin right column yet
     setIsUtilitySidebarOpen((prev) => {
-      const next = !prev // Top-bar toggle right of More
+      const next = !prev // Top-bar toggle right of More — desktop and phone
       isUtilityOpenRef.current = next
-      persistUtilitySidebarOpen(next) // Remember for reload
+      persistUtilitySidebarOpen(next) // Remember for reload (phone restore still starts closed)
       return next
     })
   }, [])
 
   const setUtilitySidebarOpen = useCallback((open: boolean) => {
     if (previewModeRef.current) return // Showcase never shows the utility column
-    if (isMobileModeRef.current && open) return // Phone: keep closed
     isUtilityOpenRef.current = open
     persistUtilitySidebarOpen(open) // Remember for reload
     setIsUtilitySidebarOpen(open)

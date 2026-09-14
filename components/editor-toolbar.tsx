@@ -92,7 +92,7 @@ import {
 } from '@/components/use-frame-nest-stack-drag' // Magnet pack + stack/unstack
 import { setSideStackEntry } from '@/lib/frame-side-stacks' // Stamp stack line link without lock
 import { useBoardAccess } from '@/lib/share/board-access-context' // Owner-only share menu
-import { useSidebarContext } from './sidebar-context' // Wait for chat column restore before measuring titles
+import { useSidebarContext, utilityOccupiedWidth } from './sidebar-context' // Wait for chat column restore before measuring titles
 import { usePhoneModeMenu } from './phone-mode-menu-context' // Phone pill drill-in portal host
 import { AiOriginTopBarToggle } from './ai-origin-top-bar-toggle' // Sparkles pin left of Share
 import { useAiEditSession } from '@/lib/ai/edit-session' // AI sparkles width in shareCompact measure
@@ -327,7 +327,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
   const { isChatSidebarOpen, chatChromeReady, isMobileMode, isUtilitySidebarOpen, utilitySidebarWidth } =
     useSidebarContext() // Measure after chat restore; phone layout; utility overlay inset
   const utilityTopBarInset =
-    !isMobileMode && isUtilitySidebarOpen ? utilitySidebarWidth : 0 // Overlay does not shrink the bar — inset chrome instead
+    isUtilitySidebarOpen ? utilityOccupiedWidth(utilitySidebarWidth) : 0 // Overlay + right air — inset chrome instead
   const { toolsHost, undoHost, phoneTools, setPhoneTools, setShareCompact } = usePhoneModeMenu() // Pill + share/AI→More before tools leave
   const { hasAiContent, aiTopBarPinned } = useAiEditSession() // Pinned sparkles fold with shareCompact
   const { reactFlowInstance, isLocked, lineStyle: verticalLineStyle, setLineStyle: setVerticalLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, isDrawing, setIsDrawing, drawTool: contextDrawTool, setDrawTool: setContextDrawTool, eraserMode, setEraserMode, drawTipSize, setDrawTipSize, drawTipZoomLocked, setDrawTipZoomLocked, eraserTipSize, setEraserTipSize, eraserTipZoomLocked, setEraserTipZoomLocked, pencilPalette, pencilColorIndex, setPencilColorIndex, setPencilColorAt, addPencilColor, removePencilColor, mapUndo, mapRedo, canMapUndo, canMapRedo, getMapTakeSnapshot, getSetNodes } = useReactFlowContext()
@@ -3515,7 +3515,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       {/* Right Section — connections + AI origin + Share + copy/favorite/more */}
       <div
         className="absolute inset-y-0 z-20 flex items-center gap-1 pointer-events-auto"
-        style={{ right: 8 + utilityTopBarInset }} // right-2 + utility overlay so Share sits left of the panel
+        style={{ right: (utilityTopBarInset ? 8 : 0) + utilityTopBarInset }} // Closed: 0 so open’s px-2 = 8px (matches close); open: 8px left of overlay
         data-right-section
       >        <NotionConnectProvider>
           <div className="flex items-center px-2 flex-shrink-0 gap-1">

@@ -7,7 +7,7 @@ import { useReactFlowContext } from './react-flow-context'
 import { PillSelect } from './pill-select'
 import { BoardFilterSortBar } from './board-filter-sort-menu' // Criteria under the mode pill
 import { PhoneModeMenuProvider } from './phone-mode-menu-context' // Phone: mode dropdown + tools in the pill
-import { useSidebarContext } from './sidebar-context' // phoneDockTight: hide tools while landscape keyboard is up
+import { useSidebarContext, utilityOccupiedWidth } from './sidebar-context' // phoneDockTight: hide tools while landscape keyboard is up
 import { useUserPreference } from '@/lib/hooks/use-user-preferences'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
@@ -22,7 +22,7 @@ export function InputAreaWithStickyPrompt({ conversationId, projectId }: { conve
   } = useSidebarContext() // Wait for chat column restore; utility overlay inset for centering
   // Overlay does not shrink the map — pad centered chrome as if the usable width excluded utility
   const utilityCenterInset =
-    !isMobileMode && isUtilitySidebarOpen ? utilitySidebarWidth : 0
+    isUtilitySidebarOpen ? utilityOccupiedWidth(utilitySidebarWidth) : 0
   const [inputHeight, setInputHeight] = useState(52) // Default height
   const [maxWidth, setMaxWidth] = useState(768) // Default max-w-3xl (768px)
   const [isCentered, setIsCentered] = useState(false) // Whether input should be centered

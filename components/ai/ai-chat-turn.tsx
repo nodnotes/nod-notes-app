@@ -65,6 +65,8 @@ import {
   chatSidebarColumnEl,
   chatSidebarColumnRect,
   transcriptScrollerEl,
+  utilitySidebarColumnEl,
+  utilitySidebarLeftX,
 } from '@/lib/ai/chat-thread-clip'
 import { startChatThreadEdgeNav } from '@/lib/ai/chat-thread-edge-nav'
 import {
@@ -225,8 +227,12 @@ export function AiChatTurn({
       shouldRerenderOnTransaction: false,
       editorProps: {
         attributes: {
-          class:
-            'prose prose-sm dark:prose-invert max-w-none focus:outline-none nokey text-sm text-gray-900 dark:text-gray-100',
+          class: cn(
+            'prose prose-sm max-w-none focus:outline-none nokey text-sm text-gray-900',
+            isUser
+              ? '' // Light-blue prompt box — keep dark ink in both themes
+              : 'dark:prose-invert dark:text-gray-100'
+          ),
         },
         handleDOMEvents: {
           paste: (view, event) => handleCaptureLinkPaste(view, event as ClipboardEvent),
@@ -671,12 +677,15 @@ export function AiChatTurn({
   const threadSvgRef = useRef<SVGSVGElement | null>(null)
   const threadUnderSvgRef = useRef<SVGSVGElement | null>(null)
   const threadScrollSvgRef = useRef<SVGSVGElement | null>(null)
+  const threadUtilitySvgRef = useRef<SVGSVGElement | null>(null) // Prompt↔board stroke behind the utility bar
   const [underHostEl, setUnderHostEl] = useState<HTMLElement | null>(null)
   const [scrollHostEl, setScrollHostEl] = useState<HTMLElement | null>(null)
+  const [utilityHostEl, setUtilityHostEl] = useState<HTMLElement | null>(null) // Open utility overlay
   useEffect(() => {
     if (!showThreadOverlay) {
       setUnderHostEl(null)
       setScrollHostEl(null)
+      setUtilityHostEl(null)
       return
     }
     const sync = () => {
@@ -688,6 +697,7 @@ export function AiChatTurn({
         setUnderHostEl(chatSidebarColumnEl()) // Desktop: stroke under the sidebar column
       }
       setScrollHostEl(transcriptScrollerEl()) // Chat↔chat rides the transcript scroller
+      setUtilityHostEl(utilitySidebarColumnEl()) // Desktop: continue the stroke behind the utility bar
     }
     sync()
     const id = window.setInterval(sync, 400)
@@ -704,7 +714,7 @@ export function AiChatTurn({
     return defs
   }
 
-  /** Clip scrolled-away desktop strokes to the map left of the sidebar seam only. */
+  /** Clip scrolled-away desktop strokes to the map left of utility (or chat seam) only. */
   const syncLeftOfSeamClip = (svg: SVGSVGElement, seamX: number | null) => {
     const defs = ensureThreadDefs(svg) // Host for #tt-thread-left-of-seam
     let cp = svg.querySelector('#tt-thread-left-of-seam') as SVGClipPathElement | null
@@ -724,8 +734,9 @@ export function AiChatTurn({
   }
 
   /**
-   * Desktop board↔chat overlap: map left of seam (any Y) ∪ content window.
-   * Lets the stroke reach the board without painting the chat header/prompt.
+   * Desktop board↔chat overlap: map left of utility (or chat seam if utility is
+   * closed) ∪ content window. Keeps the body z-90 stroke off the utility bar and
+   * off the chat header/prompt.
    */
   const syncChatOverlapClip = (svg: SVGSVGElement, seamX: number | null) => {
     const defs = ensureThreadDefs(svg) // Host for #tt-thread-chat-overlap
@@ -747,7 +758,7 @@ export function AiChatTurn({
     ) as SVGRectElement | null
     if (!mapRect || !contentRect) return
     const h = Math.max(window.innerHeight, 1)
-    // Board free zone — full height left of the sidebar seam
+    // Board free zone — full height left of utility (or chat seam if utility is closed)
     mapRect.setAttribute('x', '0')
     mapRect.setAttribute('y', '0')
     mapRect.setAttribute('width', String(seamX != null && seamX > 0 ? seamX : 0))
@@ -838,11 +849,15 @@ export function AiChatTurn({
       const overlapSvg = threadSvgRef.current
       const underSvg = threadUnderSvgRef.current
       const scrollSvg = threadScrollSvgRef.current
+      const utilitySvg = threadUtilitySvgRef.current // Behind utility chrome when that overlay is open
       const scroller = scrollHostEl ?? transcriptScrollerEl()
+      const utilityHost = utilityHostEl ?? utilitySidebarColumnEl()
       // Need at least one paint target (board overlay and/or in-scroller chat↔chat)
       if (!turn || (!overlapSvg && !scrollSvg)) return
       const toUnder = (p: { x: number; y: number }) =>
         clientToThreadSvgSpace(p, underSvg?.parentElement ?? null)
+      const toUtility = (p: { x: number; y: number }) =>
+        clientToThreadSvgSpace(p, utilityHost) // Utility-local so overflow-hidden clips to the bar
       const toScroll = (p: { x: number; y: number }) =>
         clientToTranscriptContent(p, scroller) // Content space — scrolls with turns
       const turnRect = turn.getBoundingClientRect()
@@ -857,9 +872,15 @@ export function AiChatTurn({
       const overlapStubs: { x: number; y: number }[] = []
       const scrollPaths: { d: string }[] = [] // Chat↔chat only — native scroll, no clip ids
       const underPaths: { d: string; clipLeftOfSeam?: boolean }[] = []
+      const utilityPaths: { d: string }[] = [] // Same cubic, clipped to the utility overlay box
       const visibleBoardCues: { frameMessageId: string; side: ChatTurnSide }[] = []
       const seamYs: number[] = []
       const seamX = chatSidebarSeamX()
+      const utilityX = utilitySidebarLeftX() // Overlay left — map-free clip ends here when open
+      const mapClipX =
+        utilityX != null && seamX != null
+          ? Math.min(utilityX, seamX)
+          : (utilityX ?? seamX)
       const nodes = reactFlowInstance?.getNodes() || []
       const desktopSidebar = !!chatSidebarColumnRect()
 
@@ -927,6 +948,28 @@ export function AiChatTurn({
         }
         if (!bClient) continue
         const clipped = clipChatThread(aClient, bClient, link.turnSide, link.frameSide)
+        if (utilitySvg && utilityHost) {
+          // Same cubic behind the utility bar — overflow-hidden + z-0 hide it under the card
+          if (clipped.stub && !clipped.reachesChat) {
+            utilityPaths.push({
+              d: chatThreadPath(
+                toUtility(bClient),
+                toUtility(clipped.stub),
+                link.frameSide,
+                clipped.stub.side
+              ),
+            })
+          } else {
+            utilityPaths.push({
+              d: chatThreadPath(
+                toUtility(aClient),
+                toUtility(bClient),
+                link.turnSide,
+                link.frameSide
+              ),
+            })
+          }
+        }
         if (clipped.boardCovered && underSvg) {
           // Board behind/past chat — stroke under chrome, ends at side stub (phone + desktop)
           if (clipped.stub) {
@@ -938,7 +981,7 @@ export function AiChatTurn({
                 clipped.stub.side
               ),
             })
-            // Map-side tip left of the seam so the thread doesn’t vanish under the column
+            // Map-side tip left of utility (or chat seam) so the thread doesn’t vanish under chrome
             if (desktopSidebar) {
               overlapPaths.push({
                 d: chatThreadPath(bClient, clipped.stub, link.frameSide, clipped.stub.side),
@@ -1008,17 +1051,23 @@ export function AiChatTurn({
         syncSvgChildren(scrollSvg, scrollPaths, [])
       }
       if (overlapSvg) {
-        syncLeftOfSeamClip(overlapSvg, desktopSidebar ? seamX : null)
-        syncChatOverlapClip(overlapSvg, desktopSidebar ? seamX : null) // Board∪content
+        syncLeftOfSeamClip(overlapSvg, desktopSidebar ? mapClipX : null) // Utility left when that overlay is open
+        syncChatOverlapClip(overlapSvg, desktopSidebar ? mapClipX : null) // Board∪content; not over the utility bar
         syncSvgChildren(overlapSvg, overlapPaths, overlapStubs)
       }
       if (underSvg) syncSvgChildren(underSvg, underPaths, [])
+      if (utilitySvg && utilityHost) {
+        const r = utilityHost.getBoundingClientRect() // Overlay box in client px
+        utilitySvg.setAttribute('width', String(Math.max(r.width, 1)))
+        utilitySvg.setAttribute('height', String(Math.max(r.height, 1)))
+        syncSvgChildren(utilitySvg, utilityPaths, [])
+      }
       if (!opts?.skipPublish) {
         publishChatSeamGaps(seamSourceId, seamYs)
         publishChatFrameThreadVisible(seamSourceId, visibleBoardCues)
       }
     },
-    [reactFlowInstance, seamSourceId, message.id, scrollHostEl]
+    [reactFlowInstance, seamSourceId, message.id, scrollHostEl, utilityHostEl]
   )
 
   // Board-side logo visibility is published inside paintThreads (respects clip stubs).
@@ -1105,7 +1154,7 @@ export function AiChatTurn({
       if (raf) cancelAnimationFrame(raf)
       clearChatSeamGaps(seamSourceId)
     }
-  }, [showThreadOverlay, linksKey, paintThreads, seamSourceId, underHostEl, scrollHostEl])
+  }, [showThreadOverlay, linksKey, paintThreads, seamSourceId, underHostEl, scrollHostEl, utilityHostEl])
 
   // Rubber-band also punches the seam while dragging a new thread
   useEffect(() => {
@@ -1167,16 +1216,22 @@ export function AiChatTurn({
         className={cn(
           'group relative rounded-lg', // Same radius as drag ghost
           selected ? 'z-10' : 'z-0',
-          // Unselected user prompts in the transcript — boards-nav tab hover grey (not the composer)
-          !selected && isUser && 'tt-tab-hover',
-          selected && 'bg-white dark:bg-[#1a1a1a]'
+          // User prompts stay ChatGPT ice blue even when selected (blue ring is the selected cue)
+          isUser && 'tt-chat-prompt',
+          selected && !isUser && 'bg-white dark:bg-[#1a1a1a]'
         )}
         style={{
           paddingLeft: gutter, // ⋮⋮ column — same selected or not
           paddingRight: gutter, // Match board even L/R adjust chrome
           paddingTop: 4,
           paddingBottom: 4,
-          ...(selected ? { boxShadow: 'inset 0 0 0 2px #3b82f6' } : null), // Blue ring only when selected
+          ...(selected
+            ? {
+                boxShadow: isUser
+                  ? '0 0 2px 1px rgb(0 0 0 / 0.05), inset 0 0 0 2px #3b82f6' // Even shadow-sm under the selected ring
+                  : 'inset 0 0 0 2px #3b82f6',
+              }
+            : null),
         }}
       >
         {/* Frame drag grip — unselected only (hover on pointer; always on touch). Selected → ⋮⋮.
@@ -1404,6 +1459,18 @@ export function AiChatTurn({
             height="100%"
           />,
           underHostEl
+        )}
+      {showThreadOverlay &&
+        utilityHostEl &&
+        createPortal(
+          <svg
+            ref={threadUtilitySvgRef}
+            data-tt-thread-under-utility="true"
+            className="pointer-events-none absolute inset-0 z-0 overflow-hidden" // Behind tabs/card; clip to overlay
+            width="100%"
+            height="100%"
+          />,
+          utilityHostEl
         )}
     </>
   )

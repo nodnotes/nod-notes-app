@@ -20,7 +20,6 @@ import {
   Maximize2,
   MessageSquarePlus,
   MoreHorizontal,
-  PanelRight,
   Play,
   Pin,
   PinOff,
@@ -32,7 +31,7 @@ import {
   Trash2,
   Type,
   Upload,
-} from 'lucide-react' // Share cluster + More-menu row icons + utility toggle
+} from 'lucide-react' // Share cluster + More-menu row icons
 import { Button } from '@/components/ui/button' // Ghost icon buttons
 import {
   DropdownMenu,
@@ -59,6 +58,7 @@ import { NotionConnectMenuItems } from './notion-connect-button' // Connections 
 import { useAiEditSession } from '@/lib/ai/edit-session' // AI highlight toggle in More when unpinned
 import { type BoardFontId } from '@/lib/board-font'
 import { DesktopUpdateMenuItem } from './desktop-update-menu-item' // Electron: Check for updates / Restart
+import { UtilityOpenIcon } from './utility-open-icon' // Layers stack + tilted Scan on the top sheet
 import Link from 'next/link' // Download desktop app when not in Electron
 
 type BoardTopBarShareProps = {
@@ -768,7 +768,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
             )}
           </DropdownMenuContent>
         </DropdownMenu>
-        {!isMobileMode && !isUtilitySidebarOpen && (
+        {!isUtilitySidebarOpen && (
           <Button
             variant="ghost"
             size="sm"
@@ -781,7 +781,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
             data-utility-sidebar-toggle
             onClick={toggleUtilitySidebar}
           >
-            <PanelRight className="h-4 w-4" />
+            <UtilityOpenIcon className="h-4 w-4" />
           </Button>
         )}
       </div>

@@ -1111,7 +1111,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
               <div
                 className={cn(
                   'rounded-xl overflow-hidden max-h-[min(70vh,560px)]',
-                  'bg-gray-50 dark:bg-[#0f0f0f]',
+                  'bg-[var(--nod-chat-prompt)]', // Same chrome grey as utility bar
                   'border border-black/10 dark:border-white/10 shadow-lg'
                 )}
               >
@@ -1177,7 +1177,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
               <div
                 className={cn(
                   'flex items-center gap-1 px-1.5 py-0.5 min-w-0 rounded-xl',
-                  'bg-gray-50 dark:bg-[#0f0f0f]' // Board-fill card only — no border
+                  'bg-[var(--nod-chat-prompt)]' // Same chrome grey as utility bar — no border
                 )}
               >
                 {/* Brand left of thread select while chat is open (map toggle hides) */}
@@ -1225,7 +1225,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
             )}
             <div
               data-chat-prompt
-              className="rounded-xl overflow-hidden tt-tab-hover border border-black/10 dark:border-white/10" // Shared chrome grey + hairline — no shadow
+              className="rounded-xl overflow-hidden border border-black/10 dark:border-white/10" // Chat-bar grey via [data-chat-prompt]; hairline — no shadow
             >
               <div className="px-1 pt-1">{composer}</div>
             </div>
@@ -1262,7 +1262,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
         data-chat-sidebar
         className={cn(
           'relative h-full flex flex-col isolate', // isolate so under-thread SVG stacks under chrome
-          'bg-gray-50 dark:bg-[#0f0f0f]'
+          'bg-[var(--nod-chat-prompt)]' // Same chrome grey as utility bar
           // Left edge is ChatSidebarSeam (gapped where threads cross) — not CSS border-l
         )}
         style={{ width: chatSidebarWidth, minWidth: chatSidebarWidth }} // Fixed content width so text does not reflow mid-tween
@@ -1333,7 +1333,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
 
         <div
           data-chat-content-window // Thread stubs attach to transcript column — not the composer
-          className="relative z-10 flex-1 min-h-0 flex flex-col bg-gray-50 dark:bg-[#0f0f0f]" // Opaque so under-thread strokes stay behind text
+          className="relative z-10 flex-1 min-h-0 flex flex-col bg-[var(--nod-chat-prompt)]" // Opaque utility grey so under-thread strokes stay behind text
         >
           <div
             ref={transcriptScrollRef}
@@ -1449,7 +1449,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
         <div className="relative z-10 flex-shrink-0 px-3 pb-3 pt-1 pointer-events-auto">
           <div
             data-chat-prompt
-            className="rounded-xl overflow-hidden tt-tab-hover border border-black/10 dark:border-white/10" // Shared chrome grey + hairline — no shadow
+            className="rounded-xl overflow-hidden border border-black/10 dark:border-white/10" // Chat-bar grey via [data-chat-prompt]; hairline — no shadow
           >
             <div className="px-1 pt-1">{composer}</div>
           </div>

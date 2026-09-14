@@ -7,7 +7,7 @@ import { useReactFlowContext } from './react-flow-context' // Empty = no frames 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react' // Poll nodes + measure chrome
 import { NodNotesIcon } from '@/components/nod-notes-icon' // Same mark as the home top bar
 import { createClient } from '@/lib/supabase/client' // Count boards so returning users skip chrome hints
-import { useSidebarContext } from './sidebar-context' // Utility overlay inset for empty-board center
+import { useSidebarContext, utilityOccupiedWidth } from './sidebar-context' // Utility overlay inset for empty-board center
 
 type HintId = 'nav' | 'move' | 'notion' | 'more' | 'chat' // One callout per chrome cluster
 type BowSide = 'left' | 'right' | 'up' | 'down' // Which way the quadratic bows off the chord
@@ -135,7 +135,7 @@ export function WelcomeText() {
   const { reactFlowInstance, editMenuPillMode } = useReactFlowContext() // Empty board + Draw tools change hint Y
   const { isMobileMode, isUtilitySidebarOpen, utilitySidebarWidth } = useSidebarContext() // Overlay inset for center brand
   const utilityCenterInset =
-    !isMobileMode && isUtilitySidebarOpen ? utilitySidebarWidth : 0 // Same usable strip as the mode pill
+    isUtilitySidebarOpen ? utilityOccupiedWidth(utilitySidebarWidth) : 0 // Same usable strip as the mode pill
   const rootRef = useRef<HTMLDivElement>(null) // Overlay = local origin for measures
   const measureRefs = useRef<Record<HintId, HTMLDivElement | null>>({
     nav: null,

@@ -1,7 +1,8 @@
 // Clip chat↔board threads at the chat content window. Grey simulated connection
 // points sit on the left/right side only — never top/bottom, never the prompt.
-// When the board end is under or past chat chrome (sidebar to the right, phone
-// dock below), the stroke ends at that side stub and paint stays off the chrome.
+// When the board end is under or past chat/utility chrome (desktop: utility
+// overlay, else chat sidebar; phone: dock below), the stroke ends at that side
+// stub (left of utility when that bar is open) and paint stays off the chrome.
 
 import { type ChatTurnSide, chatThreadPath } from '@/lib/ai/chat-board-links'
 
@@ -86,6 +87,22 @@ export function chatSidebarColumnEl(): HTMLElement | null {
   ) as HTMLElement | null
 }
 
+/** Desktop utility overlay (left of chat). Host for under-bar prompt↔board strokes. */
+export function utilitySidebarColumnEl(): HTMLElement | null {
+  if (typeof document === 'undefined') return null
+  const el = document.querySelector('[data-utility-sidebar]') as HTMLElement | null
+  if (!el || el.getAttribute('aria-hidden') === 'true') return null // Closed / sliding off — not a paint host
+  const r = el.getBoundingClientRect()
+  return r.width >= 8 ? el : null
+}
+
+/** Left edge of the open utility overlay in client X, or null when closed. */
+export function utilitySidebarLeftX(): number | null {
+  const el = utilitySidebarColumnEl()
+  if (!el) return null
+  return el.getBoundingClientRect().left
+}
+
 /** Phone map-dock bounds (transcript + chrome + prompt stack). */
 export function chatMapDockRect(): DOMRect | null {
   if (typeof document === 'undefined') return null
@@ -160,9 +177,14 @@ function boardFacingSide(
 
 /**
  * Outset a side stub onto the map side of chrome so it isn’t covered by the
- * sidebar/dock fill.
+ * sidebar/dock fill. Utility overlay (when open) is the map-facing chrome —
+ * sit left of that bar, not the chat column behind it.
  */
 function outsetSideStub(hit: EdgeHit): { x: number; y: number; side: ChatTurnSide } {
+  const utilityX = utilitySidebarLeftX() // Overlay left when the bar is open
+  if (utilityX != null && hit.side === 'left') {
+    return { x: utilityX - STUB_OUTSET, y: hit.point.y, side: 'left' } // Map side of utility
+  }
   const sidebar = chatSidebarColumnRect()
   if (sidebar && hit.side === 'left') {
     return { x: sidebar.left - STUB_OUTSET, y: hit.point.y, side: 'left' }
@@ -215,8 +237,10 @@ export function pointCoveredByChatChrome(p: Pt): boolean {
 }
 
 /**
- * Board connection is under chat chrome, or past it (desktop: at/right of the
- * sidebar seam; phone: below the content/dock window) — stroke must not overlap.
+ * Board connection is under chat/utility chrome, or past it (desktop: at/right
+ * of the utility overlay, else the chat seam; phone: below the dock) — stroke
+ * must not overlap. Utility is map-facing when both are open, so “behind chat”
+ * is behind the utility bar as well.
  */
 export function boardConnectionBehindChat(boardPt: Pt): boolean {
   const chrome = chatChromeRects()
@@ -231,6 +255,9 @@ export function boardConnectionBehindChat(boardPt: Pt): boolean {
     if (pointInRect(boardPt, dock, 0)) return true
     return false
   }
+
+  const utilityX = utilitySidebarLeftX() // Overlay sits left of chat when both are open
+  if (utilityX != null && boardPt.x >= utilityX - VISIBLE_PAD) return true // Under/past the utility bar
 
   const sidebar = chatSidebarColumnRect()
   if (sidebar) {

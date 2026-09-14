@@ -156,7 +156,9 @@ export function CustomizeAgentPanel({
     : active.iconDrawing ?? sharedDrawingUrl
 
   return (
-    <div className="flex flex-col h-full min-h-0 bg-gray-50 dark:bg-[#0f0f0f]">
+    <div
+      className="flex flex-col h-full min-h-0 bg-[var(--nod-chat-prompt)]" // Same chrome grey as chat column / utility bar
+    >
       {/* Back to chat */}
       <div className="flex-shrink-0 flex items-center px-2 h-9">
         <button

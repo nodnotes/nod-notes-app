@@ -34,8 +34,10 @@
     --ring: 222.2 84% 4.9%;
     --radius: 0.5rem;
     --nod-blue: #3b82f6; /* Wordmark + selection chrome (Tailwind blue-500) */
-    --nod-chat-prompt: #f4f5f6; /* Shared chrome grey — Ask prompts, brand disc, utility, tabs */
-    --nod-tab-hover: var(--nod-chat-prompt); /* Board/chat row hover — same as prompts */
+    --nod-chat-prompt: #f4f5f6; /* Shared chrome grey — chat column, Ask input, utility, brand disc, tabs */
+    --nod-chat-prompt-box: var(--nod-chat-prompt); /* Ask composer — same grey as the chat bar */
+    --nod-chat-user-box: #eaf3fd; /* Transcript user prompt boxes — ChatGPT user-bubble ice blue */
+    --nod-tab-hover: var(--nod-chat-prompt); /* Board/chat row hover — shared chrome grey */
     --nod-selected: var(--nod-chat-prompt); /* Current board/chat tab + menu selected/hover */
   }
 
@@ -59,8 +61,10 @@
     --border: 0 0% 20%; /* Subtle borders */
     --input: 0 0% 15%; /* Input backgrounds */
     --ring: 0 0% 40%; /* Focus rings */
-    --nod-chat-prompt: #222222; /* Shared chrome grey — Ask prompts, brand disc, utility, tabs */
-    --nod-tab-hover: var(--nod-chat-prompt); /* Board/chat row hover — same as prompts */
+    --nod-chat-prompt: #222222; /* Shared chrome grey — chat column, Ask input, utility, brand disc, tabs */
+    --nod-chat-prompt-box: var(--nod-chat-prompt); /* Ask composer — same grey as the chat bar */
+    --nod-chat-user-box: #eaf3fd; /* Transcript user prompt boxes — ChatGPT user-bubble ice blue */
+    --nod-tab-hover: var(--nod-chat-prompt); /* Board/chat row hover — shared chrome grey */
     --nod-selected: var(--nod-chat-prompt); /* Current board/chat tab + menu selected/hover */
   }
 }
@@ -2160,9 +2164,19 @@ span[data-added="true"] {
   .tt-selected {
     background-color: var(--nod-selected);
   }
-  /* Ask box, user prompts, hovered board/chat rows — same shared chrome grey. */
+  /* Hovered board/chat rows — shared chrome grey. */
   .tt-tab-hover {
     background-color: var(--nod-chat-prompt);
+  }
+  /* Ask composer — same grey as the chat bar. */
+  [data-chat-prompt] {
+    background-color: var(--nod-chat-prompt-box); /* Prompt input fill */
+  }
+  /* Transcript user prompt boxes — ChatGPT ice blue, same lift as utility/mode pills. */
+  .tt-chat-prompt {
+    background-color: var(--nod-chat-user-box); /* Transcript user bubbles */
+    color: #1f2937; /* Dark ink on pale blue in both themes */
+    box-shadow: 0 0 2px 1px rgb(0 0 0 / 0.05); /* shadow-sm weight, even around the box (no downward offset) */
   }
   /* Board / frame / block / thread menu hover — same shared chrome grey. Beats ghost hover:bg-accent. */
   .tt-menu-surface button:hover:not(:disabled) {

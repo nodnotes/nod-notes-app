@@ -2028,7 +2028,7 @@ function BoardFlowInner({
   const { setIsMobileMode, isMobileMode, isChatSidebarOpen, isUtilitySidebarOpen, toggleChatSidebar, logoDrawing, aiMapDockLiftPx, aiMapDockLeftPx, aiChatHasTranscript } =
     useSidebarContext()
   useChatSidebarViewportAdjust(reactFlowInstance, isChatSidebarOpen && !isMobileMode) // No column shrink on phone dock
-  useUtilitySidebarViewportAdjust(reactFlowInstance, isUtilitySidebarOpen && !isMobileMode) // Overlay: frame usable width as pane − utility
+  useUtilitySidebarViewportAdjust(reactFlowInstance, isUtilitySidebarOpen) // Overlay: frame usable width as pane − utility
   // Phone AI dock lift — Free nav / brand jump above the composer
   const mapChromeBottomPad = isMobileMode && isChatSidebarOpen ? aiMapDockLiftPx : 0
   // Phone AI open: align Free nav (+ minimap chrome) to the chat card’s left edge

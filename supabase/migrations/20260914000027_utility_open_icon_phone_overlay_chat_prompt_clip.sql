@@ -1,0 +1,2 @@
+-- Utility open glyph + phone overlay; chat prompt ice blue; clip threads behind the bar.
+-- App/docs marker only; no DDL. Remote DDL top: 20260912192948_panel_edges_canvas_endpoints (local 20260912192642).
