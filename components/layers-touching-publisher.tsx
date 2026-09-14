@@ -93,7 +93,7 @@ export function LayersTouchingPublisher() {
     if (!active || !selectionKey) return
 
     const pending = new Set<string>() // Ids that need a fresh thumb
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+    let debounceTimer: number | null = null // DOM window.setTimeout; Node Timeout clashes with @types/node
     let editGen = 0 // Cancel in-flight edit captures independently of selection gen
     const observers: MutationObserver[] = []
 

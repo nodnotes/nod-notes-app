@@ -3,6 +3,7 @@
 // Utility Layers body — reorderable preview list (top = front, bottom = back)
 
 import { useMemo, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import type { Node } from 'reactflow' // RF v11 node — setNodes updater must return this, not a zIndex stub
 import {
   DndContext,
   PointerSensor,
@@ -125,7 +126,7 @@ export function LayersTouchingList() {
     const getNodes = () => reactFlowInstance?.getNodes() ?? []
     const zById = layerZIndexByOrder(orderedIds, getNodes())
     const setNodes = getSetNodes()
-    const patch = (nds: Array<{ id: string; zIndex?: number }>) => {
+    const patch = (nds: Node[]) => {
       let changed = false
       const next = nds.map((n) => {
         const z = zById.get(n.id)
