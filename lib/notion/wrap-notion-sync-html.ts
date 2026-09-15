@@ -1,165 +1,192 @@
-// Wrap only the changed spans for Notion sync review (grey marks — not the whole frame)
+// Inline Notion sync review: highlight inserts, strikethrough deletes (not whole blocks).
 
-import {
-  htmlToPlainLoose,
-  inferReplacementsFromPlain,
-} from '@/lib/ai/apply-replacements'
-
-/** Match only paragraph/heading text — never li/div (breaks TipTap taskItem contentDOM). */
-const TEXT_BLOCK_RE =
-  /(<(?:p|h[1-4])(?:\s[^>]*)?>)([\s\S]*?)(<\/(?:p|h[1-4])>)/gi
-
-/** Top-level TipTap / Notion body blocks for structural diff. */
-const TOP_BLOCK_RE =
-  /<(p|h[1-4]|ul|ol|blockquote|pre|table|hr)(\s[^>]*)?>[\s\S]*?<\/\1>|<hr\s*\/?>|<div[^>]*data-type=["'][^"']+["'][^>]*>[\s\S]*?<\/div>/gi
+import { htmlToPlainLoose } from '@/lib/ai/apply-replacements'
 
 /** True when HTML has Notion sync pending spans. */
 export function htmlHasNotionSync(html: string | null | undefined): boolean {
   return !!html && /data-notion-sync=["']true["']/.test(html)
 }
 
+/** Escape plain text for data-notion-prev attribute. */
+export function encodeNotionPrevAttr(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+/** Escape plain text for safe insertion as HTML text nodes. */
+function escapePlainAsHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>')
+}
+
 /** True when a fragment is safe to nest inside an inline notion-sync <span>. */
 function isInlineHtmlFragment(html: string): boolean {
-  // Block tags inside a mark span are dropped by TipTap — highlights vanish
   return !/<(?:p|h[1-6]|ul|ol|li|div|blockquote|pre|table|hr|tr|td|th)\b/i.test(html)
 }
 
-/** Wrap plain (or simple HTML) replacement text in a grey Notion sync mark. */
-function notionWrap(inner: string): string {
+/** Notion insert / replacement (grey). `prev` = local text to restore on Keep non red. */
+function notionInsWrap(inner: string, prev?: string | null): string {
   if (!inner) return inner
-  // Only skip when the whole fragment is already a single sync mark
   const trimmed = inner.trim()
-  if (
-    /^<span\b[^>]*data-notion-sync=["']true["'][^>]*>[\s\S]*<\/span>$/i.test(trimmed)
-  ) {
+  if (/^<span\b[^>]*data-notion-sync=["']true["'][^>]*>[\s\S]*<\/span>$/i.test(trimmed)) {
     return inner
   }
-  return `<span data-notion-sync="true" class="tt-notion-sync">${inner}</span>`
+  const prevAttr =
+    prev != null && prev !== ''
+      ? ` data-notion-prev="${encodeNotionPrevAttr(prev)}"`
+      : ''
+  return `<span data-notion-sync="true" data-notion-sync-kind="ins" class="tt-notion-sync"${prevAttr}>${inner}</span>`
 }
 
-/** True when this p/h inner should stay unmarked (empty / nested / atoms). */
-function shouldSkipTextInner(inner: string): boolean {
-  if (/data-notion-sync=/.test(inner)) return true // Already marked
-  const stripped = String(inner).replace(/^\s+|\s+$/g, '')
-  if (!stripped || stripped === '<br>' || stripped === '<br/>') return true
-  if (/^<(?:ul|ol|li|div|table|blockquote)\b/i.test(stripped)) return true
-  if (/data-type=["'](?:boardLink|databaseBlock|propertyBlock)["']/i.test(stripped)) return true
-  return false
-}
-
-/** Wrap text insides of every p/h block (last-resort full mark). */
-function wrapAllTextBlocks(html: string): string {
-  return html.replace(TEXT_BLOCK_RE, (_m, open, inner, close) => {
-    if (shouldSkipTextInner(inner)) return `${open}${inner}${close}`
-    return `${open}${notionWrap(inner)}${close}`
-  })
-}
-
-/**
- * Collect normalized plain text of every p/h in HTML (list items included).
- * Used so a one-line list edit does not grey-mark sibling bullets.
- */
-function collectTextBlockPlains(html: string): Set<string> {
-  const plains = new Set<string>()
-  const re = new RegExp(TEXT_BLOCK_RE.source, 'gi')
-  let m: RegExpExecArray | null
-  while ((m = re.exec(html))) {
-    const plain = blockPlain(m[2] ?? '')
-    if (plain) plains.add(plain)
+/** Local text Notion removed — strikethrough; Keep non red keeps it (unstrikes). */
+function notionDelWrap(inner: string): string {
+  if (!inner) return inner
+  const trimmed = inner.trim()
+  if (/^<span\b[^>]*data-notion-sync-kind=["']del["'][^>]*>[\s\S]*<\/span>$/i.test(trimmed)) {
+    return inner
   }
-  return plains
+  return `<span data-notion-sync="true" data-notion-sync-kind="del" class="tt-notion-sync tt-notion-sync-del">${inner}</span>`
 }
 
-/**
- * Wrap only p/h whose plain text is not already in `originalHtml`.
- * Keeps unchanged list items clear when the parent `<ul>`/`<ol>` is the top-level diff unit.
- */
-function wrapChangedTextBlocksOnly(originalHtml: string, html: string): string {
-  const origPlains = collectTextBlockPlains(originalHtml)
-  let wrapped = 0
-  const next = html.replace(TEXT_BLOCK_RE, (_m, open, inner, close) => {
-    if (shouldSkipTextInner(inner)) return `${open}${inner}${close}`
-    const plain = blockPlain(inner)
-    if (!plain || origPlains.has(plain)) return `${open}${inner}${close}` // Unchanged line
-    wrapped += 1
-    return `${open}${notionWrap(inner)}${close}`
-  })
-  // If nothing matched (total rewrite / plain mismatch), fall back to marking all text
-  if (wrapped === 0) return wrapAllTextBlocks(html)
-  return next
+type DiffOp = { type: 'eq' | 'del' | 'ins'; text: string }
+
+/** Split into words + whitespace tokens so diffs stay readable. */
+function tokenizeWords(s: string): string[] {
+  return s.split(/(\s+)/).filter((t) => t.length > 0)
 }
 
-/** Split HTML into top-level block strings (best-effort). */
-function topLevelBlocks(html: string): string[] {
-  const blocks: string[] = []
-  const re = new RegExp(TOP_BLOCK_RE.source, 'gi')
-  let m: RegExpExecArray | null
-  while ((m = re.exec(html))) {
-    blocks.push(m[0])
+/** Merge adjacent same-type ops. */
+function mergeOps(ops: DiffOp[]): DiffOp[] {
+  const out: DiffOp[] = []
+  for (const op of ops) {
+    const last = out[out.length - 1]
+    if (last && last.type === op.type) last.text += op.text
+    else out.push({ ...op })
   }
-  if (blocks.length === 0 && html.trim()) return [html]
-  return blocks
+  return out
 }
 
-/** Plain text of a block for equality checks. */
-function blockPlain(html: string): string {
-  return htmlToPlainLoose(html).replace(/\s+/g, ' ').trim()
-}
+/** Word-level LCS diff (local → Notion). */
+function diffWords(a: string, b: string): DiffOp[] {
+  const A = tokenizeWords(a)
+  const B = tokenizeWords(b)
+  const n = A.length
+  const m = B.length
+  if (n === 0 && m === 0) return []
+  if (n === 0) return [{ type: 'ins', text: b }]
+  if (m === 0) return [{ type: 'del', text: a }]
 
-/**
- * Mark only Notion blocks whose plain text isn’t already in the original.
- * Unchanged paragraphs stay unmarked. For lists, mark only changed items
- * (top-level unit is the whole `<ul>`/`<ol>`, so wrap by inner p/h plain).
- */
-function markChangedBlocksOnly(originalHtml: string, notionHtml: string): string {
-  const origPlains = new Set(
-    topLevelBlocks(originalHtml)
-      .map(blockPlain)
-      .filter(Boolean)
-  )
-  const notionBlocks = topLevelBlocks(notionHtml)
-  if (notionBlocks.length === 0) return wrapChangedTextBlocksOnly(originalHtml, notionHtml)
-
-  let changed = 0
-  const out = notionBlocks.map((block) => {
-    const plain = blockPlain(block)
-    // Atoms / empty — leave alone
-    if (!plain) return block
-    if (origPlains.has(plain)) return block // Identical content — no highlight
-    changed += 1
-    // Mark only p/h lines that aren’t already in the original (list siblings stay clear)
-    return wrapChangedTextBlocksOnly(originalHtml, block)
-  })
-
-  // If every block looked changed (noise / total rewrite), still better than marking
-  // one giant span — keep per-block marks. If nothing changed, fall back to full mark.
-  if (changed === 0) return wrapChangedTextBlocksOnly(originalHtml, notionHtml)
-  return out.join('')
-}
-
-/** Remove Notion sync wrapper spans while keeping inner HTML (accept / heal path). */
-export function unwrapNotionSync(html: string): string {
-  let prev = ''
-  let next = html || ''
-  // Nested review marks from repeated syncs — peel until stable
-  while (prev !== next) {
-    prev = next
-    next = next.replace(
-      /<span[^>]*data-notion-sync=["']true["'][^>]*>([\s\S]*?)<\/span>/gi,
-      '$1'
-    )
+  const dp: number[][] = Array.from({ length: n + 1 }, () => Array(m + 1).fill(0))
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] =
+        A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1])
+    }
   }
-  return next
+
+  const ops: DiffOp[] = []
+  let i = 0
+  let j = 0
+  while (i < n && j < m) {
+    if (A[i] === B[j]) {
+      ops.push({ type: 'eq', text: A[i] })
+      i += 1
+      j += 1
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      ops.push({ type: 'del', text: A[i] })
+      i += 1
+    } else {
+      ops.push({ type: 'ins', text: B[j] })
+      j += 1
+    }
+  }
+  while (i < n) {
+    ops.push({ type: 'del', text: A[i] })
+    i += 1
+  }
+  while (j < m) {
+    ops.push({ type: 'ins', text: B[j] })
+    j += 1
+  }
+  return mergeOps(ops)
 }
 
-/** Strip leftover review marks so diffs / Accept don’t start from dirty HTML. */
-export function sanitizeNotionSyncHtml(html: string): string {
-  return unwrapNotionSync(html || '')
+type InlineEdit = {
+  /** Plain text to find in the current HTML (empty for pure insert). */
+  find: string
+  /** HTML to insert in place of `find` (or after anchor for pure insert). */
+  replacement: string
+  /** For pure insert: plain text that precedes the insertion (eq token before). */
+  after?: string
+}
+
+/** Turn word-diff ops into HTML edits on the local document. */
+function opsToInlineEdits(ops: DiffOp[], notionHtml: string): InlineEdit[] {
+  const edits: InlineEdit[] = []
+  let i = 0
+  while (i < ops.length) {
+    if (ops[i].type === 'eq') {
+      i += 1
+      continue
+    }
+    const afterEq = (() => {
+      for (let k = i - 1; k >= 0; k--) {
+        if (ops[k].type === 'eq') return ops[k].text
+      }
+      return ''
+    })()
+
+    let del = ''
+    let ins = ''
+    while (i < ops.length && ops[i].type === 'del') {
+      del += ops[i].text
+      i += 1
+    }
+    while (i < ops.length && ops[i].type === 'ins') {
+      ins += ops[i].text
+      i += 1
+    }
+    // Ins then del in LCS order is unusual; absorb trailing dels into this hunk
+    while (i < ops.length && ops[i].type === 'del' && !ins) {
+      del += ops[i].text
+      i += 1
+    }
+
+    if (del && ins) {
+      const newInner =
+        (isInlineHtmlFragment(ins) && htmlSliceForPlain(notionHtml, ins)) ||
+        escapePlainAsHtml(ins)
+      edits.push({
+        find: del,
+        replacement: notionDelWrap(escapePlainAsHtml(del)) + notionInsWrap(newInner, del),
+      })
+    } else if (del) {
+      edits.push({
+        find: del,
+        replacement: notionDelWrap(escapePlainAsHtml(del)),
+      })
+    } else if (ins) {
+      const newInner =
+        (isInlineHtmlFragment(ins) && htmlSliceForPlain(notionHtml, ins)) ||
+        escapePlainAsHtml(ins)
+      edits.push({
+        find: '',
+        replacement: notionInsWrap(newInner, ''),
+        after: afterEq,
+      })
+    }
+  }
+  return edits
 }
 
 /**
  * Find the HTML slice in `html` whose loose plain text equals `plain`.
- * Used so surgical sync keeps Notion bold/links instead of escaped plain text.
  */
 function htmlSliceForPlain(html: string, plain: string): string | null {
   if (!plain || !html) return null
@@ -233,52 +260,26 @@ function htmlSliceForPlain(html: string, plain: string): string | null {
   return html.slice(htmlStart, htmlEnd)
 }
 
-/**
- * Apply a plain old→new replacement inside HTML, wrapping only `newText` with notion-sync.
- * When `notionHtml` is provided, prefer Notion’s formatted slice for `newText` so Accept
- * keeps bold/links instead of escaped plain text.
- */
-function applyNotionReplacement(
-  html: string,
-  oldText: string,
-  newText: string,
-  notionHtml?: string
-): string | null {
-  if (!oldText) return null
-  const markedInner = (() => {
-    if (!newText) return ''
-    // Prefer Notion’s inline formatting for the new text — never block-level slices
-    // (those break TipTap marks and kill grey highlights on re-sync).
-    const fromNotion = notionHtml ? htmlSliceForPlain(notionHtml, newText) : null
-    if (fromNotion && fromNotion.length > 0 && isInlineHtmlFragment(fromNotion)) {
-      return fromNotion
-    }
-    return escapePlainAsHtml(newText)
-  })()
-
-  // Prefer raw substring when oldText has no tags / newlines
-  if (!oldText.includes('\n') && html.includes(oldText)) {
-    return html.replace(oldText, notionWrap(markedInner))
-  }
-
-  // Walk HTML with the same plain projection as htmlToPlainLoose
+/** Map a plain substring to HTML [start,end) in `html` (first match). */
+function plainRangeInHtml(html: string, plain: string): { start: number; end: number } | null {
+  if (!plain) return null
   let matched = 0
   let htmlStart = -1
   let htmlEnd = -1
   let i = 0
 
   const advanceMatch = (plainCh: string, from: number, to: number): boolean => {
-    if (plainCh === oldText[matched]) {
+    if (plainCh === plain[matched]) {
       if (matched === 0) htmlStart = from
       matched += 1
-      if (matched === oldText.length) {
+      if (matched === plain.length) {
         htmlEnd = to
-        return true // Done
+        return true
       }
-    } else if (plainCh === oldText[0]) {
+    } else if (plainCh === plain[0]) {
       htmlStart = from
       matched = 1
-      if (matched === oldText.length) {
+      if (matched === plain.length) {
         htmlEnd = to
         return true
       }
@@ -302,7 +303,7 @@ function applyNotionReplacement(
       }
       const tagEnd = html.indexOf('>', i)
       if (tagEnd < 0) break
-      i = tagEnd + 1 // Strip other tags (same as htmlToPlainLoose)
+      i = tagEnd + 1
       continue
     }
 
@@ -329,79 +330,297 @@ function applyNotionReplacement(
   }
 
   if (htmlStart < 0 || htmlEnd < 0) return null
-  return html.slice(0, htmlStart) + notionWrap(markedInner) + html.slice(htmlEnd)
+  return { start: htmlStart, end: htmlEnd }
 }
 
-/** Escape plain text for safe insertion as HTML text nodes. */
-function escapePlainAsHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\n/g, '<br>')
+/** Apply one find→replacement edit on HTML (plain projection). */
+function applyInlineEdit(html: string, edit: InlineEdit): string | null {
+  if (edit.find) {
+    if (!edit.find.includes('\n') && html.includes(edit.find)) {
+      return html.replace(edit.find, edit.replacement)
+    }
+    const range = plainRangeInHtml(html, edit.find)
+    if (!range) return null
+    return html.slice(0, range.start) + edit.replacement + html.slice(range.end)
+  }
+  // Pure insert after `after` plain (or at start)
+  if (edit.after) {
+    const range = plainRangeInHtml(html, edit.after)
+    if (!range) return null
+    return html.slice(0, range.end) + edit.replacement + html.slice(range.end)
+  }
+  // Insert at first text position inside first p/h
+  const m = html.match(/<(?:p|h[1-4])(?:\s[^>]*)?>/i)
+  if (!m || m.index == null) return null
+  const at = m.index + m[0].length
+  return html.slice(0, at) + edit.replacement + html.slice(at)
+}
+
+/** Paragraph / heading / list-item inners — TipTap-safe mark targets. */
+const TEXT_INNER_RE =
+  /(<(?:p|h[1-4]|li)(?:\s[^>]*)?>)([\s\S]*?)(<\/(?:p|h[1-4]|li)>)/gi
+
+type BlockChunk = { html: string; plain: string }
+
+/** Split TipTap HTML into top-level blocks for structural diff. */
+function splitTopLevelBlocks(html: string): BlockChunk[] {
+  const trimmed = (html || '').trim()
+  if (!trimmed) return []
+  const pieces = trimmed
+    .split(/(?=<(?:p|h[1-4]|ul|ol|blockquote|pre|table|hr)\b)/i)
+    .map((p) => p.trim())
+    .filter(Boolean)
+  return pieces.map((blockHtml) => ({
+    html: blockHtml,
+    plain: htmlToPlainLoose(blockHtml).replace(/\s+/g, ' ').trim(),
+  }))
+}
+
+type SeqOp =
+  | { type: 'eq'; ai: number; bi: number }
+  | { type: 'del'; ai: number }
+  | { type: 'ins'; bi: number }
+
+/** LCS over block plain-text keys. */
+function diffBlockSequences(A: string[], B: string[]): SeqOp[] {
+  const n = A.length
+  const m = B.length
+  if (n === 0 && m === 0) return []
+  const dp: number[][] = Array.from({ length: n + 1 }, () => Array(m + 1).fill(0))
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] =
+        A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1])
+    }
+  }
+  const ops: SeqOp[] = []
+  let i = 0
+  let j = 0
+  while (i < n && j < m) {
+    if (A[i] === B[j]) {
+      ops.push({ type: 'eq', ai: i, bi: j })
+      i += 1
+      j += 1
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      ops.push({ type: 'del', ai: i })
+      i += 1
+    } else {
+      ops.push({ type: 'ins', bi: j })
+      j += 1
+    }
+  }
+  while (i < n) {
+    ops.push({ type: 'del', ai: i })
+    i += 1
+  }
+  while (j < m) {
+    ops.push({ type: 'ins', bi: j })
+    j += 1
+  }
+  return ops
+}
+
+/** Mark every text-bearing inner in a block as Notion insert (new block). */
+function markBlockAsIns(blockHtml: string): string {
+  let marked = false
+  const next = blockHtml.replace(TEXT_INNER_RE, (_m, open, inner, close) => {
+    if (/data-notion-sync=/.test(inner)) return `${open}${inner}${close}`
+    const stripped = String(inner).replace(/^\s+|\s+$/g, '')
+    if (!stripped || /^<br\s*\/?>$/i.test(stripped)) return `${open}${inner}${close}`
+    marked = true
+    return `${open}${notionInsWrap(inner)}${close}`
+  })
+  if (marked) return next
+  // Non text-block (hr, empty) — leave as-is; still visible as new structure
+  return next
+}
+
+/** Mark every text-bearing inner in a local block as deletion (Notion removed it). */
+function markBlockAsDel(blockHtml: string): string {
+  return blockHtml.replace(TEXT_INNER_RE, (_m, open, inner, close) => {
+    if (/data-notion-sync=/.test(inner)) return `${open}${inner}${close}`
+    const stripped = String(inner).replace(/^\s+|\s+$/g, '')
+    if (!stripped || /^<br\s*\/?>$/i.test(stripped)) return `${open}${inner}${close}`
+    return `${open}${notionDelWrap(inner)}${close}`
+  })
 }
 
 /**
- * Build proposed HTML for Notion sync review: mark only what changed.
- * Structural marks on Notion HTML first (reliable grey highlights after Keep mine
- * re-sync). Surgical patch of local HTML is a fallback when it still produces marks.
+ * Word-level proposed HTML within one (or few) blocks — inserts highlighted, dels struck.
+ */
+function buildWordLevelProposedHtml(originalHtml: string, notionHtml: string): string {
+  const original = originalHtml || ''
+  const notion = notionHtml || ''
+  const origPlain = htmlToPlainLoose(original)
+  const notionPlain = htmlToPlainLoose(notion)
+  const ops = diffWords(origPlain, notionPlain)
+  const edits = opsToInlineEdits(ops, notion)
+  if (edits.length === 0) return notion
+
+  let next = original
+  let applied = 0
+  for (let i = edits.length - 1; i >= 0; i--) {
+    // Block-level inserts (newlines / multi-block) can't nest in a mark span
+    const edit = edits[i]
+    if (!edit.find && edit.replacement && !isInlineHtmlFragment(edit.replacement)) {
+      continue
+    }
+    if (
+      edit.find &&
+      edit.replacement.includes('data-notion-sync-kind="ins"') &&
+      !isInlineHtmlFragment(
+        edit.replacement.replace(/<span[^>]*data-notion-sync[^>]*>|<\/span>/gi, '')
+      )
+    ) {
+      // Fall through to block path caller
+      continue
+    }
+    const patched = applyInlineEdit(next, edit)
+    if (patched) {
+      next = patched
+      applied += 1
+    }
+  }
+
+  if (applied > 0 && htmlHasNotionSync(next)) return next
+
+  const inferredDel = ops.filter((o) => o.type === 'del').map((o) => o.text).join('')
+  const inferredIns = ops.filter((o) => o.type === 'ins').map((o) => o.text).join('')
+  if (inferredDel) {
+    const newInner =
+      (inferredIns &&
+        isInlineHtmlFragment(inferredIns) &&
+        htmlSliceForPlain(notion, inferredIns)) ||
+      escapePlainAsHtml(inferredIns || '')
+    const replacement =
+      (inferredDel ? notionDelWrap(escapePlainAsHtml(inferredDel)) : '') +
+      (inferredIns ? notionInsWrap(newInner || '', inferredDel) : '')
+    const patched = applyInlineEdit(original, { find: inferredDel, replacement })
+    if (patched && htmlHasNotionSync(patched)) return patched
+  }
+
+  // Pure Notion additions with no local anchor — mark Notion blocks as inserts
+  if (!inferredDel && inferredIns) {
+    return markBlockAsIns(notion)
+  }
+
+  return next
+}
+
+/**
+ * Build proposed HTML for Notion sync review:
+ * - New / removed **blocks** get TipTap-safe grey / strike on their text
+ * - In-place edits use word-level highlight + strikethrough
  */
 export function buildNotionSyncProposedHtml(
   originalHtml: string,
   notionHtml: string
 ): string {
-  // Always start clean — leftover review marks corrupt diffs and Accept formatting
   const original = sanitizeNotionSyncHtml(originalHtml || '')
   const notion = sanitizeNotionSyncHtml(notionHtml || '')
   if (!notion.trim()) return notion
 
-  const norm = (s: string) => htmlToPlainLoose(s).replace(/\s+/g, ' ').trim()
-  if (norm(original) && norm(notion) && norm(original) === norm(notion)) {
-    // Body text matches — nothing to highlight
+  const origPlain = htmlToPlainLoose(original)
+  const notionPlain = htmlToPlainLoose(notion)
+  const norm = (s: string) => s.replace(/\s+/g, ' ').trim()
+  if (norm(origPlain) && norm(notionPlain) && norm(origPlain) === norm(notionPlain)) {
     return notion
   }
 
-  // 1) Structural: mark changed Notion blocks (survives TipTap parse; re-sync safe)
-  const structural = markChangedBlocksOnly(original, notion)
-  if (htmlHasNotionSync(structural)) return structural
+  const origBlocks = splitTopLevelBlocks(original)
+  const notionBlocks = splitTopLevelBlocks(notion)
 
-  // 2) Surgical: patch local HTML so boardLinks stay; only keep if marks survive
-  const origPlain = htmlToPlainLoose(original)
-  const notionPlain = htmlToPlainLoose(notion)
-  const inferred = inferReplacementsFromPlain(origPlain, notionPlain)
-  if (inferred.length > 0) {
-    let next = original
-    let applied = 0
-    for (const r of inferred) {
-      const oldText = (r.oldText || '').trim()
-      if (!oldText) continue
-      const patched = applyNotionReplacement(next, oldText, r.newText ?? '', notion)
-      if (patched) {
-        next = patched
-        applied += 1
+  // Single-block (or unstructured) → word-level only
+  if (origBlocks.length <= 1 && notionBlocks.length <= 1) {
+    return buildWordLevelProposedHtml(original || '<p></p>', notion)
+  }
+
+  const ops = diffBlockSequences(
+    origBlocks.map((b) => b.plain),
+    notionBlocks.map((b) => b.plain)
+  )
+
+  const parts: string[] = []
+  let i = 0
+  while (i < ops.length) {
+    const op = ops[i]
+    if (op.type === 'eq') {
+      parts.push(origBlocks[op.ai].html) // Keep local markup when text matches
+      i += 1
+      continue
+    }
+
+    // Adjacent del+ins → treat as in-place edit (word-level inside the pair)
+    if (op.type === 'del' && ops[i + 1]?.type === 'ins') {
+      const delOp = op
+      const insOp = ops[i + 1] as Extract<SeqOp, { type: 'ins' }>
+      const localHtml = origBlocks[delOp.ai].html
+      const remoteHtml = notionBlocks[insOp.bi].html
+      const mixed = buildWordLevelProposedHtml(localHtml, remoteHtml)
+      if (htmlHasNotionSync(mixed)) {
+        parts.push(mixed)
+      } else {
+        // Word path failed — show struck local + highlighted Notion block
+        parts.push(markBlockAsDel(localHtml))
+        parts.push(markBlockAsIns(remoteHtml))
       }
+      i += 2
+      continue
     }
-    if (applied > 0 && htmlHasNotionSync(next)) return next
+
+    if (op.type === 'del') {
+      parts.push(markBlockAsDel(origBlocks[op.ai].html))
+      i += 1
+      continue
+    }
+
+    // New Notion block(s)
+    parts.push(markBlockAsIns(notionBlocks[op.bi].html))
+    i += 1
   }
 
-  // 3) Pure insertion: mark the new suffix inside Notion HTML
-  if (origPlain && notionPlain.startsWith(origPlain) && notionPlain.length > origPlain.length) {
-    const inserted = notionPlain.slice(origPlain.length)
-    if (inserted.trim()) {
-      const marked = applyNotionReplacement(notion, inserted, inserted, notion)
-      if (marked && htmlHasNotionSync(marked)) return marked
-    }
-  }
-
-  // 4) Last resort — grey every text block on the Notion body
-  const forced = wrapAllTextBlocks(notion)
-  if (htmlHasNotionSync(forced)) return forced
-  return structural
+  const proposed = parts.join('')
+  return htmlHasNotionSync(proposed) ? proposed : markBlockAsIns(notion)
 }
 
-/** @deprecated Prefer buildNotionSyncProposedHtml — marks the whole body. */
+/**
+ * Accept Notion: drop deletion proposals, unwrap insert highlights.
+ */
+export function acceptNotionSyncHtml(html: string): string {
+  let next = html || ''
+  // Notion deleted these — remove struck local text
+  next = next.replace(
+    /<span[^>]*data-notion-sync-kind=["']del["'][^>]*>[\s\S]*?<\/span>/gi,
+    ''
+  )
+  return unwrapNotionSync(next)
+}
+
+/** Remove Notion sync wrapper spans while keeping inner HTML (heal / Keep mine path). */
+export function unwrapNotionSync(html: string): string {
+  let prev = ''
+  let next = html || ''
+  while (prev !== next) {
+    prev = next
+    next = next.replace(
+      /<span[^>]*data-notion-sync=["']true["'][^>]*>([\s\S]*?)<\/span>/gi,
+      '$1'
+    )
+  }
+  return next
+}
+
+/**
+ * Strip leftover review marks for heal / Keep mine baseline.
+ * Keeps visible text (including former deletions).
+ */
+export function sanitizeNotionSyncHtml(html: string): string {
+  return unwrapNotionSync(html || '')
+}
+
+/** @deprecated Prefer buildNotionSyncProposedHtml. */
 export function markHtmlWithNotionSync(html: string): string {
   if (!html?.trim()) return html
   if (htmlHasNotionSync(html)) return html
-  return wrapAllTextBlocks(sanitizeNotionSyncHtml(html))
+  return markBlockAsIns(html)
 }

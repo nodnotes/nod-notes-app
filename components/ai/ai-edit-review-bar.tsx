@@ -2,8 +2,12 @@
 
 // Bottom-of-page edit review bar (AI rainbow + Notion sync grey)
 import { Eye, EyeOff, Trash2, Check, Loader2 } from 'lucide-react'
-import { useState } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import { useAiEditSession } from '@/lib/ai/edit-session'
+import {
+  getNotionSyncSelectedCount,
+  subscribeNotionSyncSelection,
+} from '@/lib/notion/sync-selection'
 import { cn } from '@/lib/utils'
 
 export function AiEditReviewBar() {
@@ -17,8 +21,14 @@ export function AiEditReviewBar() {
     saveEdit,
     discardEdit,
     setFocusedEditId,
+    rejectNotionSelectionOrDiscard,
   } = useAiEditSession()
   const [busy, setBusy] = useState(false)
+  const selectedCount = useSyncExternalStore(
+    subscribeNotionSyncSelection,
+    getNotionSyncSelectedCount,
+    () => 0
+  )
 
   if (pendingEdits.length === 0) return null
 
@@ -29,8 +39,11 @@ export function AiEditReviewBar() {
   const notionCount = pendingEdits.filter((e) => e.source === 'notion').length
   const aiCount = pendingEdits.length - notionCount
   const notionOnly = notionCount > 0 && aiCount === 0
+  const hasNotionSelection = notionOnly && selectedCount > 0
   const label = notionOnly
-    ? `${notionCount} Notion sync${notionCount === 1 ? '' : 's'}`
+    ? hasNotionSelection
+      ? `${selectedCount} selected`
+      : `${notionCount} Notion sync${notionCount === 1 ? '' : 's'}`
     : aiCount > 0 && notionCount > 0
       ? `${pendingEdits.length} changes`
       : `${pendingEdits.length} AI edit${pendingEdits.length === 1 ? '' : 's'}`
@@ -75,11 +88,27 @@ export function AiEditReviewBar() {
             type="button"
             disabled={busy}
             className="h-7 px-2 rounded-full flex items-center gap-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40"
-            title={focused.source === 'notion' ? 'Keep my version' : 'Remove this change'}
-            onClick={() => void run(() => discardEdit(focused.id))}
+            title={
+              focused.source === 'notion'
+                ? hasNotionSelection
+                  ? 'Keep non-red Notion changes; restore local for red'
+                  : 'Keep my version'
+                : 'Remove this change'
+            }
+            onClick={() =>
+              void run(() =>
+                focused.source === 'notion' && hasNotionSelection
+                  ? rejectNotionSelectionOrDiscard()
+                  : discardEdit(focused.id)
+              )
+            }
           >
             <Trash2 className="h-3.5 w-3.5" />
-            {focused.source === 'notion' ? 'Keep mine' : 'Remove'}
+            {focused.source === 'notion'
+              ? hasNotionSelection
+                ? 'Keep non red'
+                : 'Keep mine'
+              : 'Remove'}
           </button>
           <button
             type="button"
@@ -132,10 +161,20 @@ export function AiEditReviewBar() {
           type="button"
           disabled={busy}
           className="h-8 px-3 rounded-full text-xs font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-50"
-          title={notionOnly ? 'Keep all local versions' : 'Remove all AI changes'}
-          onClick={() => void run(() => discardAll())}
+          title={
+            notionOnly
+              ? hasNotionSelection
+                ? 'Keep non-red Notion changes; restore local for red'
+                : 'Keep all local versions'
+              : 'Remove all AI changes'
+          }
+          onClick={() =>
+            void run(() =>
+              notionOnly ? rejectNotionSelectionOrDiscard() : discardAll()
+            )
+          }
         >
-          {notionOnly ? 'Keep mine' : 'Remove changes'}
+          {notionOnly ? (hasNotionSelection ? 'Keep non red' : 'Keep mine') : 'Remove changes'}
         </button>
         <button
           type="button"

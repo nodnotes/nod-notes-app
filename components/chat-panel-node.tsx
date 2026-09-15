@@ -643,6 +643,11 @@ import {
   htmlHasNotionSync,
   sanitizeNotionSyncHtml,
 } from '@/lib/notion/wrap-notion-sync-html' // Strip orphan review marks before persist
+import {
+  refreshNotionSyncSelection,
+  registerNotionSyncEditor,
+} from '@/lib/notion/sync-selection'
+import { toggleNotionSyncMarkSelected } from '@/lib/tiptap/notion-sync-mark'
 
 interface Message {
   id: string
@@ -2848,6 +2853,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     previewOriginal,
     justRestoredByMessage,
     consumeRestoredContent,
+    patchPendingProposedContent,
   } = useAiEditSession() // AI edit review session
   const warmFrameContentMount = useWarmFrameContentMount() // Prefetch TipTap before pan-in
   const wasAiPendingRef = useRef(false) // Detect pending → cleared (Remove / Save)
@@ -4863,6 +4869,22 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     onNotionUpdatesAvailable: handleNotionUpdatesAvailable,
     onLastEditedTime: handleNotionLastEditedTime,
   })
+
+  // Register TipTap editor for Keep non red (reject selected red highlights)
+  useEffect(() => {
+    const mid = promptMessage?.id
+    if (!mid) return
+    const edit = pendingForMessage(mid)
+    if (!edit || edit.source !== 'notion') return
+    const ed = promptEditorRef.current
+    if (!ed || ed.isDestroyed) return
+    return registerNotionSyncEditor(mid, ed)
+  }, [
+    promptMessage?.id,
+    pendingForMessage,
+    promptContent,
+    aiForceSyncKey,
+  ])
 
   // Manual sync applied Notion HTML into this frame — force TipTap + RF node data to match
   useEffect(() => {
@@ -7894,9 +7916,28 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         setIsFrameHovering(false)
       }}
       onClick={(e) => {
-        // Click pending span → focus that edit in the review bar
+        // Click Notion sync highlight → toggle red selection; AI pending → focus review
+        const notionSpan = (e.target as HTMLElement | null)?.closest?.(
+          '[data-notion-sync="true"]'
+        )
+        if (notionSpan && promptMessage?.id) {
+          const edit = pendingForMessage(promptMessage.id)
+          if (edit?.source === 'notion') {
+            e.stopPropagation()
+            const ed = promptEditorRef.current
+            if (ed && !ed.isDestroyed) {
+              toggleNotionSyncMarkSelected(ed, notionSpan)
+              const html = ed.getHTML()
+              setPromptContent(html)
+              patchPendingProposedContent(promptMessage.id, html)
+              refreshNotionSyncSelection()
+            }
+            setFocusedEditId(edit.id)
+            return
+          }
+        }
         const pendingSpan = (e.target as HTMLElement | null)?.closest?.(
-          '[data-ai-pending="true"], [data-notion-sync="true"]'
+          '[data-ai-pending="true"]'
         )
         if (pendingSpan && promptMessage?.id) {
           const edit = pendingForMessage(promptMessage.id)

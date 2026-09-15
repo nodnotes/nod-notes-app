@@ -1985,7 +1985,7 @@ span[data-added="true"] {
     cursor: pointer;
   }
 
-  /* Notion sync pending — grey sheer (same review UX as AI, quieter color) */
+  /* Notion sync pending — grey sheer inserts (same review UX as AI, quieter color) */
   .ProseMirror span.tt-notion-sync[data-notion-sync="true"] {
     background: rgba(107, 114, 128, 0.22);
     border-radius: 2px;
@@ -1997,6 +1997,27 @@ span[data-added="true"] {
   .dark .ProseMirror span.tt-notion-sync[data-notion-sync="true"] {
     background: rgba(156, 163, 175, 0.28);
     box-shadow: inset 0 0 0 1px rgba(209, 213, 219, 0.2);
+  }
+  /* Notion removed local text — strikethrough (still keepable via Keep non red) */
+  .ProseMirror span.tt-notion-sync.tt-notion-sync-del[data-notion-sync-kind="del"],
+  .ProseMirror span.tt-notion-sync[data-notion-sync-kind="del"] {
+    background: rgba(107, 114, 128, 0.12);
+    text-decoration: line-through;
+    text-decoration-thickness: 1.5px;
+    text-decoration-color: rgba(75, 85, 99, 0.85);
+  }
+  .dark .ProseMirror span.tt-notion-sync[data-notion-sync-kind="del"] {
+    background: rgba(156, 163, 175, 0.14);
+    text-decoration-color: rgba(209, 213, 219, 0.85);
+  }
+  /* Selected Notion sync highlight — light red (Keep non red restores these) */
+  .ProseMirror span.tt-notion-sync[data-notion-sync="true"][data-notion-sync-selected="true"] {
+    background: rgba(248, 113, 113, 0.32);
+    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.35);
+  }
+  .dark .ProseMirror span.tt-notion-sync[data-notion-sync="true"][data-notion-sync-selected="true"] {
+    background: rgba(248, 113, 113, 0.38);
+    box-shadow: inset 0 0 0 1px rgba(252, 165, 165, 0.4);
   }
 
   /* Persisted AI origin — reddish sheer only when top-bar toggle is on */

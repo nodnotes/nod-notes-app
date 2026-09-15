@@ -26,6 +26,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260915014602_notion_sync_inline_diff_keep_non_red` — Block+word sync diffs; Keep non red; new-block highlights; strike deletions
 - `20260914232332_notion_sync_review_heal_resync` — Re-sync after Keep mine; TipTap-safe sync highlights; heal stale undone review marks
 - `20260914112320_notion_page_sync_review_oauth_return` — Notion page sync review marks + toast; OAuth returnTo board; never DELETE nested Notion pages
 - `20260914012029_free_nav_minimap_double_caret` — Free nav double-caret minimap toggle; 196px column; zoom % grows; rotate/pan stay right

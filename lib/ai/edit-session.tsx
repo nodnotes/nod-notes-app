@@ -13,10 +13,18 @@ import {
 import { createClient } from '@/lib/supabase/client'
 import { htmlHasAiOrigin, htmlHasAiPending, promotePendingToOrigin, unwrapAiPending } from '@/lib/ai/wrap-ai-html'
 import {
+  htmlHasNotionSync,
+  acceptNotionSyncHtml,
   sanitizeNotionSyncHtml,
-  unwrapNotionSync,
 } from '@/lib/notion/wrap-notion-sync-html'
 import { patchBoardMessageMetadata } from '@/lib/notion/connection-sync-pending'
+import {
+  clearNotionSyncSelection,
+  getNotionSyncEditors,
+  getNotionSyncSelectedCount,
+  refreshNotionSyncSelection,
+} from '@/lib/notion/sync-selection'
+import { rejectSelectedNotionSyncMarks } from '@/lib/tiptap/notion-sync-mark'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   buildProposedHtml,
@@ -103,6 +111,13 @@ interface AiEditSessionValue {
   discardEdit: (id: string) => Promise<void>
   saveAll: () => Promise<void>
   discardAll: () => Promise<void>
+  /**
+   * Notion review: if highlights are selected (red), restore local for those only
+   * (“Keep non red”); otherwise Keep mine / discard all Notion proposals.
+   */
+  rejectNotionSelectionOrDiscard: () => Promise<void>
+  /** Patch in-memory proposed HTML after click-select / partial reject. */
+  patchPendingProposedContent: (messageId: string, html: string) => void
   displayContentFor: (messageId: string, liveContent: string) => string
   isFramePending: (messageId: string) => boolean
   isThreadPending: (edgeId: string) => boolean
@@ -441,6 +456,7 @@ export function AiEditSessionProvider({
         }
         return next
       })
+      clearNotionSyncSelection()
       setPreviewOriginal(false)
       onMessagesMutated?.()
       bumpMessages()
@@ -452,7 +468,8 @@ export function AiEditSessionProvider({
     async (edit: AiPendingEdit): Promise<{ messageId?: string; content?: string }> => {
       if (edit.kind === 'update_frame' && edit.messageId) {
         if (edit.source === 'notion') {
-          const finalHtml = sanitizeNotionSyncHtml(unwrapNotionSync(edit.proposedContent))
+          // Drop struck deletions; unwrap insert highlights
+          const finalHtml = acceptNotionSyncHtml(edit.proposedContent)
           await persistFrameContent(edit.messageId, finalHtml)
           const metaPatch: Record<string, unknown> = {
             notionSyncReview: false,
@@ -683,6 +700,7 @@ export function AiEditSessionProvider({
     setPendingEdits([])
     setFocusedEditId(null)
     setPreviewOriginal(false)
+    clearNotionSyncSelection()
     onMessagesMutated?.()
     bumpMessages({
       contentUpdates: Object.entries(restored).map(([messageId, content]) => ({
@@ -691,6 +709,88 @@ export function AiEditSessionProvider({
       })),
     })
   }, [pendingEdits, applyDiscardOne, onMessagesMutated])
+
+  const patchPendingProposedContent = useCallback((messageId: string, html: string) => {
+    setPendingEdits((prev) =>
+      prev.map((e) =>
+        e.messageId === messageId && e.source === 'notion'
+          ? { ...e, proposedContent: html }
+          : e
+      )
+    )
+    refreshNotionSyncSelection()
+  }, [])
+
+  /**
+   * Red highlights = reject Notion for those spans (restore prev).
+   * Grey (non-red) stay as Notion proposals — “Keep non red”.
+   * No selection → Keep mine (discard all).
+   */
+  const rejectNotionSelectionOrDiscard = useCallback(async () => {
+    if (getNotionSyncSelectedCount() <= 0) {
+      await discardAll()
+      return
+    }
+    const notionEdits = pendingEdits.filter((e) => e.source === 'notion' && e.messageId)
+    const restored: Record<string, string> = {}
+    const stillPending: AiPendingEdit[] = []
+    const editors = getNotionSyncEditors()
+
+    for (const edit of notionEdits) {
+      const mid = edit.messageId!
+      const hit = editors.find((e) => e.messageId === mid)
+      let html = edit.proposedContent
+      if (hit?.editor && !hit.editor.isDestroyed) {
+        rejectSelectedNotionSyncMarks(hit.editor)
+        html = hit.editor.getHTML()
+      }
+      if (!htmlHasNotionSync(html)) {
+        // No proposals left — body already reflects Keep non red restores
+        const finalHtml = sanitizeNotionSyncHtml(html)
+        await persistFrameContent(mid, finalHtml)
+        const metaPatch: Record<string, unknown> = {
+          notionSyncReview: false,
+          notionUpdatesPending: false,
+          aiPendingEdit: false,
+        }
+        if (edit.notionLastEditedTime) {
+          metaPatch.notionLastEditedTime = edit.notionLastEditedTime
+          metaPatch.notionRemoteLastEditedTime = edit.notionLastEditedTime
+        }
+        await persistFrameMeta(mid, metaPatch)
+        if (conversationId) {
+          patchBoardMessageMetadata(queryClient, conversationId, mid, metaPatch)
+        }
+        restored[mid] = finalHtml
+      } else {
+        stillPending.push({ ...edit, proposedContent: html })
+      }
+    }
+
+    // Keep any non-notion pending edits
+    const other = pendingEdits.filter((e) => e.source !== 'notion')
+    setPendingEdits([...other, ...stillPending])
+    if (Object.keys(restored).length > 0) {
+      setJustRestoredByMessage((prev) => ({ ...prev, ...restored }))
+    }
+    clearNotionSyncSelection()
+    refreshNotionSyncSelection()
+    onMessagesMutated?.()
+    bumpMessages({
+      contentUpdates: Object.entries(restored).map(([messageId, content]) => ({
+        messageId,
+        content,
+      })),
+    })
+  }, [
+    pendingEdits,
+    discardAll,
+    persistFrameContent,
+    persistFrameMeta,
+    conversationId,
+    queryClient,
+    onMessagesMutated,
+  ])
 
   const displayContentFor = useCallback(
     (messageId: string, liveContent: string) => {
@@ -739,6 +839,8 @@ export function AiEditSessionProvider({
       discardEdit,
       saveAll,
       discardAll,
+      rejectNotionSelectionOrDiscard,
+      patchPendingProposedContent,
       displayContentFor,
       isFramePending,
       isThreadPending,
@@ -760,6 +862,8 @@ export function AiEditSessionProvider({
       discardEdit,
       saveAll,
       discardAll,
+      rejectNotionSelectionOrDiscard,
+      patchPendingProposedContent,
       displayContentFor,
       isFramePending,
       isThreadPending,
@@ -793,6 +897,8 @@ export function useAiEditSession(): AiEditSessionValue {
       discardEdit: async () => {},
       saveAll: async () => {},
       discardAll: async () => {},
+      rejectNotionSelectionOrDiscard: async () => {},
+      patchPendingProposedContent: () => {},
       displayContentFor: (_id, live) => live,
       isFramePending: () => false,
       isThreadPending: () => false,
