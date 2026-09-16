@@ -26,6 +26,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260916012644_notion_sync_review_ux_revert_accept` — Notion sync review UX: Revert/Accept; highlight red+strike; no I-bar on selected; Frames synced/changed labels
 - `20260915014602_notion_sync_inline_diff_keep_non_red` — Block+word sync diffs; Keep non red; new-block highlights; strike deletions
 - `20260914232332_notion_sync_review_heal_resync` — Re-sync after Keep mine; TipTap-safe sync highlights; heal stale undone review marks
 - `20260914112320_notion_page_sync_review_oauth_return` — Notion page sync review marks + toast; OAuth returnTo board; never DELETE nested Notion pages

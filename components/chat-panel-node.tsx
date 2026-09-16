@@ -1350,7 +1350,7 @@ function TipTapContentLive({
           const target = pe.target as HTMLElement | null
           if (
             target?.closest?.(
-              '[data-tt-block-handle], [data-tt-insert-line], .block-actions-menu, [data-page-link-preview], .tt-capture-link, .tt-database-block, .tt-notion-db'
+              '[data-tt-block-handle], [data-tt-insert-line], .block-actions-menu, [data-page-link-preview], .tt-capture-link, .tt-database-block, .tt-notion-db, [data-notion-sync="true"]'
             )
           ) {
             return false
@@ -1369,6 +1369,15 @@ function TipTapContentLive({
           if (mouseEvent.button === 2) {
             return true // Skip ProseMirror caret; let contextmenu bubble to the frame menu
           }
+          const mouseTarget = mouseEvent.target as HTMLElement | null
+          // Sync highlight → red toggle (frame onClick); never place I-bar when selected
+          if (mouseTarget?.closest?.('[data-notion-sync="true"]')) {
+            mouseEvent.preventDefault()
+            mouseEvent.stopPropagation()
+            selectOnlyClickRef.current = false
+            clearFrameTextEditActive()
+            return true
+          }
           // Unselected: editor is already editable:false — do NOT preventDefault here
           // (that aborted RF/d3 frame drag on press+move). Only suppress the follow-up I-bar.
           if (!isPanelSelectedRef.current) {
@@ -1377,7 +1386,6 @@ function TipTapContentLive({
             return false
           }
           // DB table / title chrome owns clicks (cells, toolbar) — table nodrag stops RF drag
-          const mouseTarget = mouseEvent.target as HTMLElement | null
           if (mouseTarget?.closest?.('.tt-database-block, .tt-notion-db')) {
             return false
           }
@@ -1649,10 +1657,10 @@ function TipTapContentLive({
       // their click AND suppresses pointerdown for finger 1, so a later pinch never arms.
       if (
         target?.closest?.(
-          '[data-tt-block-handle], [data-tt-insert-line], .block-actions-menu, [data-page-link-preview], .tt-database-block, .tt-notion-db'
+          '[data-tt-block-handle], [data-tt-insert-line], .block-actions-menu, [data-page-link-preview], .tt-database-block, .tt-notion-db, [data-notion-sync="true"]'
         )
       ) {
-        return // ⋮⋮ / insert line / board open / DB table own the gesture (pinch still arms)
+        return // ⋮⋮ / insert / board open / DB / sync highlight own the gesture
       }
       e.preventDefault() // Requires non-passive — stops iOS focus-only first tap
       e.stopPropagation() // RF d3-drag listens for touchstart on the node
@@ -2046,6 +2054,12 @@ function TipTapContentLive({
     if (e.button !== 0) return // Right-click is the frame menu, not an I-bar
     // Unselected: never place caret — RF selects/drags the frame first
     if (!isPanelSelected) return
+    // Sync highlight → let click bubble to frame onClick (red toggle); no I-bar
+    const t = e.target as HTMLElement | null
+    if (t?.closest?.('[data-notion-sync="true"]')) {
+      clearFrameTextEditActive()
+      return
+    }
     // Same gesture that just selected the frame / armed a nest — no I-bar
     if (selectOnlyClickRef.current) {
       selectOnlyClickRef.current = false
@@ -2058,7 +2072,6 @@ function TipTapContentLive({
       return
     }
     // DB table / cell inputs own the gesture — don't steal focus after a row warm.
-    const t = e.target as HTMLElement | null
     if (t?.closest?.('.tt-notion-db, .tt-database-block, input, textarea, select, [data-tt-db-row-warm]')) {
       return
     }

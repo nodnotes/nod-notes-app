@@ -17,7 +17,7 @@ export const NotionSyncPending = Mark.create({
             ? { 'data-notion-prev': attrs.prev }
             : {},
       },
-      // Click-selected for Keep non red (light red)
+      // Click-selected for Keep non red (light red + strike flip)
       selected: {
         default: false,
         parseHTML: (el) => el.getAttribute('data-notion-sync-selected') === 'true',

@@ -44,7 +44,7 @@ export function subscribeNotionSyncSelection(onStoreChange: () => void): () => v
   }
 }
 
-/** Selected highlight count (Keep mine → Keep non red). */
+/** Selected highlight count (Accept → Keep non red when > 0). */
 export function getNotionSyncSelectedCount(): number {
   return selectedCount
 }

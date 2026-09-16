@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import {
   Check,
   ChevronDown,
+  Folder,
   GitFork,
   ListFilter,
   Loader2,
@@ -23,6 +24,7 @@ import {
   togglePinnedChatThread,
 } from '@/lib/ai/pinned-chat-threads'
 import { createLongPressController } from '@/lib/long-press' // Hold → same row options as hover
+import { createClient } from '@/lib/supabase/client' // Load projects for the chats menu header
 
 export type AiThreadFilter = 'all' | 'board'
 
@@ -51,6 +53,8 @@ export function AiThreadPicker({
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => getPinnedChatThreadIds())
   const [rowMenuId, setRowMenuId] = useState<string | null>(null)
   const [hoveredThreadId, setHoveredThreadId] = useState<string | null>(null)
+  const [projects, setProjects] = useState<{ id: string; name: string }[]>([]) // Board-nav projects for section chrome
+  const [isProjectsExpanded, setIsProjectsExpanded] = useState(true) // Projects header collapse, same as boards nav
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const lastPointerRef = useRef({ x: 0, y: 0 })
@@ -188,6 +192,42 @@ export function AiThreadPicker({
       cancelled = true
     }
   }, [filter, boardId, refreshKey])
+
+  // Projects section — same source as boards nav; only paint the header when any exist
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    const loadProjects = async () => {
+      const supabase = createClient()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user || cancelled) return
+      const { data, error } = await supabase
+        .from('projects')
+        .select('id, name, updated_at, metadata')
+        .eq('user_id', user.id)
+        .order('updated_at', { ascending: false })
+        .limit(50)
+      if (error || cancelled) return
+      const rows = (data || []).map((proj: { id: string; name: string; metadata?: { position?: number } }) => ({
+        id: proj.id,
+        name: proj.name,
+        position: proj.metadata?.position,
+      }))
+      rows.sort((a, b) => {
+        if (a.position !== undefined && b.position !== undefined) return a.position - b.position
+        if (a.position !== undefined) return -1
+        if (b.position !== undefined) return 1
+        return 0
+      })
+      if (!cancelled) setProjects(rows.map(({ id, name }) => ({ id, name })))
+    }
+    void loadProjects()
+    return () => {
+      cancelled = true
+    }
+  }, [open, refreshKey])
 
   const filteredThreads = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
@@ -361,13 +401,41 @@ export function AiThreadPicker({
               aria-hidden
             />
 
-            <div className="px-4 flex-shrink-0">
+            <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-gray-400/50 [&::-webkit-scrollbar-thumb]:rounded-full">
+              {/* Projects — mirrors boards nav; header only when the user has projects */}
+              {projects.length > 0 && (
+                <>
+                  <div
+                    className="flex items-center gap-1 pl-1 py-2 text-xs font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 cursor-pointer group transition-colors rounded-lg min-h-[32px]"
+                    onClick={() => setIsProjectsExpanded((v) => !v)}
+                  >
+                    <span>Projects</span>
+                    <ChevronDown
+                      className={cn(
+                        'h-3 w-3 opacity-0 group-hover:opacity-100 transition-all duration-200',
+                        !isProjectsExpanded && 'group-hover:-rotate-90'
+                      )}
+                    />
+                  </div>
+                  {isProjectsExpanded && (
+                    <ul className="space-y-0 mb-1">
+                      {projects.map((project) => (
+                        <li key={project.id}>
+                          <div className="flex w-full items-center gap-2 pl-1 pr-1 h-8 rounded-lg text-sm text-gray-700 dark:text-gray-300">
+                            <Folder className="h-4 w-4 flex-shrink-0" />
+                            <span className="min-w-0 truncate">{project.name}</span>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              )}
+
               <div className="flex items-center gap-0.5 pl-1 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 min-h-[32px]">
                 <span>Chats</span>
               </div>
-            </div>
 
-            <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-gray-400/50 [&::-webkit-scrollbar-thumb]:rounded-full">
               {loading && (
                 <div className="px-1 py-1.5 text-xs text-gray-500">Loading…</div>
               )}

@@ -1,9 +1,9 @@
 # Remote Supabase migration/version snapshot
 # project_ref=yhsyhtnnklpkfcpydbst
 # project_name=Nod Notes
-# snapped_at=2026-09-15T01:46:02Z
+# snapped_at=2026-09-16T01:26:44Z
 # postgres=17.6.1.052 gotrue=v2.196.0 rest=v14.5 storage=v1.73.1
-# local_marker=20260915014602_notion_sync_inline_diff_keep_non_red (no DDL; remote DDL=20260912192948_panel_edges_canvas_endpoints)
+# local_marker=20260916012644_notion_sync_review_ux_revert_accept (no DDL; remote DDL=20260912192948_panel_edges_canvas_endpoints)
 # production=https://nodnotes.com
 # Remote applied (via Supabase Management API on nod-notes):
 # 20251124231547 create_saas_schema
@@ -220,4 +220,5 @@
 20260914012029_free_nav_minimap_double_caret.sql
 20260914112320_notion_page_sync_review_oauth_return.sql
 20260914232332_notion_sync_review_heal_resync.sql
+20260916012644_notion_sync_review_ux_revert_accept.sql
 20260915014602_notion_sync_inline_diff_keep_non_red.sql

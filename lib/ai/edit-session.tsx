@@ -112,9 +112,11 @@ interface AiEditSessionValue {
   saveAll: () => Promise<void>
   discardAll: () => Promise<void>
   /**
-   * Notion review: if highlights are selected (red), restore local for those only
-   * (“Keep non red”); otherwise Keep mine / discard all Notion proposals.
+   * Notion review: reject red (selected) highlights, then accept remaining grey.
+   * No selection → Accept all Notion proposals (same as saveAll for notion).
    */
+  keepNotionNonRed: () => Promise<void>
+  /** @deprecated Prefer keepNotionNonRed / discardAll; kept for callers. */
   rejectNotionSelectionOrDiscard: () => Promise<void>
   /** Patch in-memory proposed HTML after click-select / partial reject. */
   patchPendingProposedContent: (messageId: string, html: string) => void
@@ -722,8 +724,70 @@ export function AiEditSessionProvider({
   }, [])
 
   /**
+   * Red = undo Notion for those spans (restore prev / keep struck local).
+   * Then accept remaining grey as Notion. No selection → accept all.
+   */
+  const keepNotionNonRed = useCallback(async () => {
+    if (getNotionSyncSelectedCount() <= 0) {
+      await saveAll()
+      return
+    }
+    const notionEdits = pendingEdits.filter((e) => e.source === 'notion' && e.messageId)
+    const other = pendingEdits.filter((e) => e.source !== 'notion')
+    const editors = getNotionSyncEditors()
+    const afterReject: AiPendingEdit[] = []
+
+    for (const edit of notionEdits) {
+      const mid = edit.messageId!
+      const hit = editors.find((e) => e.messageId === mid)
+      let html = edit.proposedContent
+      if (hit?.editor && !hit.editor.isDestroyed) {
+        rejectSelectedNotionSyncMarks(hit.editor)
+        html = hit.editor.getHTML()
+      }
+      afterReject.push({ ...edit, proposedContent: html })
+    }
+
+    // Persist reject preview into session so applySaveOne sees live HTML
+    setPendingEdits([...other, ...afterReject])
+    clearNotionSyncSelection()
+    refreshNotionSyncSelection()
+
+    const restored: Record<string, string> = {}
+    for (const edit of afterReject) {
+      const result = await applySaveOne(edit)
+      if (result.messageId && result.content) {
+        restored[result.messageId] = result.content
+      }
+    }
+    for (const edit of other) {
+      const result = await applySaveOne(edit)
+      if (result.messageId && result.content) {
+        restored[result.messageId] = result.content
+      }
+    }
+
+    setJustRestoredByMessage((prev) => ({ ...prev, ...restored }))
+    setPendingEdits([])
+    setFocusedEditId(null)
+    setPreviewOriginal(false)
+    onMessagesMutated?.()
+    bumpMessages({
+      contentUpdates: Object.entries(restored).map(([messageId, content]) => ({
+        messageId,
+        content,
+      })),
+    })
+  }, [
+    pendingEdits,
+    saveAll,
+    applySaveOne,
+    onMessagesMutated,
+  ])
+
+  /**
    * Red highlights = reject Notion for those spans (restore prev).
-   * Grey (non-red) stay as Notion proposals — “Keep non red”.
+   * Grey (non-red) stay as Notion proposals.
    * No selection → Keep mine (discard all).
    */
   const rejectNotionSelectionOrDiscard = useCallback(async () => {
@@ -745,7 +809,7 @@ export function AiEditSessionProvider({
         html = hit.editor.getHTML()
       }
       if (!htmlHasNotionSync(html)) {
-        // No proposals left — body already reflects Keep non red restores
+        // No proposals left — body already reflects rejected restores
         const finalHtml = sanitizeNotionSyncHtml(html)
         await persistFrameContent(mid, finalHtml)
         const metaPatch: Record<string, unknown> = {
@@ -839,6 +903,7 @@ export function AiEditSessionProvider({
       discardEdit,
       saveAll,
       discardAll,
+      keepNotionNonRed,
       rejectNotionSelectionOrDiscard,
       patchPendingProposedContent,
       displayContentFor,
@@ -862,6 +927,7 @@ export function AiEditSessionProvider({
       discardEdit,
       saveAll,
       discardAll,
+      keepNotionNonRed,
       rejectNotionSelectionOrDiscard,
       patchPendingProposedContent,
       displayContentFor,
@@ -897,6 +963,7 @@ export function useAiEditSession(): AiEditSessionValue {
       discardEdit: async () => {},
       saveAll: async () => {},
       discardAll: async () => {},
+      keepNotionNonRed: async () => {},
       rejectNotionSelectionOrDiscard: async () => {},
       patchPendingProposedContent: () => {},
       displayContentFor: (_id, live) => live,

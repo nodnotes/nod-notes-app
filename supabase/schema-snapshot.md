@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-15T01:46:02Z`
+- Snapped at: `2026-09-16T01:26:44Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`; versions from `.temp` + Management API list; cli-latest reports `v2.117.0`)
@@ -10,9 +10,17 @@
 
 ## This save
 
+- DDL: none. Marker `20260916012644_notion_sync_review_ux_revert_accept.sql`.
+- **Review UX**: Revert (sync + AI); Accept always labeled Accept (red selected → undo red then accept grey); hint "Select highlighted changes to edit" (board fill, no border/shadow).
+- **Click**: highlight → red + strike flip; selected frame no longer places I-bar (same red toggle as unselected).
+- **Labels**: N Frames synced / N Frames changed; focused menu hides main bar.
+- Schema unchanged; remote DDL top remains `20260912192948_panel_edges_canvas_endpoints`.
+
+## Prior: Notion sync inline diffs / Keep non red
+
 - DDL: none. Marker `20260915014602_notion_sync_inline_diff_keep_non_red.sql`.
 - **Inline diffs**: block + word plain compare (Nod → Notion); inserts grey (`kind=ins` + `data-notion-prev`); removals strikethrough (`kind=del`); new blocks marked on text inners (TipTap-safe).
-- **Keep non red**: click highlights → light red; restores `prev` / keeps struck local; grey Notion proposals remain. No selection → Keep mine.
+- **Accept** (Notion sync): always labeled Accept; with red selected undoes red then accepts remaining grey; otherwise accepts all. Revert discards all.
 - **Accept**: drops dels, unwraps inserts.
 - Schema unchanged; remote DDL top remains `20260912192948_panel_edges_canvas_endpoints`.
 
