@@ -1958,10 +1958,10 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                           variant="ghost"
                           size="sm"
                           className={cn(
-                            'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center',
+                            'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center border border-transparent', // Transparent border reserves space so arming doesn’t jump
                             'transition-[padding,gap] duration-200 ease-out', compactEarlyLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5',
                             drawTool === 'eraser'
-                              ? 'bg-gray-100 dark:bg-gray-800'
+                              ? 'bg-gray-100 dark:bg-gray-800 shadow-sm border-black/10 dark:border-white/10' // Armed: wash + shadow + hairline
                               : 'hover:bg-gray-100 dark:hover:bg-gray-800'
                           )}
                           title={drawTool === 'eraser' ? 'Eraser options' : 'Eraser'}
@@ -2047,10 +2047,10 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                           variant="ghost"
                           size="sm"
                           className={cn(
-                            'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center',
+                            'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center border border-transparent', // Transparent border reserves space so arming doesn’t jump
                             'transition-[padding,gap] duration-200 ease-out', compactEarlyLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Ink cluster collapses first
                             drawTool === 'pencil'
-                              ? 'bg-gray-100 dark:bg-gray-800'
+                              ? 'bg-gray-100 dark:bg-gray-800 shadow-sm border-black/10 dark:border-white/10' // Armed: wash + shadow + hairline
                               : 'hover:bg-gray-100 dark:hover:bg-gray-800'
                           )}
                           title={drawTool === 'pencil' ? 'Freehand color' : 'Freehand Drawing'}
@@ -2117,10 +2117,10 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                       e.currentTarget.blur()
                     }}
                     className={cn(
-                      'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center',
+                      'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center border border-transparent', // Transparent border reserves space so arming doesn’t jump
                       'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Title condenses to icon on shrink
                       drawTool === 'lasso'
-                        ? 'bg-gray-100 dark:bg-gray-800'
+                        ? 'bg-gray-100 dark:bg-gray-800 shadow-sm border-black/10 dark:border-white/10' // Armed: wash + shadow + hairline
                         : 'hover:bg-gray-100 dark:hover:bg-gray-800'
                     )}
                     title={drawTool === 'lasso' ? 'Selection Mode Active (Click to deselect)' : 'Selection Mode (Click to enable)'}
@@ -2141,10 +2141,10 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                       onMouseEnter={handleInsertVerticalSpaceMouseEnter}
                       onMouseLeave={handleInsertVerticalSpaceMouseLeave}
                       className={cn(
-                        'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center',
+                        'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center border border-transparent', // Transparent border reserves space so arming doesn’t jump
                         'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Title condenses to icon on shrink
                         drawTool === 'insert-v'
-                          ? 'bg-gray-100 dark:bg-gray-800' // Armed wash matches lasso / eraser / ink tools
+                          ? 'bg-gray-100 dark:bg-gray-800 shadow-sm border-black/10 dark:border-white/10' // Armed: wash + shadow + hairline
                           : 'hover:bg-gray-100 dark:hover:bg-gray-800'
                       )}
                       title={drawTool === 'insert-v' ? 'V-space active (click to deselect)' : 'Insert V-space'}
@@ -2174,10 +2174,10 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                       onMouseEnter={handleInsertHorizontalSpaceMouseEnter}
                       onMouseLeave={handleInsertHorizontalSpaceMouseLeave}
                       className={cn(
-                        'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center',
+                        'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center border border-transparent', // Transparent border reserves space so arming doesn’t jump
                         'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Title condenses to icon on shrink
                         drawTool === 'insert-h'
-                          ? 'bg-gray-100 dark:bg-gray-800' // Armed wash matches lasso / eraser / ink tools
+                          ? 'bg-gray-100 dark:bg-gray-800 shadow-sm border-black/10 dark:border-white/10' // Armed: wash + shadow + hairline
                           : 'hover:bg-gray-100 dark:hover:bg-gray-800'
                       )}
                       title={drawTool === 'insert-h' ? 'H-space active (click to deselect)' : 'Insert H-space'}

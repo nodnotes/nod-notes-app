@@ -408,9 +408,9 @@ function SortableBoardItem({
           'flex items-center gap-1 pr-4 h-8 rounded-lg border border-transparent transition-colors text-sm group relative select-none',
           isShared ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
           isActive
-            ? 'bg-white dark:bg-white' // Open board — white chip on grey nav shell
+            ? 'bg-[var(--nod-selected)]' // Open board — grey wash on white nav shell
             // Hover bg only on real hover devices — iOS sticky :hover ate the first board tap
-            : '[@media(hover:hover)]:hover:bg-white/70 dark:[@media(hover:hover)]:hover:bg-white/15',
+            : '[@media(hover:hover)]:hover:bg-[var(--nod-tab-hover)]',
           isSelected && 'border-[#e5e7eb] dark:border-[#374151]', // Same grey as .tt-property-block-cell hover
           isDragging && 'cursor-grabbing opacity-50',
           // Clear nest-into affordance when hovering center of a page
@@ -808,10 +808,10 @@ function DroppableProjectItem({
         className={cn(
           'flex items-center gap-2 px-4 h-8 rounded-lg transition-colors text-sm border-2 group',
           isActive
-            ? 'bg-white dark:bg-white text-gray-700 dark:text-gray-300 border-transparent'
+            ? 'bg-[var(--nod-selected)] text-gray-700 dark:text-gray-300 border-transparent'
             : isDragOver
-              ? 'bg-white dark:bg-white text-gray-700 dark:text-gray-300 border-blue-500 dark:border-blue-400 border-dashed'
-              : 'hover:bg-white/70 dark:hover:bg-white/15 text-gray-700 dark:text-gray-300 border-transparent'
+              ? 'bg-[var(--nod-selected)] text-gray-700 dark:text-gray-300 border-blue-500 dark:border-blue-400 border-dashed'
+              : 'hover:bg-[var(--nod-tab-hover)] text-gray-700 dark:text-gray-300 border-transparent'
         )}
         onContextMenu={(e) => {
           e.preventDefault()
@@ -2909,7 +2909,7 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
         data-app-sidebar
         data-nav-menu-popup
         className={cn(
-          'fixed z-50 flex flex-col bg-[var(--nod-chat-prompt)] shadow-xl rounded-2xl overflow-hidden', // Same chrome grey as Ask prompts / utility
+          'fixed z-50 flex flex-col bg-white dark:bg-[#171717] shadow-xl rounded-2xl overflow-hidden', // White surface — not chrome grey
           'w-72 min-h-0' // min-h-0 so the board list can shrink and scroll under maxHeight
         )}
         style={{
@@ -3163,7 +3163,7 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
 
               <DragOverlay>
                 {activeId ? (
-                  <div className="flex items-center gap-2 px-4 h-8 rounded-lg bg-white dark:bg-white text-sm shadow-lg opacity-90 cursor-grabbing">
+                  <div className="flex items-center gap-2 px-4 h-8 rounded-lg bg-[var(--nod-selected)] text-sm shadow-lg opacity-90 cursor-grabbing">
                     <span className="truncate flex-1 text-gray-700 dark:text-gray-300">
                       {filteredConversations.find((c) => c.id === activeId)?.title || ''}
                     </span>

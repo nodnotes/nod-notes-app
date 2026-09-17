@@ -229,7 +229,7 @@ export function UtilitySidebar() {
         {/* Mode tabs — left edge matches the content card (same px-1.5) */}
         <div className="flex min-w-0 flex-1 items-center">
           <div
-            className="flex items-center gap-0.5 rounded-xl bg-[var(--nod-chat-prompt)] px-1 py-1 shadow-sm" // Same grey as Ask prompts
+            className="flex items-center gap-0.5 rounded-xl bg-[var(--nod-chat-prompt)] px-1 py-1 border border-black/10 dark:border-white/10 shadow-sm" // Same grey + hairline as Actions/Layout/Draw pill
             role="tablist"
             aria-label="Utility modes"
           >
@@ -245,7 +245,7 @@ export function UtilitySidebar() {
                   className={cn(
                     'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg transition-all duration-200',
                     active
-                      ? 'bg-white text-gray-700 dark:bg-white dark:text-gray-300' // Match selected chip fill
+                      ? 'bg-white shadow-sm text-gray-700 dark:bg-white dark:text-gray-300' // Match mode-pill selected chip fill + lift
                       : 'bg-transparent text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100'
                   )}
                   title={label}

@@ -166,6 +166,7 @@ import { PROPERTY_GROUP_H } from '@/lib/blocks/property' // Top property strip h
 import { propertyBlockHtml } from '@/lib/tiptap/property-block' // I-bar Turn into → Property seeds icon + Empty cell
 import { absFlowPosition, nodeFlowSize, useBlockGroupDrag } from './use-block-group-drag' // Drag attach/detach between groups / page
 import { useFrameNestStackDrag, isStackCollapsedMeta } from './use-frame-nest-stack-drag' // Edge-snap → stack reveal
+import { isHiddenByLiveBoardFilter } from '@/lib/board-frame-filters' // Board Filter strip hides non-matches
 import { minStackIndex } from '@/lib/frame-side-stacks' // Per-side stack z-order
 import { FrameNestStackOverlay } from './frame-nest-stack-overlay' // Snap preview line on host edge
 import { IBarFlowAnchor } from './ibar-flow-anchor' // I-bar placement without BoardFlow pan/zoom re-renders
@@ -5587,8 +5588,14 @@ function BoardFlowInner({
                 frameShape: parseFrameShape(messageMetadata.frameShape) ?? undefined,
               },
               draggable: !isLocked && messageMetadata.boardLocked !== true, // Global freeze or per-frame board pin
-              // Collapsed stack mates stay hidden until edge-line reveal
-              hidden: isStackCollapsedMeta(messageMetadata as Record<string, unknown>),
+              // Collapsed stack mates stay hidden until edge-line reveal; board filters hide non-matches
+              hidden:
+                isStackCollapsedMeta(messageMetadata as Record<string, unknown>) ||
+                (messageMetadata.isBlock === true &&
+                  isHiddenByLiveBoardFilter(
+                    messageMetadata as Record<string, unknown>,
+                    String(message.content || '')
+                  )),
               zIndex: stackIndex == null ? undefined : Math.max(0, 10 - stackIndex),
             }
 
@@ -5632,8 +5639,14 @@ function BoardFlowInner({
               frameShape: parseFrameShape(messageMetadata.frameShape) ?? undefined,
             },
             draggable: !isLocked && messageMetadata.boardLocked !== true, // Global freeze or per-frame board pin
-            // Collapsed stack mates stay hidden until edge-line reveal
-            hidden: isStackCollapsedMeta(messageMetadata as Record<string, unknown>),
+            // Collapsed stack mates stay hidden until edge-line reveal; board filters hide non-matches
+            hidden:
+              isStackCollapsedMeta(messageMetadata as Record<string, unknown>) ||
+              (messageMetadata.isBlock === true &&
+                isHiddenByLiveBoardFilter(
+                  messageMetadata as Record<string, unknown>,
+                  String(message.content || '')
+                )),
             zIndex: stackIndex == null ? undefined : Math.max(0, 10 - stackIndex),
           }
 

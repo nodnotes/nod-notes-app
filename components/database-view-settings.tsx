@@ -93,6 +93,8 @@ const OPERATORS: Array<{ id: FilterOperator; label: string }> = [
   { id: 'is_not', label: 'is not' },
   { id: 'contains', label: 'contains' },
   { id: 'does_not_contain', label: 'does not contain' },
+  { id: 'starts_with', label: 'starts with' },
+  { id: 'ends_with', label: 'ends with' },
   { id: 'is_empty', label: 'is empty' },
   { id: 'is_not_empty', label: 'is not empty' },
   { id: 'gt', label: '>' },

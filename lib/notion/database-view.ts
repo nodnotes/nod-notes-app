@@ -19,6 +19,8 @@ export type FilterOperator =
   | 'is_not'
   | 'contains'
   | 'does_not_contain'
+  | 'starts_with'
+  | 'ends_with'
   | 'is_empty'
   | 'is_not_empty'
   | 'gt'
@@ -305,6 +307,10 @@ function matchesFilter(row: NotionDbRow, filter: DatabaseFilter): boolean {
       return text.toLowerCase().includes(value.toLowerCase())
     case 'does_not_contain':
       return !text.toLowerCase().includes(value.toLowerCase())
+    case 'starts_with':
+      return text.toLowerCase().startsWith(value.toLowerCase())
+    case 'ends_with':
+      return text.toLowerCase().endsWith(value.toLowerCase())
     case 'is_empty':
       return text.length === 0
     case 'is_not_empty':

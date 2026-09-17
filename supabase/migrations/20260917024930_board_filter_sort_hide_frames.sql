@@ -1,0 +1,2 @@
+-- Board Filter/Sort: Notion-style Filter by… chips, apply on Enter/blur, hide non-matching frames when none selected.
+-- App/docs marker only; no DDL. Remote DDL top: 20260914104046_notion_multi_workspace (prior 20260912192948_panel_edges_canvas_endpoints).

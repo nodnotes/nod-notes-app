@@ -18,6 +18,7 @@ The database includes the following tables:
 See `migration-list.txt` + `schema-snapshot.md` for the full local/remote snapshot.
 
 Latest on Nod Notes (DDL):
+- `20260914104046_notion_multi_workspace` — Notion multi-workspace (remote)
 - `20260912192948_panel_edges_canvas_endpoints` (+ local `20260912192642_…`) — Threads may terminate on canvas nodes (drawings/shapes), not only frames
 - `20260811225342_conversations_owner_select_for_insert_returning` (+ local `20260811225322_…`) — conversations SELECT/UPDATE allow owner `user_id` or share rank (INSERT…RETURNING)
 - `rename_page_to_board_share_and_ai` / remote `20260811223628_…` (+ local `20260811220510_…`) — `board_share_*`, `user_board_*` RPCs, `ai_threads.board_id`
@@ -26,6 +27,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260917024930_board_filter_sort_hide_frames` — Board Filter/Sort Notion chips; hide non-matching frames when none selected
 - `20260916012644_notion_sync_review_ux_revert_accept` — Notion sync review UX: Revert/Accept; highlight red+strike; no I-bar on selected; Frames synced/changed labels
 - `20260915014602_notion_sync_inline_diff_keep_non_red` — Block+word sync diffs; Keep non red; new-block highlights; strike deletions
 - `20260914232332_notion_sync_review_heal_resync` — Re-sync after Keep mine; TipTap-safe sync highlights; heal stale undone review marks

@@ -14,6 +14,7 @@ import {
   Loader2,
   MoreHorizontal,
   Pin,
+  Plus,
   Search,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -55,6 +56,8 @@ export function AiThreadPicker({
   const [hoveredThreadId, setHoveredThreadId] = useState<string | null>(null)
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]) // Board-nav projects for section chrome
   const [isProjectsExpanded, setIsProjectsExpanded] = useState(true) // Projects header collapse, same as boards nav
+  const [creatingProject, setCreatingProject] = useState(false) // + mint in flight
+  const [projectsEpoch, setProjectsEpoch] = useState(0) // Bump after create to reload the list
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const lastPointerRef = useRef({ x: 0, y: 0 })
@@ -193,7 +196,7 @@ export function AiThreadPicker({
     }
   }, [filter, boardId, refreshKey])
 
-  // Projects section — same source as boards nav; only paint the header when any exist
+  // Projects section — same source as boards nav (header always shows)
   useEffect(() => {
     if (!open) return
     let cancelled = false
@@ -227,7 +230,7 @@ export function AiThreadPicker({
     return () => {
       cancelled = true
     }
-  }, [open, refreshKey])
+  }, [open, refreshKey, projectsEpoch])
 
   const filteredThreads = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
@@ -240,6 +243,28 @@ export function AiThreadPicker({
     const { x, y } = lastPointerRef.current
     syncHoverFromPoint(x, y)
   }, [open, loading, filteredThreads, syncHoverFromPoint])
+
+  const handleCreateProject = async () => {
+    if (creatingProject) return
+    setCreatingProject(true)
+    try {
+      const supabase = createClient()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) return
+      const { error } = await supabase.from('projects').insert({
+        user_id: user.id,
+        name: 'Untitled project',
+        metadata: { position: -1 },
+      })
+      if (error) return
+      setIsProjectsExpanded(true)
+      setProjectsEpoch((n) => n + 1)
+    } finally {
+      setCreatingProject(false)
+    }
+  }
 
   const handleForkThread = async (source: AiThread) => {
     if (forkingId) return
@@ -320,7 +345,7 @@ export function AiThreadPicker({
               zIndex: 10000, // Above board drag overlays so pointermove can hit rows
               pointerEvents: 'auto',
             }}
-            className="flex flex-col max-h-[min(24rem,70vh)] overflow-hidden rounded-2xl bg-[var(--nod-chat-prompt)] shadow-xl" // Same chrome grey as boards nav / Ask
+            className="flex flex-col max-h-[min(24rem,70vh)] overflow-hidden rounded-2xl bg-white dark:bg-[#171717] shadow-xl" // White surface — not chrome grey
           >
             <div className="px-4 pt-2 pb-2 flex-shrink-0">
               <div className="flex items-center gap-2">
@@ -402,34 +427,54 @@ export function AiThreadPicker({
             />
 
             <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-gray-400/50 [&::-webkit-scrollbar-thumb]:rounded-full">
-              {/* Projects — mirrors boards nav; header only when the user has projects */}
-              {projects.length > 0 && (
-                <>
-                  <div
-                    className="flex items-center gap-1 pl-1 py-2 text-xs font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 cursor-pointer group transition-colors rounded-lg min-h-[32px]"
-                    onClick={() => setIsProjectsExpanded((v) => !v)}
-                  >
-                    <span>Projects</span>
-                    <ChevronDown
-                      className={cn(
-                        'h-3 w-3 opacity-0 group-hover:opacity-100 transition-all duration-200',
-                        !isProjectsExpanded && 'group-hover:-rotate-90'
-                      )}
-                    />
-                  </div>
-                  {isProjectsExpanded && (
-                    <ul className="space-y-0 mb-1">
-                      {projects.map((project) => (
-                        <li key={project.id}>
-                          <div className="flex w-full items-center gap-2 pl-1 pr-1 h-8 rounded-lg text-sm text-gray-700 dark:text-gray-300">
-                            <Folder className="h-4 w-4 flex-shrink-0" />
-                            <span className="min-w-0 truncate">{project.name}</span>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
+              {/* Projects — always shown; caret beside label, + far right */}
+              <div className="flex items-center gap-0.5 min-h-[32px] py-2">
+                <button
+                  type="button"
+                  className="flex items-center gap-1 pl-1 text-xs font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors rounded-lg"
+                  onClick={() => setIsProjectsExpanded((v) => !v)}
+                  aria-expanded={isProjectsExpanded}
+                >
+                  <span>Projects</span>
+                  <ChevronDown
+                    className={cn(
+                      'h-3 w-3 flex-shrink-0 transition-transform duration-200',
+                      !isProjectsExpanded && '-rotate-90'
+                    )}
+                  />
+                </button>
+                <div className="flex-1 min-w-0" />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 flex-shrink-0 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-transparent"
+                  title="New project"
+                  aria-label="New project"
+                  disabled={creatingProject}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    void handleCreateProject()
+                  }}
+                >
+                  {creatingProject ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Plus className="h-3.5 w-3.5" />
                   )}
-                </>
+                </Button>
+              </div>
+              {isProjectsExpanded && projects.length > 0 && (
+                <ul className="space-y-0 mb-1">
+                  {projects.map((project) => (
+                    <li key={project.id}>
+                      <div className="flex w-full items-center gap-2 pl-1 pr-1 h-8 rounded-lg text-sm text-gray-700 dark:text-gray-300">
+                        <Folder className="h-4 w-4 flex-shrink-0" />
+                        <span className="min-w-0 truncate">{project.name}</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
               )}
 
               <div className="flex items-center gap-0.5 pl-1 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 min-h-[32px]">
@@ -458,9 +503,9 @@ export function AiThreadPicker({
                         className={cn(
                           'group relative flex w-full items-center gap-0.5 pr-1 h-8 rounded-lg border border-transparent text-sm transition-colors',
                           isActive
-                            ? 'bg-white dark:bg-white' // Current chat — white chip on grey shell
+                            ? 'bg-[var(--nod-selected)]' // Current chat — grey wash on white shell
                             : isHovered &&
-                                '[@media(hover:hover)]:bg-white/70 dark:[@media(hover:hover)]:bg-white/15'
+                                '[@media(hover:hover)]:bg-[var(--nod-tab-hover)]'
                         )}
                         onContextMenu={(e) => {
                           // Right-click = same as hold: reveal + open options

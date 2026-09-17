@@ -3674,6 +3674,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // the gesture gate defers them anyway. On this board 5 of 9 frames carry it, which is most of what
   // "frames don't show until I release" was.
   const coldBoxEligible = isBlock && !isFlashcard && !selected
+  // Stable key — metadata object identity changes on every message patch would rebuild the box
+  // and re-fire the deferred setNodes effect (fights auto-size strip → max update depth).
+  const deferredMetaKey = JSON.stringify({
+    rd: (promptMessage?.metadata as Record<string, unknown> | undefined)?.resizeDimensions ?? null,
+  })
   const deferredBox = useMemo(() => {
     if (!coldBoxEligible) return null
     return resolveDeferredFrameBox(
@@ -3682,7 +3687,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       promptContent,
       (promptMessage?.metadata as Record<string, unknown>) || null
     )
-  }, [coldBoxEligible, id, conversationId, promptContent, promptMessage?.metadata])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deferredMetaKey stands in for metadata
+  }, [coldBoxEligible, id, conversationId, promptContent, deferredMetaKey])
   const deferredLayoutBox = useMemo(() => {
     if (!deferredBox) return null
     return { width: deferredBox.width, height: deferredBox.height }
@@ -4721,11 +4727,21 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const syncRafRef = useRef<number | null>(null)
   const syncStormRef = useRef({ n: 0, t: 0 })
   const clearedAutoSizeStyleRef = useRef<string | null>(null)
+  const wasUserResizedForStripRef = useRef(isUserResized) // Edge-detect leave-resized → allow one strip
   useEffect(() => {
     if (!isBlock || !panelRef.current || !isInitialShrinkComplete) return
     if (isUserResized) {
-      clearedAutoSizeStyleRef.current = null // Allow re-strip after unlock→relock → grow-with-line
+      wasUserResizedForStripRef.current = true // Remember explicit-box mode; strip only after leaving it
       return // Explicit box path owns RF size above
+    }
+    // Cold/deferred frames need RF style from deferredLayoutBox. Stripping here races that
+    // effect (apply ↔ strip setNodes) and nests updates until React hits max update depth —
+    // Notion Add page tree mounts many deferred boardLinks at once and tripped this.
+    if (contentDeferred) return
+    // Left explicit-box (unlock→relock / heal) — allow one strip of leftover style.width/height
+    if (wasUserResizedForStripRef.current) {
+      clearedAutoSizeStyleRef.current = null
+      wasUserResizedForStripRef.current = false
     }
     const el = panelRef.current
     lastSyncedNodeSizeRef.current = null
@@ -4784,7 +4800,15 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       ro.disconnect()
       if (syncRafRef.current != null) cancelAnimationFrame(syncRafRef.current)
     }
-  }, [isBlock, id, getSetNodes, isInitialShrinkComplete, isUserResized, updateNodeInternals])
+  }, [
+    isBlock,
+    id,
+    getSetNodes,
+    isInitialShrinkComplete,
+    isUserResized,
+    contentDeferred,
+    updateNodeInternals,
+  ])
 
   // Persist frame lock / scale / box size (resize end + lock toggle + overflow expand)
   const persistFrameMeta = useCallback(async (patch: Record<string, unknown>) => {
