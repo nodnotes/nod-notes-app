@@ -48,6 +48,7 @@ NodNotes is a spatial mind-map on **boards** (see `DEFINITIONS.md`):
 - `NEXT_PUBLIC_HOCUSPOCUS_URL` — WebSocket URL for multiplayer (`ws://127.0.0.1:1234` locally; `npm run collab`). Omit to disable.
 - `HOCUSPOCUS_PORT` — collab server listen port (default 1234).
 - Existing Supabase + OpenAI vars unchanged.
+- Cloud Agents: `.cursor/environment.json` (`npm install` + `npm run dev` on 3031). Inject secrets via the Cloud Agents environment for `github.com/thinktable/thinktable-app` — do not commit `.env.local`. Repo Supabase project is `yhsyhtnnklpkfcpydbst` (`supabase/README.md`; dashboard may label it “thinkable”).
 
 ### Auth / confirmation email (Supabase project `yhsyhtnnklpkfcpydbst`)
 
