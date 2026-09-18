@@ -8726,6 +8726,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             data-tt-content-fit="true" // ImageBlockView contain-fit measures this box
             data-tt-sole-image={soleImageContent ? 'true' : undefined} // Absolute-fill image to sticky frame
             data-tt-shape-center={shapeCenterContent ? 'true' : undefined}
+            // Sync during render (not TipTap useEffect) so image freezes before free-layout remeasure
+            data-frame-free-resize={unlockedResized ? 'true' : undefined}
             className={cn(
               'relative shrink-0', // Shaped frames: don’t stretch to the inflated hug box
               // Locked+resized: natural width so hug measures real text (not the stretched box).

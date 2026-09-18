@@ -1,0 +1,2 @@
+-- Image free↔ fit contain-fit stability (contentFit free flag; freeze bitmap on free; remasure on fit; no max-%).
+-- App/docs marker only; no DDL. Remote DDL top: 20260914104046_notion_multi_workspace.

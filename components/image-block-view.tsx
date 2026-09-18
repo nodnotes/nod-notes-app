@@ -97,6 +97,11 @@ export function ImageBlockView({
   const [natural, setNatural] = useState({ w: 0, h: 0 }) // Bitmap intrinsic px — for contain-fit
   const [frameBox, setFrameBox] = useState({ w: 0, h: 0 }) // Content area the image must fit inside
   const [freeResize, setFreeResize] = useState(false) // Unlocked frame — keep bitmap size; clip like text
+  const freeResizeRef = useRef(false) // Sync free flag for measure without stale closures
+  // Last fit-to painted size — free mode uses this so unlock cannot re-contain / grow / shrink
+  const lockedDisplayRef = useRef<{ w: number; h: number } | null>(null)
+  const lockedFrameBoxRef = useRef<{ w: number; h: number } | null>(null) // Frame box at last locked measure
+  const [frozenDisplay, setFrozenDisplay] = useState<{ w: number; h: number } | null>(null)
   const zoom = useStore((s) =>
     navigationZoom(Math.round((s.transform[2] || 1) * 8) / 8)
   ) // Remeasure portaled Upload menu when zoom settles / steps
@@ -106,12 +111,16 @@ export function ImageBlockView({
   }, [hazed])
 
   // Contain viewport = sticky frame content box (CSS vars from chat-panel) or contentFit/panel layout size.
-  // Free frame: freeze this box + drop max-% so the bitmap stays locked size (clips like text).
+  // Free frame: freeze painted size + ignore live frameBox so unlock/clip only windows the bitmap.
   // Never observe the media/img — that fed back into hug/RO loops.
   useLayoutEffect(() => {
     if (!src) {
       setFrameBox({ w: 0, h: 0 })
       setFreeResize(false)
+      freeResizeRef.current = false
+      setFrozenDisplay(null)
+      lockedDisplayRef.current = null
+      lockedFrameBoxRef.current = null
       return
     }
     const el = mediaRef.current
@@ -125,18 +134,30 @@ export function ImageBlockView({
       return null
     }
 
-    const isFreeResize = () =>
-      !!el.closest('.ProseMirror')?.hasAttribute('data-frame-free-resize')
+    // contentFit sets the flag in render; ProseMirror sets it in useEffect (lags on free→fit).
+    // Only trust contentFit so lock remasures contain-fit against the live sticky box.
+    const isFreeResize = () => {
+      const fit = el.closest('[data-tt-content-fit="true"]') as HTMLElement | null
+      if (fit) return fit.getAttribute('data-frame-free-resize') === 'true'
+      return !!el.closest('[data-frame-free-resize="true"]')
+    }
 
-    const measure = () => {
-      const free = isFreeResize()
-      setFreeResize((prev) => (prev === free ? prev : free))
-      // Free: keep last contain viewport — shrinking the frame only clips
-      if (free) return
+    const captureFrozen = () => {
+      // Prefer last locked computed size; fall back to painted media box
+      const fromLocked = lockedDisplayRef.current
+      if (fromLocked && fromLocked.w >= 1 && fromLocked.h >= 1) return fromLocked
+      const w = Math.round(el.offsetWidth)
+      const h = Math.round(el.offsetHeight)
+      if (w >= 1 && h >= 1) return { w, h }
+      return null
+    }
+
+    const measureLiveFrameBox = () => {
       const fit = el.closest('[data-tt-content-fit="true"]') as HTMLElement | null
       const panel = el.closest('[data-panel-container="true"]') as HTMLElement | null
       const fromCss = (fit && readCssFrame(fit)) || (panel && readCssFrame(panel))
       if (fromCss) {
+        lockedFrameBoxRef.current = fromCss
         setFrameBox((prev) =>
           prev.w === fromCss.w && prev.h === fromCss.h ? prev : fromCss
         )
@@ -150,7 +171,33 @@ export function ImageBlockView({
       // client* = layout px (stable under board CSS transform); minus pad = peach content area
       const w = Math.max(1, Math.round(host.clientWidth - padX))
       const h = Math.max(1, Math.round(host.clientHeight - padY))
-      setFrameBox((prev) => (prev.w === w && prev.h === h ? prev : { w, h }))
+      const next = { w, h }
+      lockedFrameBoxRef.current = next
+      setFrameBox((prev) => (prev.w === w && prev.h === h ? prev : next))
+    }
+
+    const measure = () => {
+      const free = isFreeResize()
+      const wasFree = freeResizeRef.current
+      freeResizeRef.current = free
+      setFreeResize((prev) => (prev === free ? prev : free))
+      if (free) {
+        // Freeze once on enter — snapshot current contain viewport; ignore later CSS var changes
+        if (!wasFree) measureLiveFrameBox()
+        setFrozenDisplay((prev) => prev ?? captureFrozen())
+        // Fight races that write live (post-free) vars before the free flag lands
+        const locked = lockedFrameBoxRef.current
+        if (locked && locked.w >= 1 && locked.h >= 1) {
+          setFrameBox((prev) =>
+            prev.w === locked.w && prev.h === locked.h ? prev : locked
+          )
+        }
+        return
+      }
+      // free→fit: drop freeze and remasure live sticky box (may differ after free resize)
+      if (wasFree) setFrozenDisplay(null)
+      else setFrozenDisplay((prev) => (prev == null ? prev : null))
+      measureLiveFrameBox()
     }
 
     measure()
@@ -165,7 +212,12 @@ export function ImageBlockView({
       fit != null || pm != null
         ? new MutationObserver(() => requestAnimationFrame(measure))
         : null
-    if (fit && mo) mo.observe(fit, { attributes: true, attributeFilter: ['style'] })
+    if (fit && mo) {
+      mo.observe(fit, {
+        attributes: true,
+        attributeFilter: ['style', 'data-frame-free-resize'],
+      })
+    }
     if (pm && mo) mo.observe(pm, { attributes: true, attributeFilter: ['data-frame-free-resize'] })
     window.addEventListener('resize', measure)
     return () => {
@@ -625,14 +677,26 @@ export function ImageBlockView({
   const showMoreMenu = moreOpen && !!src && !!menuAnchor && !cropMode && !!editor?.isEditable
   const showUploadMenu = !src && !!uploadAnchor && !!editor?.isEditable
   // 100% = largest size where the FULL bitmap fits in the frame (min of W/H scale). Resize = fraction of that.
+  // Free: frameBox stays frozen at unlock — keep deriving from it so side-drag scale still works.
   const contain =
     natural.w > 0 && natural.h > 0 && frameBox.w > 0 && frameBox.h > 0
       ? Math.min(frameBox.w / natural.w, frameBox.h / natural.h)
       : 0
-  const displayW =
+  const computedW =
     contain > 0 ? Math.max(1, Math.round(natural.w * contain * imageScale)) : undefined
-  const displayH =
+  const computedH =
     contain > 0 ? Math.max(1, Math.round(natural.h * contain * imageScale)) : undefined
+  // Last locked paint — free first frame may race before frameBox freeze settles
+  if (!freeResize && computedW != null && computedH != null) {
+    lockedDisplayRef.current = { w: computedW, h: computedH }
+  }
+  // Prefer live contain from frozen frameBox; fall back to captured unlock px only if contain is 0
+  const displayW = freeResize
+    ? computedW ?? frozenDisplay?.w ?? lockedDisplayRef.current?.w
+    : computedW
+  const displayH = freeResize
+    ? computedH ?? frozenDisplay?.h ?? lockedDisplayRef.current?.h
+    : computedH
 
   return (
     <NodeViewWrapper
@@ -660,10 +724,9 @@ export function ImageBlockView({
               cropMode && 'tt-image-block-media-crop'
             )}
             style={
+              // Exact contain-fit px in both modes — never max-% (that shrunk locked, then jumped on free)
               displayW != null && displayH != null
-                ? freeResize
-                  ? { width: displayW, height: displayH } // Free: fixed px like text — frame clips, never shrinks
-                  : { width: displayW, height: displayH, maxWidth: '100%', maxHeight: '100%' }
+                ? { width: displayW, height: displayH, maxWidth: 'none', maxHeight: 'none' }
                 : freeResize
                   ? undefined
                   : { maxWidth: '100%', maxHeight: '100%' }

@@ -27,6 +27,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260918013630_image_free_fit_contain_stable` — Image free↔fit contain-fit stability (contentFit free flag; freeze on free; remasure on fit; no max-%)
 - `20260918005803_image_block_contain_free_frame_chrome` — Image contain-fit + free-frame clip; hover/side resize chrome; free↔fit sticky box
 - `20260917024930_board_filter_sort_hide_frames` — Board Filter/Sort Notion chips; hide non-matching frames when none selected
 - `20260916012644_notion_sync_review_ux_revert_accept` — Notion sync review UX: Revert/Accept; highlight red+strike; no I-bar on selected; Frames synced/changed labels
