@@ -1,12 +1,11 @@
 'use client'
 
-// Top-bar cluster right of Share: copy link, favorite, More (shareCompact: copy + star + AI sparkles live in More)
+// Top-bar cluster right of Share: favorite, More (shareCompact: star + AI sparkles live in More; Copy link is Share-only)
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react' // Copy flash + favorite + More search
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react' // Favorite + More search
 import {
   AppWindow,
   Bell,
-  Check,
   Clipboard,
   Clock,
   Copy,
@@ -141,8 +140,8 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
     setUtilitySidebarOpen,
     setUtilitySidebarMode,
   } = useSidebarContext() // Phone layout; open utility right of More (close lives in column)
-  const { shareCompact } = usePhoneModeMenu() // Toolbar collapses copy/star before tools leave for the pill
-  const collapseShare = isMobileMode || shareCompact // Hide copy/star into More ahead of phoneTools
+  const { shareCompact } = usePhoneModeMenu() // Toolbar collapses star before tools leave for the pill
+  const collapseShare = isMobileMode || shareCompact // Hide star into More ahead of phoneTools
   const hideMore = isMobileMode && isUtilitySidebarOpen // Phone: More yields the right edge to the overlay
   const [isDesktopApp, setIsDesktopApp] = useState(false) // Electron shell → hide "Download desktop app"
 
@@ -156,7 +155,6 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
     aiTopBarPinned,
     setAiTopBarPinned,
   } = useAiEditSession()
-  const [copied, setCopied] = useState(false) // Brief checkmark after copy
   const [favorited, setFavorited] = useState(false) // Star fill from metadata.favorite
   const [menuOpen, setMenuOpen] = useState(false) // Load footer stats when More opens
   const [query, setQuery] = useState('') // Search actions…
@@ -251,10 +249,8 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
     const url = `${window.location.origin}/board/${conversationId}` // Same URL as board right-click Copy link
     try {
       await navigator.clipboard.writeText(url)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1600) // Match Share-panel flash
     } catch {
-      setCopied(false)
+      // Clipboard denied — Share menu still owns the primary copy-link path
     }
   }, [conversationId])
 
@@ -367,18 +363,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
       <div className="flex items-center gap-1 flex-shrink-0">
         {!collapseShare && (
           <div data-top-bar-copy-star className="flex items-center gap-1 flex-shrink-0">
-            {/* Desktop: copy + star sit beside More; shareCompact / phone uses More rows only */}
-            <Button
-              variant="ghost"
-              size="sm"
-              className={iconBtn}
-              title={copied ? 'Copied' : 'Copy link'}
-              type="button"
-              disabled={!conversationId}
-              onClick={() => void copyLink()}
-            >
-              {copied ? <Check className="h-4 w-4 text-green-600" /> : <Link2 className="h-4 w-4" />}
-            </Button>
+            {/* Desktop: star beside More; shareCompact / phone uses More rows only (Copy link lives in Share) */}
             <Button
               variant="ghost"
               size="sm"

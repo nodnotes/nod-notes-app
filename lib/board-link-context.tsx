@@ -28,6 +28,10 @@ export type BoardLinkActions = {
   hostMessageId?: string | null
   /** Board the host frame sits on — Convert layout API. */
   conversationId?: string | null
+  /** Host RF node id — Sort target / selection keys. */
+  hostNodeId?: string | null
+  /** Host frame RF-selected — DB NodeViews re-render when this flips (storage mutation alone does not). */
+  frameSelected?: boolean
 }
 
 // Safe no-op default so NodeViews used outside a host frame don't crash.
@@ -44,6 +48,8 @@ const BoardLinkContext = createContext<BoardLinkActions>({
   hostLinkedBoardId: null,
   hostMessageId: null,
   conversationId: null,
+  hostNodeId: null,
+  frameSelected: false,
 })
 
 export const BoardLinkProvider = BoardLinkContext.Provider // Provided by the host frame (chat-panel-node)

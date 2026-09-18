@@ -70,7 +70,7 @@ import { useTheme } from './theme-provider'
 import { TidyUpIcon } from './tidy-up-icon' // Layout bar — 2×2 rounded squares
 import { ShareBoardMenu } from './share-board-menu' // Share dropdown: Notion people + role links
 import { CollabPresenceAvatars } from './collab/presence-avatars' // Who's on this board
-import { BoardTopBarShare } from './board-top-bar-share' // Copy link / favorite / More (board actions + Connections)
+import { BoardTopBarShare } from './board-top-bar-share' // Favorite / More (board actions + Connections; Copy link is Share)
 import {
   NotionConnectProvider,
   NotionTopBarPin,
@@ -648,7 +648,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
   const toolbarLayoutReadyRef = useRef(false) // Same flag for checkVisibility without a stale closure
   const measuredModeRef = useRef<string | null>(null) // Last fitted pill mode — switch is a first-pass like Actions load
   const phoneToolsRef = useRef(false) // Hysteresis for overflow→pill so it doesn’t thrash at the threshold
-  const shareCompactRef = useRef(false) // Hysteresis for copy/star → More (runs before phoneTools)
+  const shareCompactRef = useRef(false) // Hysteresis for star → More (runs before phoneTools)
   const hiddenItemsRef = useRef<Set<string>>(new Set()) // Cleared — tools move to the pill instead of More
   const [toolbarAnimate, setToolbarAnimate] = useState(false) // Enable title transitions only after the first correct layout
   const [boardSearch, setBoardSearch] = useState('') // Actions-bar live search over frame title + body
@@ -1355,19 +1355,19 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       }
 
       const rightSectionRect = rightSection.getBoundingClientRect()
-      const rightW = rightSectionRect.width // Share / copy / favorite / more / AI (live)
+      const rightW = rightSectionRect.width // Share / favorite / more / AI (live)
       const copyStarEl = rightSection.querySelector('[data-top-bar-copy-star]') as HTMLElement | null
-      const COPY_STAR_W = 64 // Two h-7 icons + gaps — used when already collapsed so expand math stays stable
+      const COPY_STAR_W = 32 // Favorite h-7 — used when already collapsed so expand math stays stable
       const copyStarLive = copyStarEl?.getBoundingClientRect().width ?? 0
       const aiOriginEl = rightSection.querySelector('[data-top-bar-ai-origin]') as HTMLElement | null
-      const AI_ORIGIN_W = 40 // Sparkles h-7 + px-1 wrapper — fold into More with copy/star
+      const AI_ORIGIN_W = 40 // Sparkles h-7 + px-1 wrapper — fold into More with star
       const aiOriginLive = aiOriginEl?.getBoundingClientRect().width ?? 0
       const aiWouldPinOnBar = hasAiContent && aiTopBarPinned
       const rightExpandedW =
         rightW +
         (copyStarLive > 0 ? 0 : COPY_STAR_W) +
         (aiWouldPinOnBar && aiOriginLive === 0 ? AI_ORIGIN_W : 0) // Simulate pinned sparkles on expand hysteresis
-      const rightCollapsedW = copyStarLive > 0 ? Math.max(0, rightW - copyStarLive) : rightW // After copy/star → More
+      const rightCollapsedW = copyStarLive > 0 ? Math.max(0, rightW - copyStarLive) : rightW // After star → More
       const PATH_GAP = 8 // Air between path glyphs and the centered undo cluster
       const hamEl = leftChrome?.querySelector('[data-nav-logo-trigger]') as HTMLElement | null // Menu icon; path starts after it
       const hamRight = hamEl?.getBoundingClientRect().right ?? toolbarRect.left + 40 // Path origin in viewport px
@@ -1381,8 +1381,8 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       const leftW = hamW + minPathW // Reserve cutoff path on shrink and expand — live crush delayed return; live extend delayed return
       const sideInset = Math.max(leftW, rightW) // Live inset for title collapse (current share chrome)
       const availableWidth = barW - 2 * sideInset - 16 // Max cluster width on the true board center (no More fold)
-      const availableExpanded = barW - 2 * Math.max(leftW, rightExpandedW) - 16 // Room if copy/star stay on the bar
-      const availableCollapsed = barW - 2 * Math.max(leftW, rightCollapsedW) - 16 // Room after copy/star → board More
+      const availableExpanded = barW - 2 * Math.max(leftW, rightExpandedW) - 16 // Room if star stays on the bar
+      const availableCollapsed = barW - 2 * Math.max(leftW, rightCollapsedW) - 16 // Room after star → board More
 
       // Icon-only widths (after all titles have condensed)
       const iconGroups = editMenuPillMode === 'insert'
@@ -1471,9 +1471,9 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       const itemGroups = nextRest ? iconGroups : nextEarly ? midGroups : fullGroups // Measure the chrome we will actually render
 
       const iconTotal = sumGroups(iconGroups) // After titles collapse, move to the pill instead of folding into More
-      const wasShare = firstPass ? false : shareCompactRef.current // Last copy/star → More decision
+      const wasShare = firstPass ? false : shareCompactRef.current // Last star → More decision
       const wasPhone = firstPass ? false : phoneToolsRef.current // Last overflow→pill decision
-      // 1) Collapse board copy/star into More while tools can still stay on the bar
+      // 1) Collapse board star into More while tools can still stay on the bar
       const nextShare =
         isMobileMode ||
         iconTotal > availableExpanded - (wasShare ? expandSlop : 0)
@@ -1674,8 +1674,12 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                     variant="ghost"
                     size="sm"
                     className={cn(
-                      'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#1f1f1f] flex-shrink-0 flex items-center',
-                      'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5'
+                      // Transparent border reserves space so open wash doesn’t jump (same as Draw tools)
+                      'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center border border-transparent',
+                      'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5',
+                      openDropdown === 'turnInto'
+                        ? 'bg-gray-100 dark:bg-gray-800 shadow-sm border-black/10 dark:border-white/10' // Open: match Draw wash + shadow + hairline
+                        : 'hover:bg-gray-100 dark:hover:bg-gray-800'
                     )}
                     disabled={!canTurnInto}
                     title={!canTurnInto ? 'Select a block to turn into' : 'Turn into'}
@@ -1763,10 +1767,13 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                 variant="ghost"
                 size="sm"
                 className={cn(
-                  'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#1f1f1f] flex-shrink-0 flex items-center',
+                  // Transparent border reserves space so open wash doesn’t jump (same as Draw tools)
+                  'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center border border-transparent',
                   'transition-[padding,gap] duration-200 ease-out', // Title collapses as the field slides out
                   compactEarlyLabels || boardSearchOpen ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Hide title on shrink or when searching
-                  boardSearchOpen && 'bg-gray-100 dark:bg-[#1f1f1f] text-gray-900 dark:text-gray-100' // Stay pressed while the field is out
+                  boardSearchOpen
+                    ? 'bg-gray-100 dark:bg-gray-800 shadow-sm border-black/10 dark:border-white/10' // Open: match Draw wash + shadow + hairline
+                    : 'hover:bg-gray-100 dark:hover:bg-gray-800'
                 )}
                 title="Search"
                 aria-label="Search board"
@@ -1824,11 +1831,12 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
               size="sm"
               onClick={handleToggleBoardLock}
               className={cn(
-                'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#1f1f1f] flex-shrink-0 flex items-center',
+                // Transparent border reserves space so armed wash doesn’t jump (same as Draw tools)
+                'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center border border-transparent',
                 'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Title condenses to icon on shrink
-                boardLockUi.hasSelection &&
-                  boardLockUi.locked &&
-                  'bg-gray-100 dark:bg-[#1f1f1f] text-gray-900 dark:text-gray-100'
+                boardLockUi.hasSelection && boardLockUi.locked
+                  ? 'bg-gray-100 dark:bg-gray-800 shadow-sm border-black/10 dark:border-white/10' // Anchored: match Draw wash + shadow + hairline
+                  : 'hover:bg-gray-100 dark:hover:bg-gray-800'
               )}
               disabled={!reactFlowInstance || !boardLockUi.hasSelection}
               title={
@@ -1848,11 +1856,12 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
               size="sm"
               onClick={handleToggleFrameLock}
               className={cn(
-                'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#1f1f1f] flex-shrink-0 flex items-center',
+                // Transparent border reserves space so armed wash doesn’t jump (same as Draw tools)
+                'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center border border-transparent',
                 'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Title condenses to icon on shrink
-                frameLockUi.hasMulti &&
-                  frameLockUi.locked &&
-                  'bg-gray-100 dark:bg-[#1f1f1f] text-gray-900 dark:text-gray-100'
+                frameLockUi.hasMulti && frameLockUi.locked
+                  ? 'bg-gray-100 dark:bg-gray-800 shadow-sm border-black/10 dark:border-white/10' // Locked: match Draw wash + shadow + hairline
+                  : 'hover:bg-gray-100 dark:hover:bg-gray-800'
               )}
               disabled={!reactFlowInstance || !frameLockUi.hasMulti}
               title={
@@ -1883,8 +1892,10 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                 variant="ghost"
                 size="sm"
                 className={cn(
-                  'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#1f1f1f] flex-shrink-0 flex items-center',
-                  'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5' // Title condenses to icon on shrink
+                  // Transparent border keeps Layout buttons aligned with Draw / Actions armed chrome
+                  'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center border border-transparent',
+                  'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Title condenses to icon on shrink
+                  'hover:bg-gray-100 dark:hover:bg-gray-800'
                 )}
                 title="Tidy up"
                 aria-label="Tidy up"
@@ -1900,8 +1911,12 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                     variant="ghost"
                     size="sm"
                     className={cn(
-                      'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#1f1f1f] flex-shrink-0 flex items-center',
-                      'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5' // Title condenses to icon on shrink
+                      // Transparent border reserves space so open wash doesn’t jump (same as Draw tools)
+                      'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center border border-transparent',
+                      'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Title condenses to icon on shrink
+                      openDropdown === 'arrowDirection'
+                        ? 'bg-gray-100 dark:bg-gray-800 shadow-sm border-black/10 dark:border-white/10' // Open: match Draw wash + shadow + hairline
+                        : 'hover:bg-gray-100 dark:hover:bg-gray-800'
                     )}
                     title="Threads"
                     aria-label="Threads"

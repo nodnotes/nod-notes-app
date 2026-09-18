@@ -119,9 +119,13 @@ export function AutomationsMenu({
           variant="ghost"
           size="sm"
           className={cn(
-            'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#1f1f1f] flex-shrink-0 flex items-center',
+            // Transparent border reserves space so open wash doesn’t jump (same as Draw tools)
+            'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center border border-transparent',
             'transition-[padding,gap] duration-200 ease-out', // Pad/gap tween with the title width
-            showLabel ? 'px-2 gap-1.5' : 'px-1.5 gap-0' // Title condenses first on shrink
+            showLabel ? 'px-2 gap-1.5' : 'px-1.5 gap-0', // Title condenses first on shrink
+            open
+              ? 'bg-gray-100 dark:bg-gray-800 shadow-sm border-black/10 dark:border-white/10' // Open: match Draw wash + shadow + hairline
+              : 'hover:bg-gray-100 dark:hover:bg-gray-800'
           )}
           title="Automations"
         >

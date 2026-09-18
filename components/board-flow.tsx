@@ -4952,11 +4952,15 @@ function BoardFlowInner({
     changesToProcess.forEach((change) => {
       if (change.type === 'select' && change.selected) {
         selectedNodeIdRef.current = change.id
-        // Dispatch event when node is selected so input can refocus
+        // Dispatch after select so Filter/Sort toolbar can re-read getNodes()
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new Event('node-selected'))
         }
       } else if (change.type === 'select' && !change.selected) {
+        // Deselect — same event so Sort greys when the table loses selection
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('node-selected'))
+        }
         // If this node was deselected, check if any other node is selected
         const selectedNode = nodes && Array.isArray(nodes) ? nodes.find((n) => n.id === change.id && n.selected) : null
         if (!selectedNode) {
@@ -11089,7 +11093,8 @@ function BoardFlowInner({
           <div
             className={cn(
               // Zoom % grows/shrinks on the left; rotate + pan stay right (ml-auto)
-              'px-0.5 py-1 flex items-center gap-0 relative w-full border-0 shadow-sm rounded-lg',
+              // Hairline matches Actions/Layout/Draw mode pill (`pill-select`) so chrome reads on the board
+              'px-0.5 py-1 flex items-center gap-0 relative w-full border border-black/10 dark:border-white/10 shadow-sm rounded-lg',
               freeNavBoardFill // Board fill on desktop even with chat open; phone keeps input-only white
             )}
           >
@@ -11199,7 +11204,11 @@ function BoardFlowInner({
         {/* Minimap — always mounted, height-clipped so load and caret share an expand-up tween */}
         <div
           data-minimap-context
-          className="relative"
+          className={cn(
+            'relative',
+            // Own shadow on the clip shell — overflow:hidden clips the inner MiniMap’s shadow-sm
+            minimapExpanded && 'shadow-sm'
+          )}
           aria-hidden={!minimapExpanded}
           onContextMenuCapture={(e) => {
             // Capture: MiniMap SVG can eat bubble-phase contextmenu

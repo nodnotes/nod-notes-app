@@ -17,6 +17,7 @@ import {
   type NotionDbRow,
 } from '@/lib/notion/database'
 import {
+  applyViewRows, // Search / filter / sort before the row cap slice
   columnWidthPx,
   normalizeViewSettings,
   parseViewSettings,
@@ -341,10 +342,12 @@ export function NotionDbStaticPreview({
   }
 
   const effectiveCap = rowCap ?? (compact ? COMPACT_PREVIEW_ROWS : NOTION_DB_CLIENT_ROW_CAP)
-  const rows = data.rows.slice(0, effectiveCap)
+  // Apply NodNotes view sorts/filters before capping — Actions Sort writes viewSettings
+  const viewedRows = applyViewRows(data.rows, settings)
+  const rows = viewedRows.slice(0, effectiveCap)
   const tablePixelWidth = visibleCols.reduce((sum, prop) => sum + columnWidthPx(prop, settings), 0)
   const vLines = settings.layoutOptions.showVerticalLines
-  const hiddenLoaded = Math.max(0, data.rows.length - rows.length)
+  const hiddenLoaded = Math.max(0, viewedRows.length - rows.length)
   // Show-more while under the client cap; show-less once past the compact preview.
   const canShowMore =
     hiddenLoaded > 0 || (!!data.rowsHasMore && rows.length < NOTION_DB_CLIENT_ROW_CAP)

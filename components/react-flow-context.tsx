@@ -586,14 +586,21 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
   // Refs to track conversationId and loading state without triggering save effects
   // conversationIdRef: Tracks current board ID for saves (updated when conversationId changes, but doesn't trigger saves)
   // isLoadingRef: Prevents saves during navigation/loading to avoid race conditions
+  // prefsHydratedRef: Blocks first-paint save of SSR defaults (e.g. boardFont 'default') before load applies real prefs
   const conversationIdRef = useRef<string | undefined>(conversationId)
   const isLoadingRef = useRef(false)
+  const prefsHydratedRef = useRef(false)
 
   // Shared function to load preferences from localStorage first (instant), then Supabase (sync)
   // If conversationId is undefined, loads from profiles.metadata (default board)
   // If conversationId exists, loads from conversations.metadata (specific board)
   const loadPreferencesFromSupabase = useCallback(async (currentConversationId?: string) => {
     if (typeof window === 'undefined') return
+
+    // Always apply a font for this board — missing key means Default, never keep the previous board's font
+    const applyBoardFont = (raw: unknown) => {
+      setBoardFont(parseBoardFontId(raw) ?? 'default')
+    }
 
     // STEP 1: Load from localStorage FIRST (synchronous, instant) - ensures UI shows saved prefs immediately
     const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
@@ -617,8 +624,7 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
         if (prefs.boardStyle && ['none', 'dotted', 'lined', 'grid'].includes(prefs.boardStyle)) {
           setBoardStyle(prefs.boardStyle)
         }
-        const loadedFont = parseBoardFontId(prefs.boardFont)
-        if (loadedFont) setBoardFont(loadedFont)
+        applyBoardFont(prefs.boardFont) // Missing/invalid → default (clears sticky prior-board font)
       } catch (e) {
         // Fallback to old localStorage keys for backward compatibility
         const savedLayoutMode = localStorage.getItem('nodnotes-layout-mode') as 'auto' | 'tree' | 'cluster' | 'none' | null
@@ -634,7 +640,10 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
         if (savedArrowDirection && ['down', 'up', 'left', 'right'].includes(savedArrowDirection)) {
           setArrowDirection(savedArrowDirection)
         }
+        applyBoardFont(undefined) // Corrupt prefs blob — Default until Supabase answers
       }
+    } else {
+      applyBoardFont(undefined) // No LS for this board yet — drop prior board font before async sync
     }
 
     // STEP 2: Then load from Supabase (async) and update if different
@@ -672,9 +681,9 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
           const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
           localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardStyle: publicBoardPrefs.boardStyle }))
         }
-        const publicFont = parseBoardFontId(publicBoardPrefs.boardFont)
-        if (publicFont) {
-          setBoardFont(publicFont)
+        const publicFont = parseBoardFontId(publicBoardPrefs.boardFont) ?? 'default'
+        setBoardFont(publicFont)
+        {
           const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
           const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
           localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardFont: publicFont }))
@@ -770,9 +779,9 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
             localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardStyle: prefs.boardStyle }))
           }
 
-          const syncedFont = parseBoardFontId((prefs as { boardFont?: unknown }).boardFont)
-          if (syncedFont) {
-            setBoardFont(syncedFont)
+          const syncedFont = parseBoardFontId((prefs as { boardFont?: unknown }).boardFont) ?? 'default'
+          setBoardFont(syncedFont)
+          {
             const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
             const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
             localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardFont: syncedFont }))
@@ -802,8 +811,10 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
     const handleFocus = () => {
       // Set loading flag to prevent saves during reload
       isLoadingRef.current = true
+      prefsHydratedRef.current = false // Block font save until this reload finishes
       // Reload from Supabase to get latest preferences
       loadPreferencesFromSupabase(conversationId).finally(() => {
+        prefsHydratedRef.current = true
         isLoadingRef.current = false
       })
     }
@@ -1185,6 +1196,7 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
   // Save board font to localStorage and Supabase when it changes
   useEffect(() => {
     if (typeof window === 'undefined') return
+    if (!prefsHydratedRef.current) return // Do not persist SSR 'default' before this board's prefs load
     if (isLoadingRef.current) return
 
     const currentConversationId = conversationIdRef.current
@@ -1344,12 +1356,45 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
       if (conversationId !== undefined) {
         // We're on a specific board, don't copy preferences
         // Just reload the new board's own preferences immediately
-        loadPreferencesFromSupabase(newConversationId)
+        isLoadingRef.current = true
+        prefsHydratedRef.current = false
+        loadPreferencesFromSupabase(newConversationId).finally(() => {
+          prefsHydratedRef.current = true
+          isLoadingRef.current = false
+        })
         return
       }
 
-      // When a new board is created from /board, copy current /board preferences to the new board
-      // This ensures the new board inherits the current selections, even if they haven't been saved yet
+      // Seed LS synchronously so load sees /board font/rule/style before any async work
+      const currentPrefs = {
+        layoutMode,
+        lineStyle,
+        arrowDirection,
+        boardFont,
+        boardRule,
+        boardStyle,
+      }
+      const defaultStorageKey = 'nodnotes-prefs-default'
+      const defaultPrefsStr = localStorage.getItem(defaultStorageKey)
+      if (defaultPrefsStr) {
+        try {
+          const merged = { ...JSON.parse(defaultPrefsStr), ...currentPrefs } // State wins over stale LS
+          localStorage.setItem(`nodnotes-prefs-${newConversationId}`, JSON.stringify(merged))
+        } catch {
+          localStorage.setItem(`nodnotes-prefs-${newConversationId}`, JSON.stringify(currentPrefs))
+        }
+      } else {
+        localStorage.setItem(`nodnotes-prefs-${newConversationId}`, JSON.stringify(currentPrefs))
+      }
+
+      isLoadingRef.current = true
+      prefsHydratedRef.current = false
+      loadPreferencesFromSupabase(newConversationId).finally(() => {
+        prefsHydratedRef.current = true
+        isLoadingRef.current = false
+      })
+
+      // Persist the same prefs to the new board's conversation metadata in the background
       const copyPrefsToNewBoard = async () => {
         try {
           const supabase = createClient()
@@ -1359,15 +1404,6 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
             return
           }
 
-          // Use current state values (most up-to-date, even if not yet saved)
-          // These are the preferences currently shown on /board
-          const currentPrefs = {
-            layoutMode,
-            lineStyle,
-            arrowDirection,
-          }
-
-          // Copy to new board's conversation metadata
           const { data: conversation, error: fetchError } = await supabase
             .from('conversations')
             .select('metadata')
@@ -1395,33 +1431,21 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
           } else {
             console.log(`✅ Copied /board preferences to new board ${newConversationId}:`, currentPrefs)
           }
-
-          // Also copy to localStorage for instant loading
-          const defaultStorageKey = 'nodnotes-prefs-default'
-          const defaultPrefsStr = localStorage.getItem(defaultStorageKey)
-          if (defaultPrefsStr) {
-            localStorage.setItem(`nodnotes-prefs-${newConversationId}`, defaultPrefsStr)
-          } else {
-            // If no default prefs in localStorage, save current state
-            localStorage.setItem(`nodnotes-prefs-${newConversationId}`, JSON.stringify(currentPrefs))
-          }
         } catch (error) {
           console.error('Error copying preferences to new board:', error)
         }
       }
 
-      copyPrefsToNewBoard()
-
-      // Load immediately - localStorage already has the copied preferences (instant)
-      // Supabase sync happens in background, no delay needed
-      loadPreferencesFromSupabase(newConversationId)
+      void copyPrefsToNewBoard()
     }
 
     const handleReloadPreferences = () => {
       // Set loading flag to prevent saves during reload
       isLoadingRef.current = true
+      prefsHydratedRef.current = false
       // Reload preferences when explicitly requested (e.g., from BoardFlowInner)
       loadPreferencesFromSupabase(conversationId).finally(() => {
+        prefsHydratedRef.current = true
         isLoadingRef.current = false
       })
     }
@@ -1430,8 +1454,10 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
     const handlePathnameChange = () => {
       // Set loading flag to prevent saves during reload
       isLoadingRef.current = true
+      prefsHydratedRef.current = false
       // Load immediately - localStorage is instant, Supabase syncs in background
       loadPreferencesFromSupabase(conversationId).finally(() => {
+        prefsHydratedRef.current = true
         isLoadingRef.current = false
       })
     }
@@ -1475,10 +1501,12 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
 
     // Set loading flag to prevent saves during reload
     isLoadingRef.current = true
+    prefsHydratedRef.current = false // Avoid writing prior-board / SSR default font into this board
 
     // Load immediately - localStorage is instant, Supabase syncs in background
     // No need for multiple retries since localStorage loads synchronously
     loadPreferencesFromSupabase(conversationId).finally(() => {
+      prefsHydratedRef.current = true
       isLoadingRef.current = false
     })
   }, [pathname, conversationId, loadPreferencesFromSupabase])

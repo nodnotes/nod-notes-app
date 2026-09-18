@@ -12,11 +12,10 @@ export interface ImageBlockOptions {
 
 export { looksLikeImageSrc } from '@/lib/tiptap/image-src' // Server-safe (no TipTap) — re-exported for existing call sites
 
-function numAttr(el: HTMLElement, name: string, fallback: number): number {
-  const raw = el.getAttribute(name)
-  if (!raw) return fallback
-  const n = parseFloat(raw)
-  return Number.isFinite(n) ? n : fallback
+/** Clamp display scale — fraction of the frame’s contain-fit box (never overflows). */
+export function clampImageScale(n: number): number {
+  if (!Number.isFinite(n)) return 1
+  return Math.min(1, Math.max(0.05, n))
 }
 
 /** A block whose payload is an image URL (or empty until the user adds one). */
@@ -43,13 +42,21 @@ export const ImageBlock = Node.create<ImageBlockOptions>({
         parseHTML: (el) => (el as HTMLElement).getAttribute('data-alt') || '',
         renderHTML: (attrs) => (attrs.alt ? { 'data-alt': attrs.alt } : {}),
       },
-      widthPct: {
-        default: 100, // Display width as % of the frame column
-        parseHTML: (el) => numAttr(el as HTMLElement, 'data-width-pct', 100),
-        renderHTML: (attrs) =>
-          attrs.widthPct != null && attrs.widthPct !== 100
-            ? { 'data-width-pct': String(attrs.widthPct) }
-            : {},
+      // Fraction of the frame contain-fit box (manual corner drag). Migrates legacy data-width-pct.
+      scale: {
+        default: 1,
+        parseHTML: (el) => {
+          const node = el as HTMLElement
+          const raw = node.getAttribute('data-scale')
+          if (raw) return clampImageScale(parseFloat(raw))
+          const pct = node.getAttribute('data-width-pct') // Legacy width-% presets
+          if (pct) return clampImageScale(parseFloat(pct) / 100)
+          return 1
+        },
+        renderHTML: (attrs) => {
+          const s = clampImageScale(Number(attrs.scale) || 1)
+          return s < 1 - 1e-6 ? { 'data-scale': String(Math.round(s * 1000) / 1000) } : {}
+        },
       },
       hazed: {
         default: false, // Blur until click-reveal (same frost as Hide text)

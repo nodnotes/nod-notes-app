@@ -1296,8 +1296,8 @@ function ProjectFlowInner({ projectId }: { projectId?: string }) {
       >
         <div
           className={cn(
-            "bg-gray-100 dark:bg-[#2a2a3a] rounded-lg px-1 py-0.5 flex items-center gap-1 relative",
-            isMinimapHidden && "shadow-sm"
+            // Hairline matches board Free nav + Actions/Layout/Draw mode pill
+            "bg-gray-100 dark:bg-[#2a2a3a] rounded-lg px-1 py-0.5 flex items-center gap-1 relative border border-black/10 dark:border-white/10 shadow-sm"
           )}
         >
           <Button

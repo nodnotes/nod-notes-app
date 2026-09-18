@@ -5129,8 +5129,8 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
       >
         <div
           className={cn(
-            "bg-gray-50 dark:bg-[#0f0f0f] rounded-lg p-1 flex items-center gap-1 relative border-0 shadow-none",
-            isMinimapHidden && "shadow-sm"
+            // Hairline matches board Free nav + Actions/Layout/Draw mode pill
+            "bg-gray-50 dark:bg-[#0f0f0f] rounded-lg p-1 flex items-center gap-1 relative border border-black/10 dark:border-white/10 shadow-sm"
           )}
         >
           <Button

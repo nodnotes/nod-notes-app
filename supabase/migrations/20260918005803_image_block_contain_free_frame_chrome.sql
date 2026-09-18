@@ -1,0 +1,2 @@
+-- Image block contain-fit + free-frame clip chrome (Notion-style side resize, hover toolbar, lock↔free sticky box).
+-- App/docs marker only; no DDL. Remote DDL top: 20260914104046_notion_multi_workspace.

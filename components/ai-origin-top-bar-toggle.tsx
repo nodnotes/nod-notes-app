@@ -19,7 +19,7 @@ export function AiOriginTopBarToggle() {
     aiTopBarPinned,
     setAiTopBarPinned,
   } = useAiEditSession()
-  const { shareCompact } = usePhoneModeMenu() // Fold into board More with copy/star when the bar is tight
+  const { shareCompact } = usePhoneModeMenu() // Fold into board More with star when the bar is tight
   const { isMobileMode } = useSidebarContext()
   const collapseToMore = isMobileMode || shareCompact
   const btnRef = useRef<HTMLButtonElement>(null)

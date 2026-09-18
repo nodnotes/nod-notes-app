@@ -75,3 +75,33 @@ export function toggleBoardFilterSort(focus: BoardFilterSortFocus) {
     })
   }
 }
+
+/** Force one side open or closed (e.g. open Sort strip after the first sort is applied). */
+export function setBoardFilterSortSide(side: BoardFilterSortFocus, open: boolean) {
+  if (side === 'filter') {
+    if (snapshot.openFilter === open) {
+      if (open) publish({ openFilter: true, openSort: snapshot.openSort, focus: 'filter' })
+      return
+    }
+    publish({
+      openFilter: open,
+      openSort: snapshot.openSort,
+      focus: open ? 'filter' : snapshot.focus,
+    })
+    return
+  }
+  if (snapshot.openSort === open) {
+    if (open) publish({ openFilter: snapshot.openFilter, openSort: true, focus: 'sort' })
+    return
+  }
+  publish({
+    openFilter: snapshot.openFilter,
+    openSort: open,
+    focus: open ? 'sort' : snapshot.focus,
+  })
+}
+
+/** Force one side closed (e.g. Sort when the table target disappears). */
+export function closeBoardFilterSortSide(side: BoardFilterSortFocus) {
+  setBoardFilterSortSide(side, false)
+}

@@ -35,6 +35,16 @@ import {
 } from '@/lib/notion/database'
 import { useDbLiveClaims } from '@/lib/frame-db-live'
 import { useFramePanelSelected } from '@/lib/frame-panel-selected'
+import {
+  registerBoardTableSortTarget, // Actions Sort target while table is mounted
+  unregisterBoardTableSortTarget,
+} from '@/lib/board-table-sort-target'
+import {
+  defaultDatabaseViewSettings, // Seed when viewSettings attr is empty
+  normalizeViewSettings,
+  parseViewSettings,
+  type DatabaseSort,
+} from '@/lib/notion/database-view'
 import { cn } from '@/lib/utils'
 
 export function DatabaseBlockView({ node, updateAttributes, editor }: NodeViewProps) {
@@ -105,6 +115,69 @@ export function DatabaseBlockView({ node, updateAttributes, editor }: NodeViewPr
   }, [hostMessageId, notionDatabaseId])
 
   const { onPointerEnter, onPointerLeave } = useDbLiveClaims(instanceId, frameSelected)
+
+  // Actions-bar Sort: register while mounted so Sort works without selecting the frame
+  useEffect(() => {
+    if (!notionDatabaseId || !instanceId) {
+      return // No table payload yet
+    }
+    const tableQueryKey = ['notion-database', notionDatabaseId] as const
+
+    const applySorts = (sorts: DatabaseSort[]) => {
+      const liveTable = queryClient.getQueryData<NotionDatabaseTable>(tableQueryKey)
+      const liveProps = liveTable?.properties ?? []
+      const current =
+        parseViewSettings((node.attrs.viewSettings as string | null) || viewSettingsJson) ||
+        defaultDatabaseViewSettings(liveTable?.title || 'Default')
+      const next = normalizeViewSettings({ ...current, sorts }, liveProps)
+      updateAttributes({ viewSettings: JSON.stringify(next) })
+      // Optimistic strip update before TipTap re-renders attrs into this effect
+      registerBoardTableSortTarget({
+        instanceId,
+        notionDatabaseId,
+        properties: liveProps,
+        sorts: next.sorts,
+        setSorts: applySorts,
+        selected: frameSelected,
+      })
+    }
+
+    const publish = () => {
+      const table = queryClient.getQueryData<NotionDatabaseTable>(tableQueryKey)
+      const properties = table?.properties ?? []
+      const base =
+        parseViewSettings(viewSettingsJson) || defaultDatabaseViewSettings(table?.title || 'Default')
+      const settings = normalizeViewSettings(base, properties)
+      registerBoardTableSortTarget({
+        instanceId,
+        notionDatabaseId,
+        properties,
+        sorts: settings.sorts,
+        setSorts: applySorts,
+        selected: frameSelected,
+      })
+    }
+    publish() // Ambient or selected — Sort enables on table show
+    // Re-publish when react-query lands properties (picker needs column names)
+    const unsub = queryClient.getQueryCache().subscribe((event) => {
+      if (event.type !== 'updated' && event.type !== 'added') return
+      const qk = event.query.queryKey
+      if (qk[0] !== 'notion-database' || qk[1] !== notionDatabaseId) return
+      publish()
+    })
+    return () => {
+      unsub()
+      unregisterBoardTableSortTarget(instanceId)
+    }
+  }, [
+    frameSelected,
+    notionDatabaseId,
+    instanceId,
+    viewSettingsJson,
+    queryClient,
+    updateAttributes,
+    node.attrs.viewSettings,
+  ])
 
   const navigating = useSyncExternalStore(
     subscribeBoardNavigating,

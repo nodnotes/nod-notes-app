@@ -122,11 +122,28 @@ function blockLocalYBand(
   try {
     const el = blockDomEl(editor, node, pos)
     if (el) {
-      const h = el.offsetHeight
-      if (h <= 0) return null
+      // Prefer layout height; fall back to painted box / inner media (sole-image flex can
+      // leave the react-renderer offsetHeight at 0 while the bitmap is visible).
+      let measureEl: HTMLElement = el
+      let h = el.offsetHeight
+      if (h <= 0) {
+        const media = el.querySelector(
+          '.tt-image-block-media, .tt-image-block-row, .tt-database-block-row, .tt-property-block-row'
+        ) as HTMLElement | null
+        if (media && media.offsetHeight > 0) {
+          measureEl = media
+          h = media.offsetHeight
+        } else {
+          const br = el.getBoundingClientRect()
+          if (br.height <= 0) return null
+          const ya = screenToLocal(root, br.left, br.top).y
+          const yb = screenToLocal(root, br.left, br.bottom).y
+          return { top: Math.min(ya, yb), bottom: Math.max(ya, yb) }
+        }
+      }
       // Local top/bottom edges → root space (survives ancestor CSS rotate)
-      const a = localToScreen(el, 0, 0)
-      const b = localToScreen(el, 0, h)
+      const a = localToScreen(measureEl, 0, 0)
+      const b = localToScreen(measureEl, 0, h)
       const ya = screenToLocal(root, a.x, a.y).y
       const yb = screenToLocal(root, b.x, b.y).y
       return { top: Math.min(ya, yb), bottom: Math.max(ya, yb) }
@@ -204,6 +221,24 @@ export function findEditorBlockAtPos(editor: Editor, pos: number): EditorBlockRe
   const { doc } = editor.state
   if (pos < 0 || pos > doc.content.size) return null
   const $pos = doc.resolve(Math.min(pos, doc.content.size))
+
+  // Atom / NodeSelection: the block sits at `pos` as nodeAfter (not an ancestor of the caret).
+  // Without this, imageBlock / databaseBlock / boardLink never park a focus ⋮⋮ after click.
+  // Only when standing *on* the atom (parent is the block container — not inside a paragraph).
+  const after = $pos.nodeAfter
+  if (
+    after &&
+    after.isAtom &&
+    isHandleBlockType(after.type.name) &&
+    !$pos.parent.inlineContent
+  ) {
+    return {
+      from: pos,
+      to: pos + after.nodeSize,
+      node: after,
+      typeName: after.type.name,
+    }
+  }
 
   // Prefer listItem / taskItem (each bullet is its own block in Notion)
   for (let d = $pos.depth; d > 0; d--) {

@@ -1,7 +1,8 @@
 'use client'
 
 // Top-bar Filter / Sort — Notion-style criteria strip under the toolbar (above the mode pill).
-// Scope: no selection → board-global; frame(s) selected → per-frame.
+// Filter: no selection → board-global hide; frame(s) selected → per-frame chips.
+// Sort: table-only — greyed unless a selected frame’s databaseBlock registered a target.
 // + Filter opens a nod-style Filter by… picker (properties, or selected frames).
 
 import {
@@ -17,11 +18,13 @@ import type { Node } from 'reactflow' // RF nodes for frame/property harvest
 import {
   ArrowUpDown, // Sorts pill / toolbar Sort
   ChevronDown, // Pill dropdown chevron
+  Globe, // Global Sort (no table frame selected)
   ListFilter, // Toolbar Filter + filter pills + Advanced filter
   MoreHorizontal, // Filter card … menu
-  Plus, // + Filter
+  Plus, // + Filter / + Sort
   Search, // Contains row glyph
   Trash2, // Delete filter
+  X, // Remove a sort chip
 } from 'lucide-react'
 import { Button } from '@/components/ui/button' // Ghost toolbar triggers
 import {
@@ -29,6 +32,8 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu' // Anchored Filter by… panel
+import { GlobalSortConfirmDialog } from '@/components/global-sort-confirm-dialog' // Are you sure?
+import { getGlobalSortSkipConfirm } from '@/lib/global-sort-confirm' // Don’t-show-again flag
 import { useReactFlowContext } from './react-flow-context' // Selection outside RF provider
 import { usePhoneModeMenu } from './phone-mode-menu-context' // Desktop center vs phone left-align
 import { ToolbarTitle } from './toolbar-title' // Animated icon-adjacent titles
@@ -37,8 +42,14 @@ import {
   getBoardFilterSortUi,
   subscribeBoardFilterSortUi,
   toggleBoardFilterSort,
+  closeBoardFilterSortSide, // Drop Sort when table target goes away
+  setBoardFilterSortSide, // Open Sort strip after first sort applied
   type BoardFilterSortFocus,
 } from '@/lib/board-filter-sort-ui'
+import {
+  useBoardTableSortTarget, // Live table Sort target (mounted databaseBlock)
+  countBoardTables, // Board-wide table presence for enablement
+} from '@/lib/board-table-sort-target'
 import {
   propertyTypeIcon,
   propertyTypeLabel,
@@ -51,7 +62,6 @@ import {
   appliedFilters,
   nodeMatchesBoardFilters,
   setLiveBoardFilters,
-  isHiddenByLiveBoardFilter,
 } from '@/lib/board-frame-filters' // Board-global hide non-matches
 import { TOOLBAR_MENU_PLACEMENT } from '@/lib/menu-placement' // Under trigger, clear of path
 import { cn } from '@/lib/utils'
@@ -321,36 +331,78 @@ function filterPropertyIcon(property: string, className = 'h-3.5 w-3.5'): ReactN
   return propertyTypeIcon('text', className)
 }
 
-/** Blue Notion-style criteria pill (Sort). */
-function CriteriaPill({
-  icon,
-  label,
-  onClick,
-  title,
-  rounded = 'md',
+/** One table sort chip — property select + asc/desc toggle + remove. */
+function TableSortChip({
+  sort,
+  properties,
+  onChange,
+  onDelete,
+  global = false, // Board-wide Sort — Globe left of ArrowUpDown
 }: {
-  icon: ReactNode
-  label: string
-  onClick?: () => void
-  title?: string
-  rounded?: 'md' | 'full' // Sort uses full pill; filter chips stay md
+  sort: DatabaseSort
+  properties: { id: string; name: string }[]
+  onChange: (next: DatabaseSort) => void
+  onDelete: () => void
+  global?: boolean
 }) {
   return (
-    <button
-      type="button"
-      title={title || label}
-      onClick={onClick}
+    <div
       className={cn(
-        'inline-flex h-7 max-w-[220px] items-center gap-1 px-2 text-[13px]',
-        rounded === 'full' ? 'rounded-full' : 'rounded-md',
-        'bg-[#e7f3f8] text-[#0b6e99] hover:bg-[#d3edf6]',
-        'dark:bg-[#1a3a4a] dark:text-[#6ec3e0] dark:hover:bg-[#214a5e]'
+        'inline-flex h-7 max-w-[280px] items-center gap-0.5 rounded-full px-1.5 text-[13px]',
+        'bg-[#e7f3f8] text-[#0b6e99]',
+        'dark:bg-[#1a3a4a] dark:text-[#6ec3e0]'
       )}
     >
-      <span className="flex-shrink-0 opacity-80">{icon}</span>
-      <span className="truncate font-medium">{label}</span>
-      <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-70" />
-    </button>
+      {global ? (
+        <Globe className="h-3.5 w-3.5 flex-shrink-0 opacity-80 ml-0.5" aria-hidden />
+      ) : null}
+      <ArrowUpDown
+        className={cn('h-3.5 w-3.5 flex-shrink-0 opacity-80', !global && 'ml-0.5')}
+        aria-hidden
+      />
+      <select
+        className={cn(
+          'max-w-[120px] truncate rounded-md border-0 bg-transparent py-0.5 pl-0.5 pr-1 text-[13px] font-medium',
+          'text-[#0b6e99] outline-none dark:text-[#6ec3e0]',
+          'cursor-pointer'
+        )}
+        value={sort.property}
+        title="Sort property"
+        aria-label="Sort property"
+        onChange={(e) => onChange({ ...sort, property: e.target.value })}
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        {properties.map((p) => (
+          <option key={p.id} value={p.name}>
+            {p.name}
+          </option>
+        ))}
+        {/* Keep a valid option if the saved property left the schema */}
+        {!properties.some((p) => p.name === sort.property) && sort.property ? (
+          <option value={sort.property}>{sort.property}</option>
+        ) : null}
+      </select>
+      <button
+        type="button"
+        className="rounded-md px-1.5 py-0.5 text-[12px] font-medium hover:bg-[#d3edf6] dark:hover:bg-[#214a5e]"
+        title={sort.direction === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'}
+        aria-label={sort.direction === 'asc' ? 'Ascending' : 'Descending'}
+        onClick={() =>
+          onChange({ ...sort, direction: sort.direction === 'asc' ? 'desc' : 'asc' })
+        }
+      >
+        {sort.direction === 'asc' ? 'Asc' : 'Desc'}
+      </button>
+      <button
+        type="button"
+        className="flex h-5 w-5 items-center justify-center rounded-full text-[#0b6e99]/70 hover:bg-[#d3edf6] hover:text-[#0b6e99] dark:hover:bg-[#214a5e]"
+        title="Remove sort"
+        aria-label="Remove sort"
+        onClick={onDelete}
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </div>
   )
 }
 
@@ -745,7 +797,127 @@ function FilterByMenu({
 }
 
 /**
- * Actions-bar Filter + Sort buttons — toggle the under-toolbar criteria strip (not a dropdown).
+ * Notion-style Sort by… menu — search + property rows (Aa Name, …).
+ * Used under the toolbar Sort button when no sorts exist, and from strip + Sort.
+ */
+function SortByMenu({
+  open,
+  onOpenChange,
+  properties,
+  onPick,
+  trigger,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  properties: { id: string; name: string; type?: string }[]
+  onPick: (propertyName: string) => void
+  trigger: ReactNode // Toolbar button or strip pill
+}) {
+  const [query, setQuery] = useState('') // Live filter of the list
+  const inputRef = useRef<HTMLInputElement>(null) // Autofocus search on open
+
+  useEffect(() => {
+    if (!open) {
+      setQuery('') // Fresh search next open
+      return
+    }
+    const t = window.setTimeout(() => inputRef.current?.focus(), 0) // After Radix mounts
+    return () => window.clearTimeout(t)
+  }, [open])
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return properties
+    return properties.filter((p) => p.name.toLowerCase().includes(q))
+  }, [properties, query])
+
+  return (
+    <DropdownMenu open={open} onOpenChange={onOpenChange}>
+      <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
+      <DropdownMenuContent
+        {...TOOLBAR_MENU_PLACEMENT} // Under the Sort glyph / pill
+        className={cn(
+          'tt-menu-surface z-[1000] w-[280px] overflow-hidden rounded-lg border border-gray-200 p-0 shadow-lg',
+          'dark:border-[#2f2f2f]',
+          'bg-transparent'
+        )}
+        onCloseAutoFocus={(e) => e.preventDefault()}
+        onKeyDown={(e) => e.stopPropagation()}
+      >
+        <div className="relative z-0 flex max-h-[min(70vh,360px)] flex-col overflow-visible">
+          <div className="flex-shrink-0 px-2 pt-2 pb-1.5">
+            <input
+              ref={inputRef}
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Sort by..."
+              className={cn(
+                'h-8 w-full rounded-md border border-gray-200 bg-white/80 px-2.5 text-sm text-gray-900',
+                'placeholder:text-gray-400 outline-none',
+                'focus:border-[#91caff] focus:ring-1 focus:ring-[#91caff]/40',
+                'dark:border-[#3a3a3a] dark:bg-black/20 dark:text-gray-100 dark:placeholder:text-gray-500',
+                'dark:focus:border-[#5a9fd4] dark:focus:ring-[#5a9fd4]/30'
+              )}
+              onKeyDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+            />
+          </div>
+
+          <div
+            data-tt-menu-body
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-1.5 pb-1.5 touch-pan-y"
+          >
+            {filtered.length === 0 ? (
+              <div className="px-2 py-4 text-center text-xs text-gray-400">
+                {properties.length === 0 ? 'Loading properties…' : 'No matches'}
+              </div>
+            ) : (
+              filtered.map((p, index) => {
+                const isTitle =
+                  p.type === 'title' || p.name.trim().toLowerCase() === 'name'
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className={cn(
+                      'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-gray-700',
+                      'hover:bg-[var(--nod-tab-hover)] dark:text-gray-200',
+                      index === 0 && !query && 'bg-gray-100/80 dark:bg-[#2a2a2a]/80'
+                    )}
+                    onPointerDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      onPick(p.name)
+                      onOpenChange(false)
+                    }}
+                  >
+                    <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-gray-500 dark:text-gray-400">
+                      {isTitle ? (
+                        <NamePropertyIcon className="text-gray-500" />
+                      ) : (
+                        propertyTypeIcon(
+                          (p.type as PropertyTypeId) || 'text',
+                          'h-4 w-4'
+                        )
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                  </button>
+                )
+              })
+            )}
+          </div>
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/**
+ * Actions-bar Filter + Sort buttons.
+ * No sorts → Sort opens a Sort by… menu under the button (Notion).
+ * Has sorts → Sort toggles the under-bar criteria strip.
+ * Global confirm runs only when applying a new ambient sort.
  */
 export function BoardFilterSortTriggers({
   showFilterLabel = true,
@@ -754,16 +926,98 @@ export function BoardFilterSortTriggers({
   sortTriggerVisible = true,
 }: BoardFilterSortTriggersProps) {
   const { openFilter, openSort } = useFilterSortUi()
+  const tableSortTarget = useBoardTableSortTarget() // Mounted table (ambient or selected)
+  const { nodes } = useBoardFilterFrames() // Selection + content for table detect
+  const { total: boardTableCount, selected: selectedTableCount } = useMemo(
+    () => countBoardTables(nodes),
+    [nodes]
+  )
+  // Universal: any table on the board unlocks Sort; ambiguous multi-select stays grey
+  const sortEnabled =
+    (boardTableCount >= 1 || tableSortTarget !== null) && selectedTableCount <= 1
+  // No table frame selected → board-wide / ambient Sort
+  const isGlobalSort = sortEnabled && selectedTableCount === 0
+  const hasSorts = (tableSortTarget?.sorts.length ?? 0) > 0
+  const [sortByOpen, setSortByOpen] = useState(false) // Empty-state Sort by… under toolbar
+  const [globalConfirmOpen, setGlobalConfirmOpen] = useState(false) // After pick, before apply
+  const [pendingProperty, setPendingProperty] = useState<string | null>(null) // Awaiting confirm
 
-  const triggerClass = (pressed: boolean, showLabel: boolean) =>
+  const triggerClass = (pressed: boolean, showLabel: boolean, disabled = false) =>
     cn(
-      'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#1f1f1f] flex-shrink-0 flex items-center',
+      // Transparent border reserves space so press wash doesn’t jump (same as Draw tools)
+      'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center border border-transparent',
       'transition-[padding,gap] duration-200 ease-out',
       showLabel ? 'px-2 gap-1.5' : 'px-1.5 gap-0',
-      pressed && 'bg-gray-100 dark:bg-[#1f1f1f] text-gray-900 dark:text-gray-100'
+      pressed && !disabled
+        ? 'bg-gray-100 dark:bg-gray-800 shadow-sm border-black/10 dark:border-white/10'
+        : !disabled && 'hover:bg-gray-100 dark:hover:bg-gray-800',
+      disabled &&
+        'opacity-40 cursor-not-allowed hover:bg-transparent hover:text-gray-600 dark:hover:text-gray-300 dark:hover:bg-transparent'
     )
 
+  /** Apply a sort by property name, then show the strip. */
+  const applySortProperty = (propertyName: string) => {
+    if (!tableSortTarget) return
+    const next = [
+      ...tableSortTarget.sorts,
+      { id: newId('s'), property: propertyName, direction: 'asc' as const },
+    ]
+    tableSortTarget.setSorts(next)
+    setBoardFilterSortSide('sort', true) // Notion: pills appear under the bar
+  }
+
+  /** Pick from Sort by… — confirm first when global + not skipped. */
+  const onPickSortProperty = (propertyName: string) => {
+    if (isGlobalSort && !getGlobalSortSkipConfirm()) {
+      setPendingProperty(propertyName)
+      setGlobalConfirmOpen(true)
+      return
+    }
+    applySortProperty(propertyName)
+  }
+
+  const onConfirmGlobalSort = () => {
+    if (pendingProperty) applySortProperty(pendingProperty)
+    setPendingProperty(null)
+  }
+
   if (!filterTriggerVisible && !sortTriggerVisible) return null
+
+  const sortButton = (
+    <Button
+      variant="ghost"
+      size="sm"
+      className={triggerClass(
+        (hasSorts ? openSort : sortByOpen) && sortEnabled,
+        showSortLabel,
+        !sortEnabled
+      )}
+      title={
+        !sortEnabled
+          ? selectedTableCount > 1
+            ? 'Sort — select a single table frame'
+            : 'Sort — add a table to the board'
+          : isGlobalSort
+            ? 'Global Sort'
+            : 'Sort'
+      }
+      aria-label={isGlobalSort ? 'Global Sort' : 'Sort'}
+      aria-pressed={(hasSorts ? openSort : sortByOpen) && sortEnabled}
+      aria-disabled={!sortEnabled}
+      disabled={!sortEnabled}
+      onClick={
+        hasSorts
+          ? () => {
+              if (!sortEnabled) return
+              toggleBoardFilterSort('sort') // Show/hide strip
+            }
+          : undefined // DropdownMenuTrigger owns the click when empty
+      }
+    >
+      <ArrowUpDown className="h-4 w-4 flex-shrink-0" />
+      <ToolbarTitle show={showSortLabel}>Sort</ToolbarTitle>
+    </Button>
+  )
 
   return (
     <div className="flex items-center gap-0.5 flex-shrink-0">
@@ -782,19 +1036,26 @@ export function BoardFilterSortTriggers({
         </Button>
       ) : null}
       {sortTriggerVisible ? (
-        <Button
-          variant="ghost"
-          size="sm"
-          className={triggerClass(openSort, showSortLabel)}
-          title="Sort"
-          aria-label="Sort"
-          aria-pressed={openSort}
-          onClick={() => toggleBoardFilterSort('sort')}
-        >
-          <ArrowUpDown className="h-4 w-4 flex-shrink-0" />
-          <ToolbarTitle show={showSortLabel}>Sort</ToolbarTitle>
-        </Button>
+        hasSorts || !sortEnabled ? (
+          sortButton
+        ) : (
+          <SortByMenu
+            open={sortByOpen}
+            onOpenChange={setSortByOpen}
+            properties={tableSortTarget?.properties ?? []}
+            onPick={onPickSortProperty}
+            trigger={sortButton}
+          />
+        )
       ) : null}
+      <GlobalSortConfirmDialog
+        open={globalConfirmOpen}
+        onOpenChange={(next) => {
+          setGlobalConfirmOpen(next)
+          if (!next) setPendingProperty(null) // Cancel drops the pending pick
+        }}
+        onConfirm={onConfirmGlobalSort}
+      />
     </div>
   )
 }
@@ -810,6 +1071,7 @@ export function BoardFilterSortBar() {
   const { editMenuPillMode, reactFlowInstance } = useReactFlowContext() // Place + hide frames
   const { phoneTools } = usePhoneModeMenu() // Desktop centering vs phone left-align
   const { selectedCount, nodes } = useBoardFilterFrames() // Frames for picker + scope
+  const tableSortTarget = useBoardTableSortTarget() // Selected table’s view sorts
   const scope: FilterSortScope = selectedCount === 0 ? 'board' : 'frame'
   const barRef = useRef<HTMLDivElement>(null) // Hug-content plate (board fill)
   const chipsRef = useRef<HTMLDivElement>(null) // Natural width measure target
@@ -818,16 +1080,28 @@ export function BoardFilterSortBar() {
   const [editingFilterId, setEditingFilterId] = useState<string | null>(null) // Open filter editor card
 
   const [boardFilters, setBoardFilters] = useState<DatabaseFilter[]>([])
-  const [boardSorts, setBoardSorts] = useState<DatabaseSort[]>([])
   const [frameFilters, setFrameFilters] = useState<DatabaseFilter[]>([])
-  const [frameSorts, setFrameSorts] = useState<DatabaseSort[]>([])
 
   const filters = scope === 'board' ? boardFilters : frameFilters
-  const sorts = scope === 'board' ? boardSorts : frameSorts
   const setFilters = scope === 'board' ? setBoardFilters : setFrameFilters
-  const setSorts = scope === 'board' ? setBoardSorts : setFrameSorts
+  // Sort is table-only — never board/frame freeform sorts
+  const sorts = tableSortTarget?.sorts ?? []
+  const sortProperties = tableSortTarget?.properties ?? []
+
+  const { total: boardTableCount, selected: selectedTableCount } = useMemo(
+    () => countBoardTables(nodes),
+    [nodes]
+  )
+  const sortEnabled =
+    (boardTableCount >= 1 || tableSortTarget !== null) && selectedTableCount <= 1
 
   const pickItems = useMemo(() => buildFilterPickItems(nodes, scope), [nodes, scope])
+
+  // Close Sort strip when disabled, or when every sort was cleared (back to toolbar menu)
+  useEffect(() => {
+    if (!openSort) return
+    if (!sortEnabled || sorts.length === 0) closeBoardFilterSortSide('sort')
+  }, [openSort, sortEnabled, sorts.length])
 
   // Re-read RF nodes when opening the picker so new property cells show up without a reselect
   useEffect(() => {
@@ -979,20 +1253,46 @@ export function BoardFilterSortBar() {
     phoneTools,
   ])
 
+  const [sortByOpen, setSortByOpen] = useState(false) // + Sort → Sort by… under the pill
+  const [globalConfirmOpen, setGlobalConfirmOpen] = useState(false) // After pick, before apply
+  const [pendingProperty, setPendingProperty] = useState<string | null>(null)
+
   const scopeLabel = useMemo(() => {
     if (scope === 'board') return 'Board'
     if (selectedCount === 1) return 'Frame'
     return `${selectedCount} frames`
   }, [scope, selectedCount])
 
-  const sortPillLabel =
-    sorts.length === 0 ? 'Sort' : sorts.length === 1 ? '1 sort' : `${sorts.length} sorts`
+  const isGlobalSort = sortEnabled && selectedTableCount === 0 // Ambient / board-wide
 
-  const addSort = () => {
-    setSorts((prev) => [
-      ...prev,
-      { id: newId('s'), property: 'Property', direction: 'asc' },
+  const applySortProperty = (propertyName: string) => {
+    if (!tableSortTarget) return
+    tableSortTarget.setSorts([
+      ...tableSortTarget.sorts,
+      { id: newId('s'), property: propertyName, direction: 'asc' },
     ])
+    setBoardFilterSortSide('sort', true)
+  }
+
+  const onPickSortProperty = (propertyName: string) => {
+    if (isGlobalSort && !getGlobalSortSkipConfirm()) {
+      setPendingProperty(propertyName)
+      setGlobalConfirmOpen(true)
+      return
+    }
+    applySortProperty(propertyName)
+  }
+
+  const updateTableSort = (id: string, next: DatabaseSort) => {
+    if (!tableSortTarget) return
+    tableSortTarget.setSorts(tableSortTarget.sorts.map((s) => (s.id === id ? next : s)))
+  }
+
+  const deleteTableSort = (id: string) => {
+    if (!tableSortTarget) return
+    const next = tableSortTarget.sorts.filter((s) => s.id !== id)
+    tableSortTarget.setSorts(next)
+    if (next.length === 0) closeBoardFilterSortSide('sort') // Back to toolbar Sort by…
   }
 
   const onPickFilter = (item: FilterPickItem) => {
@@ -1022,7 +1322,8 @@ export function BoardFilterSortBar() {
 
   if (!open) return null
 
-  const showSorts = openSort
+  // Sort strip only while at least one sort is applied (toolbar owns empty-state menu)
+  const showSorts = openSort && sortEnabled && sorts.length > 0
   const showFilters = openFilter
 
   return (
@@ -1053,14 +1354,56 @@ export function BoardFilterSortBar() {
         </span>
 
         {showSorts ? (
-          <CriteriaPill
-            icon={<ArrowUpDown className="h-3.5 w-3.5" />}
-            label={sortPillLabel}
-            title={sorts.length ? 'Edit sorts' : 'Add a sort'}
-            onClick={addSort}
-            rounded="full"
-          />
+          <>
+            {sorts.map((s) => (
+              <TableSortChip
+                key={s.id}
+                sort={s}
+                properties={sortProperties}
+                global={isGlobalSort}
+                onChange={(next) => updateTableSort(s.id, next)}
+                onDelete={() => deleteTableSort(s.id)}
+              />
+            ))}
+            <SortByMenu
+              open={sortByOpen}
+              onOpenChange={setSortByOpen}
+              properties={sortProperties}
+              onPick={onPickSortProperty}
+              trigger={
+                <button
+                  type="button"
+                  className={cn(
+                    'inline-flex h-7 items-center gap-0.5 rounded-full px-2 text-[13px]',
+                    'bg-[#e7f3f8] text-[#0b6e99] hover:bg-[#d3edf6]',
+                    'dark:bg-[#1a3a4a] dark:text-[#6ec3e0] dark:hover:bg-[#214a5e]',
+                    sortByOpen && 'ring-1 ring-[#0b6e99]/30'
+                  )}
+                  title={isGlobalSort ? 'Add a global sort' : 'Add a sort'}
+                  aria-label={isGlobalSort ? 'Add global sort' : 'Add sort'}
+                >
+                  {isGlobalSort ? (
+                    <Globe className="h-3.5 w-3.5 flex-shrink-0 opacity-80" aria-hidden />
+                  ) : null}
+                  <ArrowUpDown className="h-3.5 w-3.5 flex-shrink-0 opacity-80" aria-hidden />
+                  <span className="font-medium">+ Sort</span>
+                </button>
+              }
+            />
+          </>
         ) : null}
+
+        <GlobalSortConfirmDialog
+          open={globalConfirmOpen}
+          onOpenChange={(next) => {
+            setGlobalConfirmOpen(next)
+            if (!next) setPendingProperty(null)
+          }}
+          onConfirm={() => {
+            if (pendingProperty) applySortProperty(pendingProperty)
+            setPendingProperty(null)
+          }}
+        />
 
         {showSorts && showFilters ? (
           <span

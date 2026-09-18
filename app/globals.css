@@ -1145,15 +1145,19 @@ span[data-added="true"] {
     width: 196px !important;
     height: 120px !important;
     overflow: hidden !important;
-    border: none !important;
+    /* Same hairline as Free nav + Actions/Layout/Draw mode pill (border-black/10) */
+    border: 1px solid rgba(0, 0, 0, 0.1) !important;
     border-radius: 8px !important; /* Same radius top + bottom */
     background-color: white !important;
+    /* Same lift as Free nav (Tailwind shadow-sm) — also set on the board clip shell so overflow doesn’t eat it */
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
     touch-action: none; /* Phone: finger drag pans viewport, not page scroll */
+    box-sizing: border-box; /* Keep 196×120 including the hairline */
   }
 
   /* Dark mode minimap */
   .dark .minimap-custom-size {
-    border: none !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important; /* Match mode pill dark:border-white/10 */
     background-color: #171717 !important; /* Dark background matching sidebar */
   }
 
@@ -2142,11 +2146,9 @@ span[data-added="true"] {
     width: max-content; /* Intrinsic line width — not 100% (cyclic with frame hug) */
     box-sizing: border-box;
   }
-  /* databaseBlock / imageBlock atoms span the row so the grip/I-bar band matches the frame.
-     boardLink stays shrink-wrapped (no width:100%) so the open menu can sit just right of the
-     title when the frame is wider — not pinned to the frame’s right edge. */ 
-  .ProseMirror[data-single-line="true"] .tt-database-block,
-  .ProseMirror[data-single-line="true"] .tt-image-block {
+  /* databaseBlock atoms span the row so the grip/I-bar band matches the frame.
+     Images fill the sticky frame (contain-fit); boardLink stays shrink-wrapped. */
+  .ProseMirror[data-single-line="true"] .tt-database-block {
     width: 100%;
     box-sizing: border-box;
   }
@@ -2159,6 +2161,16 @@ span[data-added="true"] {
     -webkit-box-decoration-break: clone;
   }
   .dark .ProseMirror .tt-block-highlight {
+    background-color: rgba(59, 130, 246, 0.22) !important;
+  }
+  /* imageBlock atom — wash the NodeView (decoration class may land on react-renderer) */
+  .ProseMirror .react-renderer.node-imageBlock.tt-block-highlight,
+  .ProseMirror .tt-image-block.tt-block-highlight {
+    background-color: rgba(35, 131, 226, 0.14) !important;
+    border-radius: 4px;
+  }
+  .dark .ProseMirror .react-renderer.node-imageBlock.tt-block-highlight,
+  .dark .ProseMirror .tt-image-block.tt-block-highlight {
     background-color: rgba(59, 130, 246, 0.22) !important;
   }
   /* Property top icon row — strip wash only when ⋮⋮-armed (hover = square only) */
@@ -2684,19 +2696,160 @@ span[data-added="true"] {
   .ProseMirror .tt-image-block {
     position: relative;
     margin: 2px 0;
-    width: 100%;
-    min-width: 240px;
+    width: max-content; /* Empty: hug Upload / Embed stub */
+    min-width: 0;
     max-width: 100%;
     box-sizing: border-box;
   }
-  .ProseMirror .react-renderer.node-imageBlock {
+  /* Filled image in normal flow (text + image in one frame) */
+  .ProseMirror .tt-image-block.tt-image-block-has-src {
+    margin: 0;
     width: 100%;
-    min-width: 240px;
+    max-width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .ProseMirror .react-renderer.node-imageBlock {
+    width: max-content;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .ProseMirror .react-renderer.node-imageBlock:has(.tt-image-block-has-src) {
+    width: 100%;
     max-width: 100%;
   }
   .ProseMirror .tt-image-block-row {
-    display: block;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     width: 100%;
+    min-width: 0;
+  }
+  /* Sole-image: flex-fill the sticky box (no absolute cascade — that collapsed height to 0
+     before resizeDimensions seeded and hid the bitmap). Beat data-single-line max-content.
+     Keep overflow *visible* on TipTap chrome ancestors so ⋮⋮ can paint into the left gutter;
+     clip only on ProseMirror / the image atom (below). */
+  [data-tt-content-fit="true"][data-tt-sole-image="true"] {
+    display: flex !important;
+    flex-direction: column;
+    overflow: visible;
+    min-height: 0;
+  }
+  [data-tt-content-fit="true"][data-tt-sole-image="true"] > .relative {
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    display: flex !important;
+    flex-direction: column;
+    overflow: visible; /* ⋮⋮ sibling of EditorContent — must not clip negative-left grips */
+  }
+  [data-tt-content-fit="true"][data-tt-sole-image="true"] > .relative > .relative,
+  [data-tt-content-fit="true"][data-tt-sole-image="true"] > .relative > .relative > div {
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+    width: 100% !important;
+    height: 100% !important;
+    display: flex !important;
+    flex-direction: column;
+    overflow: visible;
+  }
+  /* EditorContent host (className on TipTap mount) must flex-fill beside the ⋮⋮ wrapper */
+  [data-tt-content-fit="true"][data-tt-sole-image="true"] .block.w-full {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden; /* Clip the bitmap only — grips are a sibling, not inside this box */
+  }
+  [data-tt-content-fit="true"][data-tt-sole-image="true"] .ProseMirror {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    min-width: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    height: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+  }
+  [data-tt-content-fit="true"][data-tt-sole-image="true"] .ProseMirror > .react-renderer.node-imageBlock {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none;
+    max-height: none;
+    display: flex !important;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    overflow: hidden;
+  }
+  [data-tt-content-fit="true"][data-tt-sole-image="true"] .ProseMirror > p {
+    display: none; /* Empty wrappers from sole-image HTML must not eat flex space */
+  }
+  [data-tt-content-fit="true"][data-tt-sole-image="true"] .tt-image-block.tt-image-block-has-src,
+  [data-tt-content-fit="true"][data-tt-sole-image="true"] .tt-image-block-row {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    display: flex;
+    /* Top-left like TipTap text — free-frame resize then only clips (center would re-park the bitmap) */
+    align-items: flex-start;
+    justify-content: flex-start;
+    overflow: hidden;
+  }
+  /* Media keeps JS contain-fit px — do not stretch to 100% (that ignored height limits) */
+  [data-tt-content-fit="true"][data-tt-sole-image="true"] .tt-image-block-media {
+    flex: 0 0 auto;
+    max-width: 100%;
+    max-height: 100%;
+  }
+  /* Free frame: fixed bitmap size + top-left pin (same as fit-to) — frame adjust only clips */
+  .ProseMirror[data-frame-free-resize="true"] > .react-renderer.node-imageBlock {
+    flex: 0 0 auto !important;
+    align-self: flex-start;
+    width: max-content !important;
+    height: max-content !important;
+    max-width: none !important;
+    max-height: none !important;
+    min-width: 0;
+    min-height: 0;
+    display: flex !important;
+    align-items: flex-start;
+    justify-content: flex-start;
+    overflow: visible !important;
+  }
+  .ProseMirror[data-frame-free-resize="true"] .tt-image-block.tt-image-block-has-src,
+  .ProseMirror[data-frame-free-resize="true"] .tt-image-block-row {
+    flex: 0 0 auto !important;
+    width: max-content !important;
+    height: max-content !important;
+    max-width: none !important;
+    max-height: none !important;
+    min-width: 0;
+    min-height: 0;
+    align-items: flex-start !important;
+    justify-content: flex-start !important;
+    overflow: visible !important;
+  }
+  .ProseMirror[data-frame-free-resize="true"] .tt-image-block-media {
+    max-width: none !important;
+    max-height: none !important;
   }
   .ProseMirror .tt-image-block-placeholder {
     display: flex;
@@ -2707,6 +2860,14 @@ span[data-added="true"] {
     border-radius: 0.5rem;
     background: #f3f4f6;
     color: #6b7280;
+    width: max-content; /* Intrinsic Upload / Embed size — chromeScale is transform-only */
+    max-width: 100%;
+  }
+  /* In-flow pin for the portaled Upload / Embed menu (screen-constant; not scaled by board zoom) */
+  .ProseMirror .tt-image-block-upload-anchor {
+    width: 1.25rem; /* Grip / hug stub only — real UI is fixed on document.body */
+    height: 1.25rem;
+    flex-shrink: 0;
   }
   .dark .ProseMirror .tt-image-block-placeholder {
     background: #1f2937;
@@ -2773,20 +2934,73 @@ span[data-added="true"] {
   }
   .ProseMirror .tt-image-block-media {
     position: relative;
-    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     max-width: 100%;
+    max-height: 100%;
     cursor: pointer;
   }
-  .ProseMirror .tt-image-block-media-selected {
-    outline: 2px solid #3b82f6;
-    outline-offset: 2px;
-    border-radius: 0.5rem;
+  /* In-flow hover pill — rides RF transform like .tt-board-link-preview (not position:fixed) */
+  .ProseMirror .tt-image-block-hover-toolbar {
+    pointer-events: auto;
   }
+  /* Notion-style side width pills — centered on L/R edges; drag keeps aspect (shared scale) */
+  .ProseMirror .tt-image-block-side-handle {
+    position: absolute;
+    top: 50%;
+    z-index: 3;
+    width: 6px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid rgba(0, 0, 0, 0.14);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+    cursor: ew-resize;
+    touch-action: none;
+    transform-origin: center center;
+  }
+  .ProseMirror .tt-image-block-side-handle-left {
+    left: 0;
+  }
+  .ProseMirror .tt-image-block-side-handle-right {
+    right: 0;
+  }
+  .ProseMirror .tt-image-block-side-handle:hover,
+  .ProseMirror .tt-image-block-side-handle:active {
+    background: #fff;
+    border-color: rgba(0, 0, 0, 0.22);
+  }
+  .dark .ProseMirror .tt-image-block-side-handle {
+    background: rgba(40, 40, 40, 0.92);
+    border-color: rgba(255, 255, 255, 0.35);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  }
+  .dark .ProseMirror .tt-image-block-side-handle:hover,
+  .dark .ProseMirror .tt-image-block-side-handle:active {
+    background: rgba(55, 55, 55, 0.95);
+    border-color: rgba(255, 255, 255, 0.5);
+  }
+  /* Let L/R pills peek past the media edge (parent had overflow:hidden for contain) */
+  .ProseMirror .tt-image-block-has-src:has(.tt-image-block-side-handle) {
+    overflow: visible;
+  }
+  .ProseMirror .tt-image-block-media:has(.tt-image-block-side-handle) {
+    overflow: visible;
+  }
+  /* Bitmap fills the JS contain-fit media box (nat × min(frameW/natW, frameH/natH) × Resize%) */
   .ProseMirror .tt-image-block-img {
     display: block;
-    width: 100%;
-    height: auto;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    object-position: center;
     border-radius: 0.375rem;
+  }
+  .ProseMirror .tt-image-block-media-selected .tt-image-block-img {
+    outline: 2px solid #3b82f6;
+    outline-offset: 0;
   }
   /* Image blur — same frost as Hide text (click to reveal temporarily) */
   .ProseMirror .tt-image-block-hazed[data-haze="true"] {

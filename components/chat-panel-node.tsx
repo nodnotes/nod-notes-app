@@ -432,7 +432,21 @@ function measureNaturalContentWidth(contentFit: HTMLElement): number {
       maxLine = Math.max(maxLine, w)
       continue
     }
-    if (child.classList.contains('react-renderer')) continue // NodeView shell — measured via inner atoms
+    // imageBlock NodeView — Resize % is naturalW×pct (fit-to-text) or frame % (wrap); measure media box
+    if (child.classList.contains('react-renderer')) {
+      const imageBlock = child.querySelector('.tt-image-block') as HTMLElement | null
+      if (imageBlock) {
+        const media = imageBlock.querySelector('.tt-image-block-media') as HTMLElement | null
+        const img = imageBlock.querySelector('.tt-image-block-img') as HTMLImageElement | null
+        let w = media?.offsetWidth || 0
+        if (w < 1 && img && img.naturalWidth > 0) {
+          const pct = parseFloat(imageBlock.getAttribute('data-width-pct') || '100') || 100
+          w = Math.max(1, Math.round((img.naturalWidth * pct) / 100))
+        }
+        if (w > 0) maxLine = Math.max(maxLine, w)
+      }
+      continue // Other NodeViews measured via inner atoms above
+    }
     maxLine = Math.max(maxLine, rangeWidth(child)) // Longest real text line
   }
   // Right margin: equal to padL when there is no ⋮⋮ gutter (gutter lives in select chrome).
@@ -440,6 +454,16 @@ function measureNaturalContentWidth(contentFit: HTMLElement): number {
   const padR = parseFloat(cs.paddingRight) || 0
   const rightInset = gutter > 0 ? Math.max(padR, padL + GRIP_ICON_INSET) : Math.max(padR, padL)
   return Math.ceil(Math.max(1, padL + gutter + maxLine + rightInset))
+}
+
+/** True when TipTap HTML is only an imageBlock (optional empty <p> wrappers). */
+function isSoleImageBlockHtml(html: string): boolean {
+  if (!/data-type=["']imageBlock["']/i.test(html || '')) return false
+  const rest = (html || '')
+    .replace(/<div[^>]*data-type=["']imageBlock["'][^>]*>[\s\S]*?<\/div>/gi, '')
+    .replace(/<p>(?:\s|<br\s*\/?>)*<\/p>/gi, '')
+    .replace(/\s+/g, '')
+  return rest.length === 0
 }
 
 /** Unscaled content height — prefer scrollHeight so clipped/wrapped overflow still counts. */
@@ -4276,6 +4300,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       hostLinkedBoardId: hasBoardLinkForFrame ? null : linkedBoardId || null,
       hostMessageId: promptMessage?.id || null, // Convert layout from DB table / row ⋮⋮
       conversationId: conversationId || null,
+      hostNodeId: id || null, // RF node id for Sort / selection store
+      frameSelected: !!selected, // React-reactive select — TipTap storage alone does not re-render NodeViews
     }),
     [
       pagePreviewOpen,
@@ -4287,6 +4313,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       linkedBoardId,
       promptMessage?.id,
       conversationId,
+      id,
+      selected,
     ]
   )
 
@@ -4343,8 +4371,35 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           const liveProps = el.querySelectorAll('.tt-property-block').length
           if (liveProps < expectProps) return
         }
-        if (hasFrameAtomHtml(promptContent) && !el.querySelector('.tt-board-link, .tt-database-block, .tt-property-block')) {
+        // Atom NodeViews mount async — don’t hug to the empty stub before they’re in the DOM.
+        // Must include imageBlock (and media): image-only frames used to hit this return forever
+        // (hasFrameAtomHtml true, but no boardLink/DB/property) → tiny blue box + overflowing img.
+        if (
+          hasFrameAtomHtml(promptContent) &&
+          !el.querySelector(
+            '.tt-board-link, .tt-database-block, .tt-property-block, .tt-image-block, .tt-media-block'
+          )
+        ) {
           return
+        }
+        // imageBlock: wait until media has a bitmap — but do NOT hug the frame to the image.
+        // Insert/fit is contain-inside-frame; growing the box was the old width-led behavior.
+        const imageHost = el.querySelector('.tt-image-block-has-src') as HTMLElement | null
+        const soleImage = isSoleImageBlockHtml(promptContent)
+        if (soleImage) {
+          // Keep prior intrinsic / resizeDimensions — frame size is sticky on image insert
+          if (imageHost) {
+            const img = imageHost.querySelector('.tt-image-block-img') as HTMLImageElement | null
+            if (img && (!img.complete || img.naturalWidth < 1)) return
+            setIntrinsicMeasured(true)
+          }
+          return
+        }
+        if (imageHost) {
+          const media = imageHost.querySelector('.tt-image-block-media') as HTMLElement | null
+          const img = imageHost.querySelector('.tt-image-block-img') as HTMLImageElement | null
+          if (img && (!img.complete || img.naturalWidth < 1)) return
+          if (media && (media.offsetWidth < 4 || media.offsetHeight < 4)) return
         }
         const rowCard = isRowCardAtomHtml(promptContent)
         // Prefer DB scrollHeight extents — contentFit border-box stays fixed when the frame
@@ -4407,6 +4462,13 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     if (dbHost) ro.observe(dbHost)
     const notionDb = dbHost?.querySelector('.tt-notion-db') as HTMLElement | null
     if (notionDb) ro.observe(notionDb)
+    // imageBlock media width changes after onLoad / Resize presets — observe so hug tracks
+    // (skip sole-image: sticky box + CSS contain — observing media caused resize feedback loops)
+    if (!isSoleImageBlockHtml(promptContent)) {
+      el.querySelectorAll('.tt-image-block-media').forEach((node) =>
+        ro.observe(node as HTMLElement)
+      )
+    }
     const connStrip = el.querySelector(
       '[data-tt-connections-header], [data-tt-notion-hug]'
     ) as HTMLElement | null
@@ -4416,12 +4478,18 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     const mo = new MutationObserver(() => {
       const nextDb = el.querySelector('.tt-notion-db') as HTMLElement | null
       if (nextDb) ro.observe(nextDb)
+      if (!isSoleImageBlockHtml(promptContent)) {
+        el.querySelectorAll('.tt-image-block-media').forEach((node) =>
+          ro.observe(node as HTMLElement)
+        )
+      }
       const conn = el.querySelector(
         '[data-tt-connections-header], [data-tt-notion-hug]'
       ) as HTMLElement | null
       if (conn) ro.observe(conn)
       measure()
     })
+    mo.observe(el, { childList: true, subtree: true })
     if (dbHost) {
       mo.observe(dbHost, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-tt-db-live'] })
     }
@@ -5042,7 +5110,10 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     const finalScale = frameScaleRef.current // Latest scale from the drag (avoid stale closure)
     const safeScale = Math.max(FRAME_SCALE_EPSILON, finalScale) // Epsilon only — no 0.15 shrink floor
     let colToPersist: number | undefined // New wrap column width to store (unlocked-wrap resize sets the point)
-    if (!unlocked && wrapping) {
+    const soleImage = isSoleImageBlockHtml(promptContentRef.current || '')
+    if (soleImage) {
+      // Keep dragged box — contain-fit fills it; never snap to intrinsic×scale
+    } else if (!unlocked && wrapping) {
       // Locked wrap: hug WIDTH to the scaled FIXED columns (no reflow) + HEIGHT to wrapped content.
       // No +2 border — selected adjust chrome uses borderWidth 0 (same as scaledFrameSize).
       if (colW != null) width = Math.round(colW * safeScale)
@@ -5096,7 +5167,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       height = Math.max(content.height, FRAME_RESIZE_MIN)
     }
     let nextScale: number | undefined
-    if (!frameUnlockedRef.current && lockedResizeStartRef.current) {
+    // Sole image: sticky box + CSS contain — never hug-to-intrinsic × frameScale (overflow + RO storms)
+    const soleImage = isSoleImageBlockHtml(promptContentRef.current || '')
+    if (!soleImage && !frameUnlockedRef.current && lockedResizeStartRef.current) {
       // Locked (wrap OR nowrap): proportional content scale — width/text scale together.
       const start = lockedResizeStartRef.current
       const ratio = width / Math.max(1, start.width) // keepAspectRatio → width tracks height
@@ -5287,6 +5360,63 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     }
 
     let metaPatch: Record<string, unknown> = { frameUnlocked: nextUnlocked }
+
+    // Sole image: keep the live sticky box both ways — free→fit must not hug-shrink the frame
+    // (image contain-fits inside; hugging natural media made the box jump).
+    const soleImage = isSoleImageBlockHtml(promptContent)
+    if (soleImage) {
+      const live = measureLiveBox()
+      const nextDims = { width: live.width, height: live.height }
+      setResizeDimensions(nextDims)
+      setIsUserResized(true)
+      if (!nextUnlocked) {
+        setUnlockedFrameSize({ width: live.width, height: live.height })
+        setUnlockedFrameScale(live.scale)
+      }
+      metaPatch = {
+        ...metaPatch,
+        frameScale: live.scale,
+        resizeDimensions: nextDims,
+        frameTextWrap,
+        ...(!nextUnlocked
+          ? {
+              unlockedFrameSize: { width: live.width, height: live.height },
+              unlockedFrameScale: live.scale,
+            }
+          : {}),
+      }
+      setFrameUnlocked(nextUnlocked)
+      const setNodesSole = getSetNodes()
+      if (setNodesSole) {
+        setNodesSole((nds: any[]) =>
+          nds.map((n: any) => {
+            if (n.id !== id) return n
+            const pm = n.data?.promptMessage
+            if (!pm) return n
+            // Keep RF node box = live free size so the blue ring doesn't snap to a hug
+            const chromeX = adjustChromeXRef.current * 2
+            const boxW = nextDims.width + chromeX
+            const boxH = nextDims.height
+            return {
+              ...n,
+              width: boxW,
+              height: boxH,
+              style: { ...n.style, width: boxW, height: boxH },
+              data: {
+                ...n.data,
+                promptMessage: {
+                  ...pm,
+                  metadata: { ...(pm.metadata || {}), ...metaPatch },
+                },
+              },
+            }
+          })
+        )
+      }
+      window.dispatchEvent(new Event('tt-frame-lock-changed'))
+      void persistFrameMeta({ ...metaPatch, frameTextWrap: metaPatch.frameTextWrap ?? frameTextWrap })
+      return
+    }
 
     if (nextUnlocked) {
       const savedFree = readSavedFreeBox()
@@ -5500,6 +5630,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   useEffect(() => {
     const rowCard = isRowCardAtomHtml(promptContent)
     const dbFrame = isDbFrame
+    // Sole image: frame size is sticky (contain-fit inside) — never re-hug to the bitmap
+    if (isSoleImageBlockHtml(promptContent)) return
     if (!isBlock || frameUnlocked || pagePreviewOpen || dragging) return
     if (!intrinsicMeasured || isResizingRef.current) return
     if (!isUserResized && !rowCard && !dbFrame && Math.abs(frameScale - 1) <= FRAME_SCALE_EPSILON) {
@@ -6239,16 +6371,66 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // Frames hug the longest TipTap line until corner-resized (match `isBlock`, not isBlockMeta alone)
   const usesFitContent = isBlock // Empty user-only bodies without isBlock still hug
   const frameMinW = blockMinFrameWidth(promptContent, false) // Frame fill only — ⋮⋮ lives in select chrome, not inside the fill
+  const soleImageContent = isSoleImageBlockHtml(promptContent) // Image contain-fits; must not max-content grow the frame
   const growsWithLine =
     usesFitContent &&
     !isUserResized &&
     Math.abs(frameScale - 1) <= FRAME_SCALE_EPSILON && // Place-scaled frames use explicit box + CSS scale
     !pagePreviewOpen &&
     !isRowCardAtomHtml(promptContent) && // Row cards live-hug — max-content blows out to icon-row width
-    !isDbFrame // DB tables live-hug from measureDatabaseBlockExtents — max-content clips the table
+    !isDbFrame && // DB tables live-hug from measureDatabaseBlockExtents — max-content clips the table
+    !soleImageContent // Image stays inside the existing box (height may limit)
   // Empty unresized: explicit px (not max-content) — CSS % children used to inflate ~120×160 boxes
   const emptyLineHug = growsWithLine && isBlockContentEmpty(promptContent)
   const hasBlockContent = isBlock && !isBlockContentEmpty(promptContent) // Lock only when a content block exists
+
+  // Sole image: pin an explicit box so contain-fit has a height limit (insert must not grow the frame)
+  useEffect(() => {
+    if (!isBlock || !soleImageContent || pagePreviewOpen) return
+    if (resizeDimensions) {
+      if (!isUserResized) setIsUserResized(true)
+      return
+    }
+    // Prefer RF node / intrinsic — panel offset collapses while sole-image content is flex-filling
+    const node = getNodes?.()?.find((n: { id: string }) => n.id === id) as
+      | { style?: { width?: number | string; height?: number | string }; width?: number; height?: number }
+      | undefined
+    const styleW =
+      typeof node?.style?.width === 'number'
+        ? node.style.width
+        : parseFloat(String(node?.style?.width ?? '')) || 0
+    const styleH =
+      typeof node?.style?.height === 'number'
+        ? node.style.height
+        : parseFloat(String(node?.style?.height ?? '')) || 0
+    const w = Math.max(
+      frameMinW,
+      Math.round(styleW || node?.width || intrinsicSize.width || BLOCK_LOCKED_MIN_W)
+    )
+    const h = Math.max(
+      BLOCK_MIN_FRAME_H,
+      Math.round(styleH || node?.height || intrinsicSize.height || Math.round(w * 0.75))
+    )
+    const box = { width: w, height: h }
+    setResizeDimensions(box)
+    setIsUserResized(true)
+    setIntrinsicMeasured(true)
+    setIntrinsicSize((prev) =>
+      Math.abs(prev.width - w) <= 1 && Math.abs(prev.height - h) <= 0.02 ? prev : { width: w, height: h }
+    )
+  }, [
+    isBlock,
+    soleImageContent,
+    pagePreviewOpen,
+    resizeDimensions,
+    isUserResized,
+    frameMinW,
+    intrinsicSize.width,
+    intrinsicSize.height,
+    id,
+    getNodes,
+  ])
+
   // Constant screen size for selection chrome via live CSS `--tt-board-zoom`.
   // React still uses frameUiScale for gutters / stack lines (updates after settle).
   const frameUiScale = screenChromeScale
@@ -6278,12 +6460,14 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     1
   ) // Scaled content (no phantom border)
   // Stamp before effects: RF push reads this so blue selection matches peach (not stale tall dims)
+  // Sole image: sticky resizeDimensions owns the box — never stamp text hug over it
   if (
     isBlock &&
     intrinsicMeasured &&
     !frameUnlocked &&
     !isDbFrame &&
     !isRowCardAtomHtml(promptContent) &&
+    !soleImageContent &&
     !pagePreviewOpen &&
     !wrapActive &&
     !isResizingRef.current
@@ -6297,6 +6481,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   useLayoutEffect(() => {
     if (!isBlock || frameUnlocked || !panelRef.current) return
     if (!intrinsicMeasured || isDbFrame || isRowCardAtomHtml(promptContent)) return
+    if (isSoleImageBlockHtml(promptContent)) return // Sticky image box — don't snap RF/panel to text hug
     if (pagePreviewOpen || isResizingRef.current || isRotatingRef.current || dragging) return
     // Need an explicit RF box path (place-scale / resized / live hug)
     if (!isUserResized && Math.abs(frameScale - 1) <= FRAME_SCALE_EPSILON) return
@@ -6394,8 +6579,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     : null
   const contentVisualW = scaledDbSize?.width ?? huggedSize.width
   const contentVisualH = scaledDbSize?.height ?? huggedSize.height
+  // Sole-image: fill sticky resizeDimensions directly — CSS scale + unscaled px caused overflow + RO loops
   const applyFrameScale =
-    isBlock && Math.abs(frameScale - 1) > FRAME_SCALE_EPSILON // Place + locked resize — CSS scale text/glyphs
+    isBlock &&
+    Math.abs(frameScale - 1) > FRAME_SCALE_EPSILON &&
+    !soleImageContent // Place + locked resize — CSS scale text/glyphs (not images)
   // Place seeds isUserResized; if only frameScale landed, still treat as resized so hug/box track scale
   const scaledAsResized = isUserResized || applyFrameScale
   const scaledLayoutW = Math.ceil(contentVisualW) // Visual content width (full table when DB)
@@ -7582,12 +7770,14 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     isBlock && isRowCardAtomHtml(promptContent) && intrinsicMeasured && !frameUnlocked
   const dbLockedHug = isDbFrame && intrinsicMeasured && !frameUnlocked
   // Fit-to-text nowrap: live-hug from measure (stale resizeDimensions left a big peach box + top-left text)
+  // Sole image uses sticky resizeDimensions + contain-fit — text hug would freeze the visual box
   const textLockedHug =
     isBlock &&
     intrinsicMeasured &&
     !frameUnlocked &&
     !isDbFrame &&
     !isRowCardAtomHtml(promptContent) &&
+    !soleImageContent &&
     !pagePreviewOpen &&
     !wrapActive
   const lockedDbSize = scaledDbSize ?? huggedSize
@@ -8402,10 +8592,14 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           !isFillTransparent && !frameShape && 'backdrop-blur-sm',
           !isBlock && 'p-1',
           pagePreviewOpen && 'flex flex-col h-full min-h-0',
-          // Clip content inside the fill; ⋮⋮ paints in the panel’s left chrome (overflow visible on panel)
+          // Clip content inside the fill; ⋮⋮ paints in the panel’s left chrome (overflow visible on panel).
+          // Sole image: clip via ProseMirror/CSS only — this shell must stay visible when selected
+          // so negative-left ⋮⋮ can reach the blue gutter (same as text frames).
           unlockedResized && !showClipPreview && !isContentRotated
             ? cn('overflow-hidden', pinConnectionsToFrame && 'flex flex-col')
-            : 'overflow-visible',
+            : soleImageContent && !selected
+              ? 'overflow-hidden'
+              : 'overflow-visible',
           promptMessage?.metadata?.fadeIn === true &&
             isBlockContentEmpty(promptContent) &&
             'animate-note-fade-in',
@@ -8529,12 +8723,17 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           >
           <div
             ref={contentFitRef} // Unscaled content box (offsetWidth ignores CSS scale)
+            data-tt-content-fit="true" // ImageBlockView contain-fit measures this box
+            data-tt-sole-image={soleImageContent ? 'true' : undefined} // Absolute-fill image to sticky frame
             data-tt-shape-center={shapeCenterContent ? 'true' : undefined}
             className={cn(
               'relative shrink-0', // Shaped frames: don’t stretch to the inflated hug box
               // Locked+resized: natural width so hug measures real text (not the stretched box).
               // Unlocked resized / wrap: fill the free frame. Unresized: w-max from longest line.
-              wrapContentWidth != null
+              // Sole image: fill the sticky frame box so height can limit contain-fit.
+              soleImageContent
+                ? 'h-full min-h-0 w-full'
+                : wrapContentWidth != null
                 ? undefined
                 : shapeCenterContent
                   ? 'w-max max-w-full'
@@ -8561,8 +8760,27 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                       paddingRight: BLOCK_FRAME_PAD_X,
                     }
                 : {}),
+              ...(soleImageContent
+                ? { width: '100%', height: '100%', minHeight: 0, boxSizing: 'border-box' }
+                : {}),
+              // Contain-fit viewport for imageBlock — Resize 100% = full bitmap inside (height may limit)
+              ...(resizeDimensions &&
+              (soleImageContent || /data-type=["']imageBlock["']/i.test(promptContent || ''))
+                ? ({
+                    ['--tt-image-frame-w' as string]: `${Math.max(
+                      1,
+                      resizeDimensions.width - BLOCK_FRAME_PAD_X * 2
+                    )}px`,
+                    ['--tt-image-frame-h' as string]: `${Math.max(
+                      1,
+                      resizeDimensions.height - BLOCK_FRAME_PAD_Y * 2
+                    )}px`,
+                  } as React.CSSProperties)
+                : {}),
               lineHeight: isBlock ? '1.25' : '1.7', // Blocks hug glyphs; chat panels keep looser rhythm
-              ...(wrapContentWidth != null ? { width: wrapContentWidth, maxWidth: wrapContentWidth } : {}), // Soft-wrap inside frame
+              ...(wrapContentWidth != null && !soleImageContent
+                ? { width: wrapContentWidth, maxWidth: wrapContentWidth }
+                : {}), // Soft-wrap inside frame
               ...(applyFrameScale
                 ? {
                     transform: `scale(${frameScale})`,
