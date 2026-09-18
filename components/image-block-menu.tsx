@@ -9,7 +9,7 @@ import {
   useState,
   type CSSProperties,
   type ReactNode,
-  type RefObject,
+  type Ref,
 } from 'react'
 import { createPortal } from 'react-dom'
 import {
@@ -51,7 +51,7 @@ type HoverToolbarProps = {
   moreOpen: boolean
   chromeScale?: number // Same √ comfort curve as boardLink open chrome (transform-only)
   onAction: (action: ImageBlockMenuAction) => void
-  toolbarRef?: RefObject<HTMLDivElement | null> // More menu anchors to this pill
+  toolbarRef?: Ref<HTMLDivElement> // More menu anchors to this pill
 }
 
 /** First image menu — absolute on the bitmap (rides RF pan like board title open chrome). */
