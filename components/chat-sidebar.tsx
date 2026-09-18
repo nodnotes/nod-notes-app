@@ -1186,7 +1186,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
               <div
                 className={cn(
                   'flex items-center gap-1 px-1.5 py-0.5 min-w-0 rounded-xl',
-                  'bg-[var(--nod-chat-prompt)]' // Same chrome grey as utility bar — no border
+                  'bg-gray-50 dark:bg-[#0f0f0f]' // Board fill — matches Free nav / map column
                 )}
               >
                 {/* Brand left of thread select while chat is open (map toggle hides) */}
@@ -1234,7 +1234,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
             )}
             <div
               data-chat-prompt
-              className="rounded-xl overflow-hidden border border-black/10 dark:border-white/10" // Chat-bar grey via [data-chat-prompt]; hairline — no shadow
+              className="rounded-xl overflow-hidden border border-black/10 dark:border-white/10 shadow-sm" // Chat-bar grey via [data-chat-prompt]; soft lift like desktop sidebar
             >
               <div className="px-1 pt-1">{composer}</div>
             </div>
@@ -1459,7 +1459,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
         <div className="relative z-10 flex-shrink-0 px-3 pb-3 pt-1 pointer-events-auto">
           <div
             data-chat-prompt
-            className="rounded-xl overflow-hidden border border-black/10 dark:border-white/10" // Chat-bar grey via [data-chat-prompt]; hairline — no shadow
+            className="rounded-xl overflow-hidden border border-black/10 dark:border-white/10 shadow-sm" // Chat-bar grey via [data-chat-prompt]; soft lift off the column
           >
             <div className="px-1 pt-1">{composer}</div>
           </div>

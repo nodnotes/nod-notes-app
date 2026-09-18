@@ -49,12 +49,12 @@ const RESIZE_PRESETS: { pct: ImageResizePreset; label: string }[] = [
 
 type HoverToolbarProps = {
   moreOpen: boolean
-  chromeScale?: number // Same √ comfort curve as boardLink open chrome (transform-only)
+  chromeScale?: number // Screen-constant counter-scale (1/zoom — same family as frame resize dots)
   onAction: (action: ImageBlockMenuAction) => void
   toolbarRef?: Ref<HTMLDivElement> // More menu anchors to this pill
 }
 
-/** First image menu — absolute on the bitmap (rides RF pan like board title open chrome). */
+/** First image menu — absolute on the bitmap (same pill metrics as board title open chrome). */
 export function ImageBlockHoverToolbar({
   moreOpen,
   chromeScale = 1,
@@ -67,9 +67,10 @@ export function ImageBlockHoverToolbar({
     { id: 'more', label: 'More', icon: <MoreHorizontal className="h-3.5 w-3.5" /> },
   ]
 
+  // Screen-constant scale (1/zoom) — keep pill size stable while the board zooms
   const style: CSSProperties = {
     transform: chromeScale !== 1 ? `scale(${chromeScale})` : undefined,
-    transformOrigin: 'top right', // Shrink toward the image corner
+    transformOrigin: 'top right',
   }
 
   return (
@@ -77,13 +78,7 @@ export function ImageBlockHoverToolbar({
       ref={toolbarRef}
       data-tt-image-menu
       data-tt-image-hover-toolbar
-      className={cn(
-        'tt-image-block-hover-toolbar nodrag nopan',
-        'absolute right-1 top-1 z-[2] flex items-center gap-0.5 rounded-md px-1 py-0.5',
-        // Glass pill — same family as .tt-board-link-preview
-        'border border-black/10 bg-white/60 shadow-sm backdrop-blur-sm',
-        'dark:border-white/10 dark:bg-[#1f1f1f]/80'
-      )}
+      className="tt-image-block-hover-toolbar nodrag nopan absolute right-1 top-1 z-[2]"
       style={style}
       contentEditable={false}
       onMouseDown={(e) => {
@@ -100,8 +95,8 @@ export function ImageBlockHoverToolbar({
           aria-label={t.label}
           aria-expanded={t.id === 'more' ? moreOpen : undefined}
           className={cn(
-            'inline-flex h-7 w-7 items-center justify-center rounded text-gray-600 hover:bg-black/5 dark:text-gray-300 dark:hover:bg-white/10',
-            t.id === 'more' && moreOpen && 'bg-black/5 dark:bg-white/10'
+            'tt-image-block-hover-btn nodrag nopan',
+            t.id === 'more' && moreOpen && 'tt-image-block-hover-btn-active'
           )}
           onClick={(e) => {
             e.preventDefault()

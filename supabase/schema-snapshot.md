@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-18T01:36:30Z`
+- Snapped at: `2026-09-18T02:42:25Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`; versions from `.temp` + Management API list; cli-latest reports `v2.117.0`)
@@ -9,6 +9,13 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260918024225_chrome_hairlines_image_screen_scale.sql`.
+- **Chrome**: boards nav + chats thread picker hairline (`border-gray-200` / dark `#2f2f2f`); Free nav fill = Ask prompt grey (`--nod-chat-prompt`); phone chat mid-chrome = board fill; Ask shells `shadow-sm`.
+- **Image hover**: board-title glass pill CSS + screen-constant `frameScreenChromeScale(zoom)` (pill + side handles).
+- Schema unchanged; remote DDL top remains `20260914104046_notion_multi_workspace`.
+
+## Prior: Image free↔fit contain-fit stable
 
 - DDL: none. Marker `20260918013630_image_free_fit_contain_stable.sql`.
 - **Free↔fit contain-fit**: contentFit `data-frame-free-resize` in render (not ProseMirror useEffect); freeze bitmap/`frameBox` on free; remasure live `--tt-image-frame-*` on fit; no max-% jump.

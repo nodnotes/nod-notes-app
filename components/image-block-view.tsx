@@ -7,7 +7,7 @@ import { createPortal } from 'react-dom'
 import { NodeViewWrapper, type NodeViewProps } from '@tiptap/react'
 import { useStore } from 'reactflow' // Remeasure upload-menu anchor when board zoom changes
 import { navigationZoom } from '@/lib/board-navigating' // Freeze mid-pinch — avoid remounting every tick
-import { elementUniformScale } from '@/lib/dom-transform' // Comfort counter-scale for hover pill (like boardLink)
+import { frameScreenChromeScale } from '@/components/threads/constants' // Screen-constant chrome (1/zoom)
 import { Check, Image as ImageIcon, Link2, Upload, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -93,7 +93,7 @@ export function ImageBlockView({
   const armingRef = useRef(false) // Skip selectionUpdate disarm during the arm gesture
   const hoverLeaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const toolbarRef = useRef<HTMLDivElement>(null) // In-flow hover pill — More menu anchors here
-  const [chromeScale, setChromeScale] = useState(1) // √ comfort counter-scale (boardLink open chrome)
+  const [chromeScale, setChromeScale] = useState(1) // Screen-constant counter-scale (hover pill + side handles)
   const [natural, setNatural] = useState({ w: 0, h: 0 }) // Bitmap intrinsic px — for contain-fit
   const [frameBox, setFrameBox] = useState({ w: 0, h: 0 }) // Content area the image must fit inside
   const [freeResize, setFreeResize] = useState(false) // Unlocked frame — keep bitmap size; clip like text
@@ -105,6 +105,8 @@ export function ImageBlockView({
   const zoom = useStore((s) =>
     navigationZoom(Math.round((s.transform[2] || 1) * 8) / 8)
   ) // Remeasure portaled Upload menu when zoom settles / steps
+  // Live zoom for screen-constant chrome — must track mid-pinch (navigationZoom freezes)
+  const liveZoom = useStore((s) => Math.round((s.transform[2] || 1) * 64) / 64)
 
   useEffect(() => {
     if (!hazed) setRevealed(false)
@@ -320,28 +322,13 @@ export function ImageBlockView({
     return () => document.removeEventListener('mousedown', onDown, true)
   }, [armed, moreOpen])
 
-  // Comfort counter-scale for the in-flow hover pill (same curve as boardLink open chrome).
+  // Screen-constant chrome — pure 1/zoom like resize dots / gutters (not √ text comfort).
+  // Hover pill + side handles stay the same visual size at every board zoom.
   useLayoutEffect(() => {
     if (!src || (!hovered && !moreOpen && !armed && !sideResizing)) return
-    const el = mediaRef.current
-    if (!el) return
-    const sync = () => {
-      const scale = elementUniformScale(el)
-      const factor = 1 / Math.max(1, Math.sqrt(scale))
-      setChromeScale((p) => (Math.abs(p - factor) < 0.01 ? p : factor))
-    }
-    sync()
-    const panel = el.closest('[data-panel-container="true"]') as HTMLElement | null
-    const ro = panel ? new ResizeObserver(() => requestAnimationFrame(sync)) : null
-    if (panel && ro) ro.observe(panel)
-    const vp = el.closest('.react-flow__viewport') as HTMLElement | null
-    const mo = vp ? new MutationObserver(() => requestAnimationFrame(sync)) : null
-    if (vp && mo) mo.observe(vp, { attributes: true, attributeFilter: ['style'] })
-    return () => {
-      ro?.disconnect()
-      mo?.disconnect()
-    }
-  }, [src, hovered, moreOpen, armed, sideResizing, zoom])
+    const factor = frameScreenChromeScale(liveZoom)
+    setChromeScale((p) => (Math.abs(p - factor) < 0.01 ? p : factor))
+  }, [src, hovered, moreOpen, armed, sideResizing, liveZoom])
 
   // More menu only — re-anchor the portaled dropdown while open (hover pill is in-flow).
   useLayoutEffect(() => {

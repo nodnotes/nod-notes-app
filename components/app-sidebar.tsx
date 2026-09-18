@@ -2909,7 +2909,8 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
         data-app-sidebar
         data-nav-menu-popup
         className={cn(
-          'fixed z-50 flex flex-col bg-white dark:bg-[#171717] shadow-xl rounded-2xl overflow-hidden', // White surface — not chrome grey
+          'fixed z-50 flex flex-col bg-white dark:bg-[#171717] shadow-xl rounded-2xl overflow-hidden', // Same white surface as chats menu
+          'border border-gray-200 dark:border-[#2f2f2f]', // Same hairline as chats menu
           'w-72 min-h-0' // min-h-0 so the board list can shrink and scroll under maxHeight
         )}
         style={{

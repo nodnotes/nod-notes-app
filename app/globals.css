@@ -2941,9 +2941,48 @@ span[data-added="true"] {
     max-height: 100%;
     cursor: pointer;
   }
-  /* In-flow hover pill — rides RF transform like .tt-board-link-preview (not position:fixed) */
+  /* In-flow hover pill — same glass + btn metrics as .tt-board-link-preview (board title open) */
   .ProseMirror .tt-image-block-hover-toolbar {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.125rem;
+    padding: 2px 4px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.6);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
     pointer-events: auto;
+  }
+  .dark .ProseMirror .tt-image-block-hover-toolbar {
+    background: rgba(31, 31, 31, 0.6);
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+  .ProseMirror .tt-image-block-hover-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    border-radius: 4px;
+    color: #4b5563;
+    cursor: pointer;
+  }
+  .ProseMirror .tt-image-block-hover-btn:hover {
+    background: rgba(0, 0, 0, 0.06);
+    color: #111827;
+  }
+  .ProseMirror .tt-image-block-hover-btn-active {
+    color: #2563eb;
+    background: rgba(0, 0, 0, 0.06);
+  }
+  .dark .ProseMirror .tt-image-block-hover-btn {
+    color: #d1d5db;
+  }
+  .dark .ProseMirror .tt-image-block-hover-btn:hover,
+  .dark .ProseMirror .tt-image-block-hover-btn-active {
+    background: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
   }
   /* Notion-style side width pills — centered on L/R edges; drag keeps aspect (shared scale) */
   .ProseMirror .tt-image-block-side-handle {

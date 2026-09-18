@@ -2026,7 +2026,7 @@ function BoardFlowInner({
     if (boardStyle === 'grid') return BackgroundVariant.Lines // Grid pattern (both horizontal and vertical lines)
     return null // Default to none
   }, [boardStyle])
-  const { setIsMobileMode, isMobileMode, isChatSidebarOpen, isUtilitySidebarOpen, toggleChatSidebar, logoDrawing, aiMapDockLiftPx, aiMapDockLeftPx, aiChatHasTranscript } =
+  const { setIsMobileMode, isMobileMode, isChatSidebarOpen, isUtilitySidebarOpen, toggleChatSidebar, logoDrawing, aiMapDockLiftPx, aiMapDockLeftPx } =
     useSidebarContext()
   useChatSidebarViewportAdjust(reactFlowInstance, isChatSidebarOpen && !isMobileMode) // No column shrink on phone dock
   useUtilitySidebarViewportAdjust(reactFlowInstance, isUtilitySidebarOpen && !isMobileMode) // Phone: overlay chrome; don’t reframe the board
@@ -2037,11 +2037,8 @@ function BoardFlowInner({
     isMobileMode && isChatSidebarOpen && aiMapDockLeftPx != null ? aiMapDockLeftPx : MINIMAP_LEFT
   // Brand stays on the map bottom-right (under the transparent utility overlay when open)
   const brandRight = BRAND_RIGHT
-  // Desktop: always board fill (incl. chat open). Phone: white only for input-only chat.
-  const freeNavBoardFill =
-    isMobileMode && isChatSidebarOpen && !aiChatHasTranscript
-      ? 'bg-white dark:bg-[#0f0f0f]'
-      : 'bg-gray-50 dark:bg-[#0f0f0f]'
+  // Same chrome grey as Ask prompt input (`--nod-chat-prompt`) — desktop + phone
+  const freeNavBoardFill = 'bg-[var(--nod-chat-prompt)]'
   // Draw bar Lasso: freehand trail owns left-drag (`lib/freehand-lasso-select`), not RF's rect marquee
   const lassoArmed = drawTool === 'lasso' && !isDrawing
   // Draw bar Eraser: overlay owns left-drag to remove freehand strokes under the brush

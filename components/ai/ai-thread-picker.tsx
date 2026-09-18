@@ -345,7 +345,7 @@ export function AiThreadPicker({
               zIndex: 10000, // Above board drag overlays so pointermove can hit rows
               pointerEvents: 'auto',
             }}
-            className="flex flex-col max-h-[min(24rem,70vh)] overflow-hidden rounded-2xl bg-white dark:bg-[#171717] shadow-xl" // White surface — not chrome grey
+            className="flex flex-col max-h-[min(24rem,70vh)] overflow-hidden rounded-2xl border border-gray-200 dark:border-[#2f2f2f] bg-white dark:bg-[#171717] shadow-xl" // White surface + same hairline as boards nav
           >
             <div className="px-4 pt-2 pb-2 flex-shrink-0">
               <div className="flex items-center gap-2">

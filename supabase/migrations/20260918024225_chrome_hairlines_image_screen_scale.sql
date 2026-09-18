@@ -1,0 +1,2 @@
+-- Chrome hairlines (boards nav / chats picker); Free nav Ask-prompt grey; image hover screen-constant scale; Ask shadow-sm.
+-- App/docs marker only; no DDL. Remote DDL top: 20260914104046_notion_multi_workspace.
