@@ -3028,7 +3028,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   ) // Track resized dimensions
   const [isUserResized, setIsUserResized] = useState(() => seedResizeDims != null) // True after corner-drag, place seed, or saved resizeDimensions
   const [fontScale, setFontScale] = useState(1) // Legacy editor font-size scale (blocks use frameScale instead)
-  const [frameUnlocked, setFrameUnlocked] = useState(false) // Unlocked: free resize; locked: content scales with frame
+  const [frameUnlocked, setFrameUnlocked] = useState(
+    () => (promptMessage?.metadata as { frameUnlocked?: boolean } | undefined)?.frameUnlocked === true
+  ) // Unlocked: free resize; locked: content scales with frame. Seed so a shaped create doesn't hug first.
   const [frameTextWrap, setFrameTextWrap] = useState(false) // Unlocked only: wrap lines in the frame box instead of clipping
   const [wrapColWidth, setWrapColWidth] = useState<number | null>(null) // Unscaled wrap column width — fixed on locked resize, restored on rewrap
   const [dbAlwaysExpanded, setDbAlwaysExpanded] = useState(false) // Notion DB frames: Expanded vs Preview (frame menu)
@@ -3046,7 +3048,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const [isFrameHovering, setIsFrameHovering] = useState(false) // Frame hover — page-open menu (not lock/rotate)
   const [clipPreviewReady, setClipPreviewReady] = useState(false) // True after hover dwell — delayed full-content peek
   const [rotation, setRotation] = useState(0) // Degrees of item rotation (persisted in message metadata)
-  const [frameShape, setFrameShape] = useState<FrameShapeType | null>(null) // Silhouette (null = default frame)
+  const [frameShape, setFrameShape] = useState<FrameShapeType | null>(() =>
+    parseFrameShape((promptMessage?.metadata as { frameShape?: unknown } | undefined)?.frameShape)
+  ) // Silhouette (null = default frame). Seed so Smart Draw paints the shape on first frame.
   const isResizingRef = useRef(false) // Track if currently resizing
   const contentFitRef = useRef<HTMLDivElement>(null) // Inner unscaled content wrapper for intrinsic measure
   const frameScaleRef = useRef(1) // Latest scale — resize-end must not close over a stale render

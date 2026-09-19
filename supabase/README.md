@@ -27,6 +27,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260919210149_smart_draw_frames` — Smart Draw shapes are frames with that silhouette, same chrome as any other frame
 - `20260919203843_smart_draw` — Smart Draw snaps pencil strokes to shapes, lines, or text frames; circles include wobbly ovals; utility + / filter menus match sidebar chrome
 - `20260919194957_utility_plus_menus` — Layers/Sets/Views + menus (New / Add to / Add to chat); organize in the filter menu; Capture view stays right
 - `20260919180141_utility_organize_image_menu` — Layers/Sets/Views organize menus (list vs grouped, collapse); image hover pill collapses to More; full image menu

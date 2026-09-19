@@ -7435,14 +7435,25 @@ function BoardFlowInner({
       html?: string
       blockType?: BlockTypeId
       propertyType?: import('@/lib/blocks/property').PropertyTypeId // Turn into → Property seed
+      frameShape?: string // Smart Draw silhouette — same id the frame shape menu writes
+      box?: { width: number; height: number } // Drawn box; top-left is flowX/flowY (no I-bar pad)
     } // Seed content + Turn into kind (empty text if omitted)
   ): Promise<string | null> => {
     const zoom = reactFlowInstance?.getViewport().zoom || 1 // Live board zoom at place
+    const drawnShape = opts?.box ? parseFrameShape(opts.frameShape) : null // Only a known silhouette gets a shaped frame
+    const drawnW = drawnShape
+      ? Math.max(FRAME_SHAPE_MIN_SIZE.width, Math.round(opts!.box!.width)) // Same floor as the shape menu
+      : 0
+    const drawnH = drawnShape
+      ? Math.max(FRAME_SHAPE_MIN_SIZE.height, Math.round(opts!.box!.height))
+      : 0
     const fs = placeFrameScale(zoom) // Match I-bar screen size → persisted frameScale
     const cursorOffsetX = BLOCK_CREATE_OFFSET_X * fs // Pad is unscaled then CSS-scaled
     // First-line Y; property strip sits above the text so spawn higher by PROPERTY_GROUP_H
     const cursorOffsetY = BLOCK_CREATE_OFFSET_Y * fs + (opts?.propertyType ? PROPERTY_GROUP_H : 0)
-    const itemPosition = { x: flowX - cursorOffsetX, y: flowY - cursorOffsetY }
+    const itemPosition = drawnShape
+      ? { x: flowX, y: flowY } // Stroke box is already the frame origin
+      : { x: flowX - cursorOffsetX, y: flowY - cursorOffsetY }
     setIBarPosition(null) // Clear pre-create cursor
     iBarPositionRef.current = null // Sync ref now so menu onClose doesn't re-arm capture
     setIBarInputAnchor(null) // Drop capture field — TipTap will take focus
@@ -7466,9 +7477,16 @@ function BoardFlowInner({
       content: html,
       created_at: new Date().toISOString(),
       metadata: newBlockMetadata({
-        position: itemPosition, // Spawn aligned to I-bar
+        position: itemPosition, // Spawn aligned to I-bar, or to the drawn box
         fadeIn: true, // Autofocus TipTap once the panel mounts
-        ...placeScaleMetadata(zoom), // Zoom-compensated size so place matches across zoom
+        ...(drawnShape
+          ? {
+              frameShape: drawnShape, // Same silhouette a frame menu would set
+              frameUnlocked: true, // Shaped frames free-resize, they don't hug empty text
+              resizeDimensions: { width: drawnW, height: drawnH },
+              unlockedFrameSize: { width: drawnW, height: drawnH },
+            }
+          : placeScaleMetadata(zoom)), // Zoom-compensated size so place matches across zoom
         ...(opts?.blockType ? { blockType: opts.blockType } : {}),
         ...(opts?.propertyType ? { propertyType: opts.propertyType } : {}),
       }),
@@ -7491,6 +7509,7 @@ function BoardFlowInner({
           responseMessage: undefined,
           conversationId: liveBoardId,
           isResponseCollapsed: false,
+          ...(drawnShape ? { frameShape: drawnShape } : {}), // First paint reads data before metadata effect
         },
       },
     ])
@@ -10928,6 +10947,9 @@ function BoardFlowInner({
                 .replace(/</g, '&lt;')
                 .replace(/>/g, '&gt;') // Frame HTML must not treat the word as markup
               void createBlockAtFlowPosition(x, y, { html: `<p>${safe}</p>` })
+            }}
+            onSmartShape={(shape, x, y, width, height) => {
+              void createBlockAtFlowPosition(x, y, { frameShape: shape, box: { width, height } }) // Frame, not a shape node
             }}
           />
         )}

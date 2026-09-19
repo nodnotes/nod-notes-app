@@ -1,0 +1,2 @@
+-- Smart Draw shapes become frames with that silhouette, same chrome as any other frame.
+-- App/docs marker only; no DDL. Remote DDL top: 20260914104046_notion_multi_workspace.

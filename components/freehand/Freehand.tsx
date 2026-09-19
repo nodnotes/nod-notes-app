@@ -29,7 +29,7 @@ import {
   strokeGap, // Split a burst when the next stroke is far away
 } from '@/lib/smart-draw/recognize'
 import { recognizeInkText } from '@/lib/smart-draw/text' // OS handwriting API, then Tesseract
-import { opaqueInkHex, saveSmartCanvasNode } from '@/lib/smart-draw/save-node'
+import { saveSmartCanvasNode } from '@/lib/smart-draw/save-node' // Persist leftover ink / straightened lines
 
 export { removeFailedSave } from './erase-persist' // Board-flow erase + undo callers
 
@@ -232,10 +232,12 @@ export function Freehand({
   conversationId,
   onBeforeCreate,
   onSmartText,
+  onSmartShape,
 }: {
   conversationId?: string
   onBeforeCreate?: () => void
   onSmartText?: (text: string, x: number, y: number) => void // Replace ink with a frame
+  onSmartShape?: (shape: string, x: number, y: number, width: number, height: number) => void // Same frame as the shape menu
 }) {
   // Get React Flow instance functions for coordinate conversion and node management
   const { screenToFlowPosition, flowToScreenPosition, setNodes, setEdges, getNodes } = useReactFlow<
@@ -271,6 +273,8 @@ export function Freehand({
   smartDrawRef.current = smartDraw
   const onSmartTextRef = useRef(onSmartText)
   onSmartTextRef.current = onSmartText
+  const onSmartShapeRef = useRef(onSmartShape) // Flush reads the latest create-frame callback
+  onSmartShapeRef.current = onSmartShape
   const conversationIdRef = useRef(conversationId)
   conversationIdRef.current = conversationId
   const pendingSmartRef = useRef<Array<{
@@ -515,35 +519,9 @@ export function Freehand({
     }
     const result = recognizeCluster(strokes.map((s) => s.points))
     if (result.kind === 'shape') {
-      const ink = strokes[0]
-      const hex = opaqueInkHex(ink.strokeColor) // Shape fill matches the pen
-      const id = generateUUID()
-      const weight = Math.min(8, Math.max(2, Math.round(ink.strokeSize)))
-      const data = { type: result.shape, color: hex, fillColor: hex, borderColor: hex, borderWeight: weight }
-      const drop = new Set(strokes.map((s) => s.id))
-      setNodes((nds: any[]) => [
-        ...nds.filter((n) => !drop.has(n.id)),
-        {
-          id,
-          type: 'shape',
-          position: { x: result.x, y: result.y },
-          width: result.width,
-          height: result.height,
-          style: { width: result.width, height: result.height },
-          data,
-          selectable: true,
-          draggable: true,
-        },
-      ])
-      await saveSmartCanvasNode(conversationIdRef.current, {
-        id,
-        nodeType: 'shape',
-        x: result.x,
-        y: result.y,
-        width: result.width,
-        height: result.height,
-        data,
-      }, queryClientRef.current)
+      const drop = new Set(strokes.map((s) => s.id)) // Ink is only a preview of the frame
+      setNodes((nds: any[]) => nds.filter((n) => !drop.has(n.id)))
+      onSmartShapeRef.current?.(result.shape, result.x, result.y, result.width, result.height) // Frame silhouette, not a shape node
       return
     }
     if (result.kind === 'line' || result.kind === 'lines') {

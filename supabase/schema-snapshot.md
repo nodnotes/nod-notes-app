@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-19T20:38:43Z`
+- Snapped at: `2026-09-19T21:01:49Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`; versions from `.temp` + Management API list; cli-latest reports `v2.117.0`)
@@ -9,6 +9,12 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260919210149_smart_draw_frames.sql`.
+- **Smart Draw shapes**: a stroke that becomes a shape is a frame with that `frameShape` (same fill, border, and chrome as any other frame), not a separate shape node.
+- Schema unchanged; remote DDL top remains `20260914104046_notion_multi_workspace`.
+
+## Prior: Smart Draw
 
 - DDL: none. Marker `20260919203843_smart_draw.sql`.
 - **Smart Draw**: wand next to Pen (`nodnotes-smart-draw`). Pencil strokes pause ~700ms, then a burst that looks like a shape, a straight line or arrow, or handwriting becomes that node (shape node, straightened freehand, or a text frame). Circles include wobbly ovals and loops that don't quite meet. Strokes that don't match stay ink. Highlighter and translucent swatches are not converted. Handwriting uses the OS API when present, otherwise lazy `tesseract.js`.
