@@ -1,0 +1,4 @@
+-- Layers / Sets / Views: top-left + opens New, Add to, and Add to chat. Organize lives in the filter menu.
+-- Views: Capture view stays on the right; empty presentations use Add or drag captures; + gaps only between slides.
+-- Frame Add to set picker says New set.
+-- App/docs marker only; no DDL. Remote DDL top: 20260914104046_notion_multi_workspace.

@@ -34,7 +34,7 @@ export function UtilitySearchHeader({
 }: UtilitySearchHeaderProps) {
   return (
     <div className="flex-shrink-0">
-      {/* pl-1.5 + left-1.5: search glyph lines up with + Group / + Set / + Presentation; pr-1: filter glyph lines up with the ⋯ */}
+      {/* pl-1.5 + left-1.5: search glyph lines up with the Layers + / New set / New presentation; pr-1: filter glyph lines up with the row ⋯ */}
       <div className="pl-1.5 pr-1 pt-2 pb-2">
         <div className="flex items-center gap-2">
           <div className="relative flex-1 min-w-0">
@@ -89,14 +89,21 @@ export function UtilitySearchHeader({
   )
 }
 
-/** One filter menu row — matches AI chat filter options. */
+/** Hairline in a filter menu — organize rows sit under the filter rows. */
+export function UtilityFilterDivider() {
+  return <div className="mx-2 my-1 h-px bg-gray-200 dark:bg-[#2f2f2f]" role="separator" /> // Same hairline as the search divider
+}
+
+/** One filter menu row — matches AI chat filter options. Optional icon is the old ⋯ glyph, left of the words. */
 export function UtilityFilterOption({
   label,
+  icon,
   active,
   disabled,
   onSelect,
 }: {
   label: string
+  icon?: ReactNode // Leading mark from the old organize ⋯ menu
   active?: boolean
   disabled?: boolean
   onSelect: () => void
@@ -112,6 +119,7 @@ export function UtilityFilterOption({
       onPointerDown={(e) => e.preventDefault()}
       onClick={onSelect}
     >
+      {icon}
       <span className="flex-1">{label}</span>
     </button>
   )

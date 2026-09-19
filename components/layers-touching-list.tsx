@@ -22,9 +22,10 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Check, Folder, FolderOpen, List, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react' // Folder row, organize menu, add, rename, delete
+import { Folder, FolderOpen, List, MessageSquare, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react' // Folder row, list mark, Add to chat, row ⋯, add, rename, delete
 import { cn } from '@/lib/utils'
 import { useReactFlowContext } from '@/components/react-flow-context'
+import { useSidebarContext } from '@/components/sidebar-context' // Open chat from Add to chat
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,6 +33,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
+  UtilityFilterDivider,
   UtilityFilterOption,
   UtilitySearchHeader,
 } from '@/components/utility-search-header' // AI-chat-style search + filter
@@ -68,6 +70,16 @@ type LayersFilter = 'all' | 'touching' | 'selected'
 
 /** Loose list id — layers that are not under a group header. */
 const UNGROUPED_SECTION = 'ungrouped'
+
+/** Icon-only Add to chat: chat mark, small add mark in the corner. Same as Views. */
+function AddToChatIcon() {
+  return (
+    <span className="relative block h-4 w-4 flex-shrink-0">
+      <MessageSquare className="h-4 w-4" /> {/* Chat */}
+      <Plus className="absolute -bottom-px -right-px h-2.5 w-2.5 rounded-full bg-[var(--nod-chat-prompt)]" /> {/* Small add, knocked out of the bubble */}
+    </span>
+  )
+}
 
 /** Shared ⋯ chrome. Each caller adds the hover group that reveals it. */
 const layerMoreButtonClass =
@@ -446,13 +458,14 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
     () => EMPTY_LAYER_STACK
   )
   const { reactFlowInstance, getSetNodes } = useReactFlowContext()
+  const { setChatSidebarOpen } = useSidebarContext() // Add to chat reveals the composer
   const [query, setQuery] = useState('') // Filter thumbs by label
   const [filterOpen, setFilterOpen] = useState(false) // Filter menu
   const [filter, setFilter] = useState<LayersFilter>('touching') // Default stays the touching cluster
   const [renamingId, setRenamingId] = useState<string | null>(null) // Header whose name is being edited
-  const [organize, setOrganize] = useState<LayerOrganize>('group') // ⋯ menu: one list, or file rows
-  const [organizeOpen, setOrganizeOpen] = useState(false) // Organize layers menu
-  const organizeRef = useRef<HTMLDivElement>(null) // Trigger + menu, so outside clicks can close it
+  const [organize, setOrganize] = useState<LayerOrganize>('group') // Filter menu: one list, or file rows
+  const [plusOpen, setPlusOpen] = useState(false) // + menu: New group / Add to group / Add to chat
+  const plusRef = useRef<HTMLDivElement>(null) // + button and its menu, so outside clicks can close it
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }) // Click selects; drag reorders
   )
@@ -463,14 +476,14 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
   }, [filter])
 
   useEffect(() => {
-    if (!organizeOpen) return
+    if (!plusOpen) return // Listener only while the + menu is up
     const onDown = (event: PointerEvent) => {
-      if (organizeRef.current?.contains(event.target as globalThis.Node)) return // DOM Node — the file also imports React Flow's Node
-      setOrganizeOpen(false)
+      if (plusRef.current?.contains(event.target as globalThis.Node)) return // DOM Node — the file also imports React Flow's Node
+      setPlusOpen(false) // Click outside the + closes New group / Add to group / Add to chat
     }
     window.addEventListener('pointerdown', onDown, true) // Capture so the board does not eat the click first
     return () => window.removeEventListener('pointerdown', onDown, true)
-  }, [organizeOpen])
+  }, [plusOpen])
 
   const boardGroups = useMemo(
     () => (conversationId ? groups.filter((g) => g.boardId === conversationId) : []), // This board only
@@ -568,9 +581,29 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
   const onNewGroup = () => {
     if (!conversationId) return
     setOrganize('group') // The new row only shows under By group
-    setOrganizeOpen(false)
     const created = createLayerGroup(conversationId) // Empty header at the top
     setRenamingId(created.id) // Name it immediately
+  }
+
+  // Layers currently selected on the board — Add to group and Add to chat both use this
+  const selectedLayerIds = useMemo(
+    () => items.filter((item) => item.selected).map((item) => item.id),
+    [items]
+  )
+
+  const onAddToGroup = () => {
+    if (!conversationId || selectedLayerIds.length === 0) return // Needs a board and a selection
+    setOrganize('group') // The new header only shows under By group
+    const created = createLayerGroup(conversationId) // Empty header, then the selection moves in
+    selectedLayerIds.forEach((id, index) => {
+      moveLayerUnderGroup(id, created.id, index, conversationId) // Exclusive — leaves any other group
+    })
+    setRenamingId(created.id) // Name it immediately
+  }
+
+  const onAddToChat = () => {
+    if (selectedLayerIds.length === 0) return // Disabled until a layer is selected
+    setChatSidebarOpen(true) // Selection is already on the board, so the composer pills follow it
   }
 
   const onListDragEnd = (event: DragEndEvent) => {
@@ -701,7 +734,7 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
         onQueryChange={setQuery}
         filterOpen={filterOpen}
         onFilterOpenChange={setFilterOpen}
-        filterActive={filter !== 'all'} // Blue icon unless every layer is showing
+        filterActive={filter !== 'all' || organize !== 'group'} // Blue unless every layer is showing in groups
         filterTitle="Filter layers"
         filterMenu={
           <>
@@ -729,69 +762,99 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
                 setFilterOpen(false)
               }}
             />
+            <UtilityFilterDivider /> {/* Organize used to live in the ⋯ menu */}
+            <UtilityFilterOption
+              label="In one list"
+              icon={<List className="h-4 w-4 flex-shrink-0" />} // Same list mark the ⋯ row used
+              active={organize === 'list'}
+              onSelect={() => {
+                setOrganize('list') // Flat thumbs, no file rows
+                setFilterOpen(false)
+              }}
+            />
+            <UtilityFilterOption
+              label="By group"
+              icon={<Folder className="h-4 w-4 flex-shrink-0" />} // Same folder mark the ⋯ row used
+              active={organize === 'group'}
+              onSelect={() => {
+                setOrganize('group') // Folder rows
+                setFilterOpen(false)
+              }}
+            />
           </>
         }
       />
 
-      <div ref={organizeRef} className="group/layer-row relative flex h-8 flex-shrink-0 items-center gap-1 px-1.5 pt-2">
-        <button
-          type="button"
-          className="flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-[13px] font-medium text-gray-500 hover:bg-black/[0.06] disabled:opacity-40 dark:text-gray-400 dark:hover:bg-white/[0.08]"
-          title="New group"
-          aria-label="New group"
-          disabled={!conversationId}
-          onPointerDown={(e) => e.preventDefault()}
-          onClick={onNewGroup}
-        >
-          <Plus className="h-4 w-4 flex-shrink-0" /> {/* Same hit target as the word */}
-          Group
-        </button>
-        <button
-          type="button"
-          className={cn(
-            layerMoreButtonClass,
-            'ml-auto [@media(hover:hover)]:group-hover/layer-row:opacity-100',
-            organizeOpen && 'opacity-100'
+      <div className="flex h-8 flex-shrink-0 items-center gap-1 px-1.5 pt-2">
+        <div ref={plusRef} className="relative flex-shrink-0"> {/* Top left — Add to group and New group */}
+          <button
+            type="button"
+            className={cn(
+              'flex h-7 w-7 items-center justify-center rounded-md text-gray-500 hover:bg-black/[0.06] hover:text-gray-900 dark:text-gray-400 dark:hover:bg-white/[0.08] dark:hover:text-gray-100',
+              plusOpen && 'bg-black/[0.06] text-gray-900 dark:bg-white/[0.08] dark:text-gray-100' // Stay marked while the menu is open
+            )}
+            title="Add"
+            aria-label="New group, add to group, or add to chat"
+            aria-expanded={plusOpen}
+            aria-haspopup="menu"
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={() => setPlusOpen((open) => !open)}
+          >
+            <Plus className="h-4 w-4" /> {/* Opens New group, Add to group, and Add to chat */}
+          </button>
+          {plusOpen && (
+            <div
+              role="menu"
+              className="absolute left-0 top-full z-50 mt-0.5 min-w-[10.5rem] overflow-hidden rounded-md border border-gray-200 bg-white py-1 shadow-md dark:border-[#2f2f2f] dark:bg-[#171717]"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-gray-900 hover:bg-[var(--nod-tab-hover)] disabled:opacity-40 dark:text-gray-100"
+                title="New group"
+                disabled={!conversationId} // Empty header still needs a board
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  onNewGroup() // Empty header, named immediately
+                  setPlusOpen(false)
+                }}
+              >
+                <Plus className="h-4 w-4 flex-shrink-0" />
+                <span className="flex-1">New group</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-gray-900 hover:bg-[var(--nod-tab-hover)] disabled:opacity-40 dark:text-gray-100"
+                title="Add to group"
+                disabled={!conversationId || selectedLayerIds.length === 0} // Needs a board and a selected layer
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  onAddToGroup() // Selected layers into a new group
+                  setPlusOpen(false)
+                }}
+              >
+                <Folder className="h-4 w-4 flex-shrink-0" />
+                <span className="flex-1">Add to group</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-gray-900 hover:bg-[var(--nod-tab-hover)] disabled:opacity-40 dark:text-gray-100"
+                title="Add to chat"
+                disabled={selectedLayerIds.length === 0} // Needs a selected layer before the composer can take it
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  onAddToChat() // Selected layers become composer pills, then chat opens
+                  setPlusOpen(false)
+                }}
+              >
+                <AddToChatIcon /> {/* Same chat-plus mark the old icon button used */}
+                <span className="flex-1">Add to chat</span>
+              </button>
+            </div>
           )}
-          title="Organize layers"
-          aria-label="Organize layers"
-          aria-expanded={organizeOpen}
-          onPointerDown={(e) => e.preventDefault()}
-          onClick={() => setOrganizeOpen((open) => !open)}
-        >
-          <MoreHorizontal className="h-4 w-4" /> {/* Far right of + Group */}
-        </button>
-        {organizeOpen && (
-          <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-gray-200 bg-white py-1.5 shadow-lg dark:border-[#2f2f2f] dark:bg-[#171717]">
-            <p className="px-3 pb-1 pt-1 text-xs text-gray-400">Organize layers</p>
-            <button
-              type="button"
-              className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-900 hover:bg-black/[0.04] dark:text-gray-100 dark:hover:bg-white/[0.06]"
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={() => {
-                setOrganize('list') // Flat thumbs, no file rows
-                setOrganizeOpen(false)
-              }}
-            >
-              <List className="h-4 w-4 flex-shrink-0" />
-              <span className="min-w-0 flex-1">In one list</span>
-              {organize === 'list' && <Check className="h-4 w-4 flex-shrink-0" />}
-            </button>
-            <button
-              type="button"
-              className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-900 hover:bg-black/[0.04] dark:text-gray-100 dark:hover:bg-white/[0.06]"
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={() => {
-                  setOrganize('group') // Folder rows under + Group
-                setOrganizeOpen(false)
-              }}
-            >
-              <Folder className="h-4 w-4 flex-shrink-0" />
-              <span className="min-w-0 flex-1">By group</span>
-              {organize === 'group' && <Check className="h-4 w-4 flex-shrink-0" />}
-            </button>
-          </div>
-        )}
+        </div>
       </div>
 
       {nothingToShow ? (

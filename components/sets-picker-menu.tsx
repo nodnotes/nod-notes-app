@@ -1,10 +1,10 @@
 'use client'
 
-// Add-to-set flyout — list of sets + Add set. Not the utility sidebar.
-// Add set leaves the I-bar in the new name; the frame is stored when that edit ends.
+// Add-to-set flyout — list of sets + New set. Not the utility sidebar.
+// New set leaves the I-bar in the new name; the frame is stored when that edit ends.
 
 import { useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { Plus } from 'lucide-react' // Add set
+import { Plus } from 'lucide-react' // New set
 import { createSet, getSets, renameSet, subscribeSets } from '@/lib/sets-list'
 
 /** Rows for the frame menu "Add to set" flyout. */
@@ -44,7 +44,7 @@ export function SetsPickerMenu({ onChoose }: { onChoose: (setId: string) => void
         }}
       >
         <Plus className="h-4 w-4 shrink-0 text-gray-500" />
-        <span>Add set</span>
+        <span>New set</span>
       </button>
       {sets.map((set) =>
         namingId === set.id ? (

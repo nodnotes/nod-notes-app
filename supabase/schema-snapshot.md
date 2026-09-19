@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-19T18:01:41Z`
+- Snapped at: `2026-09-19T19:49:57Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`; versions from `.temp` + Management API list; cli-latest reports `v2.117.0`)
@@ -9,6 +9,14 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260919194957_utility_plus_menus.sql`.
+- **Layers / Sets / Views**: top-left **+** opens **New** (group / set / presentation), **Add to** (selected items into a new header), and **Add to chat** (composer pills, then opens chat). Organize (**In one list** / **By group** · **By set** · **By presentation**) sits in the filter menu under a divider. Filter glyph is blue unless the default view.
+- **Views**: **Capture view** stays at the far right of the + row. An empty presentation shows a borderless **Add or drag captures** row. **+** gaps only sit between captures that already belong to a presentation.
+- **Sets picker**: frame **Add to set** says **New set**.
+- Schema unchanged; remote DDL top remains `20260914104046_notion_multi_workspace`.
+
+## Prior: Utility organize menus and image menu
 
 - DDL: none. Marker `20260919180141_utility_organize_image_menu.sql`.
 - **Layers**: one **+ Group** plus **⋯ Organize layers** (In one list / By group). Folder rows collapse; drop on the row; grouped thumbs indent; filter glyph is blue unless All.
@@ -38,7 +46,7 @@
 ## Prior: Sets, chat prompt glow, upright select
 
 - DDL: none. Marker `20260919033806_sets_add_to_set_chat_prompt_glow.sql`.
-- **Sets**: utility tab label Sets; Add to set on frame / block / text menus opens a picker (list + Add set); the set stores a thumb of the whole frame with the added member washed blue (`lib/sets-list.ts`); map haze stays sharp on click-reveal.
+- **Sets**: utility tab label Sets; Add to set on frame / block / text menus opens a picker (list + New set); the set stores a thumb of the whole frame with the added member washed blue (`lib/sets-list.ts`); map haze stays sharp on click-reveal.
 - **Chat**: sidebar left drop shadow; brand logo fully opaque; opening chat focuses Ask; while the caret is in the prompt the hairline stays and a `--nod-blue` glow sits outside the box.
 - **Select**: upright frames cancel L/R pad with negative margins so the fill does not slide.
 - Schema unchanged; remote DDL top remains `20260914104046_notion_multi_workspace`.

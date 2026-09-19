@@ -24,10 +24,9 @@ import {
 } from '@dnd-kit/sortable' // Vertical list + slide transitions
 import { CSS } from '@dnd-kit/utilities' // Translate while dragging
 import {
-  Check, // Organize menu current row
-  List, // In one list
   ListFilter, // Filter control (dropdown menu chrome)
-  MessageSquare, // Add to chat
+  List, // In one list
+  MessageSquare, // Add to chat — chat mark
   Plus, // Insert capture between rows
   Presentation, // New presentation + section header
   Scan, // Capture view (4 disconnected rounded corners)
@@ -38,6 +37,7 @@ import {
   Trash2, // Delete presentation
 } from 'lucide-react'
 import {
+  UtilityFilterDivider,
   UtilityFilterOption,
   UtilitySearchHeader,
 } from '@/components/utility-search-header' // Sidebar: AI-chat-style search
@@ -79,7 +79,7 @@ import {
 /** How the Capture list is arranged. By presentation is the default. */
 type PresentationOrganize = 'list' | 'presentation'
 
-/** Shared ⋯ chrome — same as the Layers + Group row. */
+/** Shared ⋯ chrome — same as the Layers Add group row. */
 const presentationMoreButtonClass =
   'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-black/[0.06] hover:text-gray-600 dark:hover:bg-white/[0.08] dark:hover:text-gray-200 [@media(hover:hover)]:opacity-0 data-[state=open]:opacity-100'
 
@@ -87,6 +87,16 @@ type CapturesPanelProps = {
   conversationId?: string // Current board — Capture view + this-board filter
   variant?: 'popover' | 'sidebar' // Popover = fixed width; sidebar = fill utility column
   onRequestClose?: () => void // Popover: dismiss after navigate / add-to-chat
+}
+
+/** Icon-only Add to chat: chat mark, small add mark in the corner. */
+function AddToChatIcon() {
+  return (
+    <span className="relative block h-4 w-4 flex-shrink-0">
+      <MessageSquare className="h-4 w-4" /> {/* Chat */}
+      <Plus className="absolute -bottom-px -right-px h-2.5 w-2.5 rounded-full bg-[var(--nod-chat-prompt)]" /> {/* Small add, knocked out of the bubble */}
+    </span>
+  )
 }
 
 /** Hairline between captures: + takes a new capture and inserts at this index. */
@@ -244,21 +254,42 @@ function resolveDropTarget(overId: string, sections: CaptureSectionModel[]) {
   return { sectionId: hit.sectionId, index: hit.index }
 }
 
-/** Empty presentation (or empty loose list) — the drop target under a new header. */
-function EmptySectionDrop({ id, label }: { id: string; label: string }) {
+/** Empty presentation — full-width add/drop row. No label = quiet drop-out for loose captures. */
+function EmptySectionDrop({
+  id,
+  label,
+  onAdd,
+  disabled,
+}: {
+  id: string
+  label?: string // Shown copy; omitted for the unlabeled loose drop
+  onAdd?: () => void // Click captures a view into this presentation
+  disabled?: boolean
+}) {
   const { setNodeRef, isOver } = useDroppable({ id: `section:${id}` }) // Drop → index 0
+  if (!label) {
+    return (
+      <div
+        ref={setNodeRef}
+        className={cn('min-h-2', isOver && 'rounded-md bg-blue-500/10')} // Hit area only; no header
+      />
+    )
+  }
   return (
-    <div
+    <button
+      type="button"
       ref={setNodeRef}
+      disabled={disabled}
       className={cn(
-        'mx-1 my-1 flex min-h-8 items-center justify-center rounded-md border border-dashed px-1 text-center text-[10px] text-gray-400',
-        isOver
-          ? 'border-blue-400 bg-blue-500/10 text-blue-600'
-          : 'border-gray-200 dark:border-white/15'
+        '-ml-1.5 -mr-2 flex min-h-8 w-[calc(100%+0.375rem+0.5rem)] items-center px-3 text-left text-[13px] text-gray-400', // Menu-wide; cancels the list’s pl-1.5 / pr-2
+        'hover:bg-black/[0.04] disabled:pointer-events-none disabled:opacity-40 dark:hover:bg-white/[0.06]',
+        isOver && 'bg-blue-500/10 text-blue-600' // Drop highlight, still no border
       )}
+      onPointerDown={(e) => e.preventDefault()} // Keep the utility menu from stealing the click
+      onClick={onAdd}
     >
       {label}
-    </div>
+    </button>
   )
 }
 
@@ -435,20 +466,20 @@ export function CapturesPanel({
   const [previewId, setPreviewId] = useState<string | null>(null) // Expanded JPEG overlay
   const [capturing, setCapturing] = useState(false) // Capture view in flight
   const [renamingId, setRenamingId] = useState<string | null>(null) // Header whose name is being edited
-  const [organize, setOrganize] = useState<PresentationOrganize>('presentation') // ⋯ menu: one list, or headers
-  const [organizeOpen, setOrganizeOpen] = useState(false) // Organize presentations menu
-  const organizeRef = useRef<HTMLDivElement>(null) // Trigger + menu, so outside clicks can close it
+  const [organize, setOrganize] = useState<PresentationOrganize>('presentation') // Filter menu: one list, or headers
+  const [plusOpen, setPlusOpen] = useState(false) // + menu: New presentation / Add to presentation / Add to chat
+  const plusRef = useRef<HTMLDivElement>(null) // + button and its menu, so outside clicks can close it
   const sidebar = variant === 'sidebar' // Narrow column layout
 
   useEffect(() => {
-    if (!organizeOpen) return
+    if (!plusOpen) return // Listener only while the + menu is up
     const onDown = (event: PointerEvent) => {
-      if (organizeRef.current?.contains(event.target as Node)) return // Trigger and menu stay open
-      setOrganizeOpen(false)
+      if (plusRef.current?.contains(event.target as globalThis.Node)) return // Keep clicks on the menu itself
+      setPlusOpen(false) // Click outside the + closes New presentation / Add to presentation / Add to chat
     }
     window.addEventListener('pointerdown', onDown, true) // Capture so the board does not eat the click first
     return () => window.removeEventListener('pointerdown', onDown, true)
-  }, [organizeOpen])
+  }, [plusOpen])
 
   const items = useMemo(
     () =>
@@ -516,8 +547,18 @@ export function CapturesPanel({
 
   const onNewPresentation = () => {
     setOrganize('presentation') // The new header only shows under By presentation
-    setOrganizeOpen(false)
     const created = createPresentation([]) // Empty header at the top of the list
+    setRenamingId(created.id) // Name it immediately
+  }
+
+  const onAddToPresentation = () => {
+    const ids = items.filter((c) => selected.has(c.id)).map((c) => c.id) // Visual order, not click order
+    if (ids.length === 0) return // Disabled until a capture is selected
+    setOrganize('presentation') // The new header only shows under By presentation
+    const created = createPresentation([]) // Empty header, then the selection moves in
+    ids.forEach((id, index) => {
+      moveCaptureUnderPresentation(id, created.id, index) // Exclusive — leaves any other presentation
+    })
     setRenamingId(created.id) // Name it immediately
   }
 
@@ -545,6 +586,13 @@ export function CapturesPanel({
   }
 
   const selectedIds = () => [...selected]
+
+  const onAddToChat = () => {
+    if (!hasSelection) return // Disabled until a capture is selected
+    attachCapturesToChat(selectedIds()) // Selected captures become composer pills
+    setChatSidebarOpen(true) // Reveal chat so the pills are visible
+    onRequestClose?.() // Popover dismisses; the utility column stays open
+  }
 
   const onListDragEnd = (event: DragEndEvent) => {
     if (!canReorder) return // Search and This board stay put
@@ -589,41 +637,48 @@ export function CapturesPanel({
   const loose = sections.all[sections.all.length - 1] // Captures not under a header
   const nothingToShow = sections.grouped.length === 0 && loose.captures.length === 0
 
-  const renderSectionCaptures = (section: CaptureSectionModel) => (
-    <>
-      {section.captures.length === 0 && canReorder ? (
-        <EmptySectionDrop
-          id={section.id}
-          label={section.presentation ? 'Drag captures here' : 'Not in a presentation'}
-        />
-      ) : (
-        <SortableContext items={section.captures.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-          {section.captures.map((item, index) => (
-            <SortableCaptureRow
-              key={item.id}
-              capture={item}
-              index={index}
-              selected={selected.has(item.id)}
-              conversationId={conversationId}
-              canReorder={canReorder}
-              onToggle={toggleRow}
-              onPreview={setPreviewId}
-              onAddAt={(i) => void captureAt(i, section.presentation?.id ?? null)}
-              onNavigate={onRequestClose}
-            />
-          ))}
-        </SortableContext>
-      )}
-      {canReorder && (
-        <TrailingDrop sectionId={section.id}>
-          <InsertGap
-            onAdd={() => void captureAt(section.captures.length, section.presentation?.id ?? null)}
+  const renderSectionCaptures = (section: CaptureSectionModel) => {
+    const inPresentation = Boolean(section.presentation) // + bars only between captures that belong to a presentation
+    return (
+      <>
+        {section.captures.length === 0 && canReorder ? (
+          <EmptySectionDrop
+            id={section.id}
+            label={inPresentation ? 'Add or drag captures' : undefined} // Loose list has no section title
             disabled={!conversationId || capturing}
+            onAdd={
+              inPresentation
+                ? () => void captureAt(0, section.presentation?.id ?? null) // Add captures into this header
+                : undefined
+            }
           />
-        </TrailingDrop>
-      )}
-    </>
-  )
+        ) : (
+          <SortableContext items={section.captures.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+            {section.captures.map((item, index) => (
+              <SortableCaptureRow
+                key={item.id}
+                capture={item}
+                index={index}
+                selected={selected.has(item.id)}
+                conversationId={conversationId}
+                canReorder={canReorder}
+                showGaps={inPresentation && index > 0} // Between slides only — not before the first, not on loose captures
+                onToggle={toggleRow}
+                onPreview={setPreviewId}
+                onAddAt={(i) => void captureAt(i, section.presentation?.id ?? null)}
+                onNavigate={onRequestClose}
+              />
+            ))}
+          </SortableContext>
+        )}
+        {canReorder && section.captures.length > 0 && (
+          <TrailingDrop sectionId={section.id}>
+            <div className="h-1" /> {/* End stays a drop target — no + bar after the last slide or on an empty presentation */}
+          </TrailingDrop>
+        )}
+      </>
+    )
+  }
 
   return (
     <div
@@ -639,7 +694,7 @@ export function CapturesPanel({
             onQueryChange={setQuery}
             filterOpen={filterOpen}
             onFilterOpenChange={setFilterOpen}
-            filterActive={thisBoardOnly}
+            filterActive={thisBoardOnly || organize !== 'presentation'} // Blue unless every board is showing by presentation
             filterTitle="Filter captures"
             filterMenu={
               <>
@@ -661,83 +716,108 @@ export function CapturesPanel({
                     setFilterOpen(false)
                   }}
                 />
+                <UtilityFilterDivider /> {/* Organize used to live in the ⋯ menu */}
+                <UtilityFilterOption
+                  label="In one list"
+                  icon={<List className="h-4 w-4 flex-shrink-0" />} // Same list mark the ⋯ row used
+                  active={organize === 'list'}
+                  onSelect={() => {
+                    setOrganize('list') // Flat thumbs, no presentation headers
+                    setFilterOpen(false)
+                  }}
+                />
+                <UtilityFilterOption
+                  label="By presentation"
+                  icon={<Presentation className="h-4 w-4 flex-shrink-0" />} // Same presentation mark the ⋯ row used
+                  active={organize === 'presentation'}
+                  onSelect={() => {
+                    setOrganize('presentation') // Headers
+                    setFilterOpen(false)
+                  }}
+                />
               </>
             }
           />
-          <div className="flex flex-shrink-0 flex-col">
-            <div className="flex h-8 flex-shrink-0 items-center px-1.5 pt-2">
-              <button
-                type="button"
-                className="flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-[13px] font-medium text-gray-500 hover:bg-black/[0.06] disabled:opacity-40 dark:text-gray-400 dark:hover:bg-white/[0.08]"
-                title="Capture view"
-                aria-label="Capture view"
-                disabled={!conversationId || capturing}
-                onPointerDown={(e) => e.preventDefault()}
-                onClick={() => void captureAt(null)}
-              >
-                <Scan className="h-4 w-4 flex-shrink-0" /> {/* Same size as the + on Presentation */}
-                Capture view
-              </button>
-            </div>
-            <div ref={organizeRef} className="group/pres-add relative flex h-8 flex-shrink-0 items-center gap-1 px-1.5">
-              <button
-                type="button"
-                className="flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-[13px] font-medium text-gray-500 hover:bg-black/[0.06] dark:text-gray-400 dark:hover:bg-white/[0.08]"
-                title="New presentation"
-                aria-label="New presentation"
-                onPointerDown={(e) => e.preventDefault()}
-                onClick={onNewPresentation}
-              >
-                <Plus className="h-4 w-4 flex-shrink-0" /> {/* Same hit target as the word */}
-                Presentation
-              </button>
+          <div className="flex h-8 flex-shrink-0 items-center gap-1 px-1.5 pt-2">
+            <div ref={plusRef} className="relative flex-shrink-0"> {/* Top left — same + menu as Layers */}
               <button
                 type="button"
                 className={cn(
-                  presentationMoreButtonClass,
-                  'ml-auto [@media(hover:hover)]:group-hover/pres-add:opacity-100',
-                  organizeOpen && 'opacity-100'
+                  'flex h-7 w-7 items-center justify-center rounded-md text-gray-500 hover:bg-black/[0.06] hover:text-gray-900 dark:text-gray-400 dark:hover:bg-white/[0.08] dark:hover:text-gray-100',
+                  plusOpen && 'bg-black/[0.06] text-gray-900 dark:bg-white/[0.08] dark:text-gray-100' // Stay marked while the menu is open
                 )}
-                title="Organize presentations"
-                aria-label="Organize presentations"
-                aria-expanded={organizeOpen}
+                title="Add"
+                aria-label="New presentation, add to presentation, or add to chat"
+                aria-expanded={plusOpen}
+                aria-haspopup="menu"
                 onPointerDown={(e) => e.preventDefault()}
-                onClick={() => setOrganizeOpen((open) => !open)}
+                onClick={() => setPlusOpen((open) => !open)}
               >
-                <MoreHorizontal className="h-4 w-4" /> {/* Far right of + Presentation */}
+                <Plus className="h-4 w-4" /> {/* Opens New presentation, Add to presentation, and Add to chat */}
               </button>
-              {organizeOpen && (
-                <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-gray-200 bg-white py-1.5 shadow-lg dark:border-[#2f2f2f] dark:bg-[#171717]">
-                  <p className="px-3 pb-1 pt-1 text-xs text-gray-400">Organize presentations</p>
+              {plusOpen && (
+                <div
+                  role="menu"
+                  className="absolute left-0 top-full z-50 mt-0.5 min-w-[12.5rem] overflow-hidden rounded-md border border-gray-200 bg-white py-1 shadow-md dark:border-[#2f2f2f] dark:bg-[#171717]"
+                >
                   <button
                     type="button"
-                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-900 hover:bg-black/[0.04] dark:text-gray-100 dark:hover:bg-white/[0.06]"
+                    role="menuitem"
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-gray-900 hover:bg-[var(--nod-tab-hover)] dark:text-gray-100"
+                    title="New presentation"
                     onPointerDown={(e) => e.preventDefault()}
                     onClick={() => {
-                      setOrganize('list') // Flat thumbs, no presentation headers
-                      setOrganizeOpen(false)
+                      onNewPresentation() // Empty header, named immediately
+                      setPlusOpen(false)
                     }}
                   >
-                    <List className="h-4 w-4 flex-shrink-0" />
-                    <span className="min-w-0 flex-1">In one list</span>
-                    {organize === 'list' && <Check className="h-4 w-4 flex-shrink-0" />}
+                    <Plus className="h-4 w-4 flex-shrink-0" />
+                    <span className="flex-1">New presentation</span>
                   </button>
                   <button
                     type="button"
-                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-900 hover:bg-black/[0.04] dark:text-gray-100 dark:hover:bg-white/[0.06]"
+                    role="menuitem"
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-gray-900 hover:bg-[var(--nod-tab-hover)] disabled:opacity-40 dark:text-gray-100"
+                    title="Add to presentation"
+                    disabled={!hasSelection} // Needs a selected capture
                     onPointerDown={(e) => e.preventDefault()}
                     onClick={() => {
-                      setOrganize('presentation') // Headers under + Presentation
-                      setOrganizeOpen(false)
+                      onAddToPresentation() // Selected captures into a new header
+                      setPlusOpen(false)
                     }}
                   >
-                    <Presentation className="h-4 w-4 flex-shrink-0" />
-                    <span className="min-w-0 flex-1">By presentation</span>
-                    {organize === 'presentation' && <Check className="h-4 w-4 flex-shrink-0" />}
+                    <PresentationIcon className="h-4 w-4 flex-shrink-0" /> {/* Same mark as the header */}
+                    <span className="flex-1">Add to presentation</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-gray-900 hover:bg-[var(--nod-tab-hover)] disabled:opacity-40 dark:text-gray-100"
+                    title="Add to chat"
+                    disabled={!hasSelection} // Needs a selected capture
+                    onPointerDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      onAddToChat() // Selected captures become composer pills, then chat opens
+                      setPlusOpen(false)
+                    }}
+                  >
+                    <AddToChatIcon /> {/* Same chat-plus mark Layers uses */}
+                    <span className="flex-1">Add to chat</span>
                   </button>
                 </div>
               )}
             </div>
+            <button
+              type="button"
+              className="ml-auto flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-gray-500 hover:bg-black/[0.06] hover:text-gray-900 disabled:opacity-40 dark:text-gray-400 dark:hover:bg-white/[0.08] dark:hover:text-gray-100"
+              title="Capture view"
+              aria-label="Capture view"
+              disabled={!conversationId || capturing} // Needs a board, and not a capture already in flight
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => void captureAt(null)} // Snapshot the current view
+            >
+              <Scan className="h-4 w-4" /> {/* Far right of the + — words don't fit this column */}
+            </button>
           </div>
         </>
       ) : (
@@ -807,15 +887,29 @@ export function CapturesPanel({
           </div>
           <button
             type="button"
-            className="flex h-8 flex-shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-40 dark:text-gray-200 dark:hover:bg-white/[0.06]"
+            className="flex h-8 flex-shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-2 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-40 dark:text-gray-200 dark:hover:bg-white/[0.06]"
             title="Capture view"
             aria-label="Capture view"
             disabled={!conversationId || capturing}
             onPointerDown={(e) => e.preventDefault()}
             onClick={() => void captureAt(null)}
           >
-            <Scan className="h-3.5 w-3.5" />
             Capture view
+            <Scan className="h-3.5 w-3.5" /> {/* Just right of the words */}
+          </button>
+          <button
+            type="button"
+            className={cn(
+              'flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-gray-700 hover:bg-gray-100 disabled:opacity-40 dark:text-gray-200 dark:hover:bg-white/[0.06]',
+              !hasSelection && 'pointer-events-none' // Stay visible but inert until a row is selected
+            )}
+            title="Add to chat"
+            aria-label="Add to chat"
+            disabled={!hasSelection}
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={onAddToChat}
+          >
+            <AddToChatIcon /> {/* Far right of Capture view — icon only */}
           </button>
         </div>
       )}
@@ -865,29 +959,23 @@ export function CapturesPanel({
                     onDelete={() => deletePresentation(section.id)}
                   />
                 )}
-                <div className={section.presentation && !section.presentation.collapsed ? 'pl-7' : undefined}>
+                <div
+                  className={
+                    section.presentation && !section.presentation.collapsed && section.captures.length > 0
+                      ? 'pl-7' // Thumbs indent; an empty “Add or drag” row stays menu-wide
+                      : undefined
+                  }
+                >
                   {section.presentation && section.presentation.collapsed ? null : renderSectionCaptures(section)}
                 </div>
               </div>
             ))}
-            {/* Loose captures sit under every header so they can be dragged up into one, or out of one */}
-            {(loose.captures.length > 0 || (sections.grouped.length > 0 && items.length > 0)) && (
-              <div>
-                {sections.grouped.length > 0 && loose.captures.length > 0 && (
-                  <div className="mt-2 px-1.5 pb-0.5 text-[10px] font-medium text-gray-400">
-                    Not in a presentation
-                  </div>
-                )}
-                {renderSectionCaptures(loose)}
-              </div>
-            )}
+            {/* Loose captures sit under every header with no section title, so they can still be dragged into one */}
+            {(loose.captures.length > 0 || (sections.grouped.length > 0 && items.length > 0)) &&
+              renderSectionCaptures(loose)}
           </DndContext>
         )}
 
-        {/* Empty list still gets a trailing + so the first capture can land here */}
-        {nothingToShow && canReorder && conversationId && (
-          <InsertGap onAdd={() => void captureAt(0)} disabled={capturing} />
-        )}
       </div>
 
       {previewItem?.imageDataUrl && (
@@ -913,34 +1001,6 @@ export function CapturesPanel({
         </button>
       )}
 
-      <div
-        className={cn(
-          'flex flex-shrink-0 items-center gap-1 border-t border-gray-100 px-2 py-2 dark:border-white/10',
-          sidebar ? 'flex-col' : 'justify-between'
-        )}
-      >
-        <button
-          type="button"
-          className={cn(
-            'flex h-8 items-center gap-1 rounded-md px-2 text-sm font-medium',
-            sidebar && 'w-full justify-center',
-            hasSelection
-              ? 'text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-white/[0.06]'
-              : 'pointer-events-none opacity-40'
-          )}
-          disabled={!hasSelection}
-          onPointerDown={(e) => e.preventDefault()}
-          onClick={() => {
-            if (!hasSelection) return
-            attachCapturesToChat(selectedIds())
-            setChatSidebarOpen(true)
-            onRequestClose?.()
-          }}
-        >
-          <MessageSquare className="h-3.5 w-3.5" />
-          Add to chat
-        </button>
-      </div>
     </div>
   )
 }

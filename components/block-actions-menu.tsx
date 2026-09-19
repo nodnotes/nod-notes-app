@@ -83,7 +83,7 @@ import {
   frameShapeLabel,
   type FrameShapeChoice,
 } from '@/lib/frame-shape' // Frame-as-shape picker values
-import { SetsPickerMenu } from '@/components/sets-picker-menu' // Add to set flyout — list + Add set
+import { SetsPickerMenu } from '@/components/sets-picker-menu' // Add to set flyout — list + New set
 
 type FrameColorKind = 'fill' | 'border' // Which chrome channel a last-used / pick targets
 
@@ -725,7 +725,7 @@ export function BlockActionsMenu({
         id: 'addToSet',
         label: 'Add to set',
         icon: <SquareStack className="h-4 w-4" />,
-        submenu: 'sets', // Picker of sets + Add set — not the utility sidebar
+        submenu: 'sets', // Picker of sets + New set — not the utility sidebar
         hidden: !onAddToSet, // Frame menu passes a commit; block and text menus omit it
       },
       {
@@ -1245,7 +1245,7 @@ export function BlockActionsMenu({
         ))}
       </div>
 
-      {/* Add to set — list of sets + Add set. Separate from the Sets utility sidebar. */}
+      {/* Add to set — list of sets + New set. Separate from the Sets utility sidebar. */}
       {openSubmenu === 'sets' && onAddToSet && (
         <div
           data-tt-menu-flyout="main"

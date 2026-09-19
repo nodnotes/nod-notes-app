@@ -27,6 +27,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260919194957_utility_plus_menus` — Layers/Sets/Views + menus (New / Add to / Add to chat); organize in the filter menu; Capture view stays right
 - `20260919180141_utility_organize_image_menu` — Layers/Sets/Views organize menus (list vs grouped, collapse); image hover pill collapses to More; full image menu
 - `20260919062104_layers_groups_board_menu_frost` — Layers + Group headers (drag in, rename, Delete returns members); board menu frosted and portaled above the welcome overlay; empty-board brand slides off open menus
 - `20260919055728_present_mode_capture_headers_layers_filter` — Present hides chrome (Escape exits); capture presentation headers; set glow; Layers All/touching/selected; board font no reload flash
