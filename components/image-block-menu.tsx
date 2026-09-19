@@ -326,7 +326,7 @@ export function ImageBlockMenu({
 
   return createPortal(
     <div
-      ref={rootRef}
+      ref={rootRef as LegacyRef<HTMLDivElement>} // useRef(null) is RefObject<T | null>; div ref still wants LegacyRef
       tabIndex={-1}
       data-tt-image-menu
       className="fixed z-[1002] w-[300px] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1 outline-none"
@@ -346,7 +346,7 @@ export function ImageBlockMenu({
     >
       <div className="px-1.5 pt-1 pb-1">
         <input
-          ref={searchRef}
+          ref={searchRef as LegacyRef<HTMLInputElement>} // useRef(null) is RefObject<T | null>; input ref still wants LegacyRef
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search actions..."
