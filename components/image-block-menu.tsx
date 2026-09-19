@@ -9,6 +9,7 @@ import {
   useState,
   type CSSProperties,
   type ReactNode,
+  type LegacyRef,
   type RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
@@ -155,7 +156,7 @@ export function ImageBlockHoverToolbar({
 
   return (
     <div
-      ref={toolbarRef}
+      ref={toolbarRef as LegacyRef<HTMLDivElement> | undefined} // useRef(null) is RefObject<T | null>; div ref still wants LegacyRef
       data-tt-image-menu
       data-tt-image-hover-toolbar
       className="tt-image-block-hover-toolbar nodrag nopan absolute right-1 top-1 z-[2]"
