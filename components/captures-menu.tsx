@@ -758,12 +758,12 @@ export function CapturesPanel({
               {plusOpen && (
                 <div
                   role="menu"
-                  className="absolute left-0 top-full z-50 mt-0.5 min-w-[12.5rem] overflow-hidden rounded-md border border-gray-200 bg-white py-1 shadow-md dark:border-[#2f2f2f] dark:bg-[#171717]"
+                  className="absolute left-0 top-full z-50 mt-0.5 min-w-[12.5rem] overflow-hidden rounded-md border border-gray-200 bg-[var(--nod-chat-prompt)] py-1 shadow-md dark:border-[#2f2f2f]" // Same chrome grey as the utility body
                 >
                   <button
                     type="button"
                     role="menuitem"
-                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-gray-900 hover:bg-[var(--nod-tab-hover)] dark:text-gray-100"
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-gray-900 hover:bg-[var(--nod-on-chrome)] dark:text-gray-100"
                     title="New presentation"
                     onPointerDown={(e) => e.preventDefault()}
                     onClick={() => {
@@ -777,7 +777,7 @@ export function CapturesPanel({
                   <button
                     type="button"
                     role="menuitem"
-                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-gray-900 hover:bg-[var(--nod-tab-hover)] disabled:opacity-40 dark:text-gray-100"
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-gray-900 hover:bg-[var(--nod-on-chrome)] disabled:opacity-40 dark:text-gray-100"
                     title="Add to presentation"
                     disabled={!hasSelection} // Needs a selected capture
                     onPointerDown={(e) => e.preventDefault()}
@@ -792,7 +792,7 @@ export function CapturesPanel({
                   <button
                     type="button"
                     role="menuitem"
-                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-gray-900 hover:bg-[var(--nod-tab-hover)] disabled:opacity-40 dark:text-gray-100"
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-gray-900 hover:bg-[var(--nod-on-chrome)] disabled:opacity-40 dark:text-gray-100"
                     title="Add to chat"
                     disabled={!hasSelection} // Needs a selected capture
                     onPointerDown={(e) => e.preventDefault()}

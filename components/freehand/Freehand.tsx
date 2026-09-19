@@ -22,6 +22,14 @@ import {
   isCanvasNodeErased, // Skip / undo late inserts after erase
   removeFailedSave, // Shared with erase-persist tombstones
 } from './erase-persist'
+import { useQueryClient } from '@tanstack/react-query' // Cache the converted shape/line so reload doesn’t drop it
+import {
+  clusterOrigin, // Where a recognized word should sit
+  recognizeCluster, // Shape / line / text for one burst of strokes
+  strokeGap, // Split a burst when the next stroke is far away
+} from '@/lib/smart-draw/recognize'
+import { recognizeInkText } from '@/lib/smart-draw/text' // OS handwriting API, then Tesseract
+import { opaqueInkHex, saveSmartCanvasNode } from '@/lib/smart-draw/save-node'
 
 export { removeFailedSave } from './erase-persist' // Board-flow erase + undo callers
 
@@ -166,7 +174,7 @@ export async function retryFailedSaves(conversationId: string) {
             id: item.node.id,
             conversation_id: item.conversationId,
             user_id: user.id,
-            node_type: 'freehand',
+            node_type: item.node.type === 'shape' ? 'shape' : 'freehand', // Smart Draw retries keep shape vs ink
             position_x: item.node.position.x,
             position_y: item.node.position.y,
             width: item.node.width,
@@ -218,15 +226,26 @@ export async function retryFailedSaves(conversationId: string) {
 // Freehand component - overlay that captures drawing strokes
 // Creates freehand nodes when user draws on the canvas
 // onBeforeCreate: Optional callback to trigger before creating a node (for undo/redo snapshot)
-export function Freehand({ conversationId, onBeforeCreate }: { conversationId?: string; onBeforeCreate?: () => void }) {
+const SMART_DRAW_PAUSE_MS = 700 // Group lifts of the pen (a letter, a box) before converting
+
+export function Freehand({
+  conversationId,
+  onBeforeCreate,
+  onSmartText,
+}: {
+  conversationId?: string
+  onBeforeCreate?: () => void
+  onSmartText?: (text: string, x: number, y: number) => void // Replace ink with a frame
+}) {
   // Get React Flow instance functions for coordinate conversion and node management
-  const { screenToFlowPosition, flowToScreenPosition, setNodes, setEdges } = useReactFlow<
+  const { screenToFlowPosition, flowToScreenPosition, setNodes, setEdges, getNodes } = useReactFlow<
     FreehandNodeType,
     Edge
   >();
+  const queryClient = useQueryClient() // Shape/line rows join the canvas-nodes cache
   const store = useStoreApi() // panBy lives on the RF store (same as thread connect auto-pan)
-  const { setDrawTool, setIsDrawing, drawTool, drawTipSize, drawTipZoomLocked, pencilColor, highlighterColor } =
-    useReactFlowContext() // Click-select disarms ink; tip + color from Draw bar
+  const { setDrawTool, setIsDrawing, drawTool, drawTipSize, drawTipZoomLocked, pencilColor, highlighterColor, smartDraw } =
+    useReactFlowContext() // Click-select disarms ink; tip + color from Draw bar; Smart converts strokes
   // Pen menu translucent swatches (red/yellow markers) paint as highlighters while tool stays Pen
   const rawInk = drawTool === 'highlighter' ? highlighterColor : pencilColor
   const strokeColor = resolveStrokeHex(drawTool === 'highlighter' ? 'highlighter' : 'pencil', rawInk) // Hex (+ alpha) from swatch
@@ -246,6 +265,51 @@ export function Freehand({ conversationId, onBeforeCreate }: { conversationId?: 
   const tipPx = drawTipSize || DRAW_TIP_DIAMETER_PX // Thickness bar value
   const brushDiameterPx = resolveBrushScreenDiameterPx(inkKind, tipPx, zoom, drawTipZoomLocked) // Screen ring
   const strokeSize = resolveStrokeSizeFromZoom(inkKind, tipPx, zoom, drawTipZoomLocked) // Flow width for commit + getStroke
+  const queryClientRef = useRef(queryClient) // Flush timer must not close over a stale client
+  queryClientRef.current = queryClient
+  const smartDrawRef = useRef(smartDraw) // Pause timer reads the toggle at fire time, not at stroke start
+  smartDrawRef.current = smartDraw
+  const onSmartTextRef = useRef(onSmartText)
+  onSmartTextRef.current = onSmartText
+  const conversationIdRef = useRef(conversationId)
+  conversationIdRef.current = conversationId
+  const pendingSmartRef = useRef<Array<{
+    id: string
+    points: Points
+    strokeSize: number
+    strokeColor: string
+    inkKind: FreehandInkKind
+    position: { x: number; y: number }
+    width: number
+    height: number
+    data: FreehandNodeType['data']
+  }>>([]) // Strokes waiting out the pause before convert-or-keep
+  const smartTimerRef = useRef(0) // setTimeout id for the burst
+  const flushSmartRef = useRef<() => Promise<void>>(async () => {}) // Latest flush, so the timer isn’t stale
+
+  useEffect(() => {
+    if (smartDraw) return // On: the pause timer owns the burst
+    window.clearTimeout(smartTimerRef.current)
+    void flushSmartRef.current() // Off: keep the ink, just persist it
+  }, [smartDraw])
+
+  useEffect(() => {
+    return () => {
+      window.clearTimeout(smartTimerRef.current) // Don’t convert after the overlay is gone
+      const batch = pendingSmartRef.current.splice(0)
+      for (const item of batch) {
+        void saveSmartCanvasNode(conversationIdRef.current, {
+          id: item.id,
+          nodeType: 'freehand',
+          x: item.position.x,
+          y: item.position.y,
+          width: item.width,
+          height: item.height,
+          data: item.data,
+        }, queryClientRef.current) // Unmount: save the drawing as ink so it isn’t lost
+      }
+    }
+  }, [])
 
   /** RF pane box used for edge inset + overlay-local preview math. */
   function flowPaneRect(): DOMRect | null {
@@ -423,6 +487,158 @@ export function Freehand({ conversationId, onBeforeCreate }: { conversationId?: 
     if (!strokeActiveRef.current) setCursor(null)
   }
 
+  /** Write a waiting stroke to canvas_nodes as the ink the user actually drew. */
+  async function persistSmartInk(items: typeof pendingSmartRef.current) {
+    for (const item of items) {
+      await saveSmartCanvasNode(conversationIdRef.current, {
+        id: item.id,
+        nodeType: 'freehand',
+        x: item.position.x,
+        y: item.position.y,
+        width: item.width,
+        height: item.height,
+        data: item.data,
+      }, queryClientRef.current)
+    }
+  }
+
+  /** After the pause: shape, straight line, text frame, or leave the drawing. */
+  async function flushSmart() {
+    const batch = pendingSmartRef.current.splice(0) // Take the burst so a new stroke starts a new one
+    if (batch.length === 0) return
+    const live = new Set(getNodes().map((n) => n.id))
+    const strokes = batch.filter((s) => live.has(s.id)) // Undo during the pause drops the node
+    if (strokes.length === 0) return
+    if (!smartDrawRef.current) {
+      await persistSmartInk(strokes) // Toggle turned off — don’t convert
+      return
+    }
+    const result = recognizeCluster(strokes.map((s) => s.points))
+    if (result.kind === 'shape') {
+      const ink = strokes[0]
+      const hex = opaqueInkHex(ink.strokeColor) // Shape fill matches the pen
+      const id = generateUUID()
+      const weight = Math.min(8, Math.max(2, Math.round(ink.strokeSize)))
+      const data = { type: result.shape, color: hex, fillColor: hex, borderColor: hex, borderWeight: weight }
+      const drop = new Set(strokes.map((s) => s.id))
+      setNodes((nds: any[]) => [
+        ...nds.filter((n) => !drop.has(n.id)),
+        {
+          id,
+          type: 'shape',
+          position: { x: result.x, y: result.y },
+          width: result.width,
+          height: result.height,
+          style: { width: result.width, height: result.height },
+          data,
+          selectable: true,
+          draggable: true,
+        },
+      ])
+      await saveSmartCanvasNode(conversationIdRef.current, {
+        id,
+        nodeType: 'shape',
+        x: result.x,
+        y: result.y,
+        width: result.width,
+        height: result.height,
+        data,
+      }, queryClientRef.current)
+      return
+    }
+    if (result.kind === 'line' || result.kind === 'lines') {
+      const polylines = result.kind === 'line' ? [result.points] : result.strokes
+      for (let i = 0; i < strokes.length; i++) {
+        const item = strokes[i]
+        const pts = polylines[i]
+        if (!item || !pts || pts.length < 2) continue
+        const laid = processFlowPoints(pts, item.strokeSize) // Straight (or arrow) samples in node space
+        const data = { ...laid.data, inkKind: item.inkKind, strokeColor: item.strokeColor }
+        setNodes((nds: any[]) =>
+          nds.map((n) =>
+            n.id === item.id
+              ? {
+                  ...n,
+                  position: laid.position,
+                  width: laid.width,
+                  height: laid.height,
+                  style: { width: laid.width, height: laid.height },
+                  data,
+                }
+              : n,
+          ),
+        )
+        await saveSmartCanvasNode(conversationIdRef.current, {
+          id: item.id,
+          nodeType: 'freehand',
+          x: laid.position.x,
+          y: laid.position.y,
+          width: laid.width,
+          height: laid.height,
+          data,
+        }, queryClientRef.current)
+      }
+      return
+    }
+    if (result.kind === 'text') {
+      const text = await recognizeInkText(strokes.map((s) => s.points))
+      if (text) {
+        const drop = new Set(strokes.map((s) => s.id))
+        const origin = clusterOrigin(strokes.map((s) => s.points))
+        setNodes((nds: any[]) => nds.filter((n) => !drop.has(n.id)))
+        onSmartTextRef.current?.(text, origin.x, origin.y) // Frame replaces the handwriting
+        return
+      }
+    }
+    await persistSmartInk(strokes) // Not close enough — keep the drawing
+  }
+  flushSmartRef.current = flushSmart
+
+  /** Hold the stroke as ink, then let the pause decide what it becomes. */
+  function enqueueSmartStroke(finalPoints: Points) {
+    if (onBeforeCreate) onBeforeCreate() // Undo snapshot before the ink node exists
+    const copy: Points = finalPoints.map((p) => [p[0], p[1], p[2] ?? 1])
+    if (pendingSmartRef.current.length > 0) {
+      const prev = pendingSmartRef.current.flatMap((s) => s.points)
+      if (strokeGap(prev, copy) > 90) {
+        window.clearTimeout(smartTimerRef.current)
+        void flushSmartRef.current() // Far from the last burst — convert that one now
+      }
+    }
+    const laid = processFlowPoints(copy, strokeSize)
+    const nodeId = generateUUID()
+    const data = { ...laid.data, inkKind, strokeColor }
+    setNodes((nodes: any[]) => [
+      ...nodes,
+      {
+        id: nodeId,
+        type: 'freehand',
+        position: laid.position,
+        width: laid.width,
+        height: laid.height,
+        style: { width: laid.width, height: laid.height },
+        data,
+        selectable: true,
+        draggable: true,
+      },
+    ])
+    pendingSmartRef.current.push({
+      id: nodeId,
+      points: copy,
+      strokeSize,
+      strokeColor,
+      inkKind,
+      position: laid.position,
+      width: laid.width,
+      height: laid.height,
+      data,
+    })
+    window.clearTimeout(smartTimerRef.current)
+    smartTimerRef.current = window.setTimeout(() => {
+      void flushSmartRef.current()
+    }, SMART_DRAW_PAUSE_MS)
+  }
+
   // Handle pointer up - finish stroke and create freehand node (or click-select a hit node)
   function handlePointerUp(e: PointerEvent) {
     try {
@@ -461,6 +677,25 @@ export function Freehand({ conversationId, onBeforeCreate }: { conversationId?: 
         return
       }
       // Empty board click — keep finalPoints and continue as a normal stroke commit (dot blot)
+    }
+
+    // Smart Draw: hold pencil ink, then snap to a shape / line / text if it resembles one
+    if (smartDraw && inkKind === 'pencil' && finalPoints.length >= 3) {
+      let minX = Infinity
+      let minY = Infinity
+      let maxX = -Infinity
+      let maxY = -Infinity
+      for (const [x, y] of finalPoints) {
+        if (x < minX) minX = x
+        if (y < minY) minY = y
+        if (x > maxX) maxX = x
+        if (y > maxY) maxY = y
+      }
+      if (Math.hypot(maxX - minX, maxY - minY) >= 12) {
+        enqueueSmartStroke(finalPoints) // Dot blots skip this and save immediately below
+        clearStroke()
+        return
+      }
     }
 
     // Process already-flow samples (bbox padding matches the armed thickness)

@@ -53,6 +53,7 @@ import {
   PaintBucket,
   LassoSelect,
   Eraser,
+  Wand2, // Smart Draw — convert a stroke that looks like a shape, line, or text
   GripVertical,
   GripHorizontal,
   Check,
@@ -331,7 +332,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
   const hideShareMore = isMobileMode && isUtilitySidebarOpen // Phone: Share + More yield the right edge to the overlay
   const { toolsHost, undoHost, phoneTools, setPhoneTools, setShareCompact } = usePhoneModeMenu() // Pill + share/AI→More before tools leave
   const { hasAiContent, aiTopBarPinned } = useAiEditSession() // Pinned sparkles fold with shareCompact
-  const { reactFlowInstance, isLocked, lineStyle: verticalLineStyle, setLineStyle: setVerticalLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, isDrawing, setIsDrawing, drawTool: contextDrawTool, setDrawTool: setContextDrawTool, eraserMode, setEraserMode, drawTipSize, setDrawTipSize, drawTipZoomLocked, setDrawTipZoomLocked, eraserTipSize, setEraserTipSize, eraserTipZoomLocked, setEraserTipZoomLocked, pencilPalette, pencilColorIndex, setPencilColorIndex, setPencilColorAt, addPencilColor, removePencilColor, mapUndo, mapRedo, canMapUndo, canMapRedo, getMapTakeSnapshot, getSetNodes } = useReactFlowContext()
+  const { reactFlowInstance, isLocked, lineStyle: verticalLineStyle, setLineStyle: setVerticalLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, isDrawing, setIsDrawing, drawTool: contextDrawTool, setDrawTool: setContextDrawTool, smartDraw, setSmartDraw, eraserMode, setEraserMode, drawTipSize, setDrawTipSize, drawTipZoomLocked, setDrawTipZoomLocked, eraserTipSize, setEraserTipSize, eraserTipZoomLocked, setEraserTipZoomLocked, pencilPalette, pencilColorIndex, setPencilColorIndex, setPencilColorAt, addPencilColor, removePencilColor, mapUndo, mapRedo, canMapUndo, canMapRedo, getMapTakeSnapshot, getSetNodes } = useReactFlowContext()
   const queryClientForAi = useQueryClient() // Turn into board list + conversations invalidate
   // Board rule/style live in top-bar More (BoardTopBarShare), not the View toolbar
   const { resolvedTheme } = useTheme() // Get theme for panel-matching opacity values
@@ -1395,7 +1396,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
         : editMenuPillMode === 'draw'
           ? [
             { id: 'drawGroup1', width: 108 }, // Lasso + insert-space — rightmost, hide first
-            { id: 'drawGroup3', width: 28 }, // Pen icon only (highlighter icon)
+            { id: 'drawGroup3', width: 28 + 4 + 28 }, // Pen + Smart icons
             { id: 'drawGroup2', width: 28 + 4 + 5 }, // Eraser icon + slash after ink cluster
             { id: 'undoRedo', width: 70 },
           ]
@@ -1417,7 +1418,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
         : editMenuPillMode === 'draw'
           ? [
             { id: 'drawGroup1', width: titledToolWidth('Lasso') + 4 + titledToolWidth('V-space') + 4 + titledToolWidth('H-space') + 16 }, // Rightmost
-            { id: 'drawGroup3', width: 28 }, // Pen title already collapsed
+            { id: 'drawGroup3', width: 28 + 4 + 28 }, // Pen + Smart, titles already collapsed
             { id: 'drawGroup2', width: 28 + 4 + 5 }, // Eraser + slash after ink cluster
             { id: 'undoRedo', width: 70 },
           ]
@@ -1434,7 +1435,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
         : editMenuPillMode === 'draw'
           ? [
             { id: 'drawGroup1', width: titledToolWidth('Lasso') + 4 + titledToolWidth('V-space') + 4 + titledToolWidth('H-space') + 16 }, // Rightmost
-            { id: 'drawGroup3', width: titledToolWidth('Pen') }, // Pen only (uses highlighter icon)
+            { id: 'drawGroup3', width: titledToolWidth('Pen') + 4 + titledToolWidth('Smart') }, // Pen + Smart toggle
             { id: 'drawGroup2', width: titledToolWidth('Eraser') + 4 + 5 }, // Eraser + slash after ink cluster
             { id: 'undoRedo', width: 70 },
           ]
@@ -2026,7 +2027,8 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                     </DropdownMenu>
                   )}
                   {!isItemHidden('drawGroup3') && (
-                    /* Freehand: first click arms draw; click again opens ink menu; click while open closes */
+                    <>
+                    {/* Freehand: first click arms draw; click again opens ink menu; click while open closes */}
                     <DropdownMenu
                       modal={false}
                       open={openDropdown === 'pencilColor'}
@@ -2107,6 +2109,26 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                         </div>
                       </DropdownMenuContent>
                     </DropdownMenu>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={(e) => {
+                        setSmartDraw(!smartDraw) // On: later pen strokes may become a shape, line, or text
+                        e.currentTarget.blur() // Armed wash, not a focus ring
+                      }}
+                      className={cn(
+                        'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center border border-transparent',
+                        'transition-[padding,gap] duration-200 ease-out', compactEarlyLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5',
+                        smartDraw
+                          ? 'bg-gray-100 dark:bg-gray-800 shadow-sm border-black/10 dark:border-white/10' // On: same wash as an armed Draw tool
+                          : 'hover:bg-gray-100 dark:hover:bg-gray-800'
+                      )}
+                      title={smartDraw ? 'Smart draw on — strokes become shapes, lines, or text' : 'Smart draw'}
+                    >
+                      <Wand2 className="h-4 w-4 flex-shrink-0" />
+                      <ToolbarTitle show={!compactEarlyLabels}>Smart</ToolbarTitle>
+                    </Button>
+                    </>
                   )}
                 </div>
                 <span className="flex h-7 items-center text-2xl font-thin text-gray-300 dark:text-gray-500 mx-1 flex-shrink-0 select-none leading-none" aria-hidden>/</span>
@@ -3188,6 +3210,14 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                         </div>
                       </DropdownMenuSubContent>
                     </DropdownMenuSub>
+                    <DropdownMenuItem
+                      onClick={() => setSmartDraw(!smartDraw)} // Same toggle as the bar button
+                      className={smartDraw ? 'bg-gray-100 dark:bg-gray-800' : ''}
+                    >
+                      <Wand2 className="h-4 w-4 mr-2" />
+                      Smart
+                      <Check className={cn('h-4 w-4 ml-auto', smartDraw ? 'opacity-100' : 'opacity-0')} />
+                    </DropdownMenuItem>
                     <DropdownMenuSeparator />
                   </>
                 )}

@@ -34,8 +34,8 @@ export function UtilitySearchHeader({
 }: UtilitySearchHeaderProps) {
   return (
     <div className="flex-shrink-0">
-      {/* pl-1.5 + left-1.5: search glyph lines up with the Layers + / New set / New presentation; pr-1: filter glyph lines up with the row ⋯ */}
-      <div className="pl-1.5 pr-1 pt-2 pb-2">
+      {/* pl-1.5 + left-1.5: search glyph lines up with the Layers + / New set / New presentation; pr-1.5: filter glyph center lines up with the header ⋯ (h-7 in the pr-2 list) */}
+      <div className="pl-1.5 pr-1.5 pt-2 pb-2">
         <div className="flex items-center gap-2">
           <div className="relative flex-1 min-w-0">
             <Search className="pointer-events-none absolute left-1.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
@@ -77,7 +77,7 @@ export function UtilitySearchHeader({
               />
             </Button>
             {filterOpen && filterMenu ? (
-              <div className="absolute right-0 top-full z-50 mt-0.5 min-w-[9.5rem] overflow-hidden rounded-md border border-gray-200 bg-white py-1 shadow-md dark:border-[#2f2f2f] dark:bg-[#171717]">
+              <div className="absolute right-0 top-full z-50 mt-0.5 min-w-[9.5rem] overflow-hidden rounded-md border border-gray-200 bg-[var(--nod-chat-prompt)] py-1 shadow-md dark:border-[#2f2f2f]"> {/* Same chrome grey as the utility body */}
                 {filterMenu}
               </div>
             ) : null}
@@ -113,7 +113,7 @@ export function UtilityFilterOption({
       type="button"
       disabled={disabled}
       className={cn(
-        'flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-[var(--nod-tab-hover)] disabled:opacity-40',
+        'flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-[var(--nod-on-chrome)] disabled:opacity-40', // Wash darker than the utility grey so the row still reads
         active && 'font-medium text-gray-900 dark:text-gray-100'
       )}
       onPointerDown={(e) => e.preventDefault()}

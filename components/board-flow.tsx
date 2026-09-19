@@ -10919,7 +10919,17 @@ function BoardFlowInner({
 
         {/* Freehand drawing overlay — pencil + highlighter both capture strokes */}
         {previewLive && isDrawing && (drawTool === 'pencil' || drawTool === 'highlighter') && (
-          <Freehand conversationId={conversationId} onBeforeCreate={takeSnapshot} />
+          <Freehand
+            conversationId={conversationId}
+            onBeforeCreate={takeSnapshot}
+            onSmartText={(text, x, y) => {
+              const safe = text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;') // Frame HTML must not treat the word as markup
+              void createBlockAtFlowPosition(x, y, { html: `<p>${safe}</p>` })
+            }}
+          />
         )}
         {/* Eraser overlay — stroke deletes whole ink; spot carves under the brush */}
         {previewLive && eraserArmed && (

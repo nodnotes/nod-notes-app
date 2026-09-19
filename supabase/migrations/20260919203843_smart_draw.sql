@@ -1,0 +1,4 @@
+-- Smart Draw: pencil strokes that look like a shape, line, or handwriting become that node.
+-- Circles include wobbly ovals and loops that don't quite meet. Highlighter stays ink.
+-- Utility + and filter menus use the same chrome grey as the sidebar body.
+-- App/docs marker only; no DDL. Remote DDL top: 20260914104046_notion_multi_workspace.
