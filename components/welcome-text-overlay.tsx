@@ -5,6 +5,7 @@
 
 import { useReactFlowContext } from './react-flow-context' // Empty = no frames / drawings
 import { useEffect, useLayoutEffect, useRef, useState } from 'react' // Poll nodes + measure chrome
+import { flushSync } from 'react-dom' // Commit the brand slide before paint so it never flashes through a menu
 import { NodNotesIcon } from '@/components/nod-notes-icon' // Same mark as the home top bar
 import { createClient } from '@/lib/supabase/client' // Count boards so returning users skip chrome hints
 import { useSidebarContext, utilityOccupiedWidth } from './sidebar-context' // Utility overlay inset for empty-board center
@@ -33,6 +34,66 @@ const CHROME_PAD = 16 // Shaft + head stop short of chrome so they sit on the bo
 const HEAD_SIZE = 13 // Tip-to-base length — small like mindmap.so / Excalidraw
 const SHAFT_W = 1.75 // Thin handwritten stroke (matches Virgil weight more than a 2px thread)
 const CHROME_HINTS_KEY = 'nodnotes-chrome-hints-shown' // Set after first board is no longer empty (or user already has boards)
+const MENU_CLEAR = 16 // Air so Virgil / the Nod mark never sit under a frosted menu
+const MENU_SEL = '.tt-menu-surface, [data-map-menu]' // Board / frame / thread cards + map menu
+
+type Box = { left: number; top: number; right: number; bottom: number } // Overlay-local edges
+
+/** Open menus in overlay-local coords — brand and chrome copy must miss these. */
+function openMenuBoxes(root: DOMRect): Box[] {
+  const out: Box[] = [] // Collected this frame
+  document.querySelectorAll(MENU_SEL).forEach((el) => {
+    if ((el as HTMLElement).closest('[data-board-welcome]')) return // Not our own overlay
+    const r = el.getBoundingClientRect() // Viewport box of the card
+    if (r.width < 2 || r.height < 2) return // Unlaid-out shell
+    const st = getComputedStyle(el) // Skip closed / invisible chrome
+    if (st.visibility === 'hidden' || st.display === 'none' || Number(st.opacity) === 0) return
+    out.push({
+      left: r.left - root.left, // Overlay-local left
+      top: r.top - root.top,
+      right: r.right - root.left,
+      bottom: r.bottom - root.top,
+    })
+  })
+  return out
+}
+
+/** Smallest slide that clears every menu, preferring a move that stays on the overlay. */
+function nudgeClear(box: Box, obstacles: Box[], boundsW: number, boundsH: number, gap: number): { x: number; y: number } {
+  let dx = 0 // Accumulated horizontal slide
+  let dy = 0 // Accumulated vertical slide
+  const pad = 12 // Keep the mark inside the board column
+  for (let pass = 0; pass < 6; pass++) {
+    let moved = false // Stop early when nothing still hits
+    for (const o of obstacles) {
+      const left = box.left + dx // Box after prior slides
+      const top = box.top + dy
+      const right = box.right + dx
+      const bottom = box.bottom + dy
+      const hitW = Math.min(right, o.right + gap) - Math.max(left, o.left - gap) // Overlap plus the air gap
+      const hitH = Math.min(bottom, o.bottom + gap) - Math.max(top, o.top - gap)
+      if (hitW <= 0 || hitH <= 0) continue // Already clear of this card
+      const pushes = [
+        { x: o.right + gap - left, y: 0 }, // Off the right edge
+        { x: o.left - gap - right, y: 0 }, // Off the left edge
+        { x: 0, y: o.bottom + gap - top }, // Below the card
+        { x: 0, y: o.top - gap - bottom }, // Above the card
+      ]
+      const fits = (p: { x: number; y: number }) => {
+        const l = left + p.x // Candidate left
+        const t = top + p.y
+        return l >= pad && t >= pad && l + (right - left) <= boundsW - pad && t + (bottom - top) <= boundsH - pad
+      }
+      pushes.sort((a, b) => Math.hypot(a.x, a.y) - Math.hypot(b.x, b.y)) // Shortest escape first
+      const pick = pushes.find(fits) ?? pushes[0] // Stay in-bounds when a short slide fits
+      dx += pick.x
+      dy += pick.y
+      moved = true
+    }
+    if (!moved) break
+  }
+  return { x: dx, y: dy }
+}
 
 /** Returning users / already-onboarded — chrome Virgil + arrows stay off. */
 function chromeHintsAlreadyShown(): boolean {
@@ -137,6 +198,8 @@ export function WelcomeText() {
   const utilityCenterInset =
     isUtilitySidebarOpen && !isMobileMode ? utilityOccupiedWidth(utilitySidebarWidth) : 0 // Phone: overlay the brand; don’t shift it
   const rootRef = useRef<HTMLDivElement>(null) // Overlay = local origin for measures
+  const brandRef = useRef<HTMLDivElement>(null) // Center Nod + “Click the board…” box we slide off menus
+  const [brandNudge, setBrandNudge] = useState({ x: 0, y: 0 }) // Extra translate so the mark misses open menus
   const measureRefs = useRef<Record<HintId, HTMLDivElement | null>>({
     nav: null,
     move: null,
@@ -208,6 +271,7 @@ export function WelcomeText() {
 
     const place = () => {
       const root = rootEl.getBoundingClientRect() // Overlay viewport box
+      const menuBoxes = openMenuBoxes(root) // Cards the chrome copy must miss
       const navT = localRect(root, '[data-nav-logo-trigger] button') // Hamburger
       const navMenuT = localRect(root, '[data-minimap-toggle-context]') // Free nav — Scroll / Zoom / % (bottom nav menu)
       const pinT = localRect(root, '[data-notion-topbar-pin]') // Only when Notion is pinned left of Share
@@ -229,8 +293,17 @@ export function WelcomeText() {
         const probe = measureRefs.current[id] // Hidden Virgil box
         const textW = probe?.offsetWidth || TEXT_MAX // Fallback wrap
         const textH = probe?.offsetHeight || 48
-        const x = Math.max(12, Math.min(textX, root.width - textW - 12)) // Keep in the board column
-        const y = Math.max(12, Math.min(textY, root.height - textH - 12))
+        let x = Math.max(12, Math.min(textX, root.width - textW - 12)) // Keep in the board column
+        let y = Math.max(12, Math.min(textY, root.height - textH - 12))
+        const cleared = nudgeClear(
+          { left: x, top: y, right: x + textW, bottom: y + textH },
+          menuBoxes,
+          root.width,
+          root.height,
+          MENU_CLEAR
+        ) // Slide chrome copy off any open menu before drawing the arrow
+        x = Math.max(12, Math.min(x + cleared.x, root.width - textW - 12))
+        y = Math.max(12, Math.min(y + cleared.y, root.height - textH - 12))
         let thread: HintLayout['thread'] = null
         if (target && from && bow) {
           const x1 =
@@ -393,6 +466,65 @@ export function WelcomeText() {
     }
   }, [show, desktop, editMenuPillMode, chromeHints])
 
+  useLayoutEffect(() => {
+    if (!show) return // No brand to slide
+    const rootEl = rootRef.current // Overlay host
+    const brand = brandRef.current // Center mark
+    if (!rootEl || !brand) return
+    const placeBrand = (sync: boolean) => {
+      const root = rootEl.getBoundingClientRect() // Overlay viewport box
+      const w = brand.offsetWidth // Natural mark width (transform does not change this)
+      const h = brand.offsetHeight
+      const next = nudgeClear(
+        {
+          left: (root.width - w) / 2, // Un-nudged center box
+          top: (root.height - h) / 2,
+          right: (root.width + w) / 2,
+          bottom: (root.height + h) / 2,
+        },
+        openMenuBoxes(root),
+        root.width,
+        root.height,
+        MENU_CLEAR
+      )
+      const apply = () => {
+        setBrandNudge((prev) => (prev.x === next.x && prev.y === next.y ? prev : next)) // Skip when the slide is unchanged
+      }
+      if (sync) flushSync(apply) // Menu mount is after this component’s layout pass — commit before paint
+      else apply() // Already inside useLayoutEffect; a nested flushSync throws
+    }
+    placeBrand(false)
+    const watched = new Set<Element>() // Menus whose style we already watch
+    const mo = new MutationObserver((records) => {
+      let menuTouched = false // Ignore chat / board mutations that are not a menu
+      for (const rec of records) {
+        const target = rec.target instanceof Element ? rec.target : null // Attribute target
+        if (target?.closest(MENU_SEL)) menuTouched = true // Card moved or restyled
+        for (const n of [...rec.addedNodes, ...rec.removedNodes]) {
+          if (!(n instanceof Element)) continue
+          if (n.matches(MENU_SEL) || n.querySelector(MENU_SEL)) menuTouched = true // Card mounted or unmounted
+        }
+      }
+      if (!menuTouched) return
+      document.querySelectorAll(MENU_SEL).forEach((el) => {
+        if (watched.has(el)) return // Already watching this card
+        watched.add(el)
+        mo.observe(el, { attributes: true, attributeFilter: ['style', 'class'] }) // Placement writes left/top after mount
+      })
+      placeBrand(true) // Slide now, before paint
+    })
+    mo.observe(document.body, { childList: true, subtree: true }) // Catch portaled menus
+    const onResize = () => placeBrand(false) // Window / utility inset — layout effect path, no nested flush
+    const ro = new ResizeObserver(onResize) // Utility column / window changes the center
+    ro.observe(rootEl)
+    window.addEventListener('resize', onResize)
+    return () => {
+      mo.disconnect()
+      ro.disconnect()
+      window.removeEventListener('resize', onResize)
+    }
+  }, [show, utilityCenterInset])
+
   if (!show) return null // First frame: no overlay (phone still gets the center brand)
 
   const copy: Record<HintId, string> = {
@@ -411,8 +543,12 @@ export function WelcomeText() {
       className="absolute inset-y-0 left-0 z-[6] pointer-events-none select-none overflow-visible"
       style={{ right: utilityCenterInset }} // Center Nod + “Click the board…” in the strip left of utility
     >
-      {/* Home top-bar brand, centered — clicks pass through so the board still adds a frame */}
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center animate-in fade-in duration-500">
+      {/* Home top-bar brand, centered — slides off open menus; clicks pass through so the board still adds a frame */}
+      <div
+        ref={brandRef}
+        className="absolute left-1/2 top-1/2 flex flex-col items-center animate-in fade-in duration-500"
+        style={{ transform: `translate(calc(-50% + ${brandNudge.x}px), calc(-50% + ${brandNudge.y}px))` }}
+      >
         <div className="inline-flex items-center text-4xl min-[900px]:text-5xl leading-none opacity-90">
           <NodNotesIcon nodIdle className="mr-1.5 h-[1cap] w-auto shrink-0 text-gray-700 dark:text-gray-200" />
           <span className="font-young-serif font-normal text-blue-500">Nod</span>

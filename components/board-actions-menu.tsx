@@ -33,8 +33,8 @@ export type BoardActionId =
   | 'capture' // Capture the current board view
 
 export type BoardActionsMenuProps = {
-  x: number // Pane-relative screen x (click point)
-  y: number // Pane-relative screen y (click point)
+  x: number // Viewport clientX (click) — menu is portaled fixed so it clears the board stacking context
+  y: number // Viewport clientY (click)
   canUndo?: boolean // Enables Undo when history exists
   canRedo?: boolean // Enables Redo when history exists
   canPaste?: boolean // Enables Paste when a frame clipboard exists
@@ -161,12 +161,11 @@ export function BoardActionsMenu({
       tabIndex={-1}
       className={cn(
         'board-actions-menu node-popup z-[1000] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1 outline-none',
-        'absolute',
         className
       )}
       data-tt-menu-width="220"
       style={{
-        position: 'absolute',
+        position: 'fixed', // Body portal — absolute was trapped under the welcome overlay by board `isolate`
         left: `${x}px`,
         top: `${y}px`,
         right: 'auto',
@@ -204,7 +203,7 @@ export function BoardActionsMenu({
             return (
               <div
                 key={`sep-${index}`}
-                className="my-1 h-px bg-black/10 dark:bg-white/10 mx-1" // Hairline that still reads on the chat-grey menu
+                className="my-1 h-px bg-black/10 dark:bg-white/10 mx-1" // Hairline that still reads on the frosted menu
               />
             )
           }

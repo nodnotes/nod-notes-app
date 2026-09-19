@@ -6849,7 +6849,7 @@ function BoardFlowInner({
         )
         setRightClickedNode(null)
         boardClickFlowRef.current = { x: flowX, y: flowY }
-        setBoardMenuPosition({ x: screenX, y: screenY })
+        setBoardMenuPosition({ x: clientX, y: clientY })
         return
       }
 
@@ -6864,7 +6864,7 @@ function BoardFlowInner({
 
       setRightClickedNode(null)
       boardClickFlowRef.current = { x: flowX, y: flowY }
-      setBoardMenuPosition({ x: screenX, y: screenY })
+      setBoardMenuPosition({ x: clientX, y: clientY })
     },
     [reactFlowInstance, rfStore, setNodes]
   )
@@ -11669,21 +11669,23 @@ function BoardFlowInner({
         document.body
       )}
 
-      {/* Board menu — empty-pane right-click */}
-      {boardMenuPosition && reactFlowInstance && (
-        <BoardActionsMenu
-          x={boardMenuPosition.x}
-          y={boardMenuPosition.y}
-          canUndo={canMapUndo}
-          canRedo={canMapRedo}
-          canPaste={false}
-          onAction={handleBoardMenuAction}
-          onClose={() => {
-            setBoardMenuPosition(null)
-            boardClickFlowRef.current = null
-          }}
-        />
-      )}
+      {/* Board menu — empty-pane right-click; body portal escapes board `isolate` so it paints above empty-board hints */}
+      {boardMenuPosition && reactFlowInstance && typeof document !== 'undefined' &&
+        createPortal(
+          <BoardActionsMenu
+            x={boardMenuPosition.x}
+            y={boardMenuPosition.y}
+            canUndo={canMapUndo}
+            canRedo={canMapRedo}
+            canPaste={false}
+            onAction={handleBoardMenuAction}
+            onClose={() => {
+              setBoardMenuPosition(null)
+              boardClickFlowRef.current = null
+            }}
+          />,
+          document.body
+        )}
 
       {/* Thread click menu — same chrome as ⋮⋮ handle / text-select menus */}
       {clickedEdge && reactFlowInstance && (

@@ -2309,13 +2309,6 @@ span[data-added="true"] {
   .tt-menu-surface button:hover:not(:disabled) {
     background-color: var(--nod-selected);
   }
-  /* Board menu — opaque chat-column grey, not the frosted frame-menu wash. */
-  .board-actions-menu.tt-menu-surface {
-    background-color: var(--nod-chat-prompt); /* Same fill as the chat column */
-  }
-  .board-actions-menu.tt-menu-surface button:hover:not(:disabled) {
-    background-color: var(--nod-on-chrome); /* Darker than the menu so the row still reads */
-  }
 
   .tt-menu-surface::before {
     content: '';

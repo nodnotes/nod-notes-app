@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-19T05:57:28Z`
+- Snapped at: `2026-09-19T06:21:04Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`; versions from `.temp` + Management API list; cli-latest reports `v2.117.0`)
@@ -9,6 +9,14 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260919062104_layers_groups_board_menu_frost.sql`.
+- **Layers**: + Group adds an empty header under search (`lib/layer-groups.ts`, local `nodnotes-layer-groups`); drag thumbs under that header (exclusive) or reorder inside it; click the name to rename; ⋯ Delete returns members to the loose list.
+- **Board menu**: frosted `.tt-menu-surface` wash (not opaque chat grey); portaled to `document.body` with client coordinates so it clears board `isolate` and the welcome overlay.
+- **Empty board**: brand and “Click the board…” slide clear of any open menu so the line does not show through the frost.
+- Schema unchanged; remote DDL top remains `20260914104046_notion_multi_workspace`.
+
+## Prior: Present mode and capture headers
 
 - DDL: none. Marker `20260919055728_present_mode_capture_headers_layers_filter.sql`.
 - **Present**: presentation header Present hides top bar, mode pills, utility, chat, Free nav, minimap, and menus (`html[data-presenting]`); Escape exits.

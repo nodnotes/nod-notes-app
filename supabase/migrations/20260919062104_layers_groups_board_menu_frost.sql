@@ -1,0 +1,4 @@
+-- Layers: + Group adds an empty header; drag thumbs under it (exclusive); rename; Delete returns members to the loose list.
+-- Board menu: frosted wash like other menus; body portal with client coordinates so it clears the welcome overlay.
+-- Empty board: brand and copy slide clear of open menus.
+-- App/docs marker only; no DDL. Remote DDL top: 20260914104046_notion_multi_workspace.
