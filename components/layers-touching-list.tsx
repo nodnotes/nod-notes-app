@@ -465,7 +465,7 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
   useEffect(() => {
     if (!organizeOpen) return
     const onDown = (event: PointerEvent) => {
-      if (organizeRef.current?.contains(event.target as Node)) return // Trigger and menu stay open
+      if (organizeRef.current?.contains(event.target as globalThis.Node)) return // DOM Node — the file also imports React Flow's Node
       setOrganizeOpen(false)
     }
     window.addEventListener('pointerdown', onDown, true) // Capture so the board does not eat the click first

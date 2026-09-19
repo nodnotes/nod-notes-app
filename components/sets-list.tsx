@@ -369,11 +369,14 @@ export function SetsList() {
 
   const openFrame = (setId: string, nodeId: string) => {
     if (selectedId !== setId) selectSet(setId) // Glow the set without toggling it off
-    const selectOnly = (nds: Array<{ id: string; selected?: boolean }>) =>
-      nds.map((n) => ({ ...n, selected: n.id === nodeId })) // Same single-select as Layers
     const setNodes = getSetNodes()
-    if (setNodes) setNodes(selectOnly)
-    else reactFlowInstance?.setNodes(selectOnly)
+    if (setNodes) {
+      setNodes((nds: Array<{ id: string; selected?: boolean }>) =>
+        nds.map((n) => ({ ...n, selected: n.id === nodeId })) // Same single-select as Layers
+      )
+    } else {
+      reactFlowInstance?.setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === nodeId })))
+    }
     reactFlowInstance?.setEdges((eds) => eds.map((e) => ({ ...e, selected: false })))
   }
 
