@@ -2,7 +2,7 @@
 
 // Utility Layers body — reorderable preview list (top = front, bottom = back)
 
-import { useMemo, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import type { Node } from 'reactflow' // RF v11 node — setNodes updater must return this, not a zIndex stub
 import {
   DndContext,
@@ -29,9 +29,13 @@ import {
   getLayersTouching,
   layerZIndexByOrder,
   reorderLayersTouching,
+  setLayersPublishScope,
   subscribeLayersTouching,
   type LayersTouchingItem,
 } from '@/lib/layers-touching'
+
+/** Filter rows in the Layers utility menu. */
+type LayersFilter = 'all' | 'touching' | 'selected'
 
 /** One sortable layer row — drag anywhere to reorder; click selects. */
 function SortableLayerRow({
@@ -93,21 +97,27 @@ export function LayersTouchingList() {
   const { reactFlowInstance, getSetNodes } = useReactFlowContext()
   const [query, setQuery] = useState('') // Filter thumbs by label
   const [filterOpen, setFilterOpen] = useState(false) // Filter menu
-  const [selectedOnly, setSelectedOnly] = useState(false) // Only show selected rows
+  const [filter, setFilter] = useState<LayersFilter>('touching') // Default stays the touching cluster
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }) // Click selects; drag reorders
   )
 
+  useEffect(() => {
+    setLayersPublishScope(filter === 'all' ? 'all' : 'touching') // All loads every layer; the rest use the cluster
+    return () => setLayersPublishScope('touching') // Leaving Layers stops the whole-board publish
+  }, [filter])
+
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase()
     return items.filter((item) => {
-      if (selectedOnly && !item.selected) return false
+      if (filter === 'selected' && !item.selected) return false // Selected only
       if (q && !item.label.toLowerCase().includes(q)) return false
       return true
     })
-  }, [items, query, selectedOnly])
+  }, [items, query, filter])
 
-  const canReorder = !query.trim() && !selectedOnly // Reorder only on the full unfiltered list
+  const canReorder = !query.trim() && filter !== 'selected' // Reorder the full All or touching list
+  const heading = filter === 'all' ? 'All' : filter === 'selected' ? 'Selected' : 'Touching'
 
   const selectItem = (id: string) => {
     const setNodes = getSetNodes()
@@ -158,23 +168,31 @@ export function LayersTouchingList() {
         onQueryChange={setQuery}
         filterOpen={filterOpen}
         onFilterOpenChange={setFilterOpen}
-        filterActive={selectedOnly}
+        filterActive={filter !== 'touching'}
         filterTitle="Filter layers"
         filterMenu={
           <>
             <UtilityFilterOption
-              label="All touching"
-              active={!selectedOnly}
+              label="All"
+              active={filter === 'all'}
               onSelect={() => {
-                setSelectedOnly(false)
+                setFilter('all') // Every frame, drawing, and shape on the board
+                setFilterOpen(false)
+              }}
+            />
+            <UtilityFilterOption
+              label="All touching"
+              active={filter === 'touching'}
+              onSelect={() => {
+                setFilter('touching')
                 setFilterOpen(false)
               }}
             />
             <UtilityFilterOption
               label="Selected only"
-              active={selectedOnly}
+              active={filter === 'selected'}
               onSelect={() => {
-                setSelectedOnly(true)
+                setFilter('selected')
                 setFilterOpen(false)
               }}
             />
@@ -186,13 +204,15 @@ export function LayersTouchingList() {
         <div className="flex flex-col gap-1 px-3 py-3 text-xs text-gray-500 dark:text-gray-400">
           <p className="font-medium text-gray-700 dark:text-gray-200">Layers</p>
           <p className="leading-relaxed">
-            Select a frame, drawing, or thread to see everything touching it.
+            {filter === 'all'
+              ? 'No frames, drawings, or shapes on this board.'
+              : 'Select a frame, drawing, or thread to see everything touching it.'}
           </p>
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-1.5 py-2">
           <p className="px-1.5 pb-1 text-[11px] font-medium text-gray-500 dark:text-gray-400">
-            Touching · {visible.length}
+            {heading} · {visible.length}
             <span className="font-normal text-gray-400"> · top front</span>
           </p>
           {visible.length === 0 ? (

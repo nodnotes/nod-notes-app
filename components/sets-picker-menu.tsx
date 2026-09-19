@@ -6,7 +6,7 @@ import { useSyncExternalStore } from 'react'
 import { Plus } from 'lucide-react' // Add set
 import { createSet, getSets, subscribeSets } from '@/lib/sets-list'
 
-/** Rows for the frame / block / text "Add to set" flyout. */
+/** Rows for the frame menu "Add to set" flyout. */
 export function SetsPickerMenu({ onChoose }: { onChoose: (setId: string) => void }) {
   const sets = useSyncExternalStore(subscribeSets, getSets, () => []) // Oldest first
 

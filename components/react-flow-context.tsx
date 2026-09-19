@@ -5,7 +5,7 @@ import { createContext, useContext, useState, useRef, useCallback, useEffect, us
 import { ReactFlowInstance } from 'reactflow'
 import { createClient } from '@/lib/supabase/client'
 import { usePathname } from 'next/navigation'
-import { parseBoardFontId, type BoardFontId } from '@/lib/board-font'
+import { parseBoardFontId, publishBoardFont, readStoredBoardFont, type BoardFontId } from '@/lib/board-font'
 
 import { isPublicBoardId } from '@/lib/public-showcase-boards'
 import { getEphemeralSandbox, isEphemeralSandboxId } from '@/lib/ephemeral-sandbox'
@@ -590,6 +590,19 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
   const conversationIdRef = useRef<string | undefined>(conversationId)
   const isLoadingRef = useRef(false)
   const prefsHydratedRef = useRef(false)
+  const fontScopeRef = useRef<string | null>(null) // Last board id we painted a font for
+  const fontScopeKey = conversationId ?? '' // '' = /board (no id)
+  if (fontScopeRef.current !== fontScopeKey) {
+    fontScopeRef.current = fontScopeKey // Track this board
+    prefsHydratedRef.current = false // Don't paint the previous board's font while this one loads
+  }
+
+  // Before paint: stored font, not the SSR Default. After prefs load, follow live state (More menu).
+  useLayoutEffect(() => {
+    const font = prefsHydratedRef.current ? boardFont : readStoredBoardFont(conversationId)
+    publishBoardFont(font) // html[data-nn-board-font] — CSS applies this on the first paint
+    if (!prefsHydratedRef.current && font !== boardFont) setBoardFont(font) // Menu check matches the glyphs
+  }, [boardFont, conversationId])
 
   // Shared function to load preferences from localStorage first (instant), then Supabase (sync)
   // If conversationId is undefined, loads from profiles.metadata (default board)
@@ -599,7 +612,9 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
 
     // Always apply a font for this board — missing key means Default, never keep the previous board's font
     const applyBoardFont = (raw: unknown) => {
-      setBoardFont(parseBoardFontId(raw) ?? 'default')
+      const font = parseBoardFontId(raw) ?? 'default' // Missing key is Default, not the previous board
+      setBoardFont(font) // React state for the More menu check
+      publishBoardFont(font) // CSS reads this immediately, before the next paint
     }
 
     // STEP 1: Load from localStorage FIRST (synchronous, instant) - ensures UI shows saved prefs immediately
@@ -681,9 +696,10 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
           const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
           localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardStyle: publicBoardPrefs.boardStyle }))
         }
-        const publicFont = parseBoardFontId(publicBoardPrefs.boardFont) ?? 'default'
-        setBoardFont(publicFont)
-        {
+        const publicFont = parseBoardFontId(publicBoardPrefs.boardFont)
+        if (publicFont) {
+          setBoardFont(publicFont) // Public metadata is the source of truth when the key exists
+          publishBoardFont(publicFont)
           const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
           const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
           localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardFont: publicFont }))
@@ -779,9 +795,10 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
             localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardStyle: prefs.boardStyle }))
           }
 
-          const syncedFont = parseBoardFontId((prefs as { boardFont?: unknown }).boardFont) ?? 'default'
-          setBoardFont(syncedFont)
-          {
+          const syncedFont = parseBoardFontId((prefs as { boardFont?: unknown }).boardFont)
+          if (syncedFont) {
+            setBoardFont(syncedFont) // Only when metadata actually stored a font — a missing key must not clobber localStorage
+            publishBoardFont(syncedFont)
             const storageKey = currentConversationId ? `nodnotes-prefs-${currentConversationId}` : 'nodnotes-prefs-default'
             const existingPrefs = JSON.parse(localStorage.getItem(storageKey) || '{}')
             localStorage.setItem(storageKey, JSON.stringify({ ...existingPrefs, boardFont: syncedFont }))

@@ -1267,6 +1267,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
 
   return (
     <div
+      data-chat-sidebar-shell // Present mode hides this column so the board is full width
       className={cn(
         'relative h-full flex flex-shrink-0 z-20', // Width tween shell — overflow stays visible so the left shadow can paint onto the board
         'shadow-[-2px_0_6px_-2px_rgb(0_0_0_/_0.08)] dark:shadow-[-2px_0_8px_-2px_rgb(0_0_0_/_0.2)]', // Barely-there left lift — a heavier falloff reads as a black band on this chrome

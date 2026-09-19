@@ -2,6 +2,7 @@
 import React from 'react'
 import { cookies } from 'next/headers'
 import AppAuthShell from '@/components/app-auth-shell'
+import { PresentingMode } from '@/components/presenting-mode' // html[data-presenting] while a presentation is playing
 import { SidebarContextProvider } from '@/components/sidebar-context'
 
 // Always re-read auth cookies — never serve another account's SSR user from the router cache
@@ -34,6 +35,7 @@ export default async function BoardLayout({
   // Always render - never throw errors
   return (
     <SidebarContextProvider initialChatOpen={initialChatOpen} initialUtilityOpen={initialUtilityOpen}>
+      <PresentingMode />
       <div className="flex flex-col" style={{ height: 'calc(var(--vh, 1vh) * 100)' }}>
         <div className="flex-1 flex overflow-hidden relative">
           {/* Client shell recovers when SSR cookies lag after sign-in */}

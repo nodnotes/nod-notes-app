@@ -408,9 +408,9 @@ function SortableBoardItem({
           'flex items-center gap-1 pr-4 h-8 rounded-lg border border-transparent transition-colors text-sm group relative select-none',
           isShared ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
           isActive
-            ? 'bg-[var(--nod-selected)]' // Open board — grey wash on white nav shell
+            ? 'bg-[var(--nod-on-chrome)]' // Open board — darker wash on the chrome-grey nav
             // Hover bg only on real hover devices — iOS sticky :hover ate the first board tap
-            : '[@media(hover:hover)]:hover:bg-[var(--nod-tab-hover)]',
+            : '[@media(hover:hover)]:hover:bg-[var(--nod-on-chrome)]',
           isSelected && 'border-[#e5e7eb] dark:border-[#374151]', // Same grey as .tt-property-block-cell hover
           isDragging && 'cursor-grabbing opacity-50',
           // Clear nest-into affordance when hovering center of a page
@@ -808,10 +808,10 @@ function DroppableProjectItem({
         className={cn(
           'flex items-center gap-2 px-4 h-8 rounded-lg transition-colors text-sm border-2 group',
           isActive
-            ? 'bg-[var(--nod-selected)] text-gray-700 dark:text-gray-300 border-transparent'
+            ? 'bg-[var(--nod-on-chrome)] text-gray-700 dark:text-gray-300 border-transparent'
             : isDragOver
-              ? 'bg-[var(--nod-selected)] text-gray-700 dark:text-gray-300 border-blue-500 dark:border-blue-400 border-dashed'
-              : 'hover:bg-[var(--nod-tab-hover)] text-gray-700 dark:text-gray-300 border-transparent'
+              ? 'bg-[var(--nod-on-chrome)] text-gray-700 dark:text-gray-300 border-blue-500 dark:border-blue-400 border-dashed'
+              : 'hover:bg-[var(--nod-on-chrome)] text-gray-700 dark:text-gray-300 border-transparent'
         )}
         onContextMenu={(e) => {
           e.preventDefault()
@@ -843,7 +843,7 @@ function DroppableProjectItem({
                 e.stopPropagation()
                 onToggleExpand()
               }}
-              className="flex-shrink-0 p-0.5 hover:bg-[var(--nod-tab-hover)] rounded transition-colors"
+              className="flex-shrink-0 p-0.5 hover:bg-[var(--nod-on-chrome)] rounded transition-colors"
               title={isExpanded ? 'Collapse project' : 'Expand project'}
               aria-label={isExpanded ? 'Collapse project' : 'Expand project'}
             >
@@ -2909,7 +2909,7 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
         data-app-sidebar
         data-nav-menu-popup
         className={cn(
-          'fixed z-50 flex flex-col bg-white dark:bg-[#171717] shadow-xl rounded-2xl overflow-hidden', // Same white surface as chats menu
+          'fixed z-50 flex flex-col bg-[var(--nod-chat-prompt)] shadow-xl rounded-2xl overflow-hidden', // Same chrome grey as the chat column and chats menu
           'border border-gray-200 dark:border-[#2f2f2f]', // Same hairline as chats menu
           'w-72 min-h-0' // min-h-0 so the board list can shrink and scroll under maxHeight
         )}
@@ -2948,14 +2948,14 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
                   placeholder="Search anything..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-7 h-8 text-sm rounded-lg border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                  className="pl-7 h-8 text-sm rounded-lg border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0" // Transparent so the search sits on the menu grey
                   suppressHydrationWarning
                 />
               </div>
               <Button
                 variant="outline"
                 size="icon"
-                className="h-8 w-8 rounded-lg bg-transparent border-0 hover:bg-gray-100 dark:hover:bg-gray-800 group"
+                className="h-8 w-8 rounded-lg bg-transparent border-0 hover:bg-[var(--nod-on-chrome)] dark:hover:bg-[var(--nod-on-chrome)] group" // Darker than the menu grey so + still reads
                 title="Create board"
                 disabled={isCreatingBoard} // Prevent duplicate mints
                 onClick={() => handleCreateBoard()} // Root Untitled board, then open it
@@ -2974,7 +2974,7 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
             <Button
               variant="outline"
               size="icon"
-              className="h-8 w-8 rounded-lg bg-transparent border-0 hover:bg-gray-100 group"
+              className="h-8 w-8 rounded-lg bg-transparent border-0 hover:bg-[var(--nod-on-chrome)] group" // Darker than the menu grey so + still reads
               title="Create board"
               disabled={isCreatingBoard} // Prevent duplicate mints
               onClick={() => handleCreateBoard()} // Root Untitled board, then open it
@@ -3164,7 +3164,7 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
 
               <DragOverlay>
                 {activeId ? (
-                  <div className="flex items-center gap-2 px-4 h-8 rounded-lg bg-[var(--nod-selected)] text-sm shadow-lg opacity-90 cursor-grabbing">
+                  <div className="flex items-center gap-2 px-4 h-8 rounded-lg bg-[var(--nod-on-chrome)] text-sm shadow-lg opacity-90 cursor-grabbing">
                     <span className="truncate flex-1 text-gray-700 dark:text-gray-300">
                       {filteredConversations.find((c) => c.id === activeId)?.title || ''}
                     </span>
@@ -3257,7 +3257,7 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
               <div className="w-full relative">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <button className="w-full flex items-center gap-3 pl-1 py-2 rounded-lg hover:bg-[var(--nod-tab-hover)] transition-colors">
+                    <button className="w-full flex items-center gap-3 pl-1 py-2 rounded-lg hover:bg-[var(--nod-on-chrome)] transition-colors">
                       <div
                         className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
                         style={{ backgroundColor: avatarColor }}

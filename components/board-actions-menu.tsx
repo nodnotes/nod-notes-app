@@ -204,7 +204,7 @@ export function BoardActionsMenu({
             return (
               <div
                 key={`sep-${index}`}
-                className="my-1 h-px bg-gray-100 dark:bg-[#2f2f2f] mx-1"
+                className="my-1 h-px bg-black/10 dark:bg-white/10 mx-1" // Hairline that still reads on the chat-grey menu
               />
             )
           }

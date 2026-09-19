@@ -27,6 +27,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260919055728_present_mode_capture_headers_layers_filter` — Present hides chrome (Escape exits); capture presentation headers; set glow; Layers All/touching/selected; board font no reload flash
 - `20260919033806_sets_add_to_set_chat_prompt_glow` — Sets tab + Add to set picker; blue member wash in the set thumb; chat sidebar shadow + Ask focus glow; upright select does not slide the fill
 - `20260918024225_chrome_hairlines_image_screen_scale` — Boards/chats hairlines; Free nav Ask-prompt grey; image hover screen-constant scale; Ask shadow-sm
 - `20260918013630_image_free_fit_contain_stable` — Image free↔fit contain-fit stability (contentFit free flag; freeze on free; remasure on fit; no max-%)

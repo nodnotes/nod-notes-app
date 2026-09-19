@@ -726,7 +726,7 @@ export function BlockActionsMenu({
         label: 'Add to set',
         icon: <SquareStack className="h-4 w-4" />,
         submenu: 'sets', // Picker of sets + Add set — not the utility sidebar
-        hidden: !onAddToSet, // Frame and block menus pass a commit; slim Notion menus omit it
+        hidden: !onAddToSet, // Frame menu passes a commit; block and text menus omit it
       },
       {
         kind: 'action',
@@ -1254,7 +1254,7 @@ export function BlockActionsMenu({
         >
           <SetsPickerMenu
             onChoose={(setId) => {
-              onAddToSet(setId) // Caller marks the content and records the member
+              onAddToSet(setId) // Caller records the frame
               onClose()
             }}
           />

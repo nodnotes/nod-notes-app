@@ -474,6 +474,11 @@ export function addCapture(input: Omit<BoardCapture, 'id' | 'createdAt'>): Board
   return capture
 }
 
+/** Ids that sit under a presentation header (not the loose list). */
+function groupedCaptureIds(presentations: BoardPresentation[]): Set<string> {
+  return new Set(presentations.flatMap((p) => p.captureIds)) // Every membership, including duplicates
+}
+
 /** Replace capture list order (ids must cover the current list). */
 export function setCaptureOrder(captureIds: string[]): void {
   const byId = new Map(getCaptures().map((c) => [c.id, c]))
@@ -485,11 +490,49 @@ export function setCaptureOrder(captureIds: string[]): void {
   setCaptures(next)
 }
 
+/** Reorder captures that are not under a header; grouped rows keep their slots. */
+export function setUngroupedCaptureOrder(ungroupedIds: string[]): void {
+  const grouped = groupedCaptureIds(getPresentations()) // Slots that must stay put
+  const byId = new Map(getCaptures().map((c) => [c.id, c])) // Id → row
+  const queue = ungroupedIds
+    .map((id) => byId.get(id))
+    .filter((c): c is BoardCapture => Boolean(c)) // Drop unknown ids
+  const next: BoardCapture[] = []
+  for (const c of getCaptures()) {
+    if (grouped.has(c.id)) {
+      next.push(c) // Header members stay in their global slot
+      continue
+    }
+    const replacement = queue.shift() // Next loose capture in the new order
+    if (replacement) next.push(replacement)
+  }
+  for (const c of queue) next.push(c) // Safety if the loose list grew
+  setCaptures(next)
+}
+
 /** Insert a newly created capture at index instead of leaving it prepended. */
 export function insertNewCaptureAt(capture: BoardCapture, index: number): void {
   const list = getCaptures().filter((c) => c.id !== capture.id) // Drop if already stored
   const i = Math.max(0, Math.min(index, list.length))
   list.splice(i, 0, capture)
+  setCaptures(list)
+}
+
+/** Insert a new capture among loose rows (index is within the ungrouped list, not global). */
+export function insertUngroupedCaptureAt(capture: BoardCapture, index: number): void {
+  const grouped = groupedCaptureIds(getPresentations()) // Skip header members when counting
+  const list = getCaptures().filter((c) => c.id !== capture.id) // takeBoardCapture already prepended it
+  let seen = 0 // How many loose rows we've passed
+  let global = list.length // Default: append (trailing +)
+  for (let i = 0; i < list.length; i++) {
+    if (grouped.has(list[i].id)) continue // Headers don't consume the ungrouped index
+    if (seen === index) {
+      global = i // Slot of the index-th loose capture
+      break
+    }
+    seen += 1
+  }
+  list.splice(global, 0, capture)
   setCaptures(list)
 }
 
@@ -515,6 +558,50 @@ export function addCapturesToPresentation(presentationId: string, captureIds: st
       return { ...p, captureIds: ids }
     })
   )
+}
+
+/**
+ * Move a capture under a presentation header, or back to the loose list.
+ * Membership is exclusive: the capture leaves every other presentation.
+ * `presentationId` null = ungrouped. `index` is within that section.
+ */
+export function moveCaptureUnderPresentation(
+  captureId: string,
+  presentationId: string | null,
+  index: number
+): void {
+  const stripped = getPresentations().map((p) => ({
+    ...p,
+    captureIds: p.captureIds.filter((id) => id !== captureId), // Leave every header first
+  }))
+  const next = presentationId
+    ? stripped.map((p) => {
+        if (p.id !== presentationId) return p
+        const ids = [...p.captureIds]
+        const i = Math.max(0, Math.min(index, ids.length)) // Clamp into the header's list
+        ids.splice(i, 0, captureId) // Sit under that header at `index`
+        return { ...p, captureIds: ids }
+      })
+    : stripped
+  setPresentations(next)
+  if (presentationId) return // Header order is captureIds; global order can stay
+  const grouped = groupedCaptureIds(next) // After the move, so this id is loose
+  const list = getCaptures()
+  const moving = list.find((c) => c.id === captureId)
+  if (!moving) return
+  const without = list.filter((c) => c.id !== captureId) // Pull it out, then place among loose rows
+  let seen = 0
+  let global = without.length
+  for (let i = 0; i < without.length; i++) {
+    if (grouped.has(without[i].id)) continue
+    if (seen === index) {
+      global = i
+      break
+    }
+    seen += 1
+  }
+  without.splice(global, 0, moving)
+  setCaptures(without)
 }
 
 /** Insert a capture at index (no-op if already in the presentation). */
@@ -546,6 +633,11 @@ export function setPresentationCaptureOrder(presentationId: string, captureIds: 
 export function renamePresentation(id: string, name: string): void {
   const trimmed = name.trim() || 'Untitled'
   setPresentations(getPresentations().map((p) => (p.id === id ? { ...p, name: trimmed } : p)))
+}
+
+/** Drop a presentation header. Its captures return to the loose list. */
+export function deletePresentation(id: string): void {
+  setPresentations(getPresentations().filter((p) => p.id !== id))
 }
 
 /** Merge selected presentations into the first: union captures, drop the rest. */

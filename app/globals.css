@@ -39,6 +39,7 @@
     --nod-chat-user-box: #eaf3fd; /* Transcript user prompt boxes — ChatGPT user-bubble ice blue */
     --nod-tab-hover: var(--nod-chat-prompt); /* Board/chat row hover — shared chrome grey */
     --nod-selected: var(--nod-chat-prompt); /* Current board/chat tab + menu selected/hover */
+    --nod-on-chrome: color-mix(in srgb, #000 7%, var(--nod-chat-prompt)); /* Row wash on chrome-grey menus — darker than the chat fill */
   }
 
   .dark {
@@ -66,6 +67,7 @@
     --nod-chat-user-box: #eaf3fd; /* Transcript user prompt boxes — ChatGPT user-bubble ice blue */
     --nod-tab-hover: var(--nod-chat-prompt); /* Board/chat row hover — shared chrome grey */
     --nod-selected: var(--nod-chat-prompt); /* Current board/chat tab + menu selected/hover */
+    --nod-on-chrome: color-mix(in srgb, #fff 10%, var(--nod-chat-prompt)); /* Row wash on dark chrome grey */
   }
 }
 
@@ -738,19 +740,30 @@ span[data-added="true"] {
     font-size: 0.875rem; /* 14px - ChatGPT chat text size */
   }
 
-  /* Board More menu → Default / Serif / Mono (frame TipTap + board links) */
+  /* Board More menu → Default / Serif / Mono.
+     html[data-nn-board-font] is set before paint (blocking script + layout effect) so the
+     first frame is not stuck on the SSR Default while React hydrates data-board-font. */
+  html[data-nn-board-font='serif'] [data-board-root] .react-flow .prose,
+  html[data-nn-board-font='serif'] [data-board-root] .react-flow .ProseMirror,
+  html[data-nn-board-font='serif'] [data-board-root] .react-flow .tt-board-link-label,
   [data-board-root][data-board-font='serif'] .react-flow .prose,
   [data-board-root][data-board-font='serif'] .react-flow .ProseMirror,
   [data-board-root][data-board-font='serif'] .react-flow .tt-board-link-label {
     font-family: ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif;
   }
 
+  html[data-nn-board-font='mono'] [data-board-root] .react-flow .prose,
+  html[data-nn-board-font='mono'] [data-board-root] .react-flow .ProseMirror,
+  html[data-nn-board-font='mono'] [data-board-root] .react-flow .tt-board-link-label,
   [data-board-root][data-board-font='mono'] .react-flow .prose,
   [data-board-root][data-board-font='mono'] .react-flow .ProseMirror,
   [data-board-root][data-board-font='mono'] .react-flow .tt-board-link-label {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
   }
 
+  html[data-nn-board-font='default'] [data-board-root] .react-flow .prose,
+  html[data-nn-board-font='default'] [data-board-root] .react-flow .ProseMirror,
+  html[data-nn-board-font='default'] [data-board-root] .react-flow .tt-board-link-label,
   [data-board-root][data-board-font='default'] .react-flow .prose,
   [data-board-root][data-board-font='default'] .react-flow .ProseMirror,
   [data-board-root][data-board-font='default'] .react-flow .tt-board-link-label {
@@ -2273,6 +2286,19 @@ span[data-added="true"] {
     box-decoration-break: clone; /* Each line of a wrapped run gets the halo */
     -webkit-box-decoration-break: clone;
   }
+  /* Utility set row selected — same blue as the Ask-prompt halo, strong enough to read on the board
+     without the frame being selected. No border-radius: this also lands on the frame box. */
+  [data-set-highlight] {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--nod-blue) 70%, transparent), /* Blue edge so a small frame still reads */
+      0 0 14px 3px color-mix(in srgb, var(--nod-blue) 55%, transparent); /* Outer glow */
+  }
+  .tt-in-set[data-set-highlight],
+  [data-in-set=''][data-set-highlight] {
+    border-radius: 3px; /* Text run / block line, not the frame box */
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
   /* Transcript user prompt boxes — ChatGPT ice blue, same lift as utility/mode pills. */
   .tt-chat-prompt {
     background-color: var(--nod-chat-user-box); /* Transcript user bubbles */
@@ -2282,6 +2308,13 @@ span[data-added="true"] {
   /* Board / frame / block / thread menu hover — same shared chrome grey. Beats ghost hover:bg-accent. */
   .tt-menu-surface button:hover:not(:disabled) {
     background-color: var(--nod-selected);
+  }
+  /* Board menu — opaque chat-column grey, not the frosted frame-menu wash. */
+  .board-actions-menu.tt-menu-surface {
+    background-color: var(--nod-chat-prompt); /* Same fill as the chat column */
+  }
+  .board-actions-menu.tt-menu-surface button:hover:not(:disabled) {
+    background-color: var(--nod-on-chrome); /* Darker than the menu so the row still reads */
   }
 
   .tt-menu-surface::before {
@@ -3510,4 +3543,20 @@ html.nn-capacitor [data-nn-safe-bottom] {
   max-width: min(200px, calc(100vw - 24px)) !important;
   min-width: 0 !important;
   box-sizing: border-box !important;
+}
+
+/* Present mode: only the board. Set by PresentingMode; Escape clears it. */
+html[data-presenting] [data-edit-top-bar],
+html[data-presenting] [data-edit-menu-context],
+html[data-presenting] [data-utility-sidebar],
+html[data-presenting] [data-chat-sidebar-shell],
+html[data-presenting] [data-chat-map-dock],
+html[data-presenting] [data-chat-sidebar-toggle],
+html[data-presenting] [data-map-chrome],
+html[data-presenting] [data-board-welcome],
+html[data-presenting] [data-nav-menu-popup],
+html[data-presenting] [data-board-menu],
+html[data-presenting] .tt-menu-surface,
+html[data-presenting] [data-radix-popper-content-wrapper] {
+  display: none !important;
 }

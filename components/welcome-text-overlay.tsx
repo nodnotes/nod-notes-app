@@ -406,6 +406,7 @@ export function WelcomeText() {
   return (
     <div
       ref={rootRef}
+      data-board-welcome // Present mode hides empty-board hints
       aria-hidden
       className="absolute inset-y-0 left-0 z-[6] pointer-events-none select-none overflow-visible"
       style={{ right: utilityCenterInset }} // Center Nod + “Click the board…” in the strip left of utility

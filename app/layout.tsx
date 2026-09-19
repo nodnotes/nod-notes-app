@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script";
 import "./globals.css";
 import { ReactQueryProvider } from "@/lib/react-query-provider";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -50,6 +51,24 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.variable} ${youngSerif.variable} ${notesSans.variable}`} suppressHydrationWarning>
+        <Script id="nn-board-font" strategy="beforeInteractive">{`
+          (function () {
+            try {
+              var path = location.pathname.replace(/\\/+$/, '') || '/';
+              var key = null;
+              if (path === '/board') key = 'nodnotes-prefs-default';
+              else {
+                var m = path.match(/^\\/(?:board|view)\\/([^/]+)$/);
+                if (m) key = 'nodnotes-prefs-' + decodeURIComponent(m[1]);
+              }
+              if (!key) return;
+              var prefs = JSON.parse(localStorage.getItem(key) || '{}');
+              var font = prefs.boardFont;
+              if (font !== 'default' && font !== 'serif' && font !== 'mono') font = 'default';
+              document.documentElement.setAttribute('data-nn-board-font', font);
+            } catch (e) {}
+          })();
+        `}</Script>
         <ViewportHeightFix />
         <ThemeProvider>
           <ReactQueryProvider>{children}</ReactQueryProvider>

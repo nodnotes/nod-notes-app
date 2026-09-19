@@ -1,7 +1,7 @@
-// Named sets — created from the Add to set picker, listed in the Sets utility tab.
-// Membership is in-memory + localStorage. The live glow is a TipTap mark / data-in-set stamp.
+// Named sets — created from the frame menu's Add to set picker, listed in the Sets utility tab.
+// Membership is in-memory + localStorage. Selecting a set glows its frames on the board.
 
-/** What was added. Frame = board or chat frame; block = TipTap line; text = a selection. */
+/** What was added. New rows are frames only; block and text remain so older rows still load. */
 export type SetItemKind = 'frame' | 'block' | 'text'
 
 /** One named set in the picker and the utility list. */
@@ -28,6 +28,7 @@ type Listener = () => void
 const listeners = new Set<Listener>()
 let sets: NodSet[] = [] // Creation order
 let members: SetMember[] = [] // Newest first
+let selectedSetId: string | null = null // Utility row whose members glow on the board; not persisted
 
 type Stored = { sets: NodSet[]; members: SetMember[] }
 
@@ -60,6 +61,7 @@ function persist() {
 
 function notify() {
   listeners.forEach((fn) => fn()) // useSyncExternalStore subscribers
+  highlightSelectedSet() // Board glow follows the selected set, including after a new member
 }
 
 /** Subscribe for useSyncExternalStore. */
@@ -78,6 +80,17 @@ export function getSets(): NodSet[] {
 /** Members, newest first (stable array until the next write). */
 export function getSetMembers(): SetMember[] {
   return members.length ? members : EMPTY_MEMBERS
+}
+
+/** Set whose content is glowing on the board, or null. */
+export function getSelectedSetId(): string | null {
+  return selectedSetId // Primitive snapshot — stable until the next select
+}
+
+/** Toggle the utility-list selection. The same id again clears the board glow. */
+export function selectSet(id: string) {
+  selectedSetId = selectedSetId === id ? null : id // One set at a time
+  notify() // List row + board halo
 }
 
 /** Open the utility sidebar on Sets. */
@@ -133,11 +146,12 @@ export function createSet(): NodSet {
   return set
 }
 
-/** Put content in a set. Skips an identical row. Opens the Sets tab. */
+/** Put a frame in a set. Blocks and text are not members. Skips an identical row. Opens the Sets tab. */
 export function addMember(
   setId: string,
   partial: { kind: SetItemKind; label: string; nodeId?: string }
 ): void {
+  if (partial.kind !== 'frame' || !partial.nodeId) return // Frame menu only — need a board or chat frame id
   const dup = members.some(
     (m) =>
       m.setId === setId &&
@@ -187,4 +201,28 @@ export function stampFramesInSets() {
     if (!ids.has(id)) el.removeAttribute('data-in-set')
   })
   ids.forEach((id) => stampFrame(id))
+  highlightSelectedSet() // Remounts drop the live halo attribute
+}
+
+/** Paint the blue halo on every frame in the selected set. Clears it when nothing is selected. */
+export function highlightSelectedSet() {
+  if (typeof document === 'undefined') return // SSR
+  const want = new Set<HTMLElement>() // Elements that should keep the halo — skip no-op writes so the observer does not loop
+  if (selectedSetId) {
+    const id = selectedSetId
+    for (const m of members) {
+      if (m.setId !== id || m.kind !== 'frame' || !m.nodeId) continue // Only frames glow
+      const safe = m.nodeId.replace(/\\/g, '\\\\').replace(/"/g, '\\"') // RF id inside quotes
+      const node = document.querySelector(`.react-flow__node[data-id="${safe}"]`) // Board frame
+      const panel = node?.querySelector('[data-panel-container="true"]') // Frame box; shapes may not have one
+      const host = panel instanceof HTMLElement ? panel : node // Glow the box, else the whole node
+      if (host instanceof HTMLElement) want.add(host)
+    }
+  }
+  document.querySelectorAll<HTMLElement>('[data-set-highlight]').forEach((el) => {
+    if (!want.has(el)) el.removeAttribute('data-set-highlight') // Left the set, or selection cleared
+  })
+  want.forEach((el) => {
+    if (!el.hasAttribute('data-set-highlight')) el.setAttribute('data-set-highlight', '') // Halo without selecting the frame
+  })
 }

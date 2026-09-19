@@ -51,7 +51,7 @@ import {
   type BlockTypeId,
   type DbConvertLayoutId,
 } from './block-actions-menu' // Notion-style block actions + Turn into baseline
-import { addMember, labelForFlowNode, clipSetLabel } from '@/lib/sets-list' // Frame / I-bar → a named set
+import { addMember, labelForFlowNode } from '@/lib/sets-list' // Frame menu → a named set
 import {
   isNotionDatabaseTableFrame,
   resolveNotionDatabaseIdFromFrame,
@@ -11052,6 +11052,7 @@ function BoardFlowInner({
        <>
        <div
          className="fixed z-20 flex flex-col items-stretch"
+         data-map-chrome // Present mode hides Free nav + minimap
          data-nn-safe-bottom // Capacitor: lift above home indicator via globals.css
          style={{
            bottom: `${
@@ -11448,10 +11449,6 @@ function BoardFlowInner({
             showAddChild={false}
             selectedCount={1}
             canUngroup={false}
-            onAddToSet={(setId) => {
-              const text = iBarInputRef.current?.value || '' // Typed buffer before a frame exists
-              addMember(setId, { kind: 'block', label: clipSetLabel(text, 'Block') })
-            }}
             boardInTargets={(() => {
               const convs =
                 (queryClient.getQueryData(['conversations']) as

@@ -1,0 +1,6 @@
+-- Present: header Present hides board chrome (html[data-presenting]); Escape exits.
+-- Capture: New presentation header; drag a capture under one header (exclusive); Delete returns rows to the loose list.
+-- Sets: Add to set is frame-only; selecting a set glows every frame in that set until clicked again.
+-- Layers: filter All / All touching / Selected only.
+-- Board font: paint from localStorage before React so reload does not flash Default.
+-- App/docs marker only; no DDL. Remote DDL top: 20260914104046_notion_multi_workspace.

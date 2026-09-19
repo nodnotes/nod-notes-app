@@ -45,6 +45,32 @@ function notify() {
   listeners.forEach((fn) => fn())
 }
 
+/** What the Layers list asks the publisher to load. */
+export type LayersPublishScope = 'all' | 'touching'
+
+let publishScope: LayersPublishScope = 'touching' // Default: selection cluster, not the whole board
+const scopeListeners = new Set<Listener>() // UI + publisher stay in sync
+
+/** Current publish scope for useSyncExternalStore. */
+export function getLayersPublishScope(): LayersPublishScope {
+  return publishScope
+}
+
+/** Subscribe when the filter switches All ↔ touching. */
+export function subscribeLayersPublishScope(fn: Listener): () => void {
+  scopeListeners.add(fn)
+  return () => {
+    scopeListeners.delete(fn) // Drop on unmount so a closed panel stops notifying
+  }
+}
+
+/** Layers filter sets this; publisher republishes the matching set. */
+export function setLayersPublishScope(next: LayersPublishScope) {
+  if (publishScope === next) return // Same scope — skip a full recapture
+  publishScope = next
+  scopeListeners.forEach((fn) => fn())
+}
+
 /** Clear the list (utility closed / left layers mode / nothing selected). */
 export function clearLayersTouching() {
   if (snapshot.items.length === 0 && snapshot.seedKey === '') return
@@ -255,9 +281,24 @@ export function computeTouchingLayerItems(
     }
   }
 
-  const items: LayersTouchingItem[] = [...cluster]
-    .map((id) => byId.get(id)!)
-    .filter(Boolean)
+  const items = sortedLayerItems(
+    [...cluster].map((id) => byId.get(id)!).filter(Boolean) // Cluster boxes, front first
+  )
+
+  return { items, seedKey }
+}
+
+/** Every layerable node on the board, front first — Layers filter “All”. */
+export function computeAllLayerItems(nodes: Node[]): { items: LayersTouchingItem[]; seedKey: string } {
+  const boxes = nodes.map(layerableNodeBox).filter((b): b is Box => !!b) // Frames, drawings, shapes only
+  const items = sortedLayerItems(boxes)
+  const seedKey = `all:${items.map((i) => i.id).sort().join(',')}` // Membership, not selection
+  return { items, seedKey }
+}
+
+/** Front (higher zIndex) first, then stable id. */
+function sortedLayerItems(boxes: Box[]): LayersTouchingItem[] {
+  return [...boxes]
     .sort((a, b) => b.zIndex - a.zIndex || a.id.localeCompare(b.id))
     .map((b) => ({
       id: b.id,
@@ -266,8 +307,6 @@ export function computeTouchingLayerItems(
       zIndex: b.zIndex,
       selected: b.selected,
     }))
-
-  return { items, seedKey }
 }
 
 /** PNG thumbnail via node-only capture (light fill, hi-DPI — not pane JPEG). */

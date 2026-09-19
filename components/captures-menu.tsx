@@ -2,16 +2,20 @@
 
 // Capture list — utility-sidebar Capture tab (reorder + insert gaps, same as old Present)
 
-import { useMemo, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { useRouter } from 'next/navigation' // Present navigates to the first capture's board
 import { useQueryClient } from '@tanstack/react-query' // Board path + frame text
 import {
   DndContext,
   PointerSensor,
   closestCenter,
+  pointerWithin,
+  useDroppable,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
-} from '@dnd-kit/core' // Capture reorder
+} from '@dnd-kit/core' // Capture reorder + drop under a presentation header
 import {
   SortableContext,
   arrayMove,
@@ -23,42 +27,50 @@ import {
   ListFilter, // Filter control (dropdown menu chrome)
   MessageSquare, // Add to chat
   Plus, // Insert capture between rows
-  Presentation, // Add to presentation
+  Presentation, // New presentation + section header
   Scan, // Capture view (4 disconnected rounded corners)
+  MoreHorizontal, // Presentation header ⋯
+  Play, // Present
   Search, // Search field glyph (non-sidebar layout)
+  Trash2, // Delete presentation
 } from 'lucide-react'
 import {
   UtilityFilterOption,
   UtilitySearchHeader,
 } from '@/components/utility-search-header' // Sidebar: AI-chat-style search
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu' // Add-to-presentation menu
 import { useReactFlowContext } from '@/components/react-flow-context' // Current viewport
 import { useSidebarContext } from '@/components/sidebar-context' // Open chat on add-to-chat
 import {
-  addCapturesToPresentation,
   attachCapturesToChat,
   createPresentation,
+  deletePresentation,
   filterCaptures,
   formatCaptureTimestamp,
   getCaptures,
   getPresentations,
-  insertNewCaptureAt,
+  insertCaptureIntoPresentation,
+  insertUngroupedCaptureAt,
+  moveCaptureUnderPresentation,
   readCaptureCameraInput,
-  setCaptureOrder,
+  renamePresentation,
+  setPresentationCaptureOrder,
+  setUngroupedCaptureOrder,
   subscribeCaptures,
   takeBoardCapture,
   type BoardCapture,
+  type BoardPresentation,
 } from '@/lib/captures' // Local capture/presentation store
 import { cn } from '@/lib/utils' // Class merge
+import { navigateToCapture } from '@/lib/capture-link' // Present starts on the first capture's camera
+import { startPresenting } from '@/lib/presentation-present' // Hide menus while presenting
 import { CaptureRowMoreMenu } from './capture-row-more-menu' // Row hover ⋯ — go to / copy link
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 type CapturesPanelProps = {
   conversationId?: string // Current board — Capture view + this-board filter
@@ -95,7 +107,6 @@ function SortableCaptureRow({
   selected,
   conversationId,
   canReorder,
-  tags,
   onToggle,
   onPreview,
   onAddAt,
@@ -106,7 +117,6 @@ function SortableCaptureRow({
   selected: boolean
   conversationId?: string
   canReorder: boolean // Off while search/filter is active
-  tags: { id: string; name: string }[]
   onToggle: (id: string) => void
   onPreview: (id: string) => void
   onAddAt: (index: number) => void
@@ -176,20 +186,176 @@ function SortableCaptureRow({
           )}
         />
       </div>
-      {tags.length > 0 && (
-        <div className="mt-1 flex flex-wrap gap-1 px-0.5">
-          {tags.map((tag) => (
-            <span
-              key={tag.id}
-              className="inline-flex max-w-full items-center gap-0.5 truncate rounded-md bg-gray-200/80 px-1.5 py-0.5 text-[10px] font-medium text-gray-700 dark:bg-white/10 dark:text-gray-300"
-              title={tag.name}
-            >
-              <Presentation className="h-2.5 w-2.5 flex-shrink-0 text-gray-500" />
-              <span className="truncate">{tag.name}</span>
-            </span>
-          ))}
-        </div>
+    </div>
+  )
+}
+
+/** Loose list id — captures that are not under a presentation header. */
+const UNGROUPED_SECTION = 'ungrouped'
+
+/** One visual section: a presentation header, or the loose list under all headers. */
+type CaptureSectionModel = {
+  id: string
+  presentation: BoardPresentation | null
+  captures: BoardCapture[]
+}
+
+/** Prefer the row under the pointer; fall back to closest center for gaps. */
+const captureCollision: CollisionDetection = (args) => {
+  const hits = pointerWithin(args) // Header / empty zone / thumb the pointer is inside
+  if (hits.length > 0) return hits
+  return closestCenter(args)
+}
+
+/** Which section a capture currently renders in. */
+function findCaptureSection(captureId: string, sections: CaptureSectionModel[]) {
+  for (const section of sections) {
+    const index = section.captures.findIndex((c) => c.id === captureId) // Visible index under that header
+    if (index >= 0) return { sectionId: section.id, index, ids: section.captures.map((c) => c.id) }
+  }
+  return null
+}
+
+/** Map a droppable id (header, empty zone, trailing gap, or capture) to a section index. */
+function resolveDropTarget(overId: string, sections: CaptureSectionModel[]) {
+  const prefixed = /^(header|section|end):([\s\S]+)$/.exec(overId) // Synthetic ids, not capture UUIDs
+  if (prefixed) {
+    const sectionId = prefixed[2]
+    const section = sections.find((s) => s.id === sectionId)
+    if (!section) return null
+    if (prefixed[1] === 'end') return { sectionId, index: section.captures.length } // After the last thumb
+    return { sectionId, index: 0 } // Header or empty zone → first slot under the header
+  }
+  const hit = findCaptureSection(overId, sections)
+  if (!hit) return null
+  return { sectionId: hit.sectionId, index: hit.index }
+}
+
+/** Empty presentation (or empty loose list) — the drop target under a new header. */
+function EmptySectionDrop({ id, label }: { id: string; label: string }) {
+  const { setNodeRef, isOver } = useDroppable({ id: `section:${id}` }) // Drop → index 0
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        'mx-1 my-1 flex min-h-8 items-center justify-center rounded-md border border-dashed px-1 text-center text-[10px] text-gray-400',
+        isOver
+          ? 'border-blue-400 bg-blue-500/10 text-blue-600'
+          : 'border-gray-200 dark:border-white/15'
       )}
+    >
+      {label}
+    </div>
+  )
+}
+
+/** Trailing gap is also a drop target so a capture can land at the end of a section. */
+function TrailingDrop({ sectionId, children }: { sectionId: string; children: ReactNode }) {
+  const { setNodeRef, isOver } = useDroppable({ id: `end:${sectionId}` }) // Drop → append
+  return (
+    <div ref={setNodeRef} className={cn('rounded-md', isOver && 'bg-blue-500/10')}>
+      {children}
+    </div>
+  )
+}
+
+/** Presentation name row — drop on it to put a capture first under the header. */
+function PresentationHeader({
+  presentation,
+  renaming,
+  canPresent,
+  onRenameStart,
+  onRenameEnd,
+  onPresent,
+  onDelete,
+}: {
+  presentation: BoardPresentation
+  renaming: boolean
+  canPresent: boolean // Needs at least one capture under the header
+  onRenameStart: () => void
+  onRenameEnd: () => void
+  onPresent: () => void
+  onDelete: () => void
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: `header:${presentation.id}` }) // Drop → index 0
+  const skipBlur = useRef(false) // Escape blur must not save the in-progress edit
+
+  useEffect(() => {
+    if (!renaming) return
+    document.getElementById(`presentation-header-${presentation.id}`)?.scrollIntoView({ block: 'nearest' })
+  }, [renaming, presentation.id])
+
+  return (
+    <div
+      ref={setNodeRef}
+      id={`presentation-header-${presentation.id}`}
+      className={cn(
+        'group/header mt-1 flex h-7 items-center gap-1 rounded-md px-1.5',
+        isOver && 'bg-blue-500/10'
+      )}
+    >
+      <Presentation className="h-3 w-3 flex-shrink-0 text-gray-400" />
+      {renaming ? (
+        <input
+          autoFocus // New header opens ready to name
+          defaultValue={presentation.name}
+          aria-label="Presentation name"
+          className="min-w-0 flex-1 bg-transparent text-[11px] font-medium text-gray-800 outline-none dark:text-gray-100"
+          onFocus={(e) => e.currentTarget.select()}
+          onPointerDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            e.stopPropagation() // Don't let the board steal Enter / Escape
+            if (e.key === 'Enter') e.currentTarget.blur()
+            if (e.key === 'Escape') {
+              skipBlur.current = true
+              e.currentTarget.blur()
+            }
+          }}
+          onBlur={(e) => {
+            if (!skipBlur.current) renamePresentation(presentation.id, e.currentTarget.value)
+            skipBlur.current = false
+            onRenameEnd()
+          }}
+        />
+      ) : (
+        <button
+          type="button"
+          className="min-w-0 flex-1 truncate text-left text-[11px] font-medium text-gray-700 dark:text-gray-200"
+          title="Rename presentation"
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={onRenameStart}
+        >
+          {presentation.name}
+        </button>
+      )}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-5 w-5 flex-shrink-0 text-gray-400 opacity-100 hover:bg-black/[0.04] hover:text-gray-700 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/header:opacity-100 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
+            title="Presentation options"
+            aria-label={`${presentation.name} options`}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-40" onClick={(e) => e.stopPropagation()}>
+          <DropdownMenuItem disabled={!canPresent} onSelect={onPresent}>
+            <Play className="mr-2 h-4 w-4" />
+            Present
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400"
+            onSelect={onDelete}
+          >
+            <Trash2 className="mr-2 h-4 w-4" />
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   )
 }
@@ -201,6 +367,7 @@ export function CapturesPanel({
   onRequestClose,
 }: CapturesPanelProps) {
   const queryClient = useQueryClient() // Path + messages cache
+  const router = useRouter() // Present may open another board
   const { reactFlowInstance } = useReactFlowContext() // Viewport at Capture view
   const { setChatSidebarOpen } = useSidebarContext() // Reveal chat when attaching
   const captures = useSyncExternalStore(subscribeCaptures, getCaptures, getCaptures) // List
@@ -211,6 +378,7 @@ export function CapturesPanel({
   const [selected, setSelected] = useState<Set<string>>(() => new Set()) // Row selection
   const [previewId, setPreviewId] = useState<string | null>(null) // Expanded JPEG overlay
   const [capturing, setCapturing] = useState(false) // Capture view in flight
+  const [renamingId, setRenamingId] = useState<string | null>(null) // Header whose name is being edited
   const sidebar = variant === 'sidebar' // Narrow column layout
 
   const items = useMemo(
@@ -222,20 +390,33 @@ export function CapturesPanel({
     [captures, query, conversationId, thisBoardOnly]
   )
 
-  const presentationsByCapture = useMemo(() => {
-    const map = new Map<string, { id: string; name: string }[]>()
-    for (const p of presentations) {
-      for (const captureId of p.captureIds) {
-        const list = map.get(captureId) || []
-        list.push({ id: p.id, name: p.name })
-        map.set(captureId, list)
-      }
-    }
-    return map
-  }, [presentations])
-
-  // Reorder / + gaps only on the full unfiltered list (order is global)
+  // Reorder / + gaps only on the full unfiltered list (order is per section)
   const canReorder = !query.trim() && !thisBoardOnly
+
+  const sections = useMemo(() => {
+    const byId = new Map(items.map((c) => [c.id, c])) // Visible captures only
+    const claimed = new Set<string>() // A capture renders under its first header
+    const grouped: CaptureSectionModel[] = []
+    const nameQuery = query.trim().toLowerCase()
+    for (const presentation of presentations) {
+      const rows: BoardCapture[] = []
+      for (const id of presentation.captureIds) {
+        if (claimed.has(id)) continue
+        const row = byId.get(id)
+        if (!row) continue // Filtered out, or deleted
+        claimed.add(id)
+        rows.push(row)
+      }
+      const nameHit = Boolean(nameQuery) && presentation.name.toLowerCase().includes(nameQuery)
+      if (!canReorder && rows.length === 0 && !nameHit) continue // Hide empty headers while searching
+      grouped.push({ id: presentation.id, presentation, captures: rows })
+    }
+    const memberIds = new Set(presentations.flatMap((p) => p.captureIds))
+    const ungrouped = items.filter((c) => !memberIds.has(c.id)) // Not under any header
+    const loose: CaptureSectionModel = { id: UNGROUPED_SECTION, presentation: null, captures: ungrouped }
+    return { grouped, all: [...grouped, loose] }
+  }, [items, presentations, canReorder, query])
+
   const hasSelection = selected.size > 0
   const previewItem = previewId ? items.find((c) => c.id === previewId) : undefined
 
@@ -243,7 +424,7 @@ export function CapturesPanel({
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }) // Click selects; drag reorders
   )
 
-  const captureAt = async (index: number | null) => {
+  const captureAt = async (index: number | null, presentationId: string | null = null) => {
     if (!conversationId || capturing) return
     setCapturing(true)
     try {
@@ -253,13 +434,34 @@ export function CapturesPanel({
         conversationId,
         readCaptureCameraInput(vp)
       )
-      if (index !== null && canReorder) {
-        insertNewCaptureAt(created, index) // Place at the + gap (takeBoardCapture prepended first)
+      if (canReorder && presentationId) {
+        insertCaptureIntoPresentation(presentationId, created.id, index ?? 0) // Land under that header
+      } else if (canReorder && index !== null) {
+        insertUngroupedCaptureAt(created, index) // Land in the loose list at the + gap
       }
       setSelected((prev) => new Set(prev).add(created.id))
     } finally {
       setCapturing(false)
     }
+  }
+
+  const onNewPresentation = () => {
+    const created = createPresentation([]) // Empty header at the top of the list
+    setRenamingId(created.id) // Name it immediately
+  }
+
+  const presentPresentation = (presentation: BoardPresentation) => {
+    const byId = new Map(captures.map((c) => [c.id, c]))
+    const first = presentation.captureIds
+      .map((id) => byId.get(id))
+      .find((c): c is BoardCapture => Boolean(c)) // First capture that still exists
+    if (!first) return
+    startPresenting() // Hide menus before the camera move
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        navigateToCapture(first, conversationId, router) // Land on that capture's view
+      })
+    })
   }
 
   const toggleRow = (id: string) => {
@@ -276,13 +478,66 @@ export function CapturesPanel({
   const onDragEnd = (event: DragEndEvent) => {
     if (!canReorder) return
     const { active, over } = event
-    if (!over || active.id === over.id) return
-    const ids = items.map((c) => c.id)
-    const oldIndex = ids.indexOf(String(active.id))
-    const newIndex = ids.indexOf(String(over.id))
-    if (oldIndex < 0 || newIndex < 0) return
-    setCaptureOrder(arrayMove(ids, oldIndex, newIndex))
+    if (!over) return
+    const activeId = String(active.id)
+    const overId = String(over.id)
+    if (activeId === overId) return
+    const from = findCaptureSection(activeId, sections.all)
+    const to = resolveDropTarget(overId, sections.all)
+    if (!from || !to) return
+    if (from.sectionId === to.sectionId) {
+      const newIndex = to.index >= from.ids.length ? from.ids.length - 1 : to.index // End-cap → last slot
+      if (from.index < 0 || from.index === newIndex) return
+      const next = arrayMove(from.ids, from.index, newIndex)
+      if (from.sectionId === UNGROUPED_SECTION) setUngroupedCaptureOrder(next)
+      else setPresentationCaptureOrder(from.sectionId, next)
+      return
+    }
+    moveCaptureUnderPresentation(
+      activeId,
+      to.sectionId === UNGROUPED_SECTION ? null : to.sectionId,
+      to.index
+    )
   }
+
+  const loose = sections.all[sections.all.length - 1] // Captures not under a header
+  const nothingToShow = sections.grouped.length === 0 && loose.captures.length === 0
+
+  const renderSectionCaptures = (section: CaptureSectionModel) => (
+    <>
+      {section.captures.length === 0 && canReorder ? (
+        <EmptySectionDrop
+          id={section.id}
+          label={section.presentation ? 'Drag captures here' : 'Not in a presentation'}
+        />
+      ) : (
+        <SortableContext items={section.captures.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+          {section.captures.map((item, index) => (
+            <SortableCaptureRow
+              key={item.id}
+              capture={item}
+              index={index}
+              selected={selected.has(item.id)}
+              conversationId={conversationId}
+              canReorder={canReorder}
+              onToggle={toggleRow}
+              onPreview={setPreviewId}
+              onAddAt={(i) => void captureAt(i, section.presentation?.id ?? null)}
+              onNavigate={onRequestClose}
+            />
+          ))}
+        </SortableContext>
+      )}
+      {canReorder && (
+        <TrailingDrop sectionId={section.id}>
+          <InsertGap
+            onAdd={() => void captureAt(section.captures.length, section.presentation?.id ?? null)}
+            disabled={!conversationId || capturing}
+          />
+        </TrailingDrop>
+      )}
+    </>
+  )
 
   return (
     <div
@@ -323,7 +578,7 @@ export function CapturesPanel({
               </>
             }
           />
-          <div className="flex-shrink-0 px-2 pb-1.5 pt-2">
+          <div className="flex flex-shrink-0 flex-col gap-0.5 px-2 pb-1.5 pt-2">
             <button
               type="button"
               className="flex h-8 w-full flex-shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium text-gray-700 hover:bg-black/[0.04] disabled:opacity-40 dark:text-gray-200 dark:hover:bg-white/[0.06]"
@@ -335,6 +590,17 @@ export function CapturesPanel({
             >
               <Scan className="h-3.5 w-3.5" />
               Capture view
+            </button>
+            <button
+              type="button"
+              className="flex h-8 w-full flex-shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium text-gray-700 hover:bg-black/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.06]"
+              title="New presentation"
+              aria-label="New presentation"
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={onNewPresentation}
+            >
+              <Presentation className="h-3.5 w-3.5" />
+              New presentation
             </button>
           </div>
         </>
@@ -424,40 +690,44 @@ export function CapturesPanel({
           sidebar ? 'flex-1' : 'max-h-72'
         )}
       >
-        {items.length === 0 ? (
+        {nothingToShow ? (
           <div className="px-1 py-8 text-center text-xs text-gray-400">
             {captures.length === 0 ? 'No captures yet' : 'No captures match'}
           </div>
         ) : (
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-            <SortableContext items={items.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-              {items.map((item, index) => (
-                <SortableCaptureRow
-                  key={item.id}
-                  capture={item}
-                  index={index}
-                  selected={selected.has(item.id)}
-                  conversationId={conversationId}
-                  canReorder={canReorder}
-                  tags={presentationsByCapture.get(item.id) || []}
-                  onToggle={toggleRow}
-                  onPreview={setPreviewId}
-                  onAddAt={(i) => void captureAt(i)}
-                  onNavigate={onRequestClose}
-                />
-              ))}
-            </SortableContext>
-            {canReorder && (
-              <InsertGap
-                onAdd={() => void captureAt(items.length)}
-                disabled={!conversationId || capturing}
-              />
+          <DndContext sensors={sensors} collisionDetection={captureCollision} onDragEnd={onDragEnd}>
+            {sections.grouped.map((section) => (
+              <div key={section.id}>
+                {section.presentation && (
+                  <PresentationHeader
+                    presentation={section.presentation}
+                    renaming={renamingId === section.id}
+                    canPresent={section.presentation.captureIds.some((id) => captures.some((c) => c.id === id))}
+                    onRenameStart={() => setRenamingId(section.id)}
+                    onRenameEnd={() => setRenamingId((current) => (current === section.id ? null : current))}
+                    onPresent={() => presentPresentation(section.presentation!)}
+                    onDelete={() => deletePresentation(section.id)}
+                  />
+                )}
+                {renderSectionCaptures(section)}
+              </div>
+            ))}
+            {/* Loose captures sit under every header so they can be dragged up into one, or out of one */}
+            {(loose.captures.length > 0 || (sections.grouped.length > 0 && items.length > 0)) && (
+              <div>
+                {sections.grouped.length > 0 && loose.captures.length > 0 && (
+                  <div className="mt-2 px-1.5 pb-0.5 text-[10px] font-medium text-gray-400">
+                    Not in a presentation
+                  </div>
+                )}
+                {renderSectionCaptures(loose)}
+              </div>
             )}
           </DndContext>
         )}
 
         {/* Empty list still gets a trailing + so the first capture can land here */}
-        {items.length === 0 && canReorder && conversationId && (
+        {nothingToShow && canReorder && conversationId && (
           <InsertGap onAdd={() => void captureAt(0)} disabled={capturing} />
         )}
       </div>
@@ -512,57 +782,6 @@ export function CapturesPanel({
           <MessageSquare className="h-3.5 w-3.5" />
           Add to chat
         </button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className={cn(
-                'flex h-8 items-center gap-1 rounded-md px-2 text-sm font-medium',
-                sidebar && 'w-full justify-center',
-                hasSelection
-                  ? 'text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-white/[0.06]'
-                  : 'pointer-events-none opacity-40'
-              )}
-              disabled={!hasSelection}
-              onPointerDown={(e) => {
-                if (!hasSelection) e.preventDefault()
-              }}
-            >
-              <Presentation className="h-3.5 w-3.5" />
-              Add to presentation
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-44 p-1" side={sidebar ? 'left' : 'top'} align="end">
-            <DropdownMenuItem
-              onSelect={() => {
-                createPresentation(selectedIds())
-              }}
-            >
-              Create new
-            </DropdownMenuItem>
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger disabled={presentations.length === 0}>
-                Select
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="max-h-56 w-48 overflow-y-auto p-1" sideOffset={6}>
-                {presentations.length === 0 ? (
-                  <div className="px-2 py-2 text-xs text-gray-400">No presentations yet</div>
-                ) : (
-                  presentations.map((p) => (
-                    <DropdownMenuItem
-                      key={p.id}
-                      onSelect={() => {
-                        addCapturesToPresentation(p.id, selectedIds())
-                      }}
-                    >
-                      {p.name}
-                    </DropdownMenuItem>
-                  ))
-                )}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-          </DropdownMenuContent>
-        </DropdownMenu>
       </div>
     </div>
   )

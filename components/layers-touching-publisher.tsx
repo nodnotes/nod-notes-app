@@ -2,17 +2,21 @@
 
 // Inside React Flow — publishes the touching cluster for the utility Layers list
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { useReactFlow, useStore } from 'reactflow'
 import { useSidebarContext } from '@/components/sidebar-context'
 import { isFrameDragging } from '@/lib/frame-dragging'
 import {
   captureNodeLayerPreview,
   clearLayersTouching,
+  computeAllLayerItems,
   computeTouchingLayerItems,
+  getLayersPublishScope,
   getLayersTouching,
+  isLayerableNode,
   patchLayersTouchingPreviews,
   publishLayersTouching,
+  subscribeLayersPublishScope,
   subscribeLayersTouching,
 } from '@/lib/layers-touching'
 
@@ -25,15 +29,16 @@ function nodeEl(id: string): HTMLElement | null {
 
 /**
  * Mount under ReactFlowProvider (BoardFlow). When the utility Layers panel is open,
- * publishes frames/drawings/shapes that touch the current selection (incl. thread endpoints).
+ * publishes the Layers filter set: every layerable node (All) or the touching cluster.
  */
 export function LayersTouchingPublisher() {
   const { isUtilitySidebarOpen, utilitySidebarMode } = useSidebarContext()
   const rf = useReactFlow()
   const active = isUtilitySidebarOpen && utilitySidebarMode === 'layers'
+  const scope = useSyncExternalStore(subscribeLayersPublishScope, getLayersPublishScope, () => 'touching') // All vs touching
   // Selection only — do NOT key on width/height (selected-frame chrome resize cancels captures)
   const selectionKey = useStore((s) => {
-    if (!active) return ''
+    if (!active || getLayersPublishScope() === 'all') return '' // All mode ignores selection churn
     const selected = s
       .getNodes()
       .filter((n) => n.selected)
@@ -47,6 +52,17 @@ export function LayersTouchingPublisher() {
       .join(',')
     return `${selected}|${edges}`
   })
+  // All mode republishes when a layer is added or removed, not on every drag
+  const allIdsKey = useStore((s) => {
+    if (!active || getLayersPublishScope() !== 'all') return ''
+    return s
+      .getNodes()
+      .filter(isLayerableNode)
+      .map((n) => n.id)
+      .sort()
+      .join(',')
+  })
+  const publishKey = scope === 'all' ? `all:${allIdsKey}` : `touch:${selectionKey}` // One key so All doesn't recapture on select
   const captureGenRef = useRef(0) // Cancel stale full-list captures
   const itemIdsKeyRef = useRef('') // Current cluster ids for edit observers
 
@@ -61,7 +77,8 @@ export function LayersTouchingPublisher() {
 
     const nodes = rf.getNodes()
     const edges = rf.getEdges()
-    const { items, seedKey } = computeTouchingLayerItems(nodes, edges)
+    const { items, seedKey } =
+      scope === 'all' ? computeAllLayerItems(nodes) : computeTouchingLayerItems(nodes, edges) // Filter “All” vs cluster
     publishLayersTouching(items, seedKey) // Keeps prior thumbs for same ids while recapturing
     itemIdsKeyRef.current = items
       .map((i) => i.id)
@@ -86,11 +103,12 @@ export function LayersTouchingPublisher() {
       window.clearTimeout(timer)
       captureGenRef.current += 1 // Invalidate in-flight captures for this selection
     }
-  }, [active, selectionKey, rf])
+  }, [active, publishKey, scope, rf])
 
   // While the cluster is open, recapture thumbs when frame/drawing DOM content edits
   useEffect(() => {
-    if (!active || !selectionKey) return
+    if (!active) return // Sidebar closed or not on Layers
+    if (scope !== 'all' && !selectionKey && getLayersTouching().length === 0) return // Nothing to watch
 
     const pending = new Set<string>() // Ids that need a fresh thumb
     let debounceTimer: number | null = null // DOM window.setTimeout; Node Timeout clashes with @types/node
@@ -163,7 +181,7 @@ export function LayersTouchingPublisher() {
       if (debounceTimer) window.clearTimeout(debounceTimer)
       editGen += 1
     }
-  }, [active, selectionKey])
+  }, [active, scope, selectionKey])
 
   useEffect(() => {
     return () => {

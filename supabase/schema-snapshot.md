@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-19T03:38:06Z`
+- Snapped at: `2026-09-19T05:57:28Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`; versions from `.temp` + Management API list; cli-latest reports `v2.117.0`)
@@ -9,6 +9,16 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260919055728_present_mode_capture_headers_layers_filter.sql`.
+- **Present**: presentation header Present hides top bar, mode pills, utility, chat, Free nav, minimap, and menus (`html[data-presenting]`); Escape exits.
+- **Capture**: New presentation adds an empty header; drag a capture under one header (exclusive); Delete returns those captures to the loose list.
+- **Sets**: Add to set is frame-only; selecting a set glows every frame in that set until the row is clicked again.
+- **Layers**: filter All / All touching / Selected only.
+- **Board font**: `html[data-nn-board-font]` paints from localStorage before React so reload does not flash Default.
+- Schema unchanged; remote DDL top remains `20260914104046_notion_multi_workspace`.
+
+## Prior: Sets, chat prompt glow, upright select
 
 - DDL: none. Marker `20260919033806_sets_add_to_set_chat_prompt_glow.sql`.
 - **Sets**: utility tab label Sets; Add to set on frame / block / text menus opens a picker (list + Add set); the set stores a thumb of the whole frame with the added member washed blue (`lib/sets-list.ts`); map haze stays sharp on click-reveal.
