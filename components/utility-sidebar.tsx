@@ -1,6 +1,6 @@
 'use client'
 
-// Transparent right utility overlay on the map — left of chat when both open; layers / sets / capture
+// Transparent right utility overlay on the map — left of chat when both open; layers / sets / views
 
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react' // Seam drag + hover tip
 import { useParams } from 'next/navigation' // Board id for Capture panel
@@ -22,7 +22,7 @@ const UTILITY_BRAND_CLEARANCE_PX = 64
 const MODE_TABS: { id: UtilitySidebarMode; label: string; icon: typeof Layers }[] = [
   { id: 'layers', label: 'Layers', icon: Layers }, // Default — frame stacking order
   { id: 'flashcards', label: 'Sets', icon: SquareStack }, // Snapshots added from menus (stored mode id stays flashcards)
-  { id: 'capture', label: 'Capture', icon: Scan }, // Board captures — utility Capture tab
+  { id: 'capture', label: 'Views', icon: Scan }, // Board views — utility Views tab (mode id stays capture)
 ]
 
 /**

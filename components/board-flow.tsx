@@ -7886,6 +7886,7 @@ function BoardFlowInner({
         | HTMLTextAreaElement
         | null
       if (menuInput) {
+        if (menuInput.hasAttribute('data-set-name')) return // New set name owns Backspace, even when cleared
         if (menuInput.value.length > 0) return
         // Fall through to delete
       } else if (target.matches?.('input, textarea, select')) {

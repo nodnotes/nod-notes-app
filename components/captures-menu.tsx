@@ -1,6 +1,6 @@
 'use client'
 
-// Capture list — utility-sidebar Capture tab (reorder + insert gaps, same as old Present)
+// Capture list — utility-sidebar Views tab (reorder + insert gaps, same as old Present)
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation' // Present navigates to the first capture's board
@@ -24,12 +24,15 @@ import {
 } from '@dnd-kit/sortable' // Vertical list + slide transitions
 import { CSS } from '@dnd-kit/utilities' // Translate while dragging
 import {
+  Check, // Organize menu current row
+  List, // In one list
   ListFilter, // Filter control (dropdown menu chrome)
   MessageSquare, // Add to chat
   Plus, // Insert capture between rows
   Presentation, // New presentation + section header
   Scan, // Capture view (4 disconnected rounded corners)
   MoreHorizontal, // Presentation header ⋯
+  Pencil, // Rename presentation
   Play, // Present
   Search, // Search field glyph (non-sidebar layout)
   Trash2, // Delete presentation
@@ -53,7 +56,9 @@ import {
   moveCaptureUnderPresentation,
   readCaptureCameraInput,
   renamePresentation,
+  setCaptureOrder,
   setPresentationCaptureOrder,
+  setPresentationCollapsed,
   setUngroupedCaptureOrder,
   subscribeCaptures,
   takeBoardCapture,
@@ -64,13 +69,19 @@ import { cn } from '@/lib/utils' // Class merge
 import { navigateToCapture } from '@/lib/capture-link' // Present starts on the first capture's camera
 import { startPresenting } from '@/lib/presentation-present' // Hide menus while presenting
 import { CaptureRowMoreMenu } from './capture-row-more-menu' // Row hover ⋯ — go to / copy link
-import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+
+/** How the Capture list is arranged. By presentation is the default. */
+type PresentationOrganize = 'list' | 'presentation'
+
+/** Shared ⋯ chrome — same as the Layers + Group row. */
+const presentationMoreButtonClass =
+  'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-black/[0.06] hover:text-gray-600 dark:hover:bg-white/[0.08] dark:hover:text-gray-200 [@media(hover:hover)]:opacity-0 data-[state=open]:opacity-100'
 
 type CapturesPanelProps = {
   conversationId?: string // Current board — Capture view + this-board filter
@@ -107,6 +118,7 @@ function SortableCaptureRow({
   selected,
   conversationId,
   canReorder,
+  showGaps = true,
   onToggle,
   onPreview,
   onAddAt,
@@ -117,6 +129,7 @@ function SortableCaptureRow({
   selected: boolean
   conversationId?: string
   canReorder: boolean // Off while search/filter is active
+  showGaps?: boolean // List mode is flat thumbs — no + insert gaps
   onToggle: (id: string) => void
   onPreview: (id: string) => void
   onAddAt: (index: number) => void
@@ -127,7 +140,7 @@ function SortableCaptureRow({
     disabled: !canReorder,
   })
   const style: CSSProperties = {
-    transform: CSS.Transform.toString(transform), // Follow pointer
+    transform: CSS.Translate.toString(transform), // Move only — scale would shrink the thumb
     transition: transition || 'transform 200ms ease', // Slide neighbors into place
     zIndex: isDragging ? 2 : undefined,
     opacity: isDragging ? 0.85 : 1,
@@ -135,8 +148,8 @@ function SortableCaptureRow({
   const stamp = formatCaptureTimestamp(capture.createdAt) // Title / a11y only
 
   return (
-    <div ref={setNodeRef} style={style} className="group/capture flex flex-col">
-      {canReorder && <InsertGap onAdd={() => onAddAt(index)} />}
+    <div ref={setNodeRef} style={style} className="group/capture flex w-full shrink-0 flex-col">
+      {canReorder && showGaps && <InsertGap onAdd={() => onAddAt(index)} />}
       <div className="relative">
         <button
           type="button"
@@ -259,7 +272,31 @@ function TrailingDrop({ sectionId, children }: { sectionId: string; children: Re
   )
 }
 
-/** Presentation name row — drop on it to put a capture first under the header. */
+/** Presentation glyph. Closed box with text lines; the stand shows only while open. */
+function PresentationIcon({ className, collapsed }: { className?: string; collapsed?: boolean }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <rect x="4" y="3" width="16" height="11" rx="2" /> {/* Screen; top stroke matches the bottom, no rail */}
+      <path d="M7 7h8" /> {/* Title line, inset from the frame */}
+      <path d="M7 10h5" /> {/* Body line */}
+      {collapsed ? null : <path d="m7 20 5-6 5 6" />} {/* Stand; hidden when closed */}
+    </svg>
+  )
+}
+
+/** Presentation name row — click collapses like a group; drop on it to put a capture first. */
 function PresentationHeader({
   presentation,
   renaming,
@@ -279,6 +316,7 @@ function PresentationHeader({
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `header:${presentation.id}` }) // Drop → index 0
   const skipBlur = useRef(false) // Escape blur must not save the in-progress edit
+  const collapsed = !!presentation.collapsed // Closed hides the captures
 
   useEffect(() => {
     if (!renaming) return
@@ -290,59 +328,77 @@ function PresentationHeader({
       ref={setNodeRef}
       id={`presentation-header-${presentation.id}`}
       className={cn(
-        'group/header mt-1 flex h-7 items-center gap-1 rounded-md px-1.5',
+        'relative mt-0.5 flex h-7 items-center gap-1.5 rounded-md pl-1.5',
         isOver && 'bg-blue-500/10'
       )}
     >
-      <Presentation className="h-3 w-3 flex-shrink-0 text-gray-400" />
       {renaming ? (
-        <input
-          autoFocus // New header opens ready to name
-          defaultValue={presentation.name}
-          aria-label="Presentation name"
-          className="min-w-0 flex-1 bg-transparent text-[11px] font-medium text-gray-800 outline-none dark:text-gray-100"
-          onFocus={(e) => e.currentTarget.select()}
-          onPointerDown={(e) => e.stopPropagation()}
-          onKeyDown={(e) => {
-            e.stopPropagation() // Don't let the board steal Enter / Escape
-            if (e.key === 'Enter') e.currentTarget.blur()
-            if (e.key === 'Escape') {
-              skipBlur.current = true
-              e.currentTarget.blur()
-            }
-          }}
-          onBlur={(e) => {
-            if (!skipBlur.current) renamePresentation(presentation.id, e.currentTarget.value)
-            skipBlur.current = false
-            onRenameEnd()
-          }}
-        />
+        <>
+          <PresentationIcon className="h-4 w-4 flex-shrink-0 text-gray-800 dark:text-gray-200" collapsed={collapsed} />
+          <input
+            autoFocus // New header opens ready to name
+            defaultValue={presentation.name}
+            aria-label="Presentation name"
+            className="min-w-0 flex-1 bg-transparent text-xs text-gray-900 outline-none dark:text-gray-100"
+            onFocus={(e) => e.currentTarget.select()}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()} // Don't start another rename while naming
+            onKeyDown={(e) => {
+              e.stopPropagation() // Don't let the board steal Enter / Escape
+              if (e.key === 'Enter') e.currentTarget.blur()
+              if (e.key === 'Escape') {
+                skipBlur.current = true
+                e.currentTarget.blur()
+              }
+            }}
+            onBlur={(e) => {
+              if (!skipBlur.current) renamePresentation(presentation.id, e.currentTarget.value)
+              skipBlur.current = false
+              onRenameEnd()
+            }}
+          />
+        </>
       ) : (
         <button
           type="button"
-          className="min-w-0 flex-1 truncate text-left text-[11px] font-medium text-gray-700 dark:text-gray-200"
-          title="Rename presentation"
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-gray-800 dark:text-gray-200"
+          title={collapsed ? 'Expand presentation' : 'Collapse presentation'}
+          aria-label={collapsed ? 'Expand presentation' : 'Collapse presentation'}
+          aria-expanded={!collapsed}
           onPointerDown={(e) => e.preventDefault()}
-          onClick={onRenameStart}
+          onClick={() => {
+            if (renaming) return // The name field owns the click while it is open
+            setPresentationCollapsed(presentation.id, !collapsed)
+          }}
+          onDoubleClick={onRenameStart} // A double-click's two clicks cancel, so collapse stays put
         >
-          {presentation.name}
+          <PresentationIcon className="h-4 w-4 flex-shrink-0" collapsed={collapsed} /> {/* Stand hidden when closed */}
+          <span className="min-w-0 flex-1 truncate text-xs text-gray-900 dark:text-gray-100">{presentation.name}</span>
         </button>
       )}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-5 w-5 flex-shrink-0 text-gray-400 opacity-100 hover:bg-black/[0.04] hover:text-gray-700 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/header:opacity-100 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
+          <button
+            type="button"
+            className={cn(presentationMoreButtonClass, '[@media(hover:hover)]:group-hover/presentation:opacity-100')}
             title="Presentation options"
             aria-label={`${presentation.name} options`}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
-            <MoreHorizontal className="h-3.5 w-3.5" />
-          </Button>
+            <MoreHorizontal className="h-4 w-4" />
+          </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-40" onClick={(e) => e.stopPropagation()}>
+        <DropdownMenuContent
+          align="end"
+          className="w-40"
+          onClick={(e) => e.stopPropagation()}
+          onCloseAutoFocus={(e) => e.preventDefault()} // Leave focus for the name field, not the ⋯ button
+        >
+          <DropdownMenuItem onSelect={onRenameStart}>
+            <Pencil className="mr-2 h-4 w-4" />
+            Rename
+          </DropdownMenuItem>
           <DropdownMenuItem disabled={!canPresent} onSelect={onPresent}>
             <Play className="mr-2 h-4 w-4" />
             Present
@@ -360,7 +416,7 @@ function PresentationHeader({
   )
 }
 
-/** Captures list body — utility Capture tab (reorder + + insert). */
+/** Captures list body — utility Views tab (reorder + + insert). */
 export function CapturesPanel({
   conversationId,
   variant = 'popover',
@@ -379,7 +435,20 @@ export function CapturesPanel({
   const [previewId, setPreviewId] = useState<string | null>(null) // Expanded JPEG overlay
   const [capturing, setCapturing] = useState(false) // Capture view in flight
   const [renamingId, setRenamingId] = useState<string | null>(null) // Header whose name is being edited
+  const [organize, setOrganize] = useState<PresentationOrganize>('presentation') // ⋯ menu: one list, or headers
+  const [organizeOpen, setOrganizeOpen] = useState(false) // Organize presentations menu
+  const organizeRef = useRef<HTMLDivElement>(null) // Trigger + menu, so outside clicks can close it
   const sidebar = variant === 'sidebar' // Narrow column layout
+
+  useEffect(() => {
+    if (!organizeOpen) return
+    const onDown = (event: PointerEvent) => {
+      if (organizeRef.current?.contains(event.target as Node)) return // Trigger and menu stay open
+      setOrganizeOpen(false)
+    }
+    window.addEventListener('pointerdown', onDown, true) // Capture so the board does not eat the click first
+    return () => window.removeEventListener('pointerdown', onDown, true)
+  }, [organizeOpen])
 
   const items = useMemo(
     () =>
@@ -446,6 +515,8 @@ export function CapturesPanel({
   }
 
   const onNewPresentation = () => {
+    setOrganize('presentation') // The new header only shows under By presentation
+    setOrganizeOpen(false)
     const created = createPresentation([]) // Empty header at the top of the list
     setRenamingId(created.id) // Name it immediately
   }
@@ -475,6 +546,17 @@ export function CapturesPanel({
 
   const selectedIds = () => [...selected]
 
+  const onListDragEnd = (event: DragEndEvent) => {
+    if (!canReorder) return // Search and This board stay put
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const ids = items.map((item) => item.id) // Flat list, headers ignored
+    const from = ids.indexOf(String(active.id))
+    const to = ids.indexOf(String(over.id))
+    if (from < 0 || to < 0) return
+    setCaptureOrder(arrayMove(ids, from, to))
+  }
+
   const onDragEnd = (event: DragEndEvent) => {
     if (!canReorder) return
     const { active, over } = event
@@ -498,6 +580,10 @@ export function CapturesPanel({
       to.sectionId === UNGROUPED_SECTION ? null : to.sectionId,
       to.index
     )
+    if (to.sectionId !== UNGROUPED_SECTION) {
+      const target = getPresentations().find((p) => p.id === to.sectionId)
+      if (target?.collapsed) setPresentationCollapsed(target.id, false) // A drop opens a closed presentation
+    }
   }
 
   const loose = sections.all[sections.all.length - 1] // Captures not under a header
@@ -578,30 +664,80 @@ export function CapturesPanel({
               </>
             }
           />
-          <div className="flex flex-shrink-0 flex-col gap-0.5 px-2 pb-1.5 pt-2">
-            <button
-              type="button"
-              className="flex h-8 w-full flex-shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium text-gray-700 hover:bg-black/[0.04] disabled:opacity-40 dark:text-gray-200 dark:hover:bg-white/[0.06]"
-              title="Capture view"
-              aria-label="Capture view"
-              disabled={!conversationId || capturing}
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={() => void captureAt(null)}
-            >
-              <Scan className="h-3.5 w-3.5" />
-              Capture view
-            </button>
-            <button
-              type="button"
-              className="flex h-8 w-full flex-shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium text-gray-700 hover:bg-black/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.06]"
-              title="New presentation"
-              aria-label="New presentation"
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={onNewPresentation}
-            >
-              <Presentation className="h-3.5 w-3.5" />
-              New presentation
-            </button>
+          <div className="flex flex-shrink-0 flex-col">
+            <div className="flex h-8 flex-shrink-0 items-center px-1.5 pt-2">
+              <button
+                type="button"
+                className="flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-[13px] font-medium text-gray-500 hover:bg-black/[0.06] disabled:opacity-40 dark:text-gray-400 dark:hover:bg-white/[0.08]"
+                title="Capture view"
+                aria-label="Capture view"
+                disabled={!conversationId || capturing}
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => void captureAt(null)}
+              >
+                <Scan className="h-4 w-4 flex-shrink-0" /> {/* Same size as the + on Presentation */}
+                Capture view
+              </button>
+            </div>
+            <div ref={organizeRef} className="group/pres-add relative flex h-8 flex-shrink-0 items-center gap-1 px-1.5">
+              <button
+                type="button"
+                className="flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-[13px] font-medium text-gray-500 hover:bg-black/[0.06] dark:text-gray-400 dark:hover:bg-white/[0.08]"
+                title="New presentation"
+                aria-label="New presentation"
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={onNewPresentation}
+              >
+                <Plus className="h-4 w-4 flex-shrink-0" /> {/* Same hit target as the word */}
+                Presentation
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  presentationMoreButtonClass,
+                  'ml-auto [@media(hover:hover)]:group-hover/pres-add:opacity-100',
+                  organizeOpen && 'opacity-100'
+                )}
+                title="Organize presentations"
+                aria-label="Organize presentations"
+                aria-expanded={organizeOpen}
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => setOrganizeOpen((open) => !open)}
+              >
+                <MoreHorizontal className="h-4 w-4" /> {/* Far right of + Presentation */}
+              </button>
+              {organizeOpen && (
+                <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-gray-200 bg-white py-1.5 shadow-lg dark:border-[#2f2f2f] dark:bg-[#171717]">
+                  <p className="px-3 pb-1 pt-1 text-xs text-gray-400">Organize presentations</p>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-900 hover:bg-black/[0.04] dark:text-gray-100 dark:hover:bg-white/[0.06]"
+                    onPointerDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      setOrganize('list') // Flat thumbs, no presentation headers
+                      setOrganizeOpen(false)
+                    }}
+                  >
+                    <List className="h-4 w-4 flex-shrink-0" />
+                    <span className="min-w-0 flex-1">In one list</span>
+                    {organize === 'list' && <Check className="h-4 w-4 flex-shrink-0" />}
+                  </button>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-900 hover:bg-black/[0.04] dark:text-gray-100 dark:hover:bg-white/[0.06]"
+                    onPointerDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      setOrganize('presentation') // Headers under + Presentation
+                      setOrganizeOpen(false)
+                    }}
+                  >
+                    <Presentation className="h-4 w-4 flex-shrink-0" />
+                    <span className="min-w-0 flex-1">By presentation</span>
+                    {organize === 'presentation' && <Check className="h-4 w-4 flex-shrink-0" />}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </>
       ) : (
@@ -686,7 +822,7 @@ export function CapturesPanel({
 
       <div
         className={cn(
-          'relative flex min-h-0 flex-col overflow-y-auto px-1.5 pb-1',
+          'utility-body-scroll relative min-h-0 pl-1.5 pr-2 pb-1', /* Not a flex column — that compresses thumbs while reordering */
           sidebar ? 'flex-1' : 'max-h-72'
         )}
       >
@@ -694,10 +830,30 @@ export function CapturesPanel({
           <div className="px-1 py-8 text-center text-xs text-gray-400">
             {captures.length === 0 ? 'No captures yet' : 'No captures match'}
           </div>
+        ) : organize === 'list' ? (
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onListDragEnd}>
+            <SortableContext items={items.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+              {items.map((item, index) => (
+                <SortableCaptureRow
+                  key={item.id}
+                  capture={item}
+                  index={index}
+                  selected={selected.has(item.id)}
+                  conversationId={conversationId}
+                  canReorder={canReorder}
+                  showGaps={false} // Flat list — no + gaps between thumbs
+                  onToggle={toggleRow}
+                  onPreview={setPreviewId}
+                  onAddAt={() => undefined}
+                  onNavigate={onRequestClose}
+                />
+              ))}
+            </SortableContext>
+          </DndContext>
         ) : (
           <DndContext sensors={sensors} collisionDetection={captureCollision} onDragEnd={onDragEnd}>
             {sections.grouped.map((section) => (
-              <div key={section.id}>
+              <div key={section.id} className="group/presentation"> {/* Hover name or thumb shows ⋯ */}
                 {section.presentation && (
                   <PresentationHeader
                     presentation={section.presentation}
@@ -709,7 +865,9 @@ export function CapturesPanel({
                     onDelete={() => deletePresentation(section.id)}
                   />
                 )}
-                {renderSectionCaptures(section)}
+                <div className={section.presentation && !section.presentation.collapsed ? 'pl-7' : undefined}>
+                  {section.presentation && section.presentation.collapsed ? null : renderSectionCaptures(section)}
+                </div>
               </div>
             ))}
             {/* Loose captures sit under every header so they can be dragged up into one, or out of one */}

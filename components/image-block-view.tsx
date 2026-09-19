@@ -14,7 +14,9 @@ import {
   ImageBlockHoverToolbar,
   ImageBlockMenu,
   type ImageBlockMenuAction,
+  type ImageMenuSubmenu,
   type ImageResizePreset,
+  type ImageTurnInto,
 } from '@/components/image-block-menu'
 import {
   cropToClipPath,
@@ -23,6 +25,7 @@ import {
   serializeImageCrop,
   type ImageCrop,
 } from '@/lib/tiptap/image-block-crop'
+import { deleteEditorBlockRange, turnEditorBlockInto } from '@/lib/tiptap/block-selection'
 
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024 // Keep data: URLs from exploding message HTML
 const UPLOAD_MENU_W = 220 // Screen px — same ballpark as BlockActionsMenu / frame menus
@@ -90,6 +93,7 @@ export function ImageBlockView({
   const [armed, setArmed] = useState(false) // Node selected (click) — blue ring on media
   const [hovered, setHovered] = useState(false) // Pointer over image / hover toolbar
   const [moreOpen, setMoreOpen] = useState(false) // Second menu from ⋯
+  const [menuSub, setMenuSub] = useState<ImageMenuSubmenu | null>(null) // Flyout the toolbar asked to open
   const armingRef = useRef(false) // Skip selectionUpdate disarm during the arm gesture
   const hoverLeaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const toolbarRef = useRef<HTMLDivElement>(null) // In-flow hover pill — More menu anchors here
@@ -494,9 +498,33 @@ export function ImageBlockView({
   }, [updateAttributes])
 
   const handleMenuAction = useCallback(
-    async (action: ImageBlockMenuAction, payload?: { widthPct?: ImageResizePreset }) => {
+    async (
+      action: ImageBlockMenuAction,
+      payload?: { widthPct?: ImageResizePreset; blockType?: ImageTurnInto }
+    ) => {
+      const blockAt = () => {
+        if (!editor || editor.isDestroyed) return null
+        const pos = getPos()
+        if (typeof pos !== 'number') return null
+        const n = editor.state.doc.nodeAt(pos)
+        if (!n) return null
+        return { from: pos, to: pos + n.nodeSize, node: n }
+      }
       if (action === 'more') {
         setMoreOpen((v) => !v)
+        setMenuSub(null)
+        armImage()
+        return
+      }
+      if (action === 'display') {
+        setMenuSub('resize') // Monitor = size presets
+        setMoreOpen(true)
+        armImage()
+        return
+      }
+      if (action === 'align') {
+        setMenuSub('moreOptions')
+        setMoreOpen(true)
         armImage()
         return
       }
@@ -523,6 +551,50 @@ export function ImageBlockView({
         replaceImage()
         return
       }
+      if (action === 'zoom' && src) {
+        window.open(src, '_blank', 'noopener,noreferrer')
+        setMoreOpen(false)
+        return
+      }
+      if (action === 'copyImage' && src) {
+        try {
+          const res = await fetch(src)
+          const blob = await res.blob()
+          await navigator.clipboard.write([new ClipboardItem({ [blob.type || 'image/png']: blob })])
+        } catch {
+          await navigator.clipboard.writeText(src).catch(() => {})
+        }
+        setMoreOpen(false)
+        return
+      }
+      if (action === 'copyLink') {
+        const url = src && !src.startsWith('data:') ? src : window.location.href
+        await navigator.clipboard.writeText(url).catch(() => {})
+        setMoreOpen(false)
+        return
+      }
+      if (action === 'duplicate') {
+        const block = blockAt()
+        if (block && editor) {
+          editor.chain().focus().insertContentAt(block.to, block.node.toJSON()).run()
+        }
+        setMoreOpen(false)
+        return
+      }
+      if (action === 'delete') {
+        const block = blockAt()
+        if (block && editor) deleteEditorBlockRange(editor, block.from, block.to)
+        setMoreOpen(false)
+        return
+      }
+      if (action === 'turnInto' && payload?.blockType) {
+        const block = blockAt()
+        if (block && editor) {
+          turnEditorBlockInto(editor, { ...block, typeName: block.node.type.name }, payload.blockType)
+        }
+        setMoreOpen(false)
+        return
+      }
       if (action === 'removeBackground' && src) {
         setBusy(true)
         try {
@@ -536,12 +608,17 @@ export function ImageBlockView({
         } finally {
           setBusy(false)
         }
+        return
       }
+      // Caption, Comment, Ask AI, Move to, Suggest edits, Present — listed; no image handler yet
+      setMoreOpen(false)
     },
     [
       armImage,
       cropAttr,
       downloadImage,
+      editor,
+      getPos,
       hazed,
       node.attrs.originalSrc,
       replaceImage,
@@ -924,8 +1001,12 @@ export function ImageBlockView({
           anchor={menuAnchor}
           widthPct={widthPct}
           hazed={hazed}
+          initialSubmenu={menuSub}
           onAction={handleMenuAction}
-          onClose={() => setMoreOpen(false)}
+          onClose={() => {
+            setMoreOpen(false)
+            setMenuSub(null)
+          }}
         />
       )}
 

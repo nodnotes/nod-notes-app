@@ -1028,14 +1028,14 @@ export function BlockActionsMenu({
       }}
       onClick={(e) => {
         e.stopPropagation()
-        // Native color pickers need the click; search already stops at the input
-        if ((e.target as HTMLElement | null)?.closest?.('input[type="color"]')) return
+        // Color pickers and the new-set name need the click so the I-bar can land
+        if ((e.target as HTMLElement | null)?.closest?.('input, textarea')) return
         e.preventDefault()
       }}
       onMouseDown={(e) => {
         e.stopPropagation()
-        // preventDefault here would swallow <input type="color"> and never open the OS picker
-        if ((e.target as HTMLElement | null)?.closest?.('input[type="color"]')) return
+        // preventDefault here would swallow the set-name I-bar and the OS color picker
+        if ((e.target as HTMLElement | null)?.closest?.('input, textarea')) return
         e.preventDefault()
       }}
       onKeyDown={(e) => {

@@ -34,6 +34,7 @@ export type BoardPresentation = {
   name: string // Display title (search key)
   createdAt: string // ISO
   captureIds: string[] // Captures in this presentation
+  collapsed?: boolean // Closed hides captures until the name is clicked
 }
 
 /** Lightweight board row used to walk the ancestor path. */
@@ -633,6 +634,11 @@ export function setPresentationCaptureOrder(presentationId: string, captureIds: 
 export function renamePresentation(id: string, name: string): void {
   const trimmed = name.trim() || 'Untitled'
   setPresentations(getPresentations().map((p) => (p.id === id ? { ...p, name: trimmed } : p)))
+}
+
+/** Open or close a presentation. Closed hides its captures. */
+export function setPresentationCollapsed(id: string, collapsed: boolean): void {
+  setPresentations(getPresentations().map((p) => (p.id === id ? { ...p, collapsed } : p)))
 }
 
 /** Drop a presentation header. Its captures return to the loose list. */

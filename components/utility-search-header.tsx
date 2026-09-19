@@ -1,6 +1,6 @@
 'use client'
 
-// Shared search chrome for utility Layers / Sets / Capture — matches AI chat thread picker
+// Shared search chrome for utility Layers / Sets / Views — matches AI chat thread picker
 
 import type { ReactNode } from 'react'
 import { ListFilter, Search } from 'lucide-react'
@@ -34,10 +34,11 @@ export function UtilitySearchHeader({
 }: UtilitySearchHeaderProps) {
   return (
     <div className="flex-shrink-0">
-      <div className="px-3 pt-2 pb-2">
+      {/* pl-1.5 + left-1.5: search glyph lines up with + Group / + Set / + Presentation; pr-1: filter glyph lines up with the ⋯ */}
+      <div className="pl-1.5 pr-1 pt-2 pb-2">
         <div className="flex items-center gap-2">
           <div className="relative flex-1 min-w-0">
-            <Search className="pointer-events-none absolute left-1 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <Search className="pointer-events-none absolute left-1.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <Input
               type="text"
               placeholder={placeholder}
@@ -54,9 +55,11 @@ export function UtilitySearchHeader({
               variant="outline"
               size="icon"
               className={cn(
-                'h-8 w-8 rounded-lg border-0 bg-transparent hover:bg-black/[0.04] dark:hover:bg-white/[0.06] group',
-                (filterOpen || filterActive) &&
-                  'bg-black/[0.06] dark:bg-white/[0.08] text-gray-900 dark:text-gray-100'
+                'h-8 w-8 rounded-lg border-0 bg-transparent group',
+                filterActive
+                  ? 'hover:bg-transparent dark:hover:bg-transparent' // Blue icon stays on a clear button
+                  : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.06]',
+                filterOpen && !filterActive && 'bg-black/[0.06] dark:bg-white/[0.08] text-gray-900 dark:text-gray-100'
               )}
               title={filterTitle}
               aria-label={filterTitle}
@@ -64,7 +67,14 @@ export function UtilitySearchHeader({
               onPointerDown={(e) => e.preventDefault()}
               onClick={() => onFilterOpenChange(!filterOpen)}
             >
-              <ListFilter className="h-4 w-4 text-gray-500 transition-colors group-hover:text-gray-900 dark:text-gray-300 dark:group-hover:text-gray-100" />
+              <ListFilter
+                className={cn(
+                  'h-4 w-4 transition-colors',
+                  filterActive
+                    ? 'text-blue-500' // Filter is not All — icon stays blue
+                    : 'text-gray-500 group-hover:text-gray-900 dark:text-gray-300 dark:group-hover:text-gray-100'
+                )}
+              />
             </Button>
             {filterOpen && filterMenu ? (
               <div className="absolute right-0 top-full z-50 mt-0.5 min-w-[9.5rem] overflow-hidden rounded-md border border-gray-200 bg-white py-1 shadow-md dark:border-[#2f2f2f] dark:bg-[#171717]">
@@ -74,7 +84,7 @@ export function UtilitySearchHeader({
           </div>
         </div>
       </div>
-      <div className="mx-3 h-px flex-shrink-0 bg-gray-200 dark:bg-[#2f2f2f]" aria-hidden />
+      <div className="mx-1.5 h-px flex-shrink-0 bg-gray-200 dark:bg-[#2f2f2f]" aria-hidden /> {/* Same inset both sides */}
     </div>
   )
 }

@@ -8,6 +8,7 @@ export type SetItemKind = 'frame' | 'block' | 'text'
 export type NodSet = {
   id: string // Stable id
   name: string // "Set 1", "Set 2", …
+  collapsed?: boolean // Closed hides member thumbs until the name is clicked
 }
 
 /** One piece of content inside a set. */
@@ -130,7 +131,37 @@ function nextId(): string {
     : `set-${Date.now()}`
 }
 
-/** Create "Set N" and return it. Does not add content. */
+/** Rename a set. A blank name keeps the generated "Set N". */
+export function renameSet(id: string, raw: string) {
+  const name = raw.replace(/\s+/g, ' ').trim() // Collapse whitespace
+  if (!name) return // Empty commit keeps the generated name
+  let changed = false
+  const next = sets.map((s) => {
+    if (s.id !== id || s.name === name) return s // Not this set, or already that name
+    changed = true
+    return { ...s, name }
+  })
+  if (!changed) return
+  sets = next // New array so the store snapshot changes
+  persist()
+  notify()
+}
+
+/** Open or close a set. Closed hides its thumbs. */
+export function setSetCollapsed(id: string, collapsed: boolean) {
+  let changed = false
+  const next = sets.map((s) => {
+    if (s.id !== id || !!s.collapsed === collapsed) return s // Not this set, or already that state
+    changed = true
+    return { ...s, collapsed }
+  })
+  if (!changed) return
+  sets = next
+  persist()
+  notify()
+}
+
+/** Create "Set N" and return it. Does not add content. The picker names it before the frame is stored. */
 export function createSet(): NodSet {
   const used = new Set(sets.map((s) => s.name)) // Avoid "Set 1" twice after a delete-less rename collision
   let n = sets.length + 1
@@ -144,6 +175,18 @@ export function createSet(): NodSet {
   persist()
   notify()
   return set
+}
+
+/** Remove a set and its members. Clears the board glow if that set was selected. */
+export function deleteSet(id: string) {
+  const nextSets = sets.filter((s) => s.id !== id) // Drop the named set
+  if (nextSets.length === sets.length) return // Unknown id
+  sets = nextSets
+  members = members.filter((m) => m.setId !== id) // Membership goes with the set
+  if (selectedSetId === id) selectedSetId = null // Don't glow a deleted set
+  persist()
+  notify()
+  stampFramesInSets() // Drop data-in-set on frames that were only in this set
 }
 
 /** Put a frame in a set. Blocks and text are not members. Skips an identical row. Opens the Sets tab. */

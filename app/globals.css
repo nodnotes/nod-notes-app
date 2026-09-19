@@ -1550,6 +1550,35 @@ span[data-added="true"] {
     scrollbar-color: rgba(107, 114, 128, 0.5) transparent; /* gray-500/50 thumb, transparent track */
   }
 
+  /* Utility Layers / Sets / Capture — classic thumb in the right gutter, not over the previews */
+  .utility-body-scroll {
+    overflow-x: hidden; /* Drag must not open a sideways bar that narrows the thumbs */
+    overflow-y: auto;
+    scrollbar-width: thin; /* Firefox reserves a slot instead of painting over the row */
+    scrollbar-color: rgba(156, 163, 175, 0.55) transparent;
+  }
+
+  .utility-body-scroll::-webkit-scrollbar {
+    width: 6px; /* Same inset the list used to pad on the right */
+  }
+
+  .utility-body-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .utility-body-scroll::-webkit-scrollbar-thumb {
+    background-color: rgba(156, 163, 175, 0.55);
+    border-radius: 9999px;
+  }
+
+  .dark .utility-body-scroll {
+    scrollbar-color: rgba(107, 114, 128, 0.55) transparent;
+  }
+
+  .dark .utility-body-scroll::-webkit-scrollbar-thumb {
+    background-color: rgba(107, 114, 128, 0.55);
+  }
+
   /* Freehand drawing overlay styles */
   .react-flow__node-freehand {
     background: transparent;
@@ -3009,6 +3038,24 @@ span[data-added="true"] {
     border-radius: 4px;
     color: #4b5563;
     cursor: pointer;
+  }
+  /* Ask AI is the only labeled control on the pill (Notion image toolbar) */
+  .ProseMirror .tt-image-block-hover-btn-text {
+    gap: 4px;
+    padding: 2px 6px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .ProseMirror .tt-image-block-hover-sep {
+    width: 1px;
+    align-self: stretch;
+    margin: 2px 2px;
+    background: rgba(0, 0, 0, 0.12);
+  }
+  .dark .ProseMirror .tt-image-block-hover-sep {
+    background: rgba(255, 255, 255, 0.16);
   }
   .ProseMirror .tt-image-block-hover-btn:hover {
     background: rgba(0, 0, 0, 0.06);

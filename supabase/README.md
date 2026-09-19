@@ -27,6 +27,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260919180141_utility_organize_image_menu` — Layers/Sets/Views organize menus (list vs grouped, collapse); image hover pill collapses to More; full image menu
 - `20260919062104_layers_groups_board_menu_frost` — Layers + Group headers (drag in, rename, Delete returns members); board menu frosted and portaled above the welcome overlay; empty-board brand slides off open menus
 - `20260919055728_present_mode_capture_headers_layers_filter` — Present hides chrome (Escape exits); capture presentation headers; set glow; Layers All/touching/selected; board font no reload flash
 - `20260919033806_sets_add_to_set_chat_prompt_glow` — Sets tab + Add to set picker; blue member wash in the set thumb; chat sidebar shadow + Ask focus glow; upright select does not slide the fill

@@ -1,0 +1,5 @@
+-- Layers: + Group plus Organize layers (In one list / By group); folder rows collapse; grouped thumbs indent.
+-- Sets: + Set names in the picker; Organize sets; click the name to collapse; two-box icon.
+-- Views: Capture tab is Views; + Presentation with Organize presentations; open/closed icon.
+-- Image: hover pill collapses to More when it would stick out; More is the full image menu.
+-- App/docs marker only; no DDL. Remote DDL top: 20260914104046_notion_multi_workspace.

@@ -1,6 +1,6 @@
 'use client'
 
-// Utility Layers body — reorderable preview list (top = front, bottom = back) plus group headers
+// Utility Layers body — reorderable preview list (top = front). Group headers share that order with loose rows.
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import type { Node } from 'reactflow' // RF v11 node — setNodes updater must return this, not a zIndex stub
@@ -22,10 +22,9 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Folder, MoreHorizontal, Plus, Trash2 } from 'lucide-react' // + Group, header, delete
+import { Check, Folder, FolderOpen, List, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react' // Folder row, organize menu, add, rename, delete
 import { cn } from '@/lib/utils'
 import { useReactFlowContext } from '@/components/react-flow-context'
-import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,15 +36,21 @@ import {
   UtilitySearchHeader,
 } from '@/components/utility-search-header' // AI-chat-style search + filter
 import {
+  EMPTY_LAYER_STACK,
   createLayerGroup,
   deleteLayerGroup,
   getLayerGroups,
+  getLayerStack,
+  groupStackToken,
+  layerStackToken,
   moveLayerUnderGroup,
   renameLayerGroup,
+  setLayerGroupCollapsed,
   setLayerGroupOrder,
+  setLayerStack,
   subscribeLayerGroups,
   type LayerGroup,
-} from '@/lib/layer-groups' // Per-board headers
+} from '@/lib/layer-groups' // Per-board headers and their mixed order with loose layers
 import {
   getLayersTouching,
   layerZIndexByOrder,
@@ -55,13 +60,20 @@ import {
   type LayersTouchingItem,
 } from '@/lib/layers-touching'
 
+/** How the Layers list is arranged. By group is the default. */
+type LayerOrganize = 'list' | 'group'
+
 /** Filter rows in the Layers utility menu. */
 type LayersFilter = 'all' | 'touching' | 'selected'
 
 /** Loose list id — layers that are not under a group header. */
 const UNGROUPED_SECTION = 'ungrouped'
 
-/** One visual section: a group header, or the loose list under all headers. */
+/** Shared ⋯ chrome. Each caller adds the hover group that reveals it. */
+const layerMoreButtonClass =
+  'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-black/[0.06] hover:text-gray-600 dark:hover:bg-white/[0.08] dark:hover:text-gray-200 [@media(hover:hover)]:opacity-0 data-[state=open]:opacity-100'
+
+/** One visual section: a group header and its members, or the loose layers mixed among those headers. */
 type LayerSection = {
   id: string
   group: LayerGroup | null
@@ -84,8 +96,13 @@ function findLayerSection(layerId: string, sections: LayerSection[]) {
   return null
 }
 
-/** Map a droppable id (header, empty zone, trailing gap, or layer) to a section index. */
+/** Map a droppable id (group header, trailing gap, or layer) to a section index. */
 function resolveDropTarget(overId: string, sections: LayerSection[]) {
+  if (overId.startsWith('g:')) {
+    const section = sections.find((s) => s.id === overId.slice(2)) // Header row is the group's stack token
+    if (!section) return null
+    return { sectionId: section.id, index: 0 } // Drop on the folder row → first slot under that header
+  }
   const prefixed = /^(header|section|end):([\s\S]+)$/.exec(overId) // Synthetic ids, not RF node ids
   if (prefixed) {
     const sectionId = prefixed[2]
@@ -118,38 +135,113 @@ function reorderVisibleMembers(layerIds: string[], visibleIds: string[], from: n
   return layerIds.map((id) => (visibleIds.includes(id) ? (queue.shift() ?? id) : id))
 }
 
-/** Front-to-back ids: each header's members, then loose rows, limited to the published list. */
-function visualLayerIds(groups: LayerGroup[], list: LayersTouchingItem[]): string[] {
-  const present = new Set(list.map((item) => item.id)) // Only layers the publisher handed us
-  const claimed = new Set<string>()
+/** Keep saved slots, drop deleted headers, and append layers the stack has never seen. */
+function reconcileStack(stored: string[], groups: LayerGroup[], looseIds: string[]): string[] {
+  const groupIds = new Set(groups.map((g) => g.id))
+  const member = new Set(groups.flatMap((g) => g.layerIds))
   const out: string[] = []
-  for (const group of groups) {
-    for (const id of group.layerIds) {
-      if (!present.has(id) || claimed.has(id)) continue
-      claimed.add(id)
-      out.push(id) // Header order wins over the snapshot
+  const seen = new Set<string>()
+  for (const token of stored) {
+    if (seen.has(token)) continue
+    if (token.startsWith('g:')) {
+      if (!groupIds.has(token.slice(2))) continue // Header was deleted
+      seen.add(token)
+      out.push(token)
+      continue
     }
+    if (!token.startsWith('l:')) continue
+    if (member.has(token.slice(2))) continue // Renders under its header
+    seen.add(token)
+    out.push(token) // Loose row, or a layer outside this publish
   }
-  for (const item of list) {
-    if (!claimed.has(item.id)) out.push(item.id) // Loose rows keep snapshot order
+  const missing = groups.filter((g) => !seen.has(groupStackToken(g.id)))
+  if (missing.length > 0) out.unshift(...missing.map((g) => groupStackToken(g.id))) // Unsaved headers stay newest-first at the top
+  for (const id of looseIds) {
+    const token = layerStackToken(id)
+    if (seen.has(token)) continue
+    seen.add(token)
+    out.push(token) // New loose rows land at the back
   }
   return out
 }
 
-/** Empty group (or empty loose list) — the drop target under a new header. */
-function EmptySectionDrop({ id, label }: { id: string; label: string }) {
-  const { setNodeRef, isOver } = useDroppable({ id: `section:${id}` }) // Drop → index 0
-  return (
-    <div
-      ref={setNodeRef}
-      className={cn(
-        'mx-1 my-1 flex min-h-8 items-center justify-center rounded-md border border-dashed px-1 text-center text-[10px] text-gray-400',
-        isOver ? 'border-blue-400 bg-blue-500/10 text-blue-600' : 'border-gray-200 dark:border-white/15'
-      )}
-    >
-      {label}
-    </div>
-  )
+/** Front-to-back ids following the mixed list: a header's members travel with that header. */
+function orderFromTokens(tokens: string[], groups: LayerGroup[], list: LayersTouchingItem[]): string[] {
+  const byGroup = new Map(groups.map((g) => [g.id, g]))
+  const present = new Set(list.map((item) => item.id))
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const token of tokens) {
+    if (token.startsWith('g:')) {
+      const group = byGroup.get(token.slice(2))
+      if (!group) continue
+      for (const id of group.layerIds) {
+        if (!present.has(id) || seen.has(id)) continue
+        seen.add(id)
+        out.push(id)
+      }
+      continue
+    }
+    if (!token.startsWith('l:')) continue
+    const id = token.slice(2)
+    if (!present.has(id) || seen.has(id)) continue
+    seen.add(id)
+    out.push(id)
+  }
+  for (const item of list) {
+    if (!seen.has(item.id)) out.push(item.id) // Anything the stack missed stays at the back
+  }
+  return out
+}
+
+/** After a flat reorder, put each header just above its first member. */
+function stackFromFlat(orderedIds: string[], groups: LayerGroup[], prev: string[]): string[] {
+  const memberOf = new Map<string, string>()
+  for (const group of groups) {
+    for (const id of group.layerIds) memberOf.set(id, group.id)
+  }
+  const out: string[] = []
+  const placed = new Set<string>()
+  const known = new Set(orderedIds)
+  for (const id of orderedIds) {
+    const groupId = memberOf.get(id)
+    if (groupId) {
+      if (!placed.has(groupId)) {
+        placed.add(groupId)
+        out.push(groupStackToken(groupId)) // Header sits with its members in this flat order
+      }
+      continue
+    }
+    out.push(layerStackToken(id))
+  }
+  for (const group of groups) {
+    if (!placed.has(group.id)) out.push(groupStackToken(group.id)) // Empty headers follow the list
+  }
+  for (const token of prev) {
+    if (!token.startsWith('l:')) continue
+    const id = token.slice(2)
+    if (known.has(id) || memberOf.has(id)) continue
+    out.push(token) // Layers outside this publish keep a slot
+  }
+  return out
+}
+
+/** Move one stack token onto another slot. `anchor` null appends. */
+function shiftToken(tokens: string[], token: string, anchor: string | null): string[] {
+  const from = tokens.indexOf(token)
+  if (!anchor) {
+    const without = from < 0 ? tokens : tokens.filter((t) => t !== token)
+    return [...without, token] // Bottom of the mixed list
+  }
+  const to = tokens.indexOf(anchor)
+  if (to < 0) return tokens
+  if (from < 0) {
+    const next = [...tokens]
+    next.splice(to, 0, token) // Newly loose row takes the drop slot
+    return next
+  }
+  if (from === to) return tokens
+  return arrayMove(tokens, from, to)
 }
 
 /** Trailing gap is also a drop target so a layer can land at the end of a section. */
@@ -162,86 +254,121 @@ function TrailingDrop({ sectionId, children }: { sectionId: string; children: Re
   )
 }
 
-/** Group name row — drop on it to put a layer first under the header. */
+/** Group name row — drag it among loose layers; drop a layer on it to put that layer first. */
 function GroupHeader({
   group,
   renaming,
+  draggable,
   onRenameStart,
   onRenameEnd,
   onDelete,
 }: {
   group: LayerGroup
   renaming: boolean
+  draggable: boolean // Search and Selected stay put
   onRenameStart: () => void
   onRenameEnd: () => void
   onDelete: () => void
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: `header:${group.id}` }) // Drop → index 0
+  const { setNodeRef, isOver, transform, transition, isDragging, listeners } = useSortable({
+    id: groupStackToken(group.id), // Same token as the mixed list, so the header sorts with loose rows
+    disabled: !draggable || renaming,
+  })
   const skipBlur = useRef(false) // Escape blur must not save the in-progress edit
+  const style: CSSProperties = {
+    transform: CSS.Translate.toString(transform), // Move the header; don't scale it onto a thumb
+    transition,
+    zIndex: isDragging ? 2 : undefined,
+    opacity: isDragging ? 0.9 : 1,
+  }
 
   useEffect(() => {
     if (!renaming) return
     document.getElementById(`layer-group-${group.id}`)?.scrollIntoView({ block: 'nearest' })
   }, [renaming, group.id])
 
+  const toggleCollapsed = () => {
+    if (renaming) return // The name field owns the click while it is open
+    setLayerGroupCollapsed(group.id, !group.collapsed)
+  }
+
   return (
     <div
       ref={setNodeRef}
       id={`layer-group-${group.id}`}
+      style={style}
       className={cn(
-        'group/header mt-1 flex h-7 items-center gap-1 rounded-md px-1.5',
+        'relative mt-0.5 flex h-7 items-center gap-1.5 rounded-md pl-1.5',
         isOver && 'bg-blue-500/10'
       )}
     >
-      <Folder className="h-3 w-3 flex-shrink-0 text-gray-400" />
       {renaming ? (
-        <input
-          autoFocus // New header opens ready to name
-          defaultValue={group.name}
-          aria-label="Group name"
-          className="min-w-0 flex-1 bg-transparent text-[11px] font-medium text-gray-800 outline-none dark:text-gray-100"
-          onFocus={(e) => e.currentTarget.select()}
-          onPointerDown={(e) => e.stopPropagation()}
-          onKeyDown={(e) => {
-            e.stopPropagation() // Don't let the board steal Enter / Escape
-            if (e.key === 'Enter') e.currentTarget.blur()
-            if (e.key === 'Escape') {
-              skipBlur.current = true
-              e.currentTarget.blur()
-            }
-          }}
-          onBlur={(e) => {
-            if (!skipBlur.current) renameLayerGroup(group.id, e.currentTarget.value)
-            skipBlur.current = false
-            onRenameEnd()
-          }}
-        />
+        <>
+          <FolderOpen className="h-4 w-4 flex-shrink-0 text-gray-800 dark:text-gray-200" />
+          <input
+            autoFocus // New header opens ready to name
+            defaultValue={group.name}
+            aria-label="Group name"
+            className="min-w-0 flex-1 bg-transparent text-xs text-gray-900 outline-none dark:text-gray-100"
+            onFocus={(e) => e.currentTarget.select()}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()} // Don't collapse while naming
+            onKeyDown={(e) => {
+              e.stopPropagation() // Don't let the board steal Enter / Escape
+              if (e.key === 'Enter') e.currentTarget.blur()
+              if (e.key === 'Escape') {
+                skipBlur.current = true
+                e.currentTarget.blur()
+              }
+            }}
+            onBlur={(e) => {
+              if (!skipBlur.current) renameLayerGroup(group.id, e.currentTarget.value)
+              skipBlur.current = false
+              onRenameEnd()
+            }}
+          />
+        </>
       ) : (
         <button
           type="button"
-          className="min-w-0 flex-1 truncate text-left text-[11px] font-medium text-gray-700 dark:text-gray-200"
-          title="Rename group"
-          onPointerDown={(e) => e.preventDefault()}
-          onClick={onRenameStart}
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-gray-800 dark:text-gray-200"
+          title={group.collapsed ? 'Expand group' : 'Collapse group'}
+          aria-label={group.collapsed ? 'Expand group' : 'Collapse group'}
+          aria-expanded={!group.collapsed}
+          onPointerDown={(e) => {
+            listeners?.onPointerDown?.(e) // Drag the header among loose layers; a click still toggles
+            e.preventDefault() // Don't steal focus from the board
+          }}
+          onClick={toggleCollapsed} // Name and folder are one control
+          onDoubleClick={onRenameStart} // Rename stays off the single click
         >
-          {group.name}
+          {group.collapsed ? <Folder className="h-4 w-4 flex-shrink-0" /> : <FolderOpen className="h-4 w-4 flex-shrink-0" />}
+          <span className="min-w-0 flex-1 truncate text-xs text-gray-900 dark:text-gray-100">{group.name}</span>
         </button>
       )}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-5 w-5 flex-shrink-0 text-gray-400 opacity-100 hover:bg-black/[0.04] hover:text-gray-700 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/header:opacity-100 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
+          <button
+            type="button"
+            className={cn(layerMoreButtonClass, '[@media(hover:hover)]:group-hover/layer-group:opacity-100')}
             title="Group options"
             aria-label={`${group.name} options`}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
-            <MoreHorizontal className="h-3.5 w-3.5" />
-          </Button>
+            <MoreHorizontal className="h-4 w-4" />
+          </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-40" onClick={(e) => e.stopPropagation()}>
+        <DropdownMenuContent
+          align="end"
+          className="w-40"
+          onClick={(e) => e.stopPropagation()}
+          onCloseAutoFocus={(e) => e.preventDefault()} // Leave focus for the name field, not the ⋯ button
+        >
+          <DropdownMenuItem onSelect={onRenameStart}>
+            <Pencil className="mr-2 h-4 w-4" />
+            Rename
+          </DropdownMenuItem>
           <DropdownMenuItem
             className="text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400"
             onSelect={onDelete}
@@ -267,14 +394,14 @@ function SortableLayerRow({
     id: item.id,
   })
   const style: CSSProperties = {
-    transform: CSS.Transform.toString(transform),
+    transform: CSS.Translate.toString(transform), // Move only — scale would shrink the thumb onto a shorter row
     transition: transition || 'transform 200ms ease',
     zIndex: isDragging ? 2 : undefined,
     opacity: isDragging ? 0.9 : 1,
   }
 
   return (
-    <li ref={setNodeRef} style={style}>
+    <li ref={setNodeRef} style={style} className="w-full shrink-0"> {/* Keep the 4:3 box; a flex shrink mid-drag makes it smaller */}
       <button
         type="button"
         {...attributes}
@@ -313,11 +440,19 @@ function SortableLayerRow({
 export function LayersTouchingList({ conversationId }: { conversationId?: string }) {
   const items = useSyncExternalStore(subscribeLayersTouching, getLayersTouching, () => [])
   const groups = useSyncExternalStore(subscribeLayerGroups, getLayerGroups, () => [])
+  const stack = useSyncExternalStore(
+    subscribeLayerGroups, // Same notify as membership — a header move publishes here too
+    () => (conversationId ? getLayerStack(conversationId) : EMPTY_LAYER_STACK),
+    () => EMPTY_LAYER_STACK
+  )
   const { reactFlowInstance, getSetNodes } = useReactFlowContext()
   const [query, setQuery] = useState('') // Filter thumbs by label
   const [filterOpen, setFilterOpen] = useState(false) // Filter menu
   const [filter, setFilter] = useState<LayersFilter>('touching') // Default stays the touching cluster
   const [renamingId, setRenamingId] = useState<string | null>(null) // Header whose name is being edited
+  const [organize, setOrganize] = useState<LayerOrganize>('group') // ⋯ menu: one list, or file rows
+  const [organizeOpen, setOrganizeOpen] = useState(false) // Organize layers menu
+  const organizeRef = useRef<HTMLDivElement>(null) // Trigger + menu, so outside clicks can close it
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }) // Click selects; drag reorders
   )
@@ -326,6 +461,16 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
     setLayersPublishScope(filter === 'all' ? 'all' : 'touching') // All loads every layer; the rest use the cluster
     return () => setLayersPublishScope('touching') // Leaving Layers stops the whole-board publish
   }, [filter])
+
+  useEffect(() => {
+    if (!organizeOpen) return
+    const onDown = (event: PointerEvent) => {
+      if (organizeRef.current?.contains(event.target as Node)) return // Trigger and menu stay open
+      setOrganizeOpen(false)
+    }
+    window.addEventListener('pointerdown', onDown, true) // Capture so the board does not eat the click first
+    return () => window.removeEventListener('pointerdown', onDown, true)
+  }, [organizeOpen])
 
   const boardGroups = useMemo(
     () => (conversationId ? groups.filter((g) => g.boardId === conversationId) : []), // This board only
@@ -367,8 +512,26 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
     return { grouped, all: [...grouped, loose] }
   }, [visible, boardGroups, canReorder, query])
 
-  const heading = filter === 'all' ? 'All' : filter === 'selected' ? 'Selected' : 'Touching'
   const loose = sections.all[sections.all.length - 1] // Layers not under a header
+  const rows = useMemo(() => {
+    const sectionById = new Map(sections.grouped.map((section) => [section.id, section]))
+    const looseById = new Map(loose.items.map((item) => [item.id, item]))
+    const member = new Set(boardGroups.flatMap((g) => g.layerIds))
+    const looseIds = items.map((item) => item.id).filter((id) => !member.has(id))
+    const tokens = reconcileStack(stack, boardGroups, looseIds) // Saved order, plus anything new
+    const out: Array<{ kind: 'group'; section: LayerSection } | { kind: 'layer'; item: LayersTouchingItem }> = []
+    for (const token of tokens) {
+      if (token.startsWith('g:')) {
+        const section = sectionById.get(token.slice(2))
+        if (section) out.push({ kind: 'group', section }) // Skip headers hidden by search
+        continue
+      }
+      const item = token.startsWith('l:') ? looseById.get(token.slice(2)) : undefined
+      if (item) out.push({ kind: 'layer', item })
+    }
+    return out
+  }, [sections.grouped, loose.items, boardGroups, items, stack])
+  const topIds = rows.map((row) => (row.kind === 'group' ? groupStackToken(row.section.id) : row.item.id))
   const nothingToShow = sections.grouped.length === 0 && loose.items.length === 0 && items.length === 0
 
   const selectItem = (id: string) => {
@@ -404,8 +567,35 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
 
   const onNewGroup = () => {
     if (!conversationId) return
+    setOrganize('group') // The new row only shows under By group
+    setOrganizeOpen(false)
     const created = createLayerGroup(conversationId) // Empty header at the top
     setRenamingId(created.id) // Name it immediately
+  }
+
+  const onListDragEnd = (event: DragEndEvent) => {
+    if (!canReorder) return // Search and Selected only stay put
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const ids = visible.map((item) => item.id) // Flat stack, groups ignored
+    const from = ids.indexOf(String(active.id))
+    const to = ids.indexOf(String(over.id))
+    if (from < 0 || to < 0 || !conversationId) return
+    const next = arrayMove(ids, from, to)
+    applyOrder(next)
+    const groupsNow = getLayerGroups().filter((g) => g.boardId === conversationId)
+    for (const group of groupsNow) {
+      const ordered = next.filter((id) => group.layerIds.includes(id))
+      if (ordered.length !== group.layerIds.length) continue // Hidden members stay in their slots
+      if (ordered.every((id, index) => id === group.layerIds[index])) continue
+      setLayerGroupOrder(group.id, ordered) // Members follow the flat order
+    }
+    setLayerStack(conversationId, stackFromFlat(next, groupsNow, getLayerStack(conversationId)))
+  }
+
+  const looseIdsOf = (groupsNow: LayerGroup[]) => {
+    const member = new Set(groupsNow.flatMap((g) => g.layerIds))
+    return items.map((item) => item.id).filter((id) => !member.has(id))
   }
 
   const onDragEnd = (event: DragEndEvent) => {
@@ -415,62 +605,94 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
     const activeId = String(active.id)
     const overId = String(over.id)
     if (activeId === overId) return
+    const groupsNow = () => getLayerGroups().filter((g) => g.boardId === conversationId)
+
+    if (activeId.startsWith('g:')) {
+      const groups = groupsNow()
+      const tokens = reconcileStack(getLayerStack(conversationId), groups, looseIdsOf(groups))
+      let anchor: string | null = null // null = after the last slot
+      if (overId === 'end:stack') anchor = null
+      else if (overId.startsWith('g:')) anchor = overId
+      else if (overId.startsWith('end:')) anchor = groupStackToken(overId.slice(4)) // Gap under a header → that header's slot
+      else {
+        const hit = findLayerSection(overId, sections.all)
+        if (!hit) return
+        anchor = hit.sectionId === UNGROUPED_SECTION ? layerStackToken(overId) : groupStackToken(hit.sectionId)
+      }
+      if (anchor === activeId) return // Dropped on its own members
+      const next = shiftToken(tokens, activeId, anchor)
+      if (next === tokens) return
+      setLayerStack(conversationId, next)
+      applyOrder(orderFromTokens(next, groups, items)) // Members move with the header
+      return
+    }
+
+    if (overId === 'end:stack') {
+      const from = findLayerSection(activeId, sections.all)
+      if (!from) return
+      if (from.sectionId !== UNGROUPED_SECTION) moveLayerUnderGroup(activeId, null, 0, conversationId)
+      const groups = groupsNow()
+      const tokens = reconcileStack(getLayerStack(conversationId), groups, looseIdsOf(groups))
+      const next = shiftToken(tokens, layerStackToken(activeId), null) // Loose row at the bottom
+      setLayerStack(conversationId, next)
+      applyOrder(orderFromTokens(next, groups, items))
+      return
+    }
+
     const from = findLayerSection(activeId, sections.all)
     const to = resolveDropTarget(overId, sections.all)
     if (!from || !to) return
-    const board = getLayerGroups().filter((g) => g.boardId === conversationId)
+    const board = groupsNow()
 
     if (from.sectionId === to.sectionId) {
       const newIndex = to.index >= from.ids.length ? from.ids.length - 1 : to.index // End-cap → last slot
       if (from.index < 0 || from.index === newIndex) return
       if (from.sectionId === UNGROUPED_SECTION) {
-        const nextLoose = arrayMove(from.ids, from.index, newIndex) // Loose rows only
-        const front = visualLayerIds(board, items).filter((id) => !from.ids.includes(id)) // Headers stay above
-        applyOrder([...front, ...nextLoose])
+        const tokens = reconcileStack(getLayerStack(conversationId), board, looseIdsOf(board))
+        const next = shiftToken(tokens, layerStackToken(activeId), layerStackToken(overId)) // Can pass a header
+        if (next === tokens) return
+        setLayerStack(conversationId, next)
+        applyOrder(orderFromTokens(next, board, items))
         return
       }
       const group = board.find((g) => g.id === from.sectionId)
       if (!group) return
       setLayerGroupOrder(group.id, reorderVisibleMembers(group.layerIds, from.ids, from.index, newIndex))
-      applyOrder(visualLayerIds(getLayerGroups().filter((g) => g.boardId === conversationId), items))
+      const after = groupsNow()
+      applyOrder(orderFromTokens(reconcileStack(getLayerStack(conversationId), after, looseIdsOf(after)), after, items))
       return
     }
 
-    const target = board.find((g) => g.id === to.sectionId) ?? null // Null = loose list
-    const visibleTarget = sections.all.find((s) => s.id === to.sectionId)?.items.map((item) => item.id) ?? []
-    const storedIndex = target ? storedInsertIndex(target, visibleTarget, to.index) : to.index
-    moveLayerUnderGroup(activeId, target ? target.id : null, storedIndex, conversationId)
-    const after = getLayerGroups().filter((g) => g.boardId === conversationId)
-    if (target) {
-      applyOrder(visualLayerIds(after, items)) // Header order is the front of the list
+    const target = board.find((g) => g.id === to.sectionId) ?? null // Null = land among loose rows
+    if (!target) {
+      moveLayerUnderGroup(activeId, null, 0, conversationId) // Leave the header
+      const after = groupsNow()
+      const tokens = reconcileStack(getLayerStack(conversationId), after, looseIdsOf(after))
+      const next = shiftToken(tokens, layerStackToken(activeId), layerStackToken(overId))
+      setLayerStack(conversationId, next)
+      applyOrder(orderFromTokens(next, after, items))
       return
     }
-    const memberIds = new Set(after.flatMap((g) => g.layerIds))
-    const looseIds = items.map((item) => item.id).filter((id) => !memberIds.has(id) && id !== activeId)
-    looseIds.splice(Math.max(0, Math.min(to.index, looseIds.length)), 0, activeId) // Land among loose rows
-    const front = visualLayerIds(after, items).filter((id) => memberIds.has(id)) // Grouped thumbs stay above
-    applyOrder([...front, ...looseIds])
+    const visibleTarget = sections.all.find((s) => s.id === to.sectionId)?.items.map((item) => item.id) ?? []
+    moveLayerUnderGroup(activeId, target.id, storedInsertIndex(target, visibleTarget, to.index), conversationId)
+    if (target.collapsed) setLayerGroupCollapsed(target.id, false) // A drop opens a closed folder
+    const after = groupsNow()
+    applyOrder(orderFromTokens(reconcileStack(getLayerStack(conversationId), after, looseIdsOf(after)), after, items))
   }
 
-  const renderSection = (section: LayerSection) => (
-    <>
-      {section.items.length === 0 && canReorder ? (
-        <EmptySectionDrop
-          id={section.id}
-          label={section.group ? 'Drag layers here' : 'Not in a group'}
-        />
-      ) : (
+  const renderSection = (section: LayerSection) =>
+    section.items.length === 0 ? null : (
+      <>
         <SortableContext items={section.items.map((item) => item.id)} strategy={verticalListSortingStrategy}>
-          <ul className="flex flex-col gap-1">
+          <ul className="flex flex-col gap-1 pl-7"> {/* Name column: folder width + gap */}
             {section.items.map((item) => (
               <SortableLayerRow key={item.id} item={item} onSelect={selectItem} />
             ))}
           </ul>
         </SortableContext>
-      )}
-      {canReorder && section.items.length > 0 && <TrailingDrop sectionId={section.id}>{null}</TrailingDrop>}
-    </>
-  )
+        {canReorder && <TrailingDrop sectionId={section.id}>{null}</TrailingDrop>}
+      </>
+    )
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -479,7 +701,7 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
         onQueryChange={setQuery}
         filterOpen={filterOpen}
         onFilterOpenChange={setFilterOpen}
-        filterActive={filter !== 'touching'}
+        filterActive={filter !== 'all'} // Blue icon unless every layer is showing
         filterTitle="Filter layers"
         filterMenu={
           <>
@@ -511,19 +733,65 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
         }
       />
 
-      <div className="flex flex-shrink-0 px-2 pb-1.5 pt-2">
+      <div ref={organizeRef} className="group/layer-row relative flex h-8 flex-shrink-0 items-center gap-1 px-1.5 pt-2">
         <button
           type="button"
-          className="flex h-8 w-full flex-shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium text-gray-700 hover:bg-black/[0.04] disabled:opacity-40 dark:text-gray-200 dark:hover:bg-white/[0.06]"
+          className="flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-[13px] font-medium text-gray-500 hover:bg-black/[0.06] disabled:opacity-40 dark:text-gray-400 dark:hover:bg-white/[0.08]"
           title="New group"
           aria-label="New group"
           disabled={!conversationId}
           onPointerDown={(e) => e.preventDefault()}
           onClick={onNewGroup}
         >
-          <Plus className="h-3.5 w-3.5" />
+          <Plus className="h-4 w-4 flex-shrink-0" /> {/* Same hit target as the word */}
           Group
         </button>
+        <button
+          type="button"
+          className={cn(
+            layerMoreButtonClass,
+            'ml-auto [@media(hover:hover)]:group-hover/layer-row:opacity-100',
+            organizeOpen && 'opacity-100'
+          )}
+          title="Organize layers"
+          aria-label="Organize layers"
+          aria-expanded={organizeOpen}
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => setOrganizeOpen((open) => !open)}
+        >
+          <MoreHorizontal className="h-4 w-4" /> {/* Far right of + Group */}
+        </button>
+        {organizeOpen && (
+          <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-gray-200 bg-white py-1.5 shadow-lg dark:border-[#2f2f2f] dark:bg-[#171717]">
+            <p className="px-3 pb-1 pt-1 text-xs text-gray-400">Organize layers</p>
+            <button
+              type="button"
+              className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-900 hover:bg-black/[0.04] dark:text-gray-100 dark:hover:bg-white/[0.06]"
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setOrganize('list') // Flat thumbs, no file rows
+                setOrganizeOpen(false)
+              }}
+            >
+              <List className="h-4 w-4 flex-shrink-0" />
+              <span className="min-w-0 flex-1">In one list</span>
+              {organize === 'list' && <Check className="h-4 w-4 flex-shrink-0" />}
+            </button>
+            <button
+              type="button"
+              className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-900 hover:bg-black/[0.04] dark:text-gray-100 dark:hover:bg-white/[0.06]"
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => {
+                  setOrganize('group') // Folder rows under + Group
+                setOrganizeOpen(false)
+              }}
+            >
+              <Folder className="h-4 w-4 flex-shrink-0" />
+              <span className="min-w-0 flex-1">By group</span>
+              {organize === 'group' && <Check className="h-4 w-4 flex-shrink-0" />}
+            </button>
+          </div>
+        )}
       </div>
 
       {nothingToShow ? (
@@ -536,39 +804,51 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
           </p>
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-1.5 py-2">
-          <p className="px-1.5 pb-1 text-[11px] font-medium text-gray-500 dark:text-gray-400">
-            {heading} · {visible.length}
-            <span className="font-normal text-gray-400"> · top front</span>
-          </p>
-          {visible.length === 0 && sections.grouped.length === 0 ? (
+        <div className="utility-body-scroll min-h-0 flex-1 pl-1.5 pr-2 py-1"> {/* Not a flex column — that compresses thumbs while a drag reorders */}
+            {organize === 'list' ? (
+              visible.length === 0 ? (
+                <p className="px-1.5 py-6 text-center text-xs text-gray-400">No matching layers</p>
+              ) : (
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onListDragEnd}>
+                  <SortableContext items={visible.map((item) => item.id)} strategy={verticalListSortingStrategy}>
+                    <ul className="flex flex-col gap-1">
+                      {visible.map((item) => (
+                        <SortableLayerRow key={item.id} item={item} onSelect={selectItem} />
+                      ))}
+                    </ul>
+                  </SortableContext>
+                </DndContext>
+              )
+            ) : visible.length === 0 && sections.grouped.length === 0 ? (
             <p className="px-1.5 py-6 text-center text-xs text-gray-400">No matching layers</p>
           ) : (
             <DndContext sensors={sensors} collisionDetection={layerCollision} onDragEnd={onDragEnd}>
-              {sections.grouped.map((section) => (
-                <div key={section.id}>
-                  {section.group && (
-                    <GroupHeader
-                      group={section.group}
-                      renaming={renamingId === section.id}
-                      onRenameStart={() => setRenamingId(section.id)}
-                      onRenameEnd={() => setRenamingId((current) => (current === section.id ? null : current))}
-                      onDelete={() => deleteLayerGroup(section.id)}
-                    />
+              <ul className="flex flex-col gap-1">
+                <SortableContext items={topIds} strategy={verticalListSortingStrategy}>
+                  {rows.map((row) =>
+                    row.kind === 'layer' ? (
+                      <SortableLayerRow key={row.item.id} item={row.item} onSelect={selectItem} />
+                    ) : (
+                      <li key={row.section.id} className="group/layer-group list-none w-full shrink-0">
+                        {row.section.group && (
+                          <GroupHeader
+                            group={row.section.group}
+                            draggable={canReorder}
+                            renaming={renamingId === row.section.id}
+                            onRenameStart={() => setRenamingId(row.section.id)}
+                            onRenameEnd={() =>
+                              setRenamingId((current) => (current === row.section.id ? null : current))
+                            }
+                            onDelete={() => deleteLayerGroup(row.section.id)}
+                          />
+                        )}
+                        {row.section.group && !row.section.group.collapsed && renderSection(row.section)}
+                      </li>
+                    )
                   )}
-                  {renderSection(section)}
-                </div>
-              ))}
-              {(loose.items.length > 0 || sections.grouped.length > 0) && (
-                <div>
-                  {sections.grouped.length > 0 && loose.items.length > 0 && (
-                    <div className="mt-2 px-1.5 pb-0.5 text-[10px] font-medium text-gray-400">
-                      Not in a group
-                    </div>
-                  )}
-                  {renderSection(loose)}
-                </div>
-              )}
+                </SortableContext>
+              </ul>
+              {canReorder && rows.length > 0 && <TrailingDrop sectionId="stack">{null}</TrailingDrop>}
             </DndContext>
           )}
         </div>
