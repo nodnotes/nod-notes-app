@@ -234,6 +234,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
   const [customizeOpen, setCustomizeOpen] = useState(false) // Brand → customize panel
   const [agentIconRevision, setAgentIconRevision] = useState(0) // Reload custom icons after Done
   const [hoverBrand, setHoverBrand] = useState(false) // Customize pill on empty state
+  const [promptFocused, setPromptFocused] = useState(false) // Blue box only while the I-bar is in the prompt
   const [thread, setThread] = useState<AiThread | null>(null) // Active thread
   const [messages, setMessages] = useState<AiMessage[]>([]) // Transcript
   const [streamingId, setStreamingId] = useState<string | null>(null) // Live assistant
@@ -579,7 +580,10 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
 
   // Leaving chat closes customize so reopen lands on the transcript
   useEffect(() => {
-    if (!isChatSidebarOpen) setCustomizeOpen(false)
+    if (!isChatSidebarOpen) {
+      setCustomizeOpen(false)
+      setPromptFocused(false) // Grey box again — the caret is gone
+    }
   }, [isChatSidebarOpen])
 
   useEffect(() => {
@@ -1026,6 +1030,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
       seedSkillIds={seedSkillIds}
       onSeedSkillsConsumed={() => setSeedSkillIds(undefined)}
       autoFocus={false} // Brand tap focuses via registerAiComposerFocus (same user gesture)
+      onPromptFocus={setPromptFocused} // Blue border tracks the caret, not a one-off DOM attribute
       onChatImported={handleChatImported}
       onEdits={async (edits) => {
         const mapped = edits
@@ -1234,6 +1239,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
             )}
             <div
               data-chat-prompt
+              data-chat-prompt-focused={promptFocused ? '' : undefined} // Present only while the caret is in the prompt
               className="rounded-xl overflow-hidden border border-black/10 dark:border-white/10 shadow-sm" // Chat-bar grey via [data-chat-prompt]; soft lift like desktop sidebar
             >
               <div className="px-1 pt-1">{composer}</div>
@@ -1262,12 +1268,14 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
   return (
     <div
       className={cn(
-        'relative h-full flex flex-shrink-0 z-20 overflow-hidden', // Clip inner full-width aside while the column grows/shrinks
+        'relative h-full flex flex-shrink-0 z-20', // Width tween shell — overflow stays visible so the left shadow can paint onto the board
+        'shadow-[-2px_0_6px_-2px_rgb(0_0_0_/_0.08)] dark:shadow-[-2px_0_8px_-2px_rgb(0_0_0_/_0.2)]', // Barely-there left lift — a heavier falloff reads as a black band on this chrome
         desktopWidthTransition && 'transition-[width] duration-200 ease-out' // Match RF viewport open/close tween; off while seam-resizing
       )}
       style={{ width: desktopShown ? chatSidebarWidth : 0 }} // 0 ↔ preferred width drives the slide
       onTransitionEnd={onDesktopWidthTransitionEnd}
     >
+      <div className="relative h-full w-full overflow-hidden"> {/* Clip the full-width aside while the column grows/shrinks */}
       <aside
         data-chat-sidebar
         className={cn(
@@ -1459,6 +1467,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
         <div className="relative z-10 flex-shrink-0 px-3 pb-3 pt-1 pointer-events-auto">
           <div
             data-chat-prompt
+            data-chat-prompt-focused={promptFocused ? '' : undefined} // Present only while the caret is in the prompt
             className="rounded-xl overflow-hidden border border-black/10 dark:border-white/10 shadow-sm" // Chat-bar grey via [data-chat-prompt]; soft lift off the column
           >
             <div className="px-1 pt-1">{composer}</div>
@@ -1467,6 +1476,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
           </>
         )}
       </aside>
+      </div>
 
       <PersonalizeAiModal
         open={personalizeOpen}

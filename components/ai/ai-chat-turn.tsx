@@ -29,6 +29,7 @@ import {
   type BlockActionPayload,
 } from '@/components/block-actions-menu'
 import { SelectionFormatPopupAnchor } from '@/components/selection-format-popup'
+import { addMember, clipSetLabel } from '@/lib/sets-list' // Frame menu → a named set
 import { BLOCK_HANDLE_GUTTER_W } from '@/lib/frame-adjust-box'
 import { useReactFlowContext } from '@/components/react-flow-context'
 import { cn } from '@/lib/utils'
@@ -1369,6 +1370,13 @@ export function AiChatTurn({
             showResendPrompt={isUser}
             showRegenerateResponse={!isUser}
             chatRegenBusy={!!chatBusy || !!streaming}
+            onAddToSet={(setId) =>
+              addMember(setId, {
+                kind: 'frame',
+                label: clipSetLabel(turnRef.current?.innerText || '', 'Frame'),
+                nodeId: message.id, // data-ai-turn — glow while this chat frame is selected
+              })
+            }
             onAction={handleFrameMenuAction}
             onClose={() => setFrameMenu(null)}
           />,

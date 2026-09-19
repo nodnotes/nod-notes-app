@@ -17,6 +17,7 @@ import { isBlockContentEmpty, newBlockMetadata } from '@/lib/blocks' // Canonica
 import { bodyHtmlWithoutBoardTitle } from '@/lib/blocks/turn-into' // Title line ≠ board body block
 import { markHtmlWithAiOrigin } from '@/lib/ai/wrap-ai-html' // Assistant chat → board keeps AI provenance
 import { cn } from '@/lib/utils'
+import { addMember, clipSetLabel } from '@/lib/sets-list' // ⋮⋮ Add to set → named set + glow mark
 import { clientPointInElement, screenToLocal } from '@/lib/dom-transform' // Rotation-safe hit + grip Y
 import {
   BlockActionsMenu,
@@ -1893,6 +1894,19 @@ export function TipTapBlockHandles({
               ))
             }
             showRevertText={showRevertText}
+            onAddToSet={(setId) => {
+              const el = blockDom(editor, menu.block) // The TipTap line this ⋮⋮ menu is for
+              const from = menu.block.from + 1 // First content pos inside the block
+              const to = menu.block.to - 1 // Last content pos
+              if (to > from) {
+                editor.chain().setTextSelection({ from, to }).setSetMember().run() // Halo on the line's text
+              }
+              el?.setAttribute('data-in-set', '') // Whole line glows even if it has no text
+              addMember(setId, {
+                kind: 'block',
+                label: clipSetLabel(el?.innerText || '', 'Block'),
+              })
+            }}
             onAction={onAction}
             onClose={closeMenu}
           />,

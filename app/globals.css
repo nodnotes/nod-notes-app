@@ -2257,6 +2257,22 @@ span[data-added="true"] {
   [data-chat-prompt] {
     background-color: var(--nod-chat-prompt-box); /* Prompt input fill */
   }
+  /* I-bar in the prompt — hairline stays; a blue glow sits outside it. */
+  [data-chat-prompt][data-chat-prompt-focused] {
+    box-shadow:
+      0 1px 2px 0 rgb(0 0 0 / 0.05), /* Keep the same shadow-sm lift */
+      0 0 8px 0 color-mix(in srgb, var(--nod-blue) 35%, transparent); /* Light blue glow, not a second border */
+  }
+  /* Content in a set — same light blue halo as the focused Ask prompt, only while its frame is selected. */
+  .react-flow__node.selected [data-in-set],
+  [data-frame-selected='true'] [data-in-set],
+  [data-ai-turn-selected='true'][data-in-set],
+  [data-ai-turn-selected='true'] [data-in-set] {
+    box-shadow: 0 0 8px 0 color-mix(in srgb, var(--nod-blue) 35%, transparent); /* Outer glow, not a fill wash */
+    border-radius: 3px; /* Soft corners so a text run reads like the prompt box */
+    box-decoration-break: clone; /* Each line of a wrapped run gets the halo */
+    -webkit-box-decoration-break: clone;
+  }
   /* Transcript user prompt boxes — ChatGPT ice blue, same lift as utility/mode pills. */
   .tt-chat-prompt {
     background-color: var(--nod-chat-user-box); /* Transcript user bubbles */

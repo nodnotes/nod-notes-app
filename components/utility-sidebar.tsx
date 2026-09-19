@@ -1,6 +1,6 @@
 'use client'
 
-// Transparent right utility overlay on the map — left of chat when both open; layers / study / capture
+// Transparent right utility overlay on the map — left of chat when both open; layers / sets / capture
 
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react' // Seam drag + hover tip
 import { useParams } from 'next/navigation' // Board id for Capture panel
@@ -12,11 +12,8 @@ import {
   useOpenClosePresence,
 } from '@/lib/hooks/use-open-close-presence' // Keep overlay mounted through open/close slide
 import { LayersTouchingList } from './layers-touching-list' // Preview list of touching selection
+import { SetsList } from './sets-list' // Snapshots added from frame / block / text menus
 import { CapturesPanel } from './captures-menu' // Capture list (same as View-bar menu)
-import {
-  UtilityFilterOption,
-  UtilitySearchHeader,
-} from './utility-search-header' // AI-chat-style search chrome
 
 /** Clear the map brand chat toggle (42px + 8px inset + air) so Capture footer / lists don’t sit on it. */
 const UTILITY_BRAND_CLEARANCE_PX = 64
@@ -24,7 +21,7 @@ const UTILITY_BRAND_CLEARANCE_PX = 64
 /** Mode tab labels for the utility header strip. */
 const MODE_TABS: { id: UtilitySidebarMode; label: string; icon: typeof Layers }[] = [
   { id: 'layers', label: 'Layers', icon: Layers }, // Default — frame stacking order
-  { id: 'flashcards', label: 'Study', icon: SquareStack }, // Flashcard study — build later
+  { id: 'flashcards', label: 'Sets', icon: SquareStack }, // Snapshots added from menus (stored mode id stays flashcards)
   { id: 'capture', label: 'Capture', icon: Scan }, // Board captures — utility Capture tab
 ]
 
@@ -101,7 +98,7 @@ function UtilitySidebarSeam() {
   )
 }
 
-/** Mode body — layers list, study stub, or embedded captures panel. */
+/** Mode body — layers list, sets list, or embedded captures panel. */
 function UtilityModeBody({
   mode,
   conversationId,
@@ -113,53 +110,9 @@ function UtilityModeBody({
     return <LayersTouchingList />
   }
   if (mode === 'flashcards') {
-    return <StudyUtilityStub />
+    return <SetsList /> // Sets tab — named sets, not the Add-to-set picker
   }
   return <CapturesPanel conversationId={conversationId} variant="sidebar" />
-}
-
-/** Study tab shell — same search chrome; study controls later. */
-function StudyUtilityStub() {
-  const [query, setQuery] = useState('') // Search field (filters later)
-  const [filterOpen, setFilterOpen] = useState(false) // Filter menu
-  const [scope, setScope] = useState<'all' | 'due'>('all') // Stub filter: all vs due
-
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <UtilitySearchHeader
-        query={query}
-        onQueryChange={setQuery}
-        filterOpen={filterOpen}
-        onFilterOpenChange={setFilterOpen}
-        filterActive={scope === 'due'}
-        filterTitle="Filter study"
-        filterMenu={
-          <>
-            <UtilityFilterOption
-              label="All cards"
-              active={scope === 'all'}
-              onSelect={() => {
-                setScope('all')
-                setFilterOpen(false)
-              }}
-            />
-            <UtilityFilterOption
-              label="Due for review"
-              active={scope === 'due'}
-              onSelect={() => {
-                setScope('due')
-                setFilterOpen(false)
-              }}
-            />
-          </>
-        }
-      />
-      <div className="flex flex-col gap-1 px-3 py-3 text-xs text-gray-500 dark:text-gray-400">
-        <p className="font-medium text-gray-700 dark:text-gray-200">Study</p>
-        <p className="leading-relaxed">Flashcard study controls will live here.</p>
-      </div>
-    </div>
-  )
 }
 
 /** Overlay on the map’s right edge (left of chat) — transparent so the board shows through. */
@@ -260,7 +213,7 @@ export function UtilitySidebar() {
         <button
           type="button"
           onClick={() => setUtilitySidebarOpen(false)}
-          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-[var(--nod-chat-prompt)] text-gray-500 shadow-sm transition-colors hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100" // h-9 = mode pill; grey = Ask prompts
+          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-black/10 bg-[var(--nod-chat-prompt)] text-gray-500 shadow-sm transition-colors hover:text-gray-900 dark:border-white/10 dark:text-gray-400 dark:hover:text-gray-100" // Same hairline as the mode pill next to it
           title="Hide sidebar"
           aria-label="Hide utility sidebar"
         >
@@ -278,7 +231,7 @@ export function UtilitySidebar() {
         {/* Content card — same fill as Actions/Layout/Draw pill; tabs stay outside */}
         <div
           className={cn(
-            'flex min-h-0 flex-1 flex-col rounded-xl bg-[var(--nod-chat-prompt)] shadow-md dark:shadow-black/40', // Same grey as Ask prompts / mode toggle — no border
+            'flex min-h-0 flex-1 flex-col rounded-xl border border-black/10 bg-[var(--nod-chat-prompt)] shadow-md dark:border-white/10 dark:shadow-black/40', // Same grey + hairline as the mode pill and hide button
             'overflow-hidden' // Search stays put; body scrolls inside
           )}
         >

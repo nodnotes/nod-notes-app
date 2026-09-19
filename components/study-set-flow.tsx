@@ -26,6 +26,7 @@ import {
   type BlockActionPayload,
   type BlockTypeId,
 } from './block-actions-menu' // Shared block actions + Turn into baseline
+import { addMember, labelForFlowNode } from '@/lib/sets-list' // Frame menu → a named set
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import { useEffect, useRef, useMemo, useState, useCallback } from 'react'
@@ -5022,6 +5023,13 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
           currentBlockType={
             (rightClickedNode.data?.promptMessage?.metadata?.blockType as BlockTypeId) || 'text'
           }
+          onAddToSet={(setId) =>
+            addMember(setId, {
+              kind: 'frame',
+              label: labelForFlowNode(rightClickedNode),
+              nodeId: rightClickedNode.id,
+            })
+          }
           onAction={handleBlockAction}
           onClose={() => {
             setRightClickedNode(null)
@@ -5303,7 +5311,7 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
           type="button"
           data-chat-sidebar-toggle
           onClick={() => toggleChatSidebar()}
-          className="absolute z-40 flex items-center justify-center bg-transparent opacity-80 hover:opacity-100 transition-opacity p-0 border-0 overflow-visible"
+          className="absolute z-40 flex items-center justify-center bg-transparent p-0 border-0 overflow-visible" // Fully opaque — same open-chat disc as the board
           style={{
             bottom: '12px',
             right: '12px',

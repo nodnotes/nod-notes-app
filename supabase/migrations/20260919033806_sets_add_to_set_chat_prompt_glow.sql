@@ -1,0 +1,4 @@
+-- Sets: Add to set picker; utility Sets tab; blue member wash in the set thumb only.
+-- Chat: left drop shadow; Ask prompt focuses on open with a blue glow while the caret is in it.
+-- Upright frame select keeps the fill put (negative margins, no position slide).
+-- App/docs marker only; no DDL. Remote DDL top: 20260914104046_notion_multi_workspace.

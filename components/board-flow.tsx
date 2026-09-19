@@ -51,6 +51,7 @@ import {
   type BlockTypeId,
   type DbConvertLayoutId,
 } from './block-actions-menu' // Notion-style block actions + Turn into baseline
+import { addMember, labelForFlowNode, clipSetLabel } from '@/lib/sets-list' // Frame / I-bar → a named set
 import {
   isNotionDatabaseTableFrame,
   resolveNotionDatabaseIdFromFrame,
@@ -11310,7 +11311,7 @@ function BoardFlowInner({
           data-nn-safe-bottom // Capacitor: lift above home indicator via globals.css
           onClick={() => toggleChatSidebar()}
           className={cn(
-            'z-40 flex items-center justify-center bg-transparent opacity-80 hover:opacity-100 transition-opacity p-0 border-0 overflow-visible',
+            'z-40 flex items-center justify-center bg-transparent p-0 border-0 overflow-visible', // Fully opaque — the disc is the open-chat control, not a faded overlay
             hideMapChrome ? 'absolute' : 'fixed' // Homepage previews: stay inside the map frame
           )}
           style={{
@@ -11447,6 +11448,10 @@ function BoardFlowInner({
             showAddChild={false}
             selectedCount={1}
             canUngroup={false}
+            onAddToSet={(setId) => {
+              const text = iBarInputRef.current?.value || '' // Typed buffer before a frame exists
+              addMember(setId, { kind: 'block', label: clipSetLabel(text, 'Block') })
+            }}
             boardInTargets={(() => {
               const convs =
                 (queryClient.getQueryData(['conversations']) as
@@ -11555,6 +11560,13 @@ function BoardFlowInner({
             FRAME_SHAPE_NONE
           }
           showFrameShape={rightClickedNode.type === 'chatPanel'}
+          onAddToSet={(setId) =>
+            addMember(setId, {
+              kind: 'frame',
+              label: labelForFlowNode(rightClickedNode),
+              nodeId: rightClickedNode.id, // Selected-frame glow host
+            })
+          }
           currentFillColor={
             (rightClickedNode.data?.fillColor as string | undefined) ||
             (rightClickedNode.data?.promptMessage?.metadata?.fillColor as string | undefined) ||

@@ -1,7 +1,7 @@
 'use client'
 
 // AI sidebar composer — Ask/Edit toggle in-box + Cursor-style + skills menu
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
@@ -60,7 +60,7 @@ import {
 } from '@/lib/ai/models'
 import { AiModelSelect } from '@/components/ai/ai-model-select'
 import { cn } from '@/lib/utils'
-import { useSidebarContext } from '@/components/sidebar-context'
+import { chatPromptWantsFocus, clearChatPromptFocus, useSidebarContext } from '@/components/sidebar-context'
 
 /** + menu skill rows — driven by the skill registry (user-attached, not LLM tools). */
 const MENU_SKILLS: Array<{
@@ -118,6 +118,8 @@ interface AiComposerProps {
   onSeedSkillsConsumed?: () => void
   /** When true, focus the textarea after mount (phone map-dock opens the soft keyboard). */
   autoFocus?: boolean
+  /** Caret entered or left the prompt — parent paints the blue box. */
+  onPromptFocus?: (focused: boolean) => void
   /** ChatGPT export picked from the + menu opens as a new imported thread. */
   onChatImported?: (thread: AiThread) => void
   onEdits?: (
@@ -275,10 +277,11 @@ export function AiComposer({
   seedSkillIds,
   onSeedSkillsConsumed,
   autoFocus = false,
+  onPromptFocus,
   onChatImported,
   onEdits,
 }: AiComposerProps) {
-  const { registerAiComposerFocus } = useSidebarContext()
+  const { registerAiComposerFocus, isChatSidebarOpen } = useSidebarContext()
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [dropActive, setDropActive] = useState(false)
@@ -430,6 +433,24 @@ export function AiComposer({
     })
     return () => window.cancelAnimationFrame(id)
   }, [autoFocus])
+
+  // User opened chat — put the I-bar in the prompt (desktop composer mounts after the click)
+  useLayoutEffect(() => {
+    if (!isChatSidebarOpen || !chatPromptWantsFocus()) return // Closed, or cookie restore
+    textareaRef.current?.focus({ preventScroll: true }) // Caret at the start of an empty prompt
+    onPromptFocus?.(true) // Blue border even if this browser skips the focus event
+    const id = window.requestAnimationFrame(() => clearChatPromptFocus()) // After strict-mode remount
+    return () => window.cancelAnimationFrame(id)
+  }, [isChatSidebarOpen, onPromptFocus])
+
+  // Caret moved — blue box only while this prompt holds it (clicks on Ask / the board)
+  useEffect(() => {
+    const sync = (event: FocusEvent) => {
+      onPromptFocus?.(event.target === textareaRef.current)
+    }
+    document.addEventListener('focusin', sync)
+    return () => document.removeEventListener('focusin', sync)
+  }, [onPromptFocus])
 
   // Register sync focus for brand-tap open (iOS requires focus inside the click turn)
   useEffect(() => {
@@ -951,6 +972,12 @@ export function AiComposer({
               ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onFocus={() => {
+                onPromptFocus?.(true) // Blue box while the I-bar is in the prompt
+              }}
+              onBlur={() => {
+                onPromptFocus?.(false) // Grey hairline once the caret leaves
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault()
@@ -974,6 +1001,7 @@ export function AiComposer({
                 'block min-h-[32px] max-h-[200px] resize-none border-0 bg-transparent shadow-none',
                 'text-base leading-5 sm:text-sm flex-1 self-center',
                 'placeholder:text-gray-400 dark:placeholder:text-gray-500',
+                'caret-gray-900 dark:caret-gray-100', // I-bar matches ink so it shows on the grey box
                 'focus-visible:ring-0 focus-visible:ring-offset-0',
                 'px-1 py-[6px]'
               )}

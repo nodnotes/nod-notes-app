@@ -3057,6 +3057,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   unlockedFrameSizeRef.current = unlockedFrameSize
   const unlockedFrameScaleRef = useRef(unlockedFrameScale)
   unlockedFrameScaleRef.current = unlockedFrameScale
+  // Last fit-mode box for a sole image — free→fit restores this (text hugs content; images must not hug the bitmap)
+  const imageFitSizeRef = useRef<{ width: number; height: number } | null>(null)
   const frameTextWrapRef = useRef(frameTextWrap) // Live wrap flag for the same stable resize handlers
   frameTextWrapRef.current = frameTextWrap
   const wrapColWidthRef = useRef(wrapColWidth) // Live wrap columns — locked proportional math
@@ -3321,6 +3323,12 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         if (isBlockPanel && typeof metadata.unlockedFrameScale === 'number' && metadata.unlockedFrameScale > 0) {
           setUnlockedFrameScale(metadata.unlockedFrameScale) // Scale paired with the unlocked shape
         }
+        if (isBlockPanel && metadata.imageFitSize && typeof metadata.imageFitSize === 'object') {
+          const fit = metadata.imageFitSize as { width?: number; height?: number }
+          if (fit.width && fit.height && fit.width > 0 && fit.height > 0) {
+            imageFitSizeRef.current = { width: fit.width, height: fit.height } // Restore target for free→fit
+          }
+        }
         if (isBlockPanel && typeof metadata.frameScale === 'number' && metadata.frameScale > 0) {
           setFrameScale(metadata.frameScale) // Locked proportional scale
         }
@@ -3407,6 +3415,15 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             } else {
             setResizeDimensions({ width: dims.width, height: dims.height })
             setIsUserResized(true) // Persisted resize → wrap in fixed box; skip line-grow
+            if (
+              metadata.frameUnlocked !== true &&
+              isSoleImageBlockHtml(contentHtml) &&
+              dims.width > 0 &&
+              dims.height > 0
+            ) {
+              // While locked, the live box is the fit size free→fit should restore
+              imageFitSizeRef.current = { width: dims.width, height: dims.height }
+            }
 
             // RF chrome size = upright AABB when rotated (content dims stay in resizeDimensions)
             const rot =
@@ -3796,7 +3813,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // Turning chrome on at drag-start used to shift RF position while d3 already had the grab point → jump.
   const showFrameChrome = Boolean(isBlock && selected && !isThreadConnecting)
   // Live L/R pad while selected (⋮⋮ stays centered in the blue↔fill strip as zoom changes).
-  // Fill stays put: glueFrameChromePad shifts RF XY by the pad delta (fill-origin fixed).
+  // Upright fill stays put via negative margins on the panel (same paint as the pad).
+  // Rotated fill stays put: glueFrameChromePad shifts RF XY by half the AABB delta.
   const chromeScale =
     isBlock && Math.abs(frameScale - 1) > FRAME_SCALE_EPSILON
       ? Math.max(FRAME_SCALE_EPSILON, frameScale)
@@ -3820,51 +3838,63 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // so the blue adjust box hugs the blocks vertically (no empty strip under the last block).
   const adjustChromeYTop = 0
   const adjustChromeYBottom = 0
-  // Keep the filled frame glued when selection chrome appears/disappears OR pad changes with zoom.
-  // Upright: L/R pad shifts RF −X. Rotated: chrome is baked into the upright AABB — shift by half the
-  // AABB delta so the fill (and ⋮⋮) stay centered instead of growing only down/right.
+  // Rotated chrome is baked into the upright AABB — shift RF by half the AABB delta so the fill
+  // stays centered. Upright frames do not move: negative margins cancel the pad in the same paint.
+  // A deferred −X shift lost the race to drag-stop and only stuck on the second select.
   const frameChromeOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   const glueFrameChromePad = useCallback(() => {
-    if (!isBlock || dragging) return
+    if (!isBlock || dragging) return // Drag owns the transform; shifting here jumps the grab
     let wantX = 0
     let wantY = 0
-    if (showFrameChrome) {
-      if (Math.abs(rotation) > 0.5) {
-        const dims = liveLockedContentRef.current ?? resizeDimensionsRef.current
-        if (dims) {
-          const inner = rotatedFrameAabbSize(dims.width, dims.height, rotation, frameShape)
-          const outer = rotatedFrameAabbSize(
-            dims.width + adjustChromeX * 2,
-            dims.height,
-            rotation,
-            frameShape
-          )
-          wantX = (outer.width - inner.width) / 2
-          wantY = (outer.height - inner.height) / 2
-        } else {
-          wantX = adjustChromeX
-        }
+    const upright = Math.abs(rotation) <= 0.5
+    if (showFrameChrome && !upright) {
+      const dims = liveLockedContentRef.current ?? resizeDimensionsRef.current
+      if (dims) {
+        const inner = rotatedFrameAabbSize(dims.width, dims.height, rotation, frameShape)
+        const outer = rotatedFrameAabbSize(
+          dims.width + adjustChromeX * 2,
+          dims.height,
+          rotation,
+          frameShape
+        )
+        wantX = (outer.width - inner.width) / 2 // Half the extra AABB — grow both ways
+        wantY = (outer.height - inner.height) / 2
       } else {
-        wantX = adjustChromeX
-        wantY = adjustChromeYTop
+        wantX = adjustChromeX // No dims yet — shift by the gutter until the AABB is known
       }
     }
-    const prev = frameChromeOffsetRef.current
-    if (prev.x === wantX && prev.y === wantY) return
-
+    const storeNode = rfStoreApi.getState().nodeInternals.get(id)
+    const storePos = storeNode?.position
+    if (!storePos) return
+    const applied = readFrameChromePad(storeNode?.data)
+    const fill = fillOriginFromFlowPosition(storePos, applied) // Undo any leftover −X from the old path
+    const nextPos = flowPositionFromFillOrigin(fill, { x: wantX, y: wantY })
+    frameChromeOffsetRef.current = { x: wantX, y: wantY }
+    if (
+      Math.abs(nextPos.x - storePos.x) < 0.5 &&
+      Math.abs(nextPos.y - storePos.y) < 0.5 &&
+      applied.x === wantX &&
+      applied.y === wantY
+    ) {
+      return // Store XY and pad already match — upright pad stays unset
+    }
     const setNodesFunc = getSetNodes()
     if (!setNodesFunc) return
     setNodesFunc((nds: any[]) =>
       nds.map((n) => {
         if (n.id !== id) return n
-        const applied = readFrameChromePad(n.data)
-        const fill = fillOriginFromFlowPosition(n.position, applied)
-        frameChromeOffsetRef.current = { x: wantX, y: wantY }
-        const nextPos = flowPositionFromFillOrigin(fill, { x: wantX, y: wantY })
+        const padNow = readFrameChromePad(n.data)
+        const fillNow = fillOriginFromFlowPosition(n.position, padNow)
+        const pos = flowPositionFromFillOrigin(fillNow, { x: wantX, y: wantY })
         const data = { ...(n.data || {}) }
         if (wantX || wantY) data.frameChromePad = { x: wantX, y: wantY }
-        else delete data.frameChromePad
-        return { ...n, position: nextPos, data }
+        else delete data.frameChromePad // Upright: margins own the gutter; pad would double-shift
+        if (Math.abs(pos.x - n.position.x) < 0.5 && Math.abs(pos.y - n.position.y) < 0.5) {
+          const had = readFrameChromePad(n.data)
+          const padSame = had.x === wantX && had.y === wantY
+          return padSame ? n : { ...n, data }
+        }
+        return { ...n, position: pos, data }
       })
     )
     updateNodeInternals(id)
@@ -3873,15 +3903,15 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     id,
     showFrameChrome,
     adjustChromeX,
-    adjustChromeYTop,
     rotation,
     frameShape,
     dragging,
     getSetNodes,
     updateNodeInternals,
+    rfStoreApi,
   ])
   useLayoutEffect(() => {
-    glueFrameChromePad()
+    glueFrameChromePad() // Clear a stale RF −X before paint so it cannot stack with the margins
   }, [glueFrameChromePad, showFrameChrome, adjustChromeX, rotation])
   // Stack/hide unmounts the node while chrome is still on — without this, RF keeps the
   // chrome-shifted XY and remount reapplies chrome → frame jumps up/left one gutter.
@@ -5136,6 +5166,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     if (unlocked) {
       setUnlockedFrameSize({ width, height })
       setUnlockedFrameScale(finalScale)
+    } else if (soleImage) {
+      // Fit-mode corner drag is the size free→fit must return to
+      imageFitSizeRef.current = { width, height }
     }
 
     await persistFrameMetaRef.current({
@@ -5145,6 +5178,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       frameScale: finalScale,
       fontScale: fontScaleRef.current,
       ...(unlocked ? { unlockedFrameSize: { width, height }, unlockedFrameScale: finalScale } : {}),
+      ...(soleImage && !unlocked ? { imageFitSize: { width, height } } : {}),
       ...(colToPersist != null ? { wrapColWidth: colToPersist } : {}), // Save the new unlocked wrap point
     })
   }, [])
@@ -5361,30 +5395,66 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
 
     let metaPatch: Record<string, unknown> = { frameUnlocked: nextUnlocked }
 
-    // Sole image: keep the live sticky box both ways — free→fit must not hug-shrink the frame
-    // (image contain-fits inside; hugging natural media made the box jump).
+    // Sole image: same round-trip as text, but fit size is the last sticky box (not a bitmap hug).
     const soleImage = isSoleImageBlockHtml(promptContent)
     if (soleImage) {
       const live = measureLiveBox()
-      const nextDims = { width: live.width, height: live.height }
+      const readSavedFitBox = (): { width: number; height: number } | null => {
+        const fromRef = imageFitSizeRef.current // Live ref — metadata can lag a same-session toggle
+        if (fromRef && fromRef.width > 0 && fromRef.height > 0) return fromRef
+        const meta = promptMessage?.metadata as Record<string, unknown> | undefined
+        const fromMeta = meta?.imageFitSize as { width?: number; height?: number } | undefined
+        if (fromMeta?.width && fromMeta?.height && fromMeta.width > 0 && fromMeta.height > 0) {
+          return { width: fromMeta.width, height: fromMeta.height }
+        }
+        return null
+      }
+      let nextDims = { width: live.width, height: live.height }
+      let nextScale = live.scale
+      if (nextUnlocked) {
+        // Leaving fit: remember this box, then restore the last free box (text does the same).
+        const fitBox = { width: live.width, height: live.height }
+        imageFitSizeRef.current = fitBox
+        const savedFree = readSavedFreeBox()
+        if (savedFree) {
+          nextDims = { width: savedFree.width, height: savedFree.height }
+          nextScale = savedFree.scale
+        }
+        if (nextScale !== frameScale) setFrameScale(nextScale)
+        metaPatch = {
+          ...metaPatch,
+          frameScale: nextScale,
+          resizeDimensions: nextDims,
+          frameTextWrap,
+          imageFitSize: fitBox,
+          ...(savedFree
+            ? {
+                unlockedFrameSize: { width: savedFree.width, height: savedFree.height },
+                unlockedFrameScale: nextScale,
+              }
+            : {}),
+        }
+      } else {
+        // Entering fit: remember the free box, then return to the last fit box.
+        const freeBox = { width: live.width, height: live.height }
+        setUnlockedFrameSize(freeBox)
+        setUnlockedFrameScale(live.scale)
+        unlockedFrameSizeRef.current = freeBox
+        unlockedFrameScaleRef.current = live.scale
+        const savedFit = readSavedFitBox()
+        if (savedFit) nextDims = { width: savedFit.width, height: savedFit.height }
+        metaPatch = {
+          ...metaPatch,
+          frameScale: live.scale,
+          resizeDimensions: nextDims,
+          frameTextWrap,
+          unlockedFrameSize: freeBox,
+          unlockedFrameScale: live.scale,
+          ...(savedFit ? { imageFitSize: savedFit } : {}),
+        }
+      }
       setResizeDimensions(nextDims)
       setIsUserResized(true)
-      if (!nextUnlocked) {
-        setUnlockedFrameSize({ width: live.width, height: live.height })
-        setUnlockedFrameScale(live.scale)
-      }
-      metaPatch = {
-        ...metaPatch,
-        frameScale: live.scale,
-        resizeDimensions: nextDims,
-        frameTextWrap,
-        ...(!nextUnlocked
-          ? {
-              unlockedFrameSize: { width: live.width, height: live.height },
-              unlockedFrameScale: live.scale,
-            }
-          : {}),
-      }
       setFrameUnlocked(nextUnlocked)
       const setNodesSole = getSetNodes()
       if (setNodesSole) {
@@ -5393,7 +5463,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             if (n.id !== id) return n
             const pm = n.data?.promptMessage
             if (!pm) return n
-            // Keep RF node box = live free size so the blue ring doesn't snap to a hug
+            // RF node box follows the restored fit/free size so the blue ring matches
             const chromeX = adjustChromeXRef.current * 2
             const boxW = nextDims.width + chromeX
             const boxH = nextDims.height
@@ -8049,6 +8119,10 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         paddingRight: isContentRotated ? undefined : adjustPadCss,
         paddingBottom: adjustChromeYBottom || undefined,
         paddingLeft: isContentRotated ? undefined : adjustPadCss,
+        // Same paint as the pad: margin box stays the fill width, border box grows both ways.
+        // A later RF position write cannot shove the text — there is no −X shift to lose.
+        marginLeft: showFrameChrome && !isContentRotated ? -adjustChromeX : undefined,
+        marginRight: showFrameChrome && !isContentRotated ? -adjustChromeX : undefined,
         boxSizing: 'border-box',
         // `isInitialShrinkComplete` starts false and is only flipped by an effect, so *every* mount
         // paints one frame at 0 and then transitions to 1 over 300ms (the class above transitions

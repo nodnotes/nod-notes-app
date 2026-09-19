@@ -7,8 +7,8 @@
 // rAF while a frame is selected: read viewport matrix → publish live zoom (React
 // syncExternalStore) + stamp CSS vars / chrome element sizes.
 // L/R adjust pad is live from React (`data-tt-chrome-pad-x`); rAF only mirrors it to
-// `--tt-adjust-pad-x`. ChatPanelNode re-glues RF XY to the fill origin when pad changes
-// so the peach fill (and threads) stay put while the blue gutter reflows.
+// `--tt-adjust-pad-x`. Upright frames cancel that pad with negative margins (RF XY stays
+// the fill origin). Rotated frames still re-glue RF XY by half the AABB delta.
 
 /** Keep in sync with FRAME_SCREEN_CHROME_BOOST in threads/constants. */
 const CHROME_BOOST = 1.4

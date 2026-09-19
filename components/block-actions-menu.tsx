@@ -66,6 +66,7 @@ import {
   AppWindow,
   Rows3,
   RotateCcw,
+  SquareStack,
 } from 'lucide-react' // Action + Turn into + Property + Connections icons
 import { NotionMarkIcon } from '@/components/notion-mark-icon' // Notion row in Connections
 import type { NotionSyncMode } from '@/lib/blocks' // Live sync when connected
@@ -82,6 +83,7 @@ import {
   frameShapeLabel,
   type FrameShapeChoice,
 } from '@/lib/frame-shape' // Frame-as-shape picker values
+import { SetsPickerMenu } from '@/components/sets-picker-menu' // Add to set flyout — list + Add set
 
 type FrameColorKind = 'fill' | 'border' // Which chrome channel a last-used / pick targets
 
@@ -260,6 +262,7 @@ export type BlockActionId =
   | 'revertText' // Restore original sent/received text after a user edit
   | 'resendPrompt' // Chat prompt frame — truncate later turns and send again
   | 'regenerateResponse' // Chat response frame — re-run from the preceding prompt
+  | 'addToSet' // Opens the sets picker (not the utility sidebar)
 
 export type DbConvertLayoutId = 'card' | 'table' // Convert layout flyout picks
 /** Row-setter commit: exact count, all loaded (or client cap), or compact default. */
@@ -351,6 +354,8 @@ export type BlockActionsMenuProps = {
   positionMode?: 'absolute' | 'fixed'
   /** fixed mode only: anchor to the LEFT of x (menu's right edge) instead of right of the handle */
   openLeft?: boolean
+  /** When set, Add to set opens the sets picker; called with the chosen set id. */
+  onAddToSet?: (setId: string) => void
 }
 
 type TurnIntoDef = {
@@ -417,7 +422,7 @@ type RowDef =
       icon: React.ReactNode
       danger?: boolean
       disabled?: boolean // Grey out + skip onAction (e.g. Revert with no edits)
-      submenu?: 'turnInto' | 'color' | 'listFormat' | 'skills' | 'boardIn' | 'frameShape' | 'frameColor' | 'connections' | 'convertLayout' | 'dbRows'
+      submenu?: 'turnInto' | 'color' | 'listFormat' | 'skills' | 'boardIn' | 'frameShape' | 'frameColor' | 'connections' | 'convertLayout' | 'dbRows' | 'sets'
       hidden?: boolean
       beta?: boolean
     }
@@ -576,6 +581,7 @@ export function BlockActionsMenu({
   className,
   positionMode = 'absolute',
   openLeft = false,
+  onAddToSet,
 }: BlockActionsMenuProps) {
   const [query, setQuery] = useState('') // Filter actions + turn-into
   const [propertyQuery, setPropertyQuery] = useState('') // Filter inside the Property pane
@@ -589,6 +595,7 @@ export function BlockActionsMenu({
     | 'connections'
     | 'convertLayout'
     | 'dbRows'
+    | 'sets'
     | null
   >(null) // Flyout
   const inputRef = useRef<HTMLInputElement>(null) // Autofocus search
@@ -712,6 +719,14 @@ export function BlockActionsMenu({
         label: 'Color',
         icon: <PaintRoller className="h-4 w-4" />,
         submenu: showFrameShape ? 'frameColor' : 'color', // Frame → fill/border palette; block → stub
+      },
+      {
+        kind: 'action',
+        id: 'addToSet',
+        label: 'Add to set',
+        icon: <SquareStack className="h-4 w-4" />,
+        submenu: 'sets', // Picker of sets + Add set — not the utility sidebar
+        hidden: !onAddToSet, // Frame and block menus pass a commit; slim Notion menus omit it
       },
       {
         kind: 'action',
@@ -889,7 +904,7 @@ export function BlockActionsMenu({
                 .includes(q)
             )))
     )
-  }, [query, selectedCount, canUngroup, showAddChild, currentBlockType, showFrameShape, boardLocked, framesLockedTogether, canLockFramesTogether, notionConnected, convertLayoutMode, dbRowSetter, showOpen, showRevertText, canRevertText, showResendPrompt, showRegenerateResponse, chatRegenBusy])
+  }, [query, selectedCount, canUngroup, showAddChild, currentBlockType, showFrameShape, boardLocked, framesLockedTogether, canLockFramesTogether, notionConnected, convertLayoutMode, dbRowSetter, showOpen, showRevertText, canRevertText, showResendPrompt, showRegenerateResponse, chatRegenBusy, onAddToSet])
 
   // When searching, also surface matching Turn into types as flat picks
   const turnIntoMatches = useMemo(() => {
@@ -1084,6 +1099,7 @@ export function BlockActionsMenu({
           const isConnectionsOpen = row.submenu === 'connections' && openSubmenu === 'connections'
           const isConvertLayoutOpen =
             row.submenu === 'convertLayout' && openSubmenu === 'convertLayout'
+          const isSetsOpen = row.submenu === 'sets' && openSubmenu === 'sets'
           return (
             <Button
               key={row.id}
@@ -1102,12 +1118,19 @@ export function BlockActionsMenu({
                 else if (row.submenu === 'frameColor') setOpenSubmenu('frameColor')
                 else if (row.submenu === 'convertLayout') setOpenSubmenu('convertLayout')
                 else if (row.submenu === 'dbRows') setOpenSubmenu('dbRows')
+                else if (row.submenu === 'sets') setOpenSubmenu('sets') // Add to set picker
                 else if (row.submenu === 'connections') return // Click-only picker
                 else setOpenSubmenu(null)
               }}
               // pointerdown: menu root preventDefault on mousedown can suppress click
               onPointerDown={(e) => {
                 if (e.button !== 0) return // Left button only
+                if (row.submenu === 'sets') {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setOpenSubmenu('sets') // Click opens the picker even if the later click is swallowed
+                  return
+                }
                 if (row.submenu) return // Submenus toggle on click / hover
                 if (row.disabled) return // Revert (etc.) greyed out when nothing to restore
                 e.preventDefault()
@@ -1142,6 +1165,10 @@ export function BlockActionsMenu({
                   setOpenSubmenu((s) => (s === 'connections' ? null : 'connections')) // Click → Notion
                   return
                 }
+                if (row.submenu === 'sets') {
+                  setOpenSubmenu('sets') // Click keeps the picker open (hover already opened it)
+                  return
+                }
                 // Submenus without UI yet — fire stub action and close
                 if (row.submenu) {
                   onAction(row.id)
@@ -1158,7 +1185,8 @@ export function BlockActionsMenu({
                   isShapeOpen ||
                   isFrameColorOpen ||
                   isConnectionsOpen ||
-                  isConvertLayoutOpen) &&
+                  isConvertLayoutOpen ||
+                  isSetsOpen) &&
                   'bg-gray-100 dark:bg-[#2a2a2a]'
               )}
             >
@@ -1216,6 +1244,22 @@ export function BlockActionsMenu({
           </Button>
         ))}
       </div>
+
+      {/* Add to set — list of sets + Add set. Separate from the Sets utility sidebar. */}
+      {openSubmenu === 'sets' && onAddToSet && (
+        <div
+          data-tt-menu-flyout="main"
+          className="absolute z-[1001] w-[200px] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f]"
+          onMouseEnter={() => setOpenSubmenu('sets')}
+        >
+          <SetsPickerMenu
+            onChoose={(setId) => {
+              onAddToSet(setId) // Caller marks the content and records the member
+              onClose()
+            }}
+          />
+        </div>
+      )}
 
       {/* Turn into flyout: Format / Property tabs — one pane so the menu stays compact */}
       {(openSubmenu === 'turnInto' || openSubmenu === 'boardIn') && (

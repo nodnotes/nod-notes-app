@@ -31,9 +31,12 @@ import {
   AlignRight, // Text align right
   AlignJustify, // Text align justify
   RotateCcw, // Revert text to original sent/received
+  SquareStack, // Add to set — same icon as the Sets utility tab
 } from 'lucide-react'
 import { cn } from '@/lib/utils' // Conditional classes for active Hide text row
 import { getMenuSafeRect } from '@/lib/menu-placement' // Same chrome-free lane as action menus
+import { addMember, clipSetLabel } from '@/lib/sets-list' // Text selection → a named set
+import { SetsPickerMenu } from '@/components/sets-picker-menu' // List of sets + Add set
 import { getSkill } from '@/lib/ai/skills'
 import { requestAiSkill } from '@/lib/ai/attach-skill'
 
@@ -89,7 +92,8 @@ export function SelectionFormatPopup({
   onRevertText?: () => void
 }) {
   const [, setTick] = useState(0) // Re-render when marks/align change so active styles stay in sync
-  const [openFlyout, setOpenFlyout] = useState<'color' | 'align' | null>(null) // One flyout at a time
+  const [openFlyout, setOpenFlyout] = useState<'color' | 'align' | 'sets' | null>(null) // One flyout at a time
+  const setRangeRef = useRef<{ from: number; to: number } | null>(null) // Selection to mark when a set is picked
   const isHazed = !!editor?.isActive('haze') // Selection already has haze mark
 
   useEffect(() => {
@@ -108,6 +112,22 @@ export function SelectionFormatPopup({
 
   const handleHideText = () => {
     run(() => editor!.chain().focus().toggleHaze().run()) // Toggle frost on the current selection
+  }
+
+  const handleAddToSet = () => {
+    if (!editor || editor.isDestroyed || editor.state.selection.empty) return // Need a real range
+    const { from, to } = editor.state.selection
+    setRangeRef.current = { from, to } // Keep it if the click moves the caret
+    setOpenFlyout((cur) => (cur === 'sets' ? null : 'sets')) // Picker, not an immediate add
+  }
+
+  const commitTextToSet = (setId: string) => {
+    const range = setRangeRef.current
+    if (!editor || editor.isDestroyed || !range || range.to <= range.from) return
+    const label = clipSetLabel(editor.state.doc.textBetween(range.from, range.to, ' '), 'Text')
+    editor.chain().setTextSelection(range).setSetMember().run() // Halo mark on that run
+    addMember(setId, { kind: 'text', label }) // Named set in the utility list
+    setOpenFlyout(null)
   }
 
   const attachPopupSkill = (skillId: string) => {
@@ -358,6 +378,24 @@ export function SelectionFormatPopup({
             <span>Revert text</span>
           </button>
         ) : null}
+        <div className="relative">
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-gray-50 dark:hover:bg-gray-800"
+          tabIndex={-1}
+          title="Add this selection to a set"
+          onClick={handleAddToSet}
+        >
+          <SquareStack className="h-4 w-4 shrink-0 text-gray-600 dark:text-gray-300" />
+          <span className="flex-1">Add to set</span>
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+        </button>
+        {openFlyout === 'sets' && (
+          <div className="tt-menu-surface absolute left-full top-0 z-[1001] ml-1 w-[200px] rounded-lg border border-gray-200 shadow-lg dark:border-[#2f2f2f]">
+            <SetsPickerMenu onChoose={commitTextToSet} />
+          </div>
+        )}
+        </div>
       </div>
 
       {/* Divider before Skills */}

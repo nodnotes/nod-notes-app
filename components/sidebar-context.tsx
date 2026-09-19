@@ -13,6 +13,8 @@ import {
 } from 'react'
 import { getStoredLogoDrawing, NN_LOGO_DRAWING_STORAGE_KEY } from './personalize-ai-modal'
 import { ACCOUNT_CHANGED_EVENT } from '@/lib/auth-session-isolation'
+import { SETS_REVEAL_EVENT } from '@/lib/sets-list' // Add to set → open this sidebar on Sets
+import { SetMembershipSync } from '@/components/set-membership-sync' // Restamp frames that belong to a set
 
 /** Default / minimum width of the right chat sidebar when open (Notion-like). */
 export const CHAT_SIDEBAR_WIDTH = 360
@@ -193,7 +195,7 @@ interface SidebarContextType {
   utilitySidebarMode: UtilitySidebarMode // layers (default) | flashcards | capture
   toggleUtilitySidebar: () => void // Top-bar toggle right of More (open only — close via seam / header)
   setUtilitySidebarOpen: (open: boolean) => void // Explicit open/close for utility column
-  setUtilitySidebarMode: (mode: UtilitySidebarMode) => void // Switch layers / study / capture menus
+  setUtilitySidebarMode: (mode: UtilitySidebarMode) => void // Switch layers / sets / capture menus
   logoDrawing: string | null // Custom logo PNG data URL (shared by chat + map open icon)
   setLogoDrawing: (url: string | null) => void // Persist + sync custom logo across chrome
   /** Phone: AiComposer registers focus so brand tap can open the soft keyboard in the same gesture. */
@@ -219,6 +221,23 @@ interface SidebarContextType {
 }
 
 const SidebarContext = createContext<SidebarContextType | undefined>(undefined)
+
+let chatPromptFocusPending = false // True only for a user open, not a cookie restore
+
+/** Mark that the next mounted prompt should take the caret (desktop mounts after the click). */
+export function requestChatPromptFocus() {
+  chatPromptFocusPending = true // Survives until the composer exists
+}
+
+/** Drop a pending caret so a close-before-mount does not focus the next open. */
+export function clearChatPromptFocus() {
+  chatPromptFocusPending = false
+}
+
+/** True when this open should place the I-bar in the prompt (not yet consumed). */
+export function chatPromptWantsFocus() {
+  return chatPromptFocusPending // Stay set across the mount that follows the click
+}
 
 export function SidebarContextProvider({
   children,
@@ -490,22 +509,30 @@ export function SidebarContextProvider({
     if (previewModeRef.current) {
       // Showcase: toggle open/closed in-memory only — never write board cookies
       const opening = !isChatOpenRef.current
-      if (opening && isMobileModeRef.current) {
-        aiComposerFocusRef.current?.()
-      } else if (!opening && isMobileModeRef.current) {
-        const ae = document.activeElement as HTMLElement | null
-        if (ae?.closest?.('[data-chat-map-dock]')) ae.blur()
+      if (opening) {
+        requestChatPromptFocus() // Desktop caret after the column mounts; phone keyboard still uses the tap
+        if (isMobileModeRef.current) aiComposerFocusRef.current?.() // Same-tap soft keyboard
+      } else {
+        clearChatPromptFocus() // Close before mount must not focus the next open
+        if (isMobileModeRef.current) {
+          const ae = document.activeElement as HTMLElement | null
+          if (ae?.closest?.('[data-chat-map-dock]')) ae.blur()
+        }
       }
       setIsChatSidebarOpen((prev) => !prev)
       return
     }
     const opening = !isChatOpenRef.current // About to open?
     // iOS: focus must run in this tap — phone dock keeps composer mounted while closed
-    if (opening && isMobileModeRef.current) {
-      aiComposerFocusRef.current?.()
-    } else if (!opening && isMobileModeRef.current) {
-      const ae = document.activeElement as HTMLElement | null
-      if (ae?.closest?.('[data-chat-map-dock]')) ae.blur() // Dismiss soft keyboard
+    if (opening) {
+      requestChatPromptFocus() // Desktop caret after the column mounts
+      if (isMobileModeRef.current) aiComposerFocusRef.current?.() // Same-tap soft keyboard
+    } else {
+      clearChatPromptFocus()
+      if (isMobileModeRef.current) {
+        const ae = document.activeElement as HTMLElement | null
+        if (ae?.closest?.('[data-chat-map-dock]')) ae.blur() // Dismiss soft keyboard
+      }
     }
     setIsChatSidebarOpen((prev) => {
       const next = !prev // Logo by minimap toggles chat column
@@ -517,21 +544,29 @@ export function SidebarContextProvider({
   const setChatSidebarOpen = useCallback((open: boolean) => {
     if (previewModeRef.current) {
       // Showcase: allow open/close without writing board open cookie
-      if (open && isMobileModeRef.current && !isChatOpenRef.current) {
-        aiComposerFocusRef.current?.()
-      } else if (!open && isMobileModeRef.current) {
-        const ae = document.activeElement as HTMLElement | null
-        if (ae?.closest?.('[data-chat-map-dock]')) ae.blur()
+      if (open && !isChatOpenRef.current) {
+        requestChatPromptFocus()
+        if (isMobileModeRef.current) aiComposerFocusRef.current?.()
+      } else if (!open) {
+        clearChatPromptFocus()
+        if (isMobileModeRef.current) {
+          const ae = document.activeElement as HTMLElement | null
+          if (ae?.closest?.('[data-chat-map-dock]')) ae.blur()
+        }
       }
       isChatOpenRef.current = open
       setIsChatSidebarOpen(open)
       return
     }
-    if (open && isMobileModeRef.current && !isChatOpenRef.current) {
-      aiComposerFocusRef.current?.() // Same-tap keyboard when opened explicitly
-    } else if (!open && isMobileModeRef.current) {
-      const ae = document.activeElement as HTMLElement | null
-      if (ae?.closest?.('[data-chat-map-dock]')) ae.blur() // Dismiss soft keyboard
+    if (open && !isChatOpenRef.current) {
+      requestChatPromptFocus() // Caret in the prompt once the composer is mounted
+      if (isMobileModeRef.current) aiComposerFocusRef.current?.() // Same-tap keyboard when opened explicitly
+    } else if (!open) {
+      clearChatPromptFocus()
+      if (isMobileModeRef.current) {
+        const ae = document.activeElement as HTMLElement | null
+        if (ae?.closest?.('[data-chat-map-dock]')) ae.blur() // Dismiss soft keyboard
+      }
     }
     persistChatSidebarOpen(open) // Remember for reload
     setIsChatSidebarOpen(open)
@@ -555,9 +590,19 @@ export function SidebarContextProvider({
   }, [])
 
   const setUtilitySidebarMode = useCallback((mode: UtilitySidebarMode) => {
-    setUtilitySidebarModeState(mode) // Switch layers / flashcards / capture
+    setUtilitySidebarModeState(mode) // Switch layers / sets / capture
     if (!previewModeRef.current) persistUtilitySidebarMode(mode) // Remember across reload
   }, [])
+
+  // Add to set asks the utility column to show the Sets list
+  useEffect(() => {
+    const onReveal = () => {
+      setUtilitySidebarMode('flashcards') // Mode id kept; the tab label is Sets
+      setUtilitySidebarOpen(true)
+    }
+    window.addEventListener(SETS_REVEAL_EVENT, onReveal)
+    return () => window.removeEventListener(SETS_REVEAL_EVENT, onReveal)
+  }, [setUtilitySidebarMode, setUtilitySidebarOpen])
 
   // Notion-style ⌘/; — toggle chat (Close on the seam tip when open)
   useEffect(() => {
@@ -613,6 +658,7 @@ export function SidebarContextProvider({
         setPhoneDockTight,
       }}
     >
+      <SetMembershipSync />
       {children}
     </SidebarContext.Provider>
   )

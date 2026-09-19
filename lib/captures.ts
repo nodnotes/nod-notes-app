@@ -314,64 +314,91 @@ async function captureFlowPaneImage(clip?: FlowClip): Promise<string | undefined
   }
 }
 
+/** Sets clones set this so the thumb uses the map surface instead of a light card. */
+function previewBackground(el: HTMLElement): string {
+  if (el.getAttribute('data-set-capture-host') != null && el.style.backgroundColor) {
+    return el.style.backgroundColor // Dark-mode ink disappears on a forced light fill
+  }
+  return '#f9fafb'
+}
+
+/** Drop chrome that is not the content (same exclusions as Layers thumbs). */
+function previewChromeFilter(node: globalThis.Node): boolean {
+  if (!(node instanceof HTMLElement)) return true // Text nodes stay
+  const cls = node.classList
+  if (cls.contains('react-flow__handle')) return false // Connection points
+  if (cls.contains('react-flow__resize-control')) return false // Resize dots
+  if (node.getAttribute('data-tt-connection-indicator') != null) return false
+  if (node.getAttribute('data-frame-chrome') != null) return false
+  if (node.getAttribute('data-tt-adjust-ring') != null) return false // Blue select box
+  if (node.getAttribute('data-tt-block-handle') != null) return false // Block grip
+  if (node.getAttribute('data-tt-ibar-grip') != null) return false // Pre-frame grip
+  if (node.getAttribute('data-tt-insert-line') != null) return false
+  return true
+}
+
 /**
- * Preview of one frame/drawing/shape alone — that RF node’s DOM only (no board/neighbors).
- * Must override RF `transform: translate(...)` on the clone or the canvas is empty.
- * Light fill so transparent ink isn’t black.
+ * Thumbnail of one element — same light fill + scale as Layers.
+ * Always replaces `transform` so an RF `translate(...)` cannot paint off-canvas.
  */
-export async function captureNodePreviewImage(nodeId: string): Promise<string | undefined> {
-  if (typeof document === 'undefined') return undefined
-  const safeId = nodeId.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-  const el = document.querySelector(`.react-flow__node[data-id="${safeId}"]`) as HTMLElement | null
-  if (!el || el.clientWidth < 4 || el.clientHeight < 4) return undefined
-  const w = el.clientWidth
+export async function captureElementPreview(el: HTMLElement): Promise<string | undefined> {
+  if (el.clientWidth < 4 || el.clientHeight < 4) return undefined // Too small to snapshot
+  const w = el.clientWidth // Layout width (not the visual AABB)
   const h = el.clientHeight
-  // Upscale small on-screen boxes; never shrink below 1 (keep sharpness when zoomed in)
+  // Upscale small boxes; never shrink below 1 so zoomed-in content stays sharp
   const scale = Math.min(VIEW_JPEG_MAX_W / Math.max(w, 1), Math.max(1, 320 / Math.max(w, 1)))
   const outW = Math.max(1, Math.round(w * scale))
   const outH = Math.max(1, Math.round(h * scale))
-  const filter = (node: globalThis.Node) => {
-    if (!(node instanceof HTMLElement)) return true
-    const cls = node.classList
-    if (cls.contains('react-flow__handle')) return false
-    if (cls.contains('react-flow__resize-control')) return false
-    if (node.getAttribute('data-tt-connection-indicator') != null) return false
-    if (node.getAttribute('data-frame-chrome') != null) return false
-    if (node.getAttribute('data-tt-adjust-ring') != null) return false // Blue select/adjust box — not part of the item
-    if (node.getAttribute('data-tt-block-handle') != null) return false
-    if (node.getAttribute('data-tt-insert-line') != null) return false
-    return true
-  }
+  const fill = previewBackground(el) // Sets clones keep the map color; Layers stay on the light fill
   const style = {
-    // Replace RF translate — leaving it paints the node off-canvas (blank thumb)
-    transform: `scale(${scale})`,
+    transform: `scale(${scale})`, // Replace RF translate — leaving it blanks the thumb
     transformOrigin: 'top left',
+    position: 'relative', // Fixed + off-screen left paints outside the bitmap
+    inset: '0px', // Computed `inset` survives a bare `left: 0` and keeps glyphs off-canvas
+    left: '0px',
+    top: '0px',
+    right: 'auto',
+    bottom: 'auto',
+    margin: '0px',
     width: `${w}px`,
     height: `${h}px`,
-    backgroundColor: '#f9fafb',
+    backgroundColor: fill,
+    // Selected-frame ring is map chrome. Only the added piece stays blue.
+    ...(el.getAttribute('data-set-capture-host') != null ? { boxShadow: 'none' } : {}),
   }
   try {
-    const { toPng, toJpeg } = await import('html-to-image')
+    const { toPng, toJpeg } = await import('html-to-image') // DOM snapshot
     const base = {
       cacheBust: true,
       pixelRatio: 1,
       width: outW,
       height: outH,
-      backgroundColor: '#f9fafb',
+      backgroundColor: fill,
       style,
-      filter,
+      filter: previewChromeFilter,
     }
     try {
       const png = await toPng(el, base)
       if (png) return png
     } catch {
-      // Fall through
+      // Fall through to JPEG
     }
     const jpeg = await toJpeg(el, { ...base, quality: 0.85 })
     return jpeg || undefined
   } catch {
     return undefined
   }
+}
+
+/**
+ * Preview of one frame/drawing/shape alone — that RF node’s DOM only (no board/neighbors).
+ */
+export async function captureNodePreviewImage(nodeId: string): Promise<string | undefined> {
+  if (typeof document === 'undefined') return undefined
+  const safeId = nodeId.replace(/\\/g, '\\\\').replace(/"/g, '\\"') // CSS attribute escape
+  const el = document.querySelector(`.react-flow__node[data-id="${safeId}"]`) as HTMLElement | null
+  if (!el) return undefined
+  return captureElementPreview(el)
 }
 
 /** JPEG of the visible board (current camera), scaled for storage. */

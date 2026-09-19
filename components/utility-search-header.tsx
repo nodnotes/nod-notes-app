@@ -1,6 +1,6 @@
 'use client'
 
-// Shared search chrome for utility Layers / Study / Capture — matches AI chat thread picker
+// Shared search chrome for utility Layers / Sets / Capture — matches AI chat thread picker
 
 import type { ReactNode } from 'react'
 import { ListFilter, Search } from 'lucide-react'

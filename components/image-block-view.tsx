@@ -184,10 +184,15 @@ export function ImageBlockView({
       freeResizeRef.current = free
       setFreeResize((prev) => (prev === free ? prev : free))
       if (free) {
-        // Freeze once on enter — snapshot current contain viewport; ignore later CSS var changes
-        if (!wasFree) measureLiveFrameBox()
+        // Keep the last fit contain box. Do not re-read CSS vars on enter — fit→free
+        // may restore a different frame box in the same commit, and that would rescale the bitmap.
+        const haveFitBox =
+          lockedFrameBoxRef.current != null &&
+          lockedFrameBoxRef.current.w >= 1 &&
+          lockedFrameBoxRef.current.h >= 1
+        if (!wasFree && !haveFitBox) measureLiveFrameBox()
         setFrozenDisplay((prev) => prev ?? captureFrozen())
-        // Fight races that write live (post-free) vars before the free flag lands
+        // Ignore later free-resize var writes — paint stays at the fit contain size
         const locked = lockedFrameBoxRef.current
         if (locked && locked.w >= 1 && locked.h >= 1) {
           setFrameBox((prev) =>

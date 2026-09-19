@@ -13,6 +13,7 @@ import CollaborationCaret from '@tiptap/extension-collaboration-caret'
 import type { HocuspocusProvider } from '@hocuspocus/provider'
 import type * as Y from 'yjs'
 import { Haze } from '@/lib/tiptap/haze'
+import { SetMember } from '@/lib/tiptap/set-member' // In-set glow mark (paints only while the frame is selected)
 import { AiPending, AiOrigin } from '@/lib/tiptap/ai-marks' // AI edit review + provenance
 import { NotionSyncPending } from '@/lib/tiptap/notion-sync-mark' // Notion sync review (grey)
 import {
@@ -81,6 +82,7 @@ export function createPanelExtensions(
     }),
     Highlight.configure({ multicolor: true }),
     Haze,
+    SetMember, // Span the selected-frame halo targets
     AiPending, // Rainbow pending AI edits
     AiOrigin, // Persisted AI-written spans (toggleable reddish mask)
     NotionSyncPending, // Grey pending Notion→NodNotes sync review
