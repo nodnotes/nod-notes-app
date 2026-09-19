@@ -3,6 +3,7 @@
 // Utility Sets body — set names, plus a Layers-style thumb for each frame in the set
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import type { Node } from 'reactflow' // RF v11 node — setNodes updater must return this, not a selected stub
 import { List, MessageSquare, MoreHorizontal, Pencil, Plus, SquareStack, Trash2 } from 'lucide-react' // New set, list mark, Add to chat, row ⋯, rename, delete
 import { cn } from '@/lib/utils' // Selected-row wash + thumb border
 import { captureNodePreviewImage } from '@/lib/captures' // Same node-only thumb Layers uses
@@ -445,7 +446,7 @@ export function SetsList() {
     if (setFrameIds.length === 0) return // Disabled until the glowing set has a frame
     const want = new Set(setFrameIds) // Frames that should stay selected
     const setNodes = getSetNodes()
-    const patch = (nds: Array<{ id: string; selected?: boolean }>) =>
+    const patch = (nds: Node[]) =>
       nds.map((n) => ({ ...n, selected: want.has(n.id) })) // Composer live pills follow this selection
     if (setNodes) setNodes(patch)
     else reactFlowInstance?.setNodes(patch)
