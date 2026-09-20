@@ -25,10 +25,8 @@ import {
 import { CSS } from '@dnd-kit/utilities' // Translate while dragging
 import {
   ListFilter, // Filter control (dropdown menu chrome)
-  List, // In one list
   MessageSquare, // Add to chat — chat mark
-  Plus, // Insert capture between rows
-  Presentation, // New presentation + section header
+  Plus, // Insert capture between rows + Presentation
   Scan, // Capture view (4 disconnected rounded corners)
   MoreHorizontal, // Presentation header ⋯
   Pencil, // Rename presentation
@@ -37,7 +35,6 @@ import {
   Trash2, // Delete presentation
 } from 'lucide-react'
 import {
-  UtilityFilterDivider,
   UtilityFilterOption,
   UtilitySearchHeader,
 } from '@/components/utility-search-header' // Sidebar: AI-chat-style search
@@ -466,20 +463,8 @@ export function CapturesPanel({
   const [previewId, setPreviewId] = useState<string | null>(null) // Expanded JPEG overlay
   const [capturing, setCapturing] = useState(false) // Capture view in flight
   const [renamingId, setRenamingId] = useState<string | null>(null) // Header whose name is being edited
-  const [organize, setOrganize] = useState<PresentationOrganize>('presentation') // Filter menu: one list, or headers
-  const [plusOpen, setPlusOpen] = useState(false) // + menu: New presentation / Add to presentation / Add to chat
-  const plusRef = useRef<HTMLDivElement>(null) // + button and its menu, so outside clicks can close it
+  const [organize, setOrganize] = useState<PresentationOrganize>('presentation') // By presentation (no Views ⋯ — Capture sits there)
   const sidebar = variant === 'sidebar' // Narrow column layout
-
-  useEffect(() => {
-    if (!plusOpen) return // Listener only while the + menu is up
-    const onDown = (event: PointerEvent) => {
-      if (plusRef.current?.contains(event.target as globalThis.Node)) return // Keep clicks on the menu itself
-      setPlusOpen(false) // Click outside the + closes New presentation / Add to presentation / Add to chat
-    }
-    window.addEventListener('pointerdown', onDown, true) // Capture so the board does not eat the click first
-    return () => window.removeEventListener('pointerdown', onDown, true)
-  }, [plusOpen])
 
   const items = useMemo(
     () =>
@@ -548,17 +533,6 @@ export function CapturesPanel({
   const onNewPresentation = () => {
     setOrganize('presentation') // The new header only shows under By presentation
     const created = createPresentation([]) // Empty header at the top of the list
-    setRenamingId(created.id) // Name it immediately
-  }
-
-  const onAddToPresentation = () => {
-    const ids = items.filter((c) => selected.has(c.id)).map((c) => c.id) // Visual order, not click order
-    if (ids.length === 0) return // Disabled until a capture is selected
-    setOrganize('presentation') // The new header only shows under By presentation
-    const created = createPresentation([]) // Empty header, then the selection moves in
-    ids.forEach((id, index) => {
-      moveCaptureUnderPresentation(id, created.id, index) // Exclusive — leaves any other presentation
-    })
     setRenamingId(created.id) // Name it immediately
   }
 
@@ -694,7 +668,7 @@ export function CapturesPanel({
             onQueryChange={setQuery}
             filterOpen={filterOpen}
             onFilterOpenChange={setFilterOpen}
-            filterActive={thisBoardOnly || organize !== 'presentation'} // Blue unless every board is showing by presentation
+            filterActive={thisBoardOnly} // Blue when limited to this board
             filterTitle="Filter captures"
             filterMenu={
               <>
@@ -716,97 +690,21 @@ export function CapturesPanel({
                     setFilterOpen(false)
                   }}
                 />
-                <UtilityFilterDivider /> {/* Organize used to live in the ⋯ menu */}
-                <UtilityFilterOption
-                  label="In one list"
-                  icon={<List className="h-4 w-4 flex-shrink-0" />} // Same list mark the ⋯ row used
-                  active={organize === 'list'}
-                  onSelect={() => {
-                    setOrganize('list') // Flat thumbs, no presentation headers
-                    setFilterOpen(false)
-                  }}
-                />
-                <UtilityFilterOption
-                  label="By presentation"
-                  icon={<Presentation className="h-4 w-4 flex-shrink-0" />} // Same presentation mark the ⋯ row used
-                  active={organize === 'presentation'}
-                  onSelect={() => {
-                    setOrganize('presentation') // Headers
-                    setFilterOpen(false)
-                  }}
-                />
               </>
             }
           />
           <div className="flex h-8 flex-shrink-0 items-center gap-1 px-1.5 pt-2">
-            <div ref={plusRef} className="relative flex-shrink-0"> {/* Top left — same + menu as Layers */}
-              <button
-                type="button"
-                className={cn(
-                  'flex h-7 w-7 items-center justify-center rounded-md text-gray-500 hover:bg-black/[0.06] hover:text-gray-900 dark:text-gray-400 dark:hover:bg-white/[0.08] dark:hover:text-gray-100',
-                  plusOpen && 'bg-black/[0.06] text-gray-900 dark:bg-white/[0.08] dark:text-gray-100' // Stay marked while the menu is open
-                )}
-                title="Add"
-                aria-label="New presentation, add to presentation, or add to chat"
-                aria-expanded={plusOpen}
-                aria-haspopup="menu"
-                onPointerDown={(e) => e.preventDefault()}
-                onClick={() => setPlusOpen((open) => !open)}
-              >
-                <Plus className="h-4 w-4" /> {/* Opens New presentation, Add to presentation, and Add to chat */}
-              </button>
-              {plusOpen && (
-                <div
-                  role="menu"
-                  className="absolute left-0 top-full z-50 mt-0.5 min-w-[12.5rem] overflow-hidden rounded-md border border-gray-200 bg-[var(--nod-chat-prompt)] py-1 shadow-md dark:border-[#2f2f2f]" // Same chrome grey as the utility body
-                >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-gray-900 hover:bg-[var(--nod-on-chrome)] dark:text-gray-100"
-                    title="New presentation"
-                    onPointerDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      onNewPresentation() // Empty header, named immediately
-                      setPlusOpen(false)
-                    }}
-                  >
-                    <Plus className="h-4 w-4 flex-shrink-0" />
-                    <span className="flex-1">New presentation</span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-gray-900 hover:bg-[var(--nod-on-chrome)] disabled:opacity-40 dark:text-gray-100"
-                    title="Add to presentation"
-                    disabled={!hasSelection} // Needs a selected capture
-                    onPointerDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      onAddToPresentation() // Selected captures into a new header
-                      setPlusOpen(false)
-                    }}
-                  >
-                    <PresentationIcon className="h-4 w-4 flex-shrink-0" /> {/* Same mark as the header */}
-                    <span className="flex-1">Add to presentation</span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-gray-900 hover:bg-[var(--nod-on-chrome)] disabled:opacity-40 dark:text-gray-100"
-                    title="Add to chat"
-                    disabled={!hasSelection} // Needs a selected capture
-                    onPointerDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      onAddToChat() // Selected captures become composer pills, then chat opens
-                      setPlusOpen(false)
-                    }}
-                  >
-                    <AddToChatIcon /> {/* Same chat-plus mark Layers uses */}
-                    <span className="flex-1">Add to chat</span>
-                  </button>
-                </div>
-              )}
-            </div>
+            <button
+              type="button"
+              className="flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-[13px] font-medium text-gray-500 hover:bg-black/[0.06] dark:text-gray-400 dark:hover:bg-white/[0.08]"
+              title="New presentation"
+              aria-label="New presentation"
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={onNewPresentation}
+            >
+              <Plus className="h-4 w-4 flex-shrink-0" /> {/* Same hit target as the word */}
+              Presentation
+            </button>
             <button
               type="button"
               className="ml-auto flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-gray-500 hover:bg-black/[0.06] hover:text-gray-900 disabled:opacity-40 dark:text-gray-400 dark:hover:bg-white/[0.08] dark:hover:text-gray-100"
@@ -816,7 +714,7 @@ export function CapturesPanel({
               onPointerDown={(e) => e.preventDefault()}
               onClick={() => void captureAt(null)} // Snapshot the current view
             >
-              <Scan className="h-4 w-4" /> {/* Far right of the + — words don't fit this column */}
+              <Scan className="h-4 w-4" /> {/* Far right of + Presentation — where Layers/Sets put ⋯ */}
             </button>
           </div>
         </>

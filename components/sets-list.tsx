@@ -3,14 +3,11 @@
 // Utility Sets body — set names, plus a Layers-style thumb for each frame in the set
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import type { Node } from 'reactflow' // RF v11 node — setNodes updater must return this, not a selected stub
-import { List, MessageSquare, MoreHorizontal, Pencil, Plus, SquareStack, Trash2 } from 'lucide-react' // New set, list mark, Add to chat, row ⋯, rename, delete
+import { CalendarDays, Check, List, MoreHorizontal, Pencil, Plus, SquareStack, Trash2 } from 'lucide-react' // Schedule, organize check, + Set, list mark, row ⋯, rename, delete
 import { cn } from '@/lib/utils' // Selected-row wash + thumb border
 import { captureNodePreviewImage } from '@/lib/captures' // Same node-only thumb Layers uses
 import { isFrameDragging } from '@/lib/frame-dragging' // Don't snapshot mid-drag
 import { useReactFlowContext } from '@/components/react-flow-context' // Thumb click selects that frame
-import { useSidebarContext } from '@/components/sidebar-context' // Open chat from Add to chat
-import { getAiSelectedFrameIds, subscribeAiSelection } from '@/lib/ai/selection-bridge' // Enable Add to set while frames are selected
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,13 +15,11 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
-  addMember,
   createSet,
   deleteSet,
   getSelectedSetId,
   getSetMembers,
   getSets,
-  labelForFlowNode,
   renameSet,
   selectSet,
   setSetCollapsed,
@@ -33,23 +28,13 @@ import {
   type SetItemKind,
 } from '@/lib/sets-list'
 import {
-  UtilityFilterDivider,
   UtilityFilterOption,
   UtilitySearchHeader,
 } from '@/components/utility-search-header'
+import { SetScheduleModal } from '@/components/set-schedule-modal' // Sets ⋯ Schedule full-screen planner
 
 /** How the Sets list is arranged. By set is the default. */
 type SetOrganize = 'list' | 'set'
-
-/** Icon-only Add to chat: chat mark, small add mark in the corner. Same as Views. */
-function AddToChatIcon() {
-  return (
-    <span className="relative block h-4 w-4 flex-shrink-0">
-      <MessageSquare className="h-4 w-4" /> {/* Chat */}
-      <Plus className="absolute -bottom-px -right-px h-2.5 w-2.5 rounded-full bg-[var(--nod-chat-prompt)]" /> {/* Small add, knocked out of the bubble */}
-    </span>
-  )
-}
 
 /** Shared ⋯ chrome — same as the Layers Add group row. */
 const setMoreButtonClass =
@@ -144,12 +129,14 @@ function SetNameRow({
   renaming,
   onRenameStart,
   onRenameEnd,
+  onSchedule,
 }: {
   set: NodSet
   on: boolean // This set owns the board halo
   renaming: boolean // New set opens ready to name
   onRenameStart: () => void
   onRenameEnd: () => void
+  onSchedule: () => void // Opens the spaced-repetition Schedule popup
 }) {
   const skipBlur = useRef(false) // Escape blur must not save the in-progress edit
   const collapsed = !!set.collapsed // Closed hides the thumbs
@@ -232,13 +219,17 @@ function SetNameRow({
         </DropdownMenuTrigger>
         <DropdownMenuContent
           align="end"
-          className="w-40"
+          className="w-44"
           onClick={(e) => e.stopPropagation()}
           onCloseAutoFocus={(e) => e.preventDefault()} // Leave focus for the name field, not the ⋯ button
         >
           <DropdownMenuItem onSelect={onRenameStart}>
             <Pencil className="mr-2 h-4 w-4" />
             Rename
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={onSchedule}>
+            <CalendarDays className="mr-2 h-4 w-4" />
+            Schedule
           </DropdownMenuItem>
           <DropdownMenuItem
             className="text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400"
@@ -259,8 +250,6 @@ export function SetsList() {
   const members = useSyncExternalStore(subscribeSets, getSetMembers, () => []) // Newest first
   const selectedId = useSyncExternalStore(subscribeSets, getSelectedSetId, () => null) // Glowing set, or none
   const { reactFlowInstance, getSetNodes } = useReactFlowContext() // Thumb click selects that frame
-  const { setChatSidebarOpen } = useSidebarContext() // Add to chat reveals the composer
-  const [selectedFrameCount, setSelectedFrameCount] = useState(0) // Board frames currently selected — enables Add to set
   const [urls, setUrls] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {} // Seed from the tab-switch cache
     previewCache.forEach((url, id) => {
@@ -275,25 +264,21 @@ export function SetsList() {
   const [filterOpen, setFilterOpen] = useState(false)
   const [kind, setKind] = useState<SetItemKind | 'all'>('all')
   const [renamingId, setRenamingId] = useState<string | null>(null) // Set whose name is being edited
-  const [organize, setOrganize] = useState<SetOrganize>('set') // Filter menu: one list, or set rows
-  const [plusOpen, setPlusOpen] = useState(false) // + menu: New set / Add to set / Add to chat
-  const plusRef = useRef<HTMLDivElement>(null) // + button and its menu, so outside clicks can close it
+  const [scheduleSetId, setScheduleSetId] = useState<string | null>(null) // Set whose Schedule popup is open
+  const [organize, setOrganize] = useState<SetOrganize>('set') // ⋯ menu: one list, or set rows
+  const [organizeOpen, setOrganizeOpen] = useState(false) // Organize sets menu
+  const organizeRef = useRef<HTMLDivElement>(null) // + Set row + ⋯ menu, so outside clicks can close it
+  const scheduleSet = scheduleSetId ? sets.find((s) => s.id === scheduleSetId) : null // Title for the Schedule modal
 
   useEffect(() => {
-    const sync = () => setSelectedFrameCount(getAiSelectedFrameIds().length) // Primitive — getAiSelectedFrameIds returns a new array
-    sync() // First paint matches the current board selection
-    return subscribeAiSelection(sync) // Board selection changes while this tab is open
-  }, [])
-
-  useEffect(() => {
-    if (!plusOpen) return // Listener only while the + menu is up
+    if (!organizeOpen) return // Listener only while the ⋯ menu is up
     const onDown = (event: PointerEvent) => {
-      if (plusRef.current?.contains(event.target as globalThis.Node)) return // Keep clicks on the menu itself
-      setPlusOpen(false) // Click outside the + closes New set / Add to set / Add to chat
+      if (organizeRef.current?.contains(event.target as globalThis.Node)) return // Keep clicks on the menu itself
+      setOrganizeOpen(false) // Click outside closes In one list / By set
     }
     window.addEventListener('pointerdown', onDown, true) // Capture so the board does not eat the click first
     return () => window.removeEventListener('pointerdown', onDown, true)
-  }, [plusOpen])
+  }, [organizeOpen])
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -410,50 +395,6 @@ export function SetsList() {
     setRenamingId(created.id) // Name it immediately
   }
 
-  // Frames in the glowing set — Add to chat selects these, then opens the composer
-  const setFrameIds = useMemo(() => {
-    if (!selectedId) return [] as string[] // Nothing glowing
-    return members
-      .filter((m) => m.setId === selectedId && m.kind === 'frame' && m.nodeId) // Frame members only
-      .map((m) => m.nodeId as string)
-  }, [members, selectedId])
-
-  const onAddToSet = () => {
-    const frames = (reactFlowInstance?.getNodes() ?? []).filter(
-      (n) => n.selected && n.type === 'chatPanel' // Board frames only — blocks and text are not set members
-    )
-    if (frames.length === 0) return // Button stays disabled, but ignore a stale click
-    setOrganize('set') // New thumbs only show under By set
-    const existing = getSelectedSetId() // Glowing set is the target; otherwise mint one
-    const targetId = existing ?? createSet().id
-    if (!existing) {
-      if (getSelectedSetId() !== targetId) selectSet(targetId) // selectSet toggles, so only call when off
-      setRenamingId(targetId) // Name the new set immediately
-    } else {
-      const current = getSets().find((s) => s.id === targetId)
-      if (current?.collapsed) setSetCollapsed(targetId, false) // Show the frames that just joined
-    }
-    for (const node of frames) {
-      addMember(targetId, {
-        kind: 'frame',
-        label: labelForFlowNode(node),
-        nodeId: node.id, // Same host the frame menu stores
-      })
-    }
-  }
-
-  const onAddToChat = () => {
-    if (setFrameIds.length === 0) return // Disabled until the glowing set has a frame
-    const want = new Set(setFrameIds) // Frames that should stay selected
-    const setNodes = getSetNodes()
-    const patch = (nds: Node[]) =>
-      nds.map((n) => ({ ...n, selected: want.has(n.id) })) // Composer live pills follow this selection
-    if (setNodes) setNodes(patch)
-    else reactFlowInstance?.setNodes(patch)
-    reactFlowInstance?.setEdges((eds) => eds.map((e) => ({ ...e, selected: false })))
-    setChatSidebarOpen(true) // Reveal chat so the pills are visible
-  }
-
   const flatFrames = useMemo(() => {
     const byNode = new Map<string, { nodeId: string; label: string; setId: string }>() // One thumb per frame
     for (const set of visible) {
@@ -473,7 +414,7 @@ export function SetsList() {
         onQueryChange={setQuery}
         filterOpen={filterOpen}
         onFilterOpenChange={setFilterOpen}
-        filterActive={kind !== 'all' || organize !== 'set'} // Blue unless every set is showing by set
+        filterActive={kind !== 'all'} // Blue unless every set kind is showing
         filterTitle="Filter sets"
         filterMenu={
           <>
@@ -493,103 +434,73 @@ export function SetsList() {
                 setFilterOpen(false)
               }}
             />
-            <UtilityFilterDivider /> {/* Organize used to live in the ⋯ menu */}
-            <UtilityFilterOption
-              label="In one list"
-              icon={<List className="h-4 w-4 flex-shrink-0" />} // Same list mark the ⋯ row used
-              active={organize === 'list'}
-              onSelect={() => {
-                setOrganize('list') // Flat thumbs, no set names
-                setFilterOpen(false)
-              }}
-            />
-            <UtilityFilterOption
-              label="By set"
-              icon={<SquareStack className="h-4 w-4 flex-shrink-0" />} // Same set mark the ⋯ row used
-              active={organize === 'set'}
-              onSelect={() => {
-                setOrganize('set') // Set names
-                setFilterOpen(false)
-              }}
-            />
           </>
         }
       />
 
-      <div className="flex h-8 flex-shrink-0 items-center gap-1 px-1.5 pt-2">
-        <div ref={plusRef} className="relative flex-shrink-0"> {/* Top left — same + menu as Layers */}
-          <button
-            type="button"
-            className={cn(
-              'flex h-7 w-7 items-center justify-center rounded-md text-gray-500 hover:bg-black/[0.06] hover:text-gray-900 dark:text-gray-400 dark:hover:bg-white/[0.08] dark:hover:text-gray-100',
-              plusOpen && 'bg-black/[0.06] text-gray-900 dark:bg-white/[0.08] dark:text-gray-100' // Stay marked while the menu is open
-            )}
-            title="Add"
-            aria-label="New set, add to set, or add to chat"
-            aria-expanded={plusOpen}
-            aria-haspopup="menu"
-            onPointerDown={(e) => e.preventDefault()}
-            onClick={() => setPlusOpen((open) => !open)}
-          >
-            <Plus className="h-4 w-4" /> {/* Opens New set, Add to set, and Add to chat */}
-          </button>
-          {plusOpen && (
-            <div
-              role="menu"
-              className="absolute left-0 top-full z-50 mt-0.5 min-w-[10.5rem] overflow-hidden rounded-md border border-gray-200 bg-[var(--nod-chat-prompt)] py-1 shadow-md dark:border-[#2f2f2f]" // Same chrome grey as the utility body
-            >
-              <button
-                type="button"
-                role="menuitem"
-                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-gray-900 hover:bg-[var(--nod-on-chrome)] dark:text-gray-100"
-                title="New set"
-                onPointerDown={(e) => e.preventDefault()}
-                onClick={() => {
-                  onNewSet() // Empty set, named immediately
-                  setPlusOpen(false)
-                }}
-              >
-                <Plus className="h-4 w-4 flex-shrink-0" />
-                <span className="flex-1">New set</span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-gray-900 hover:bg-[var(--nod-on-chrome)] disabled:opacity-40 dark:text-gray-100"
-                title="Add to set"
-                disabled={selectedFrameCount === 0} // Needs a selected frame on the board
-                onPointerDown={(e) => e.preventDefault()}
-                onClick={() => {
-                  onAddToSet() // Selected frames join the glowing set, or a new one
-                  setPlusOpen(false)
-                }}
-              >
-                <SquareStack className="h-4 w-4 flex-shrink-0" />
-                <span className="flex-1">Add to set</span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-gray-900 hover:bg-[var(--nod-on-chrome)] disabled:opacity-40 dark:text-gray-100"
-                title="Add to chat"
-                disabled={setFrameIds.length === 0} // Needs a glowing set that has a frame
-                onPointerDown={(e) => e.preventDefault()}
-                onClick={() => {
-                  onAddToChat() // That set’s frames become composer pills, then chat opens
-                  setPlusOpen(false)
-                }}
-              >
-                <AddToChatIcon /> {/* Same chat-plus mark Layers uses */}
-                <span className="flex-1">Add to chat</span>
-              </button>
-            </div>
+      <div ref={organizeRef} className="group/set-add relative flex h-8 flex-shrink-0 items-center gap-1 px-1.5 pt-2">
+        <button
+          type="button"
+          className="flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-[13px] font-medium text-gray-500 hover:bg-black/[0.06] dark:text-gray-400 dark:hover:bg-white/[0.08]"
+          title="New set"
+          aria-label="New set"
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={onNewSet}
+        >
+          <Plus className="h-4 w-4 flex-shrink-0" /> {/* Same hit target as the word */}
+          Set
+        </button>
+        <button
+          type="button"
+          className={cn(
+            setMoreButtonClass,
+            'ml-auto [@media(hover:hover)]:group-hover/set-add:opacity-100',
+            organizeOpen && 'opacity-100'
           )}
-        </div>
+          title="Organize sets"
+          aria-label="Organize sets"
+          aria-expanded={organizeOpen}
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => setOrganizeOpen((open) => !open)}
+        >
+          <MoreHorizontal className="h-4 w-4" /> {/* Far right of + Set */}
+        </button>
+        {organizeOpen && (
+          <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-gray-200 bg-[var(--nod-chat-prompt)] py-1.5 shadow-lg dark:border-[#2f2f2f]"> {/* Same chrome grey as the utility body */}
+            <p className="px-3 pb-1 pt-1 text-xs text-gray-400">Organize sets</p>
+            <button
+              type="button"
+              className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-900 hover:bg-[var(--nod-on-chrome)] dark:text-gray-100"
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setOrganize('list') // Flat thumbs, no set names
+                setOrganizeOpen(false)
+              }}
+            >
+              <List className="h-4 w-4 flex-shrink-0" />
+              <span className="min-w-0 flex-1">In one list</span>
+              {organize === 'list' && <Check className="h-4 w-4 flex-shrink-0" />}
+            </button>
+            <button
+              type="button"
+              className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-900 hover:bg-[var(--nod-on-chrome)] dark:text-gray-100"
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setOrganize('set') // Set names under + Set
+                setOrganizeOpen(false)
+              }}
+            >
+              <SquareStack className="h-4 w-4 flex-shrink-0" />
+              <span className="min-w-0 flex-1">By set</span>
+              {organize === 'set' && <Check className="h-4 w-4 flex-shrink-0" />}
+            </button>
+          </div>
+        )}
       </div>
 
       {sets.length === 0 ? (
         <div className="px-3 py-3 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-          Use New set, or Add to set on a frame.
+          Use + Set, or Add to set on a frame.
         </div>
       ) : (
         <div className="utility-body-scroll min-h-0 flex-1 pl-1.5 pr-2 py-1"> {/* Not a flex column — that compresses thumbs while a drag reorders */}
@@ -625,6 +536,7 @@ export function SetsList() {
                       renaming={renamingId === set.id}
                       onRenameStart={() => setRenamingId(set.id)}
                       onRenameEnd={() => setRenamingId((current) => (current === set.id ? null : current))}
+                      onSchedule={() => setScheduleSetId(set.id)}
                     />
                     {!set.collapsed && frames.length > 0 ? (
                       <ul className="flex flex-col gap-1 pl-7"> {/* Name column: icon width + gap */}
@@ -647,6 +559,13 @@ export function SetsList() {
           )}
         </div>
       )}
+      <SetScheduleModal
+        open={!!scheduleSet}
+        onOpenChange={(next) => {
+          if (!next) setScheduleSetId(null) // Close clears which set owns the planner
+        }}
+        setName={scheduleSet?.name ?? 'Set'}
+      />
     </div>
   )
 }

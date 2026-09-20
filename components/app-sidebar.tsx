@@ -7,10 +7,11 @@ import { createClient } from '@/lib/supabase/client'
 import { DEFAULT_BOARD_TITLE } from '@/lib/board-title' // Nav + / nested mint use the same default as empty `/board`
 import type { User } from '@supabase/supabase-js'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, MoreHorizontal, Trash2, Pencil, ChevronDown, File, FileText, Folder, FolderOpen, Loader2, Share2, UserPlus, Users, CornerUpLeft, Sparkles, HelpCircle, LogOut, ChevronRight as ChevronRightIcon, Settings } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, Trash2, Pencil, ChevronDown, File, FileText, Folder, FolderOpen, Loader2, Share2, UserPlus, Users, CornerUpLeft, ChevronRight as ChevronRightIcon } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { SettingsPanel } from '@/components/settings-panel'
+import { ACCOUNT_MENU_REOPEN_KEY } from '@/components/account-connections'
 import { UpgradePanel } from '@/components/upgrade-panel'
 import { OpenMojiImg } from '@/components/openmoji-picker'
 import { resolveAvatarColor } from '@/lib/avatar-colors'
@@ -1222,7 +1223,7 @@ async function fetchProjects(userId: string): Promise<Project[]> {
   })
 }
 
-const NAV_POPUP_TOP = 60 // Flush under top-bar island (8px inset + 52px bar) so hover can bridge from the menu icon
+const NAV_POPUP_TOP = 52 // Top of utility body card (below the 52px mode-pill toggle row / top bar)
 const NAV_POPUP_MAX_CAP = 720 // Desktop tall-screen cap when fully avoiding bottom chrome
 const NAV_POPUP_CHROME_GAP = 8 // Air between the popup bottom and Free nav / minimap
 const NAV_POPUP_MIN_H = 160 // Search + a few boards still usable if chrome is tall
@@ -1325,6 +1326,7 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
   const [isDeleting, setIsDeleting] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [accountSection, setAccountSection] = useState<'profile' | 'preferences' | 'security' | 'connections'>('profile')
   const [upgradeOpen, setUpgradeOpen] = useState(false)
   const [deletingConversationId, setDeletingConversationId] = useState<string | null>(null)
   const [isCollapsed] = useState(false) // Always expanded inside hover popup (kept for legacy branches)
@@ -1448,6 +1450,24 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
       console.error('Error signing out:', error)
     }
     window.location.assign('/') // Hard clear; soft push left stale account chrome
+  }
+
+  // Notion OAuth from Connections returns here — reopen that section
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem(ACCOUNT_MENU_REOPEN_KEY) !== 'connections') return
+      sessionStorage.removeItem(ACCOUNT_MENU_REOPEN_KEY)
+      setAccountSection('connections')
+      setSettingsOpen(true)
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  const openAccountMenu = () => {
+    setAccountSection('profile') // Profile row opens the account menu on Profile
+    setSettingsOpen(true)
+    closeSidebar()
   }
 
   // Ensure hover works on first load when window is in focus
@@ -2903,7 +2923,7 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
         />
       )}
 
-      {/* Rounded rectangular nav popup (former left sidebar) — top-left under logo */}
+      {/* Rounded rectangular nav popup — top-aligned with utility body card (not the mode-pill row) */}
       {showNavPopup && (
       <div
         data-app-sidebar
@@ -2914,7 +2934,7 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
           'w-72 min-h-0' // min-h-0 so the board list can shrink and scroll under maxHeight
         )}
         style={{
-          top: NAV_POPUP_TOP, // Flush under top bar so hover can bridge from logo
+          top: NAV_POPUP_TOP, // Same Y as utility Layers/Sets/Views card (below mode pills)
           left: '0.5rem',
           maxHeight: navPopupMaxHeight, // Blended avoid/overlap — see navPopupOverlapBlend
           transition: 'max-height 220ms ease-out',
@@ -3228,113 +3248,38 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
             isCollapsed ? "flex items-center justify-center" : "px-4"
           )}>
             {isCollapsed ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    className="w-8 h-8 rounded-full flex items-center justify-center hover:opacity-90 transition-opacity"
-                    style={{ backgroundColor: avatarColor }}
-                    title="Profile"
-                  >
-                    {profileAvatar}
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  <DropdownMenuItem onClick={() => {
-                    setSettingsOpen(true)
-                    closeSidebar()
-                  }}>
-                    <Settings className="h-4 w-4 mr-2" />
-                    Settings
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={handleLogout}>
-                    <LogOut className="h-4 w-4 mr-2" />
-                    Log out
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <button
+                type="button"
+                className="w-8 h-8 rounded-full flex items-center justify-center hover:opacity-90 transition-opacity"
+                style={{ backgroundColor: avatarColor }}
+                title="Account"
+                onClick={openAccountMenu}
+              >
+                {profileAvatar}
+              </button>
             ) : (
               <div className="w-full relative">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button className="w-full flex items-center gap-3 pl-1 py-2 rounded-lg hover:bg-[var(--nod-on-chrome)] transition-colors">
-                      <div
-                        className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
-                        style={{ backgroundColor: avatarColor }}
-                      >
-                        {profileAvatar}
-                      </div>
-                      <div className="flex-1 min-w-0 text-left">
-                        <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
-                          {profile?.full_name || user.email?.split('@')[0] || 'User'}
-                        </p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">
-                          {subscriptionTierLabel(profile?.subscription_tier)}
-                        </p>
-                      </div>
-                      {/* Spacer for Upgrade / Help button beside profile */}
-                      <div className="w-[70px] flex-shrink-0" />
-                    </button>
-                  </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  <DropdownMenuItem 
-                    onClick={() => {
-                      setSettingsOpen(true)
-                      closeSidebar()
-                    }}
-                    className="px-2 py-1.5 focus:bg-transparent"
+                <button
+                  type="button"
+                  className="w-full flex items-center gap-3 pl-1 py-2 rounded-lg hover:bg-[var(--nod-on-chrome)] transition-colors"
+                  onClick={openAccountMenu}
+                >
+                  <div
+                    className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                    style={{ backgroundColor: avatarColor }}
                   >
-                    <div className="w-full flex items-center gap-2">
-                      <div
-                        className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
-                        style={{ backgroundColor: avatarColor }}
-                      >
-                        {profileAvatar}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
-                          {profile?.full_name || user.email?.split('@')[0] || 'User'}
-                        </p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                          {user.email || 'user@example.com'}
-                        </p>
-                      </div>
-                    </div>
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator className="mx-2" />
-                  {!isPaidSubscriptionTier(profile?.subscription_tier) && (
-                    <DropdownMenuItem
-                      onClick={() => {
-                        setUpgradeOpen(true)
-                        closeSidebar()
-                      }}
-                    >
-                      <Sparkles className="h-4 w-4 mr-2" />
-                      Upgrade plan
-                    </DropdownMenuItem>
-                  )}
-                  <DropdownMenuItem onClick={() => {
-                    setSettingsOpen(true)
-                    closeSidebar()
-                  }}>
-                    <Settings className="h-4 w-4 mr-2" />
-                    Settings
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator className="mx-2" />
-                  {/* Help lives on the profile button when upgraded; keep it in the menu for free users */}
-                  {!isPaidSubscriptionTier(profile?.subscription_tier) && (
-                    <DropdownMenuItem>
-                      <HelpCircle className="h-4 w-4 mr-2" />
-                      Help
-                      <ChevronRightIcon className="h-4 w-4 ml-auto" />
-                    </DropdownMenuItem>
-                  )}
-                  <DropdownMenuItem onClick={handleLogout}>
-                    <LogOut className="h-4 w-4 mr-2" />
-                    Log out
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-                </DropdownMenu>
+                    {profileAvatar}
+                  </div>
+                  <div className="flex-1 min-w-0 text-left">
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                      {profile?.full_name || user.email?.split('@')[0] || 'User'}
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      {subscriptionTierLabel(profile?.subscription_tier)}
+                    </p>
+                  </div>
+                  <div className="w-[70px] flex-shrink-0" />
+                </button>
                 {/* Free: Upgrade button; upgraded: Help in the same spot */}
                 {!isPaidSubscriptionTier(profile?.subscription_tier) ? (
                   <button
@@ -3394,6 +3339,10 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
           isDeleting={isDeleting}
           showDeleteConfirm={showDeleteConfirm}
           onShowDeleteConfirm={setShowDeleteConfirm}
+          onLogout={() => {
+            void handleLogout()
+          }}
+          initialSection={accountSection}
         />
 
         {/* Upgrade Panel */}

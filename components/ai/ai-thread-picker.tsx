@@ -93,8 +93,9 @@ export function AiThreadPicker({
       })
       return
     }
+    // Desktop: top-align with boards nav + utility body card (below the mode-pill toggle row)
     setPanelPos({
-      top: rect.bottom + 4,
+      top: 52,
       left,
       width,
     })
@@ -337,7 +338,7 @@ export function AiThreadPicker({
             data-chat-thread-picker-popup
             style={{
               position: 'fixed',
-              top: panelPos.top, // Desktop sidebar — drop below the header trigger
+              top: panelPos.top, // Desktop — top-align with boards nav + utility body card
               bottom: panelPos.bottom, // Phone dock — grow upward above the chat chrome
               left: panelPos.left,
               width: panelPos.width,

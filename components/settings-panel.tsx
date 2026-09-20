@@ -1,8 +1,8 @@
 'use client'
 
-// Settings panel component - slides in from right with semi-transparent backdrop
+// Account menu — centered settings window. Profile, preferences, and calendar connections.
 import { useState, useEffect } from 'react'
-import { X, Settings, User as UserIcon, Shield, ChevronDown, Pencil } from 'lucide-react'
+import { X, Settings, User as UserIcon, Shield, ChevronDown, Pencil, Search, LogOut, Link2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -22,7 +22,10 @@ import {
 } from '@/lib/subscription-plans'
 import { OpenMojiImg } from '@/components/openmoji-picker'
 import { EditProfileDialog } from '@/components/edit-profile-dialog'
+import { AccountConnections } from '@/components/account-connections'
 import { DEFAULT_AVATAR_COLOR, resolveAvatarColor } from '@/lib/avatar-colors'
+
+type AccountSection = 'profile' | 'preferences' | 'security' | 'connections'
 
 interface SettingsPanelProps {
   open: boolean
@@ -32,6 +35,8 @@ interface SettingsPanelProps {
   isDeleting: boolean
   showDeleteConfirm: boolean
   onShowDeleteConfirm: (show: boolean) => void
+  onLogout: () => void // Profile menu Log out now lives in this menu
+  initialSection?: AccountSection // Profile opens on profile; OAuth return opens Connections
 }
 
 export function SettingsPanel({
@@ -42,8 +47,11 @@ export function SettingsPanel({
   isDeleting,
   showDeleteConfirm,
   onShowDeleteConfirm,
+  onLogout,
+  initialSection = 'profile',
 }: SettingsPanelProps) {
-  const [activeTab, setActiveTab] = useState<'account' | 'general' | 'security'>('account')
+  const [activeTab, setActiveTab] = useState<AccountSection>(initialSection)
+  const [navQuery, setNavQuery] = useState('') // Filters the left-hand sections
   const { theme, setTheme } = useTheme()
   const supabase = createClient()
   const queryClient = useQueryClient()
@@ -90,6 +98,11 @@ export function SettingsPanel({
     }
   }, [profile, user.email])
 
+  // Jump to the section the profile button (or OAuth return) asked for
+  useEffect(() => {
+    if (open) setActiveTab(initialSection)
+  }, [open, initialSection])
+
   const profileInitials =
     profile?.full_name?.split(' ').map((n: string) => n[0]).join('').toUpperCase() ||
     user.email?.charAt(0).toUpperCase() ||
@@ -97,70 +110,88 @@ export function SettingsPanel({
 
   if (!open) return null
 
+  const navItems: { id: AccountSection; label: string; group: string; icon: typeof UserIcon }[] = [
+    { id: 'profile', label: 'Profile', group: 'Account', icon: UserIcon },
+    { id: 'preferences', label: 'Preferences', group: 'Account', icon: Settings },
+    { id: 'security', label: 'Security', group: 'Account', icon: Shield },
+    { id: 'connections', label: 'Connections', group: 'Features', icon: Link2 },
+  ]
+  const q = navQuery.trim().toLowerCase()
+  const visibleNav = q ? navItems.filter((item) => item.label.toLowerCase().includes(q)) : navItems
+  const groups = ['Account', 'Features'].filter((group) => visibleNav.some((item) => item.group === group))
+
   return (
     <>
-      {/* Semi-transparent backdrop */}
-      <div
-        className="fixed inset-0 bg-black/50 z-40 transition-opacity"
-        onClick={onClose}
-      />
-      
-      {/* Settings Panel */}
-      <div className="fixed right-0 top-0 h-full w-[600px] bg-white dark:bg-gray-900 shadow-2xl z-50 flex flex-col animate-in slide-in-from-right duration-300">
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-xl font-semibold dark:text-white">Settings</h2>
+      <div className="fixed inset-0 bg-black/40 z-[55]" onClick={onClose} />
+
+      <div className="fixed left-1/2 top-1/2 z-[56] flex h-[min(760px,92vh)] w-[min(1040px,94vw)] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+        <div className="flex w-60 shrink-0 flex-col border-r border-gray-200 dark:border-gray-700">
+          <div className="p-3">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+              <Input
+                value={navQuery}
+                onChange={(e) => setNavQuery(e.target.value)}
+                placeholder="Search settings"
+                className="h-8 pl-8 text-sm dark:bg-gray-800 dark:border-gray-700"
+              />
+            </div>
+          </div>
+          <div className="flex-1 space-y-4 overflow-y-auto px-2 pb-2">
+            {groups.map((group) => (
+              <div key={group}>
+                <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-gray-400">{group}</p>
+                <div className="space-y-0.5">
+                  {visibleNav
+                    .filter((item) => item.group === group)
+                    .map((item) => {
+                      const Icon = item.icon
+                      const selected = activeTab === item.id
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => setActiveTab(item.id)}
+                          className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm ${
+                            selected
+                              ? 'bg-gray-100 font-medium text-gray-900 dark:bg-gray-800 dark:text-white'
+                              : 'text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800'
+                          }`}
+                        >
+                          <Icon className="h-4 w-4 shrink-0" />
+                          <span className="truncate">{item.label}</span>
+                        </button>
+                      )
+                    })}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="border-t border-gray-200 p-2 dark:border-gray-700">
+            <button
+              type="button"
+              onClick={onLogout}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              <LogOut className="h-4 w-4" />
+              Log out
+            </button>
+          </div>
+        </div>
+
+        <div className="relative flex min-w-0 flex-1 flex-col">
           <Button
             variant="ghost"
             size="icon"
             onClick={onClose}
-            className="h-8 w-8"
+            className="absolute right-3 top-3 z-10 h-8 w-8"
+            aria-label="Close"
           >
             <X className="h-4 w-4" />
           </Button>
-        </div>
 
-        <div className="flex flex-1 overflow-hidden">
-          {/* Left Navigation */}
-          <div className="w-48 border-r border-gray-200 dark:border-gray-700 p-4 space-y-1">
-            <button
-              onClick={() => setActiveTab('account')}
-              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-                activeTab === 'account'
-                  ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white font-medium'
-                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
-              }`}
-            >
-              <UserIcon className="h-4 w-4" />
-              <span>Account</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('general')}
-              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-                activeTab === 'general'
-                  ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white font-medium'
-                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
-              }`}
-            >
-              <Settings className="h-4 w-4" />
-              <span>General</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('security')}
-              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-                activeTab === 'security'
-                  ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white font-medium'
-                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
-              }`}
-            >
-              <Shield className="h-4 w-4" />
-              <span>Security</span>
-            </button>
-          </div>
-
-          {/* Content Area */}
-          <div className="flex-1 overflow-y-auto p-6">
-            {activeTab === 'account' && (
+          <div className="flex-1 overflow-y-auto p-8 pr-14">
+            {activeTab === 'profile' && (
               <div className="space-y-6">
                 <div>
                   <h3 className="text-lg font-semibold mb-4 dark:text-white">Profile</h3>
@@ -377,9 +408,9 @@ export function SettingsPanel({
               </div>
             )}
 
-            {activeTab === 'general' && (
+            {activeTab === 'preferences' && (
               <div className="space-y-6">
-                <h3 className="text-lg font-semibold dark:text-white">General</h3>
+                <h3 className="text-lg font-semibold dark:text-white">Preferences</h3>
                 
                 {/* Theme Option */}
                 <div className="space-y-2">
@@ -421,6 +452,8 @@ export function SettingsPanel({
                 </div>
               </div>
             )}
+
+            {activeTab === 'connections' && <AccountConnections />}
 
             {activeTab === 'security' && (
               <div className="space-y-6">

@@ -11,7 +11,9 @@ import { cn } from '@/lib/utils'
 type UtilitySearchHeaderProps = {
   query: string // Live search string
   onQueryChange: (value: string) => void // Update search
-  placeholder?: string // Default: Search anything…
+  placeholder?: string // Empty by default (icon-only search cue)
+  leadingAction?: ReactNode // Optional control left of search
+  trailingAction?: ReactNode // Optional control after filter
   filterOpen: boolean // Filter menu visibility
   onFilterOpenChange: (open: boolean) => void // Toggle filter menu
   filterActive?: boolean // Highlight filter when a non-default filter is on
@@ -20,12 +22,14 @@ type UtilitySearchHeaderProps = {
 }
 
 /**
- * Search (left) + filter (right) + hairline divider — same layout as the AI chat menu search.
+ * Optional leading + search + filter (right) + optional trailing + hairline divider.
  */
 export function UtilitySearchHeader({
   query,
   onQueryChange,
-  placeholder = 'Search anything...',
+  placeholder = '',
+  leadingAction,
+  trailingAction,
   filterOpen,
   onFilterOpenChange,
   filterActive = false,
@@ -34,17 +38,18 @@ export function UtilitySearchHeader({
 }: UtilitySearchHeaderProps) {
   return (
     <div className="flex-shrink-0">
-      {/* pl-1.5 + left-1.5: search glyph lines up with the Layers + / New set / New presentation; pr-1.5: filter glyph center lines up with the header ⋯ (h-7 in the pr-2 list) */}
-      <div className="pl-1.5 pr-1.5 pt-2 pb-2">
-        <div className="flex items-center gap-2">
+      {/* pl-1 matches mode-pill px-1; pr-1.5 keeps filter with list ⋯ */}
+      <div className="pl-1 pr-1.5 pt-2 pb-2">
+        <div className="flex items-center gap-0">
+          {leadingAction}
           <div className="relative flex-1 min-w-0">
-            <Search className="pointer-events-none absolute left-1.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <Search className="pointer-events-none absolute left-1 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <Input
               type="text"
               placeholder={placeholder}
               value={query}
               onChange={(e) => onQueryChange(e.target.value)}
-              className="h-8 rounded-lg border-0 bg-transparent pl-7 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
+              className="h-7 rounded-lg border-0 bg-transparent pl-6 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
               onKeyDown={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
             />
@@ -55,7 +60,7 @@ export function UtilitySearchHeader({
               variant="outline"
               size="icon"
               className={cn(
-                'h-8 w-8 rounded-lg border-0 bg-transparent group',
+                'h-7 w-7 rounded-lg border-0 bg-transparent group',
                 filterActive
                   ? 'hover:bg-transparent dark:hover:bg-transparent' // Blue icon stays on a clear button
                   : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.06]',
@@ -82,6 +87,7 @@ export function UtilitySearchHeader({
               </div>
             ) : null}
           </div>
+          {trailingAction}
         </div>
       </div>
       <div className="mx-1.5 h-px flex-shrink-0 bg-gray-200 dark:bg-[#2f2f2f]" aria-hidden /> {/* Same inset both sides */}
