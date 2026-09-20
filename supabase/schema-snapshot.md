@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-20T17:22:27Z`
+- Snapped at: `2026-09-20T18:54:00Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`/`migration list`; versions from `.temp` + Management API list; cli-latest reports `v2.117.0`)
@@ -9,6 +9,14 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260920185400_top_bar_chrome_fit.sql`.
+- **Top-bar chrome fit** (`lib/top-bar-chrome-fit.ts`): when the board path would sit under Share or the utility toggle, live chat width shrinks toward the 360 minimum without writing `nodnotes-chat-sidebar-width` (utility width stays at the user’s preference). If that is still not enough, chat docks on the map (`chatFitPhone`) like the phone layout so the utility toggle can move right.
+- **Boards nav**: height fills from the utility-card top down to Free nav / minimap so the account row lines up with that chrome.
+- **Utility lists**: Layers / Sets / Views thumbs share one side inset (`px-2`).
+- Schema unchanged; remote DDL top remains `20260914104046_notion_multi_workspace`.
+
+## Prior: Board menus, Sets This board
 
 - DDL: none. Marker `20260920172227_board_menus_sets_this_board.sql`.
 - **Board menus**: frame menu and block ⋮⋮ stay through pan/zoom (`lib/board-nav-menu.ts`). They hide while the camera moves and return on the new point. A click that does not move the board still closes them. Zoom no longer closes the frame menu.

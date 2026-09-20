@@ -468,7 +468,7 @@ export function SetsList({ conversationId }: { conversationId?: string }) {
       <div ref={organizeRef} className="group/set-add relative flex h-8 flex-shrink-0 items-center gap-1 pl-[3px] pr-1.5 pt-1"> {/* Plus ink lines up with the Layers toggle icon */}
         <button
           type="button"
-          className="flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-[13px] font-medium text-gray-900 hover:bg-black/[0.06] dark:text-gray-100 dark:hover:bg-white/[0.08]"
+          className="flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-[13px] font-medium text-gray-900 dark:text-gray-100" // No hover wash — ink stays flat
           title="New set"
           aria-label="New set"
           onPointerDown={(e) => e.preventDefault()}
@@ -536,7 +536,7 @@ export function SetsList({ conversationId }: { conversationId?: string }) {
                 : 'No frames in these sets.'}
         </div>
       ) : (
-        <div className="utility-body-scroll min-h-0 flex-1 pl-1.5 pr-2 py-1"> {/* Not a flex column — that compresses thumbs while a drag reorders */}
+        <div className="utility-body-scroll min-h-0 flex-1 px-2 py-1"> {/* px-2: left gap matches the right; not a flex column — that compresses thumbs while a drag reorders */}
           {organize === 'list' ? (
               <ul className="flex flex-col gap-1">
                 {flatFrames.map((frame) => (

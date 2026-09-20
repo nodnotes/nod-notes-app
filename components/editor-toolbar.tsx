@@ -94,6 +94,7 @@ import {
 import { setSideStackEntry } from '@/lib/frame-side-stacks' // Stamp stack line link without lock
 import { useBoardAccess } from '@/lib/share/board-access-context' // Owner-only share menu
 import { useSidebarContext, utilityOccupiedWidth } from './sidebar-context' // Wait for chat column restore before measuring titles
+import { UTILITY_TOGGLE_TOP_BAR_INSET_PX } from '@/lib/top-bar-chrome-fit' // Share clears the right-aligned mode pill, not the full body
 import { usePhoneModeMenu } from './phone-mode-menu-context' // Phone pill drill-in portal host
 import { AiOriginTopBarToggle } from './ai-origin-top-bar-toggle' // Sparkles pin left of Share
 import { useAiEditSession } from '@/lib/ai/edit-session' // AI sparkles width in shareCompact measure
@@ -325,10 +326,18 @@ function PhoneUndoRedoPortal({
 
 export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
   const { canShare, canEdit, role } = useBoardAccess() // Gate share + show view-only chrome
-  const { isChatSidebarOpen, chatChromeReady, isMobileMode, isUtilitySidebarOpen, utilitySidebarWidth } =
-    useSidebarContext() // Measure after chat restore; phone layout; utility overlay inset
-  const utilityTopBarInset =
-    isUtilitySidebarOpen && !isMobileMode ? utilityOccupiedWidth(utilitySidebarWidth) : 0 // Phone: overlap chrome; don’t shrink the island
+  const {
+    isChatSidebarOpen,
+    chatChromeReady,
+    isMobileMode,
+    isUtilitySidebarOpen,
+    utilitySidebarWidth,
+    requestTopBarChromeFit,
+  } = useSidebarContext() // Measure after chat restore; phone layout; utility overlay inset; chrome fit
+  const utilityBodyInset =
+    isUtilitySidebarOpen && !isMobileMode ? utilityOccupiedWidth(utilitySidebarWidth) : 0 // Tools center left of the body card
+  const utilityToggleInset =
+    isUtilitySidebarOpen && !isMobileMode ? UTILITY_TOGGLE_TOP_BAR_INSET_PX : 0 // Share clears only the right-aligned mode pill / close
   const hideShareMore = isMobileMode && isUtilitySidebarOpen // Phone: Share + More yield the right edge to the overlay
   const { toolsHost, undoHost, phoneTools, setPhoneTools, setShareCompact } = usePhoneModeMenu() // Pill + share/AI→More before tools leave
   const { hasAiContent, aiTopBarPinned } = useAiEditSession() // Pinned sparkles fold with shareCompact
@@ -1416,13 +1425,16 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       const pathMin = pathBox?.querySelector('[data-path-min]') as HTMLElement | null // Hidden icon-minimum row (current icon whole)
       const minPathW = Math.max(64, pathMin?.scrollWidth || 64) // Cutoff-able path: ancestor icons + current icon, never mid-icon clip
       // Overlay utility does not shrink the DOM bar — usable width matches the old flex-sibling map column
-      const barW = toolbarRect.width - utilityTopBarInset
-      const barCenter = toolbarRect.left + barW / 2 // Center of the usable strip (left of utility)
+      const barW = toolbarRect.width - utilityBodyInset
+      const barCenter = toolbarRect.left + barW / 2 // Center of the usable strip (left of utility body)
       const leftW = hamW + minPathW // Reserve cutoff path on shrink and expand — live crush delayed return; live extend delayed return
       const sideInset = Math.max(leftW, rightW) // Live inset for title collapse (current share chrome)
       const availableWidth = barW - 2 * sideInset - 16 // Max cluster width on the true board center (no More fold)
       const availableExpanded = barW - 2 * Math.max(leftW, rightExpandedW) - 16 // Room if star stays on the bar
       const availableCollapsed = barW - 2 * Math.max(leftW, rightCollapsedW) - 16 // Room after star → board More
+
+      // Shrink live chat (or dock) so path + Share stay left of the right-aligned utility toggle — utility width stays put
+      requestTopBarChromeFit({ leftMinWidth: leftW, rightWidth: rightW })
 
       // Icon-only widths (after all titles have condensed)
       const iconGroups = editMenuPillMode === 'insert'
@@ -1611,7 +1623,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       window.removeEventListener('resize', checkVisibility)
       window.removeEventListener('nodnotes-notion-status', onNotionStatus)
     }
-  }, [editor, editMenuPillMode, boardSearchOpen, chatChromeReady, isChatSidebarOpen, isMobileMode, utilityTopBarInset, hasAiContent, aiTopBarPinned, setPhoneTools, setShareCompact]) // Re-run when map / utility usable width is known
+  }, [editor, editMenuPillMode, boardSearchOpen, chatChromeReady, isChatSidebarOpen, isMobileMode, utilityBodyInset, utilityToggleInset, hasAiContent, aiTopBarPinned, setPhoneTools, setShareCompact, requestTopBarChromeFit]) // Re-run when map / utility usable width is known
 
   useLayoutEffect(() => {
     if (toolbarLayoutReady && !toolbarAnimate) setToolbarAnimate(true) // After first reveal, allow later collapse/expand animation
@@ -1628,7 +1640,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       {/* Tools — center of the usable bar (left of utility overlay when open) */}
       <div
         className="absolute inset-0 flex items-center justify-center pointer-events-none"
-        style={utilityTopBarInset ? { right: utilityTopBarInset } : undefined} // Match old map-column center when utility overlays
+        style={utilityBodyInset ? { right: utilityBodyInset } : undefined} // Match old map-column center when utility overlays
       >        <div
           data-toolbar-center
           data-toolbar-ready={toolbarLayoutReady ? 'true' : undefined} // Mode pill waits for this so it doesn’t paint before tools
@@ -3584,7 +3596,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       {/* Right Section — connections + AI origin + Share + copy/favorite/more */}
       <div
         className="absolute inset-y-0 z-20 flex items-center gap-1 pointer-events-auto"
-        style={{ right: (utilityTopBarInset ? 8 : 0) + utilityTopBarInset }} // Closed: 0 so open’s px-2 = 8px (matches close); open: 8px left of overlay
+        style={{ right: (utilityToggleInset ? 8 : 0) + utilityToggleInset }} // Closed: 0 so open’s px-2 = 8px (matches close); open: 8px left of the right-aligned toggle
         data-right-section
       >        <NotionConnectProvider conversationId={conversationId}>
           <div className="flex items-center px-2 flex-shrink-0 gap-1">

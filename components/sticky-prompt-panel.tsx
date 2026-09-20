@@ -7,14 +7,13 @@ import { useEditorContext } from './editor-context'
 import { BOARD_LOAD_FADE_MS } from '@/components/frame-content-shimmer' // Same 300ms as board frame shells
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useSidebarContext } from './sidebar-context'
-import { Check, ChevronDown, ChevronRight, File, FileText, Menu } from 'lucide-react' // Check = current View; chevron = View menu
+import { ChevronRight, File, FileText, Menu } from 'lucide-react' // Path tree chevron + page icons + nav menu
 import { createClient } from '@/lib/supabase/client'
 import { useQuery, useQueryClient } from '@tanstack/react-query' // Invalidate path/nav after an inline rename
 import { useRouter } from 'next/navigation'
 import { replaceBoardUrl } from '@/lib/replace-board-url' // Empty `/board` rename mints a row without remounting
 import { syncBoardRenameToBlock } from '@/lib/blocks' // Keep the parent-map boardLink title in sync
 import { DEFAULT_BOARD_TITLE, boardTitleOrDefault } from '@/lib/board-title' // Same default as nav + / nested mint
-import { TOOLBAR_MENU_PLACEMENT } from '@/lib/menu-placement' // View menu sits under the bar, never over the path
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -299,44 +298,6 @@ function BoardTitleEditor({
     >
       <span className="truncate">{title || DEFAULT_BOARD_TITLE}</span>
     </button>
-  )
-}
-
-/** Board views — UI stub until views are persisted. Sits beside the current title. */
-function BoardViewMenu() {
-  return (
-    <DropdownMenu modal={false}>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className="flex-shrink-0 h-8 inline-flex items-center gap-0.5 rounded px-1.5 text-sm font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
-          aria-label="Board views"
-          title="Views"
-        >
-          <span>View</span>
-          <ChevronDown className="h-3.5 w-3.5" aria-hidden />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent {...TOOLBAR_MENU_PLACEMENT} className="w-44">
-        <DropdownMenuItem className="cursor-default" onSelect={(e) => e.preventDefault()}>
-          <Check className="h-3.5 w-3.5 mr-2 flex-shrink-0" aria-hidden />
-          <span>Default</span>
-        </DropdownMenuItem>
-        <DropdownMenuItem disabled>
-          New view
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
-/** Hidden width twin of BoardViewMenu so --tt-path-min never clips View. */
-function BoardViewMenuMeasure() {
-  return (
-    <span className="flex-shrink-0 inline-flex items-center gap-0.5 px-1.5 text-sm font-medium" aria-hidden>
-      <span>View</span>
-      <span className="h-3.5 w-3.5" />
-    </span>
   )
 }
 
@@ -937,7 +898,7 @@ export function EditPanel({ conversationId, projectId }: EditPanelProps) {
             </button>
           </div>
 
-          {/* Board path — highest / … / parent / current (click to rename) + View; vertically centered on the bar */}
+          {/* Board path — highest / … / parent / current (click to rename); vertically centered on the bar */}
           <div
             ref={pathBoxRef}
             data-board-path
@@ -950,7 +911,7 @@ export function EditPanel({ conversationId, projectId }: EditPanelProps) {
                   ref={pathFullRef}
                   data-path-full
                   aria-hidden
-                  className="pointer-events-none absolute left-0 top-0 -z-10 flex h-8 w-max items-center whitespace-nowrap opacity-0" // Full titles + View; compact measure only
+                  className="pointer-events-none absolute left-0 top-0 -z-10 flex h-8 w-max items-center whitespace-nowrap opacity-0" // Full titles; compact measure only
                 >
                   {pathSlots.map((slot, index) => (
                     <span key={slot.type === 'ellipsis' ? 'ellipsis' : slot.segment.id} className="inline-flex items-center flex-shrink-0">
@@ -965,13 +926,12 @@ export function EditPanel({ conversationId, projectId }: EditPanelProps) {
                       )}
                     </span>
                   ))}
-                  <BoardViewMenuMeasure />
                 </span>
                 <span
                   ref={pathMinRef}
                   data-path-min
                   aria-hidden
-                  className="pointer-events-none absolute left-0 top-0 -z-10 flex h-8 w-max items-center whitespace-nowrap opacity-0" // Ancestor icons + current icon + View; toolbar overflow uses this width
+                  className="pointer-events-none absolute left-0 top-0 -z-10 flex h-8 w-max items-center whitespace-nowrap opacity-0" // Ancestor icons + current icon; toolbar overflow uses this width
                 >
                   {pathSlots.map((slot, index) => (
                     <span key={slot.type === 'ellipsis' ? 'ellipsis' : slot.segment.id} className="inline-flex items-center flex-shrink-0">
@@ -985,7 +945,6 @@ export function EditPanel({ conversationId, projectId }: EditPanelProps) {
                       )}
                     </span>
                   ))}
-                  <BoardViewMenuMeasure />
                 </span>
                 <span
                   className={cn(
@@ -1016,7 +975,6 @@ export function EditPanel({ conversationId, projectId }: EditPanelProps) {
                       </span>
                     )
                   })}
-                  <BoardViewMenu />
                 </span>
               </>
             ) : pathReady || !pathKey ? (
@@ -1038,7 +996,6 @@ export function EditPanel({ conversationId, projectId }: EditPanelProps) {
                   )}
                 >
                   <BoardTitleEditor boardId={conversationId} title={displayTitle || DEFAULT_BOARD_TITLE} />
-                  <BoardViewMenu />
                 </span>
               )
             ) : null}

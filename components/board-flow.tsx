@@ -2028,15 +2028,16 @@ function BoardFlowInner({
     if (boardStyle === 'grid') return BackgroundVariant.Lines // Grid pattern (both horizontal and vertical lines)
     return null // Default to none
   }, [boardStyle])
-  const { setIsMobileMode, isMobileMode, isChatSidebarOpen, isUtilitySidebarOpen, toggleChatSidebar, logoDrawing, aiMapDockLiftPx, aiMapDockLeftPx } =
+  const { setIsMobileMode, isMobileMode, chatFitPhone, isChatSidebarOpen, isUtilitySidebarOpen, toggleChatSidebar, logoDrawing, aiMapDockLiftPx, aiMapDockLeftPx } =
     useSidebarContext()
-  useChatSidebarViewportAdjust(reactFlowInstance, isChatSidebarOpen && !isMobileMode) // No column shrink on phone dock
+  const useChatMapDock = isMobileMode || chatFitPhone // Phone breakpoint or top-bar fit dock
+  useChatSidebarViewportAdjust(reactFlowInstance, isChatSidebarOpen && !useChatMapDock) // No column shrink on phone / fit dock
   useUtilitySidebarViewportAdjust(reactFlowInstance, isUtilitySidebarOpen && !isMobileMode) // Phone: overlay chrome; don’t reframe the board
-  // Phone AI dock lift — Free nav / brand jump above the composer
-  const mapChromeBottomPad = isMobileMode && isChatSidebarOpen ? aiMapDockLiftPx : 0
-  // Phone AI open: align Free nav (+ minimap chrome) to the chat card’s left edge
+  // Phone / fit AI dock lift — Free nav / brand jump above the composer
+  const mapChromeBottomPad = useChatMapDock && isChatSidebarOpen ? aiMapDockLiftPx : 0
+  // Phone / fit AI open: align Free nav (+ minimap chrome) to the chat card’s left edge
   const mapChromeLeft =
-    isMobileMode && isChatSidebarOpen && aiMapDockLeftPx != null ? aiMapDockLeftPx : MINIMAP_LEFT
+    useChatMapDock && isChatSidebarOpen && aiMapDockLeftPx != null ? aiMapDockLeftPx : MINIMAP_LEFT
   // Brand stays on the map bottom-right (under the transparent utility overlay when open)
   const brandRight = BRAND_RIGHT
   // Same chrome grey as Ask prompt input (`--nod-chat-prompt`) — desktop + phone
@@ -2302,7 +2303,7 @@ function BoardFlowInner({
     return localStorage.getItem('nodnotes-minimap-hidden') === 'true'
   })
   // Phone AI dock open (= Free nav "jumped"): minimap auto-closes but can still be peeked / pinned
-  const phoneAiOpen = isMobileMode && isChatSidebarOpen
+  const phoneAiOpen = useChatMapDock && isChatSidebarOpen
   const [aiDockMinimapOpen, setAiDockMinimapOpen] = useState(false) // Visible while jumped
   const [aiDockMinimapPinned, setAiDockMinimapPinned] = useState(false) // Click-to-keep-open (no auto-close)
   const aiDockMinimapPinnedRef = useRef(false) // Latest pin for leave-timeout (avoid stale close)
@@ -11090,7 +11091,7 @@ function BoardFlowInner({
          style={{
            bottom: `${
              // Tighter to the AI dock when phone chat is open; keep default inset otherwise
-             (isMobileMode && isChatSidebarOpen ? 2 : MINIMAP_BOTTOM) + mapChromeBottomPad
+             (useChatMapDock && isChatSidebarOpen ? 2 : MINIMAP_BOTTOM) + mapChromeBottomPad
            }px`,
            left: `${mapChromeLeft}px`,
            width: FREE_NAV_WIDTH,

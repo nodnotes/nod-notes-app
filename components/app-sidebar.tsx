@@ -1224,51 +1224,19 @@ async function fetchProjects(userId: string): Promise<Project[]> {
 }
 
 const NAV_POPUP_TOP = 52 // Top of utility body card (below the 52px mode-pill toggle row / top bar)
-const NAV_POPUP_MAX_CAP = 720 // Desktop tall-screen cap when fully avoiding bottom chrome
-const NAV_POPUP_CHROME_GAP = 8 // Air between the popup bottom and Free nav / minimap
+const NAV_POPUP_SSR_H = 720 // First paint before map chrome is measured
+const NAV_POPUP_CHROME_GAP = 8 // Viewport inset when Free nav / minimap are not mounted
 const NAV_POPUP_MIN_H = 160 // Search + a few boards still usable if chrome is tall
-/** Overlap blend: fully over nav/minimap below FULL, hold through HOLD, fade to avoid by NONE. */
-const NAV_POPUP_OVERLAP_VH_FULL = 900
-const NAV_POPUP_OVERLAP_VH_HOLD = 960
-const NAV_POPUP_OVERLAP_VH_NONE = 1080
-const NAV_POPUP_OVERLAP_VW_FULL = 840
-const NAV_POPUP_OVERLAP_VW_HOLD = 920
-const NAV_POPUP_OVERLAP_VW_NONE = 1024
 
-function smoothstep01(t: number): number {
-  const x = Math.max(0, Math.min(1, t))
-  return x * x * (3 - 2 * x)
-}
-
-/** 0 = stop above nav/minimap; 1 = may paint over them — plateau at the crossover avoids a snap. */
-function navPopupOverlapBlend(vh: number, vw: number): number {
-  let heightBlend = 1
-  if (vh >= NAV_POPUP_OVERLAP_VH_NONE) heightBlend = 0
-  else if (vh > NAV_POPUP_OVERLAP_VH_HOLD) {
-    heightBlend = 1 - smoothstep01((vh - NAV_POPUP_OVERLAP_VH_HOLD) / (NAV_POPUP_OVERLAP_VH_NONE - NAV_POPUP_OVERLAP_VH_HOLD))
-  } else if (vh > NAV_POPUP_OVERLAP_VH_FULL) {
-    heightBlend = 1 // Hold overlap height while crossing the old threshold
-  }
-
-  let widthBlend = 1
-  if (vw >= NAV_POPUP_OVERLAP_VW_NONE) widthBlend = 0
-  else if (vw > NAV_POPUP_OVERLAP_VW_HOLD) {
-    widthBlend = 1 - smoothstep01((vw - NAV_POPUP_OVERLAP_VW_HOLD) / (NAV_POPUP_OVERLAP_VW_NONE - NAV_POPUP_OVERLAP_VW_HOLD))
-  } else if (vw > NAV_POPUP_OVERLAP_VW_FULL) {
-    widthBlend = 1
-  }
-
-  return Math.max(heightBlend, widthBlend)
-}
-
-function measureMinimapChromeTop(vh: number): number {
-  let chromeTop = vh - NAV_POPUP_CHROME_GAP
-  document.querySelectorAll('[data-minimap-toggle-context], [data-minimap-context], [data-minimap-pill-context]').forEach((el) => {
-    const r = (el as HTMLElement).getBoundingClientRect()
-    if (r.height < 1 || r.width < 1) return
-    chromeTop = Math.min(chromeTop, r.top)
+/** Lowest painted edge of Free nav + minimap — the board menu bottom lines up with this. */
+function measureMapChromeBottom(): number | null {
+  let bottom: number | null = null // No chrome yet
+  document.querySelectorAll('[data-map-chrome], [data-minimap-toggle-context], [data-minimap-context], [data-minimap-pill-context]').forEach((el) => {
+    const r = (el as HTMLElement).getBoundingClientRect() // Live box, including phone dock lift
+    if (r.height < 1 || r.width < 1) return // Collapsed minimap clip is not the floor
+    bottom = bottom == null ? r.bottom : Math.max(bottom, r.bottom) // Lowest edge of the stack
   })
-  return chromeTop
+  return bottom
 }
 
 /** Bottom edge of the chat prompt card — boards nav may extend down to this line. */
@@ -1292,30 +1260,14 @@ function measureChatPromptBottom(): number | null {
   return null
 }
 
-/** Cap the board nav popup — blend avoid/overlap heights so resize does not snap above nav. */
+/** Stretch the board menu from its top down to the bottom of Free nav / minimap. */
 function measureNavPopupMaxHeight(popupTop: number): number {
-  const vh = window.visualViewport?.height ?? window.innerHeight
-  const vw = window.innerWidth
-  const promptBottom = measureChatPromptBottom()
-  const overlapBlend = navPopupOverlapBlend(vh, vw)
-
-  let avoidTop = measureMinimapChromeTop(vh)
-  let overlapTop = vh - NAV_POPUP_CHROME_GAP
-  if (promptBottom != null) {
-    avoidTop = Math.min(avoidTop, promptBottom)
-    overlapTop = Math.min(overlapTop, promptBottom)
-  }
-
-  const bottomGap = promptBottom != null ? 0 : NAV_POPUP_CHROME_GAP
-  const avoidAvailable = avoidTop - popupTop - bottomGap
-  const overlapAvailable = overlapTop - popupTop - bottomGap
-  const available = avoidAvailable + (overlapAvailable - avoidAvailable) * overlapBlend
-
-  const maxCap =
-    overlapBlend > 0 && promptBottom == null
-      ? Math.max(NAV_POPUP_MAX_CAP, overlapAvailable)
-      : NAV_POPUP_MAX_CAP
-  return Math.max(NAV_POPUP_MIN_H, Math.min(maxCap, available))
+  const vh = window.visualViewport?.height ?? window.innerHeight // Keyboard-aware viewport
+  const chromeBottom = measureMapChromeBottom() // Free nav / minimap floor
+  const promptBottom = chromeBottom == null ? measureChatPromptBottom() : null // Only when map chrome is absent
+  const bottom = chromeBottom ?? promptBottom ?? vh - NAV_POPUP_CHROME_GAP // Same bottom edge as the nav stack
+  const available = bottom - popupTop // Fixed height so a short board list still fills
+  return Math.max(NAV_POPUP_MIN_H, available)
 }
 
 export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
@@ -1371,7 +1323,7 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
   const queryClient = useQueryClient()
   const { isMobileMode, isSidebarOpen, isSidebarPinned, closeSidebar, openSidebar, scheduleCloseSidebar, cancelCloseSidebar, aiMapDockLiftPx } = useSidebarContext()
   const [navPopupMaxHeight, setNavPopupMaxHeight] = useState<number>(() =>
-    typeof window === 'undefined' ? NAV_POPUP_MAX_CAP : measureNavPopupMaxHeight(NAV_POPUP_TOP)
+    typeof window === 'undefined' ? NAV_POPUP_SSR_H : measureNavPopupMaxHeight(NAV_POPUP_TOP)
   )
 
   // When live user id changes, pull that account's boards (query key already scoped)
@@ -1387,13 +1339,13 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
     closeSidebar()
   }, [pathname, closeSidebar, isSidebarPinned])
 
-  // Desktop: keep the popup above Free nav / open minimap; phone/short viewports may overlap
+  // Stretch the popup so its bottom matches Free nav / minimap
   useLayoutEffect(() => {
     if (!isSidebarOpen) return // Closed — nothing to size
     const update = () => setNavPopupMaxHeight(measureNavPopupMaxHeight(NAV_POPUP_TOP))
-    update() // Before paint so the first open frame already misses the stack
+    update() // Before paint so the first open frame already meets the stack bottom
     const ro = new ResizeObserver(update) // Minimap clip height 0→120 and Free nav size
-    document.querySelectorAll('[data-minimap-toggle-context], [data-minimap-context]').forEach((el) => ro.observe(el))
+    document.querySelectorAll('[data-map-chrome], [data-minimap-toggle-context], [data-minimap-context]').forEach((el) => ro.observe(el))
     document.querySelectorAll('[data-chat-map-dock], [data-chat-sidebar]:not([data-chat-map-dock]), [data-chat-prompt]').forEach((el) =>
       ro.observe(el)
     )
@@ -2931,13 +2883,13 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
         className={cn(
           'fixed z-50 flex flex-col bg-[var(--nod-chat-prompt)] shadow-xl rounded-2xl overflow-hidden', // Same chrome grey as the chat column and chats menu
           'border border-gray-200 dark:border-[#2f2f2f]', // Same hairline as chats menu
-          'w-72 min-h-0' // min-h-0 so the board list can shrink and scroll under maxHeight
+          'w-72 min-h-0' // min-h-0 so the board list can shrink and scroll inside the stretched height
         )}
         style={{
           top: NAV_POPUP_TOP, // Same Y as utility Layers/Sets/Views card (below mode pills)
           left: '0.5rem',
-          maxHeight: navPopupMaxHeight, // Blended avoid/overlap — see navPopupOverlapBlend
-          transition: 'max-height 220ms ease-out',
+          height: navPopupMaxHeight, // Fills to the Free nav / minimap bottom (account row pins via mt-auto)
+          transition: 'height 220ms ease-out',
         }}
         onMouseEnter={() => {
           cancelCloseSidebar() // Keep open while pointer is in menu

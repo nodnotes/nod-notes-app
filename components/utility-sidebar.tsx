@@ -6,7 +6,7 @@ import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useParams } from 'next/navigation' // Board id for Capture panel
 import { ChevronsRight, Layers, Scan, SquareStack } from 'lucide-react' // Mode icons + header close
 import { cn } from '@/lib/utils' // Class merge
-import { useSidebarContext, UTILITY_RIGHT_GAP_PX, type UtilitySidebarMode } from './sidebar-context' // Open state + live width + right air gap
+import { useSidebarContext, UTILITY_RIGHT_GAP_PX, UTILITY_SIDEBAR_WIDTH, type UtilitySidebarMode } from './sidebar-context' // Open state + live width + right air gap + min chrome
 import {
   SIDEBAR_OPEN_CLOSE_MS,
   useOpenClosePresence,
@@ -17,6 +17,9 @@ import { CapturesPanel } from './captures-menu' // Capture list (same as View-ba
 
 /** Clear the map brand chat toggle (42px + 8px inset + air) so Capture footer / lists don’t sit on it. */
 const UTILITY_BRAND_CLEARANCE_PX = 64
+
+/** Header / body share `px-1.5` (6×2) — toggle shell matches the body card at the min chrome width. */
+const UTILITY_TOGGLE_SHELL_WIDTH_PX = UTILITY_SIDEBAR_WIDTH - 12
 
 /** Mode tab labels for the utility header strip. */
 const MODE_TABS: { id: UtilitySidebarMode; label: string; icon: typeof Layers }[] = [
@@ -175,17 +178,18 @@ export function UtilitySidebar() {
       {shown ? <UtilitySidebarSeam /> : null}
       <header
         className={cn(
-          'relative z-10 flex h-[52px] flex-shrink-0 items-center gap-0.5 px-1.5',
-          shown ? 'pointer-events-auto' : 'pointer-events-none' // Pass through to the map while sliding off
+          'relative z-10 flex h-[52px] flex-shrink-0 items-center justify-end px-1.5 pointer-events-none' // Toggle hugs the right; left strip stays pass-through over the top bar
         )}
       >
-        {/* Mode tabs — left edge matches the content card (same px-1.5) */}
-        <div className="flex min-w-0 flex-1 items-center">
-          <div
-            className="flex items-center gap-0.5 rounded-xl bg-[var(--nod-chat-prompt)] px-1 py-1 border border-black/10 dark:border-white/10 shadow-sm" // Same grey + hairline as Actions/Layout/Draw pill
-            role="tablist"
-            aria-label="Utility modes"
-          >
+        {/* Modes left + close right — fixed to min body-card width; right-aligned when the panel is wider */}
+        <div
+          className={cn(
+            'flex flex-shrink-0 items-center justify-between rounded-xl border border-black/10 bg-[var(--nod-chat-prompt)] px-1 py-1 shadow-sm dark:border-white/10', // Same grey + hairline as Actions/Layout/Draw pill
+            shown ? 'pointer-events-auto' : 'pointer-events-none' // Only this control captures clicks
+          )}
+          style={{ width: UTILITY_TOGGLE_SHELL_WIDTH_PX }} // Same as the body card at UTILITY_SIDEBAR_WIDTH
+        >
+          <div className="flex items-center gap-0.5" role="tablist" aria-label="Utility modes">
             {MODE_TABS.map(({ id, label, icon: Icon }) => {
               const active = utilitySidebarMode === id // White chip when selected
               return (
@@ -209,16 +213,22 @@ export function UtilitySidebar() {
               )
             })}
           </div>
+          <div className="flex items-center gap-0.5">
+            <div
+              className="mx-0.5 h-5 w-px flex-shrink-0 bg-black/10 dark:bg-white/10"
+              aria-hidden
+            />
+            <button
+              type="button"
+              onClick={() => setUtilitySidebarOpen(false)}
+              className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-gray-500 transition-colors hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
+              title="Hide sidebar"
+              aria-label="Hide utility sidebar"
+            >
+              <ChevronsRight className="h-4 w-4" />
+            </button>
+          </div>
         </div>
-        <button
-          type="button"
-          onClick={() => setUtilitySidebarOpen(false)}
-          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-black/10 bg-[var(--nod-chat-prompt)] text-gray-500 shadow-sm transition-colors hover:text-gray-900 dark:border-white/10 dark:text-gray-400 dark:hover:text-gray-100" // Same hairline as the mode pill next to it
-          title="Hide sidebar"
-          aria-label="Hide utility sidebar"
-        >
-          <ChevronsRight className="h-4 w-4" />
-        </button>
       </header>
 
       {!hideUtilityBody ? (

@@ -703,7 +703,7 @@ export function CapturesPanel({
           <div className="flex h-8 flex-shrink-0 items-center gap-1 pl-[3px] pr-1.5 pt-1"> {/* Plus ink lines up with the Layers toggle icon */}
             <button
               type="button"
-              className="flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-[13px] font-medium text-gray-900 hover:bg-black/[0.06] dark:text-gray-100 dark:hover:bg-white/[0.08]"
+              className="flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-[13px] font-medium text-gray-900 dark:text-gray-100" // No hover wash — ink stays flat
               title="New presentation"
               aria-label="New presentation"
               onPointerDown={(e) => e.preventDefault()}
@@ -826,7 +826,7 @@ export function CapturesPanel({
 
       <div
         className={cn(
-          'utility-body-scroll relative min-h-0 pl-1.5 pr-2 pb-1', /* Not a flex column — that compresses thumbs while reordering */
+          'utility-body-scroll relative min-h-0 px-2 pb-1', /* px-2: left gap matches the right; not a flex column — that compresses thumbs while reordering */
           sidebar ? 'flex-1' : 'max-h-72'
         )}
       >

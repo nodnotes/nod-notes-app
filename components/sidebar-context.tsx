@@ -15,6 +15,10 @@ import { getStoredLogoDrawing, NN_LOGO_DRAWING_STORAGE_KEY } from './personalize
 import { ACCOUNT_CHANGED_EVENT } from '@/lib/auth-session-isolation'
 import { SETS_REVEAL_EVENT } from '@/lib/sets-list' // Add to set → open this sidebar on Sets
 import { SetMembershipSync } from '@/components/set-membership-sync' // Restamp frames that belong to a set
+import {
+  planTopBarChromeFit,
+  topBarChromeFitChanged,
+} from '@/lib/top-bar-chrome-fit' // Shrink live chat/utility when the top bar would overlap
 
 /** Default / minimum width of the right chat sidebar when open (Notion-like). */
 export const CHAT_SIDEBAR_WIDTH = 360
@@ -184,13 +188,17 @@ interface SidebarContextType {
   scheduleCloseSidebar: () => void // Hide after short delay (bridge logo ↔ menu; no-op if pinned)
   cancelCloseSidebar: () => void // Cancel pending delayed close when re-entering
   isChatSidebarOpen: boolean // True when right chat sidebar is visible
-  chatSidebarWidth: number // Live column width (preferred clamped to this window)
+  chatSidebarWidth: number // Live column width (preferred clamped to this window; may be fit-shrunk)
   setChatSidebarWidth: (width: number) => void // Drag-resize; preferred persisted, display clamped
   chatChromeReady: boolean // True after storage restore so the top bar can measure the final column
   toggleChatSidebar: () => void // Toggle right chat sidebar (logo by minimap)
   setChatSidebarOpen: (open: boolean) => void // Explicit open/close for chat sidebar
+  /** Top-bar fit docked chat onto the map so the utility toggle can move right — not the phone breakpoint. */
+  chatFitPhone: boolean
+  /** Shrink live chat/utility (no localStorage write) when the board path would sit under Share / the utility toggle. */
+  requestTopBarChromeFit: (measure: { leftMinWidth: number; rightWidth: number }) => void
   isUtilitySidebarOpen: boolean // True when thin right utility column (left of chat) is visible
-  utilitySidebarWidth: number // Live utility column width (preferred clamped to this window)
+  utilitySidebarWidth: number // Live utility column width (preferred clamped to this window; may be fit-shrunk)
   setUtilitySidebarWidth: (width: number) => void // Seam drag-resize; preferred persisted, display clamped
   utilitySidebarMode: UtilitySidebarMode // layers (default) | flashcards | capture
   toggleUtilitySidebar: () => void // Top-bar toggle right of More (open only — close via seam / header)
@@ -256,6 +264,7 @@ export function SidebarContextProvider({
   const [isChatSidebarOpen, setIsChatSidebarOpen] = useState(initialChatOpen || previewMode) // Cookie/SSR: already open when it was last time
   const [chatSidebarWidth, setChatSidebarWidthState] = useState(CHAT_SIDEBAR_WIDTH) // SSR default; restore from storage before paint
   const [chatChromeReady, setChatChromeReady] = useState(false) // False until this layout effect restores open/closed
+  const [chatFitPhone, setChatFitPhone] = useState(false) // Top-bar fit docked chat (not the phone breakpoint)
   const [isUtilitySidebarOpen, setIsUtilitySidebarOpen] = useState(initialUtilityOpen && !previewMode) // Cookie/SSR: thin column already open
   const [utilitySidebarWidth, setUtilitySidebarWidthState] = useState(UTILITY_SIDEBAR_WIDTH) // SSR default; restore from storage before paint
   const [utilitySidebarMode, setUtilitySidebarModeState] = useState<UtilitySidebarMode>('layers') // Default layers until storage restore
@@ -276,7 +285,11 @@ export function SidebarContextProvider({
   const aiComposerFocusRef = useRef<(() => void) | null>(null) // Phone composer.focus (same-tap keyboard)
   const closedAtRef = useRef(0) // Timestamp of last close — ignore ghost click reopen on the hamburger
   const preferredChatWidthRef = useRef(CHAT_SIDEBAR_WIDTH) // User’s width across shrink/expand (not half-clamped)
+  const chatSidebarWidthRef = useRef(CHAT_SIDEBAR_WIDTH) // Live display for fit changed-check
+  const chatFitPhoneRef = useRef(false) // Latest fit-dock flag for measure without stale closure
   previewModeRef.current = previewMode // Keep latest for callbacks without rebinding
+  chatSidebarWidthRef.current = chatSidebarWidth // Sync before requestTopBarChromeFit runs
+  chatFitPhoneRef.current = chatFitPhone
 
   // Keep pin ref in sync for delayed-close guard
   useEffect(() => {
@@ -388,6 +401,8 @@ export function SidebarContextProvider({
       setIsSidebarOpen(false)
       preferredChatWidthRef.current = CHAT_SIDEBAR_WIDTH
       setChatSidebarWidthState(CHAT_SIDEBAR_WIDTH)
+      setChatFitPhone(false) // Clear fit dock on account switch
+      chatFitPhoneRef.current = false
       setAiChatHasTranscript(false)
     }
     window.addEventListener(ACCOUNT_CHANGED_EVENT, onAccountChanged)
@@ -397,8 +412,13 @@ export function SidebarContextProvider({
   // Re-clamp the live column on viewport change — never overwrite the stored preference
   useEffect(() => {
     const onResize = () => {
+      // Reset toward preferred (half-clamped); top-bar measure then fit-shrinks without writing storage
       setChatSidebarWidthState(clampChatSidebarWidth(preferredChatWidthRef.current))
       setUtilitySidebarWidthState(clampUtilitySidebarWidth(preferredUtilityWidthRef.current))
+      if (window.innerWidth < PHONE_LAYOUT_MAX_WIDTH) {
+        setChatFitPhone(false) // Phone breakpoint owns docking — drop a stale fit dock
+        chatFitPhoneRef.current = false
+      }
     }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
@@ -416,6 +436,36 @@ export function SidebarContextProvider({
     preferredUtilityWidthRef.current = display // Last intentional width
     if (!previewModeRef.current) persistUtilitySidebarWidth(display)
     setUtilitySidebarWidthState(display)
+  }, [])
+
+  // Display-only chat shrink when path/Share would sit under the utility toggle — never writes width keys or touches utility width
+  const requestTopBarChromeFit = useCallback((measure: { leftMinWidth: number; rightWidth: number }) => {
+    if (previewModeRef.current) return // Showcase owns fixed chrome
+    const next = planTopBarChromeFit({
+      leftMinWidth: measure.leftMinWidth,
+      rightWidth: measure.rightWidth,
+      chatOpen: isChatOpenRef.current,
+      chatPreferredWidth: preferredChatWidthRef.current,
+      utilityOpen: isUtilityOpenRef.current,
+      chatFitPhone: chatFitPhoneRef.current,
+      isPhoneLayout: isMobileModeRef.current,
+      windowWidth: typeof window !== 'undefined' ? window.innerWidth : 1200,
+    })
+    if (
+      !topBarChromeFitChanged(
+        {
+          chatWidth: chatSidebarWidthRef.current,
+          chatFitPhone: chatFitPhoneRef.current,
+        },
+        next
+      )
+    ) {
+      return // Same plan — skip setState thrash
+    }
+    chatSidebarWidthRef.current = next.chatWidth // Sync refs before the next measure
+    chatFitPhoneRef.current = next.chatFitPhone
+    setChatSidebarWidthState(next.chatWidth) // Live only — preferred stays in the ref / localStorage
+    setChatFitPhone(next.chatFitPhone)
   }, [])
 
   // BoardFlow sets mobile from window width — keep showcase on the desktop AI column
@@ -634,6 +684,8 @@ export function SidebarContextProvider({
         chatChromeReady,
         toggleChatSidebar,
         setChatSidebarOpen,
+        chatFitPhone,
+        requestTopBarChromeFit,
         isUtilitySidebarOpen,
         utilitySidebarWidth,
         setUtilitySidebarWidth,
@@ -684,6 +736,8 @@ export function useSidebarContext() {
       chatChromeReady: true, // No provider — nothing to restore; measure immediately
       toggleChatSidebar: () => {},
       setChatSidebarOpen: () => {},
+      chatFitPhone: false,
+      requestTopBarChromeFit: () => {},
       isUtilitySidebarOpen: false,
       utilitySidebarWidth: UTILITY_SIDEBAR_WIDTH,
       setUtilitySidebarWidth: () => {},

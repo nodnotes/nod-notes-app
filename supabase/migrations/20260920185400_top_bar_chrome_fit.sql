@@ -1,0 +1,2 @@
+-- Top-bar chrome fit: shrink live chat / dock when path would collide with Share or utility toggle.
+-- App/docs marker only; no DDL. Remote DDL top: 20260914104046_notion_multi_workspace.

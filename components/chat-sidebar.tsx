@@ -212,6 +212,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
     setChatSidebarOpen,
     chatSidebarWidth,
     isMobileMode,
+    chatFitPhone,
     logoDrawing,
     setLogoDrawing,
     setAiMapDockLiftPx,
@@ -221,13 +222,14 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
     setPhoneDockTight,
     closeSidebar,
   } = useSidebarContext()
-  // Desktop column stays mounted while width tweens closed (phone dock uses opacity, not this)
+  const useChatMapDock = isMobileMode || chatFitPhone // Phone breakpoint or top-bar fit dock
+  // Desktop column stays mounted while width tweens closed (phone / fit dock uses opacity, not this)
   const {
     mounted: desktopMounted,
     shown: desktopShown,
     transitionOn: desktopWidthTransition,
     onTransitionEnd: onDesktopWidthTransitionEnd,
-  } = useOpenClosePresence(isChatSidebarOpen && !isMobileMode, SIDEBAR_OPEN_CLOSE_MS)
+  } = useOpenClosePresence(isChatSidebarOpen && !useChatMapDock, SIDEBAR_OPEN_CLOSE_MS)
   const { addPendingEdits } = useAiEditSession()
   const [personalizeOpen, setPersonalizeOpen] = useState(false) // Logo draw modal
   const [personalizeDraftId, setPersonalizeDraftId] = useState<string | null>(null) // Which agent gets the icon
@@ -651,10 +653,10 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
     }
   }, [isChatSidebarOpen, refreshKey])
 
-  // Phone dock host: BoardFlow root (absolute inset-0) — escapes main overflow-hidden clipping
+  // Phone / fit dock host: BoardFlow root (absolute inset-0) — escapes main overflow-hidden clipping
   useLayoutEffect(() => {
-    if (!isMobileMode) {
-      setMapRoot(null) // Desktop uses the column, not the map portal
+    if (!useChatMapDock) {
+      setMapRoot(null) // Desktop column uses the sibling, not the map portal
       return
     }
     let cancelled = false // Strict Mode / unmount
@@ -671,17 +673,17 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
       cancelled = true
       cancelAnimationFrame(id)
     }
-  }, [isMobileMode, conversationId]) // Board remounts when the route id changes
+  }, [useChatMapDock, conversationId]) // Board remounts when the route id changes
 
-  // Phone: boards-nav scrim (z-40) would cover the dock — close nav when chat is open
+  // Phone / fit dock: boards-nav scrim (z-40) would cover the dock — close nav when chat is open
   useEffect(() => {
-    if (isMobileMode && isChatSidebarOpen) closeSidebar()
-  }, [isMobileMode, isChatSidebarOpen, closeSidebar])
+    if (useChatMapDock && isChatSidebarOpen) closeSidebar()
+  }, [useChatMapDock, isChatSidebarOpen, closeSidebar])
 
-  // Phone dock: keyboard inset + height cap so landscape+keyboard cannot cover the top bar
+  // Phone / fit dock: keyboard inset + height cap so landscape+keyboard cannot cover the top bar
   useLayoutEffect(() => {
-    if (!isChatSidebarOpen || !isMobileMode) {
-      setKeyboardInset(0) // Desktop / closed: no lift
+    if (!isChatSidebarOpen || !useChatMapDock) {
+      setKeyboardInset(0) // Desktop column / closed: no lift
       setDockMaxHeight(null) // No cap
       setDockCompact(false) // Show transcript + chrome when there is room
       setPhoneDockTight(false) // Restore the top bar / mode pill
@@ -718,13 +720,13 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
       window.removeEventListener('resize', update)
       setPhoneDockTight(false) // Bar back if this effect tears down mid-keyboard
     }
-  }, [isChatSidebarOpen, isMobileMode, setPhoneDockTight])
+  }, [isChatSidebarOpen, useChatMapDock, setPhoneDockTight])
 
-  // Phone: publish dock+keyboard lift + left so Free nav sits above and flush with the composer
+  // Phone / fit dock: publish dock+keyboard lift + left so Free nav sits above and flush with the composer
   // useLayoutEffect + geometric left so Free nav snaps aligned on the same frame (no lag)
   useLayoutEffect(() => {
-    if (!isMobileMode || !isChatSidebarOpen) {
-      setAiMapDockLiftPx(0) // No lift when closed / desktop
+    if (!useChatMapDock || !isChatSidebarOpen) {
+      setAiMapDockLiftPx(0) // No lift when closed / desktop column
       setAiMapDockComposerLiftPx(0) // Utility overlap floor follows the dock
       setAiMapDockLeftPx(null) // Restore default MINIMAP_LEFT
       return
@@ -770,7 +772,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
       setAiMapDockLeftPx(null)
     }
   }, [
-    isMobileMode,
+    useChatMapDock,
     isChatSidebarOpen,
     keyboardInset,
     dockCompact,
@@ -992,7 +994,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
     scrollSelectedTurnIntoView,
   ])
 
-  if (!desktopMounted && !isMobileMode) return null // Desktop: keep mounted through close tween; phone: dock always for same-tap focus
+  if (!desktopMounted && !useChatMapDock) return null // Desktop: keep mounted through close tween; phone/fit dock always for same-tap focus
 
   const promptBarProps = {
     boardId: conversationId,
@@ -1077,10 +1079,10 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
     />
   )
 
-  // Phone: composer docks on the map above the keyboard — no sidebar column
+  // Phone / top-bar fit: composer docks on the map above the keyboard — no sidebar column
   // Stay mounted while closed (invisible) so brand tap can focus() in the same gesture
   // Portal onto [data-board-root]: flex-sibling fixed inside main overflow-hidden is clipped
-  if (isMobileMode) {
+  if (useChatMapDock) {
     // Prefer state; fall back to live query so the first phone frame after shrink still paints
     const host =
       mapRoot ??
