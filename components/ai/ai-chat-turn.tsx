@@ -1375,6 +1375,7 @@ export function AiChatTurn({
                 kind: 'frame',
                 label: clipSetLabel(turnRef.current?.innerText || '', 'Frame'),
                 nodeId: message.id, // data-ai-turn — glow while this chat frame is selected
+                boardId: conversationId, // This board filter
               })
             }
             onAction={handleFrameMenuAction}

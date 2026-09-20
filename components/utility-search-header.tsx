@@ -43,13 +43,13 @@ export function UtilitySearchHeader({
         <div className="flex items-center gap-0">
           {leadingAction}
           <div className="relative flex-1 min-w-0">
-            <Search className="pointer-events-none absolute left-1 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <Search className="pointer-events-none absolute left-[6px] top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" /> {/* Ink lines up with the Layers icon in the mode toggle */}
             <Input
               type="text"
               placeholder={placeholder}
               value={query}
               onChange={(e) => onQueryChange(e.target.value)}
-              className="h-7 rounded-lg border-0 bg-transparent pl-6 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
+              className="h-7 rounded-lg border-0 bg-transparent pl-7 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
               onKeyDown={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
             />
@@ -98,6 +98,15 @@ export function UtilitySearchHeader({
 /** Hairline in a filter menu — organize rows sit under the filter rows. */
 export function UtilityFilterDivider() {
   return <div className="mx-2 my-1 h-px bg-gray-200 dark:bg-[#2f2f2f]" role="separator" /> // Same hairline as the search divider
+}
+
+/** Permanent menu name under search, above + Group / + Set / + Presentation. Same type as the old empty Layers title. */
+export function UtilityMenuTitle({ children }: { children: string }) {
+  return (
+    <p className="flex-shrink-0 px-3 pt-2 text-xs font-medium text-gray-500 dark:text-gray-400"> {/* Grey title; + row under it is black */}
+      {children}
+    </p>
+  )
 }
 
 /** One filter menu row — matches AI chat filter options. Optional icon is the old ⋯ glyph, left of the words. */

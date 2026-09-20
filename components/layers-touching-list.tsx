@@ -33,6 +33,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import {
   UtilityFilterOption,
+  UtilityMenuTitle,
   UtilitySearchHeader,
 } from '@/components/utility-search-header' // AI-chat-style search + filter
 import {
@@ -298,7 +299,7 @@ function GroupHeader({
       id={`layer-group-${group.id}`}
       style={style}
       className={cn(
-        'relative mt-0.5 flex h-7 items-center gap-1.5 rounded-md pl-1.5',
+        'relative mt-0.5 flex h-7 items-center gap-1.5 rounded-md pl-[3px]', // Folder ink lines up with the Layers toggle icon
         isOver && 'bg-blue-500/10'
       )}
     >
@@ -532,7 +533,7 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
     return out
   }, [sections.grouped, loose.items, boardGroups, items, stack])
   const topIds = rows.map((row) => (row.kind === 'group' ? groupStackToken(row.section.id) : row.item.id))
-  const nothingToShow = sections.grouped.length === 0 && loose.items.length === 0 && items.length === 0
+  const listEmpty = visible.length === 0 && (organize === 'list' || sections.grouped.length === 0) // No thumbs — the line under + follows the filter
 
   const selectItem = (id: string) => {
     const setNodes = getSetNodes()
@@ -732,10 +733,11 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
         }
       />
 
-      <div ref={organizeRef} className="group/layer-row relative flex h-8 flex-shrink-0 items-center gap-1 px-1.5 pt-2">
+      <UtilityMenuTitle>Layers</UtilityMenuTitle>
+      <div ref={organizeRef} className="group/layer-row relative flex h-8 flex-shrink-0 items-center gap-1 pl-[3px] pr-1.5 pt-1"> {/* Plus ink lines up with the Layers toggle icon */}
         <button
           type="button"
-          className="flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-[13px] font-medium text-gray-500 hover:bg-black/[0.06] disabled:opacity-40 dark:text-gray-400 dark:hover:bg-white/[0.08]"
+          className="flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-[13px] font-medium text-gray-900 hover:bg-black/[0.06] disabled:opacity-40 dark:text-gray-100 dark:hover:bg-white/[0.08]"
           title="New group"
           aria-label="New group"
           disabled={!conversationId} // Empty header still needs a board
@@ -793,21 +795,19 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
         )}
       </div>
 
-      {nothingToShow ? (
-        <div className="flex flex-col gap-1 px-3 py-3 text-xs text-gray-500 dark:text-gray-400">
-          <p className="font-medium text-gray-700 dark:text-gray-200">Layers</p>
-          <p className="leading-relaxed">
-            {filter === 'all'
-              ? 'No frames, drawings, or shapes on this board.'
-              : 'Select a frame, drawing, or thread to see everything touching it.'}
-          </p>
+      {listEmpty ? (
+        <div className="px-3 py-3 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+          {query.trim()
+            ? 'No layers match.'
+            : filter === 'all'
+              ? 'No layers yet.'
+              : filter === 'selected'
+                ? 'See selected board contents.'
+                : 'Select board contents to see layers touching them.'}
         </div>
       ) : (
         <div className="utility-body-scroll min-h-0 flex-1 pl-1.5 pr-2 py-1"> {/* Not a flex column — that compresses thumbs while a drag reorders */}
             {organize === 'list' ? (
-              visible.length === 0 ? (
-                <p className="px-1.5 py-6 text-center text-xs text-gray-400">No matching layers</p>
-              ) : (
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onListDragEnd}>
                   <SortableContext items={visible.map((item) => item.id)} strategy={verticalListSortingStrategy}>
                     <ul className="flex flex-col gap-1">
@@ -817,10 +817,7 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
                     </ul>
                   </SortableContext>
                 </DndContext>
-              )
-            ) : visible.length === 0 && sections.grouped.length === 0 ? (
-            <p className="px-1.5 py-6 text-center text-xs text-gray-400">No matching layers</p>
-          ) : (
+            ) : (
             <DndContext sensors={sensors} collisionDetection={layerCollision} onDragEnd={onDragEnd}>
               <ul className="flex flex-col gap-1">
                 <SortableContext items={topIds} strategy={verticalListSortingStrategy}>

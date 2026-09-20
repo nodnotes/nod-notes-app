@@ -1,14 +1,26 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-20T14:33:59Z`
+- Snapped at: `2026-09-20T17:22:27Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
-- CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`; versions from `.temp` + Management API list; cli-latest reports `v2.117.0`)
+- CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`/`migration list`; versions from `.temp` + Management API list; cli-latest reports `v2.117.0`)
 - Remote applied tops out at `20260914104046_notion_multi_workspace` (includes `20260912192948_panel_edges_canvas_endpoints`)
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260920172227_board_menus_sets_this_board.sql`.
+- **Board menus**: frame menu and block ⋮⋮ stay through pan/zoom (`lib/board-nav-menu.ts`). They hide while the camera moves and return on the new point. A click that does not move the board still closes them. Zoom no longer closes the frame menu.
+- **Sets**: **This board** hides members saved on another board (`boardId`, or the live frame when an older set has none). Title **Sets** sits under search.
+- **Captures**: row ⋯ **Delete** removes the saved view. Title **Captures** sits under search.
+- **Layers**: title **Layers** under search. Search glyph lines up with the Layers toggle.
+- **Ask**: tags, then +; prompt above; Auto/Ask at the far left of the toolbar.
+- **Pen**: first click only arms. A click while the color menu is open closes it and leaves the pen on.
+- **Minimap**: desktop bottom and left inset 12px, lined up with the chat prompt and utility card.
+- Schema unchanged; remote DDL top remains `20260914104046_notion_multi_workspace`.
+
+## Prior: Utility create rows and calendar Schedule
 
 - DDL: none. Marker `20260920143359_utility_create_rows_calendar_schedule.sql`.
 - **Utility create rows**: Layers/Sets/Views restore **+ Group** / **+ Set** / **+ Presentation** under search; organize **⋯** (In one list / By group|set) sits far right of Group and Set; Views puts **Capture** there instead (no organize ⋯). Filter menus are filter-only again.

@@ -110,7 +110,7 @@ function UtilityModeBody({
     return <LayersTouchingList conversationId={conversationId} /> // Groups are stored per board
   }
   if (mode === 'flashcards') {
-    return <SetsList /> // Sets tab — named sets, not the Add-to-set picker
+    return <SetsList conversationId={conversationId} /> // Sets tab — All boards, or only this board
   }
   return <CapturesPanel conversationId={conversationId} variant="sidebar" />
 }

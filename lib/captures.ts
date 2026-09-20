@@ -464,6 +464,22 @@ export async function takeBoardCaptureSelected(
   return addCapture({ ...input, imageDataUrl })
 }
 
+/** Remove one capture, drop it from presentations, and dismiss its chat pill. */
+export function deleteCapture(id: string): void {
+  setCaptures(getCaptures().filter((c) => c.id !== id)) // Drop the saved view
+  const presentations = getPresentations() // Headers that may still list this id
+  if (presentations.some((p) => p.captureIds.includes(id))) {
+    setPresentations(
+      presentations.map((p) =>
+        p.captureIds.includes(id)
+          ? { ...p, captureIds: p.captureIds.filter((captureId) => captureId !== id) } // No dangling slide
+          : p
+      )
+    )
+  }
+  if (chatCaptureIds.includes(id)) detachCaptureFromChat(id) // Composer pill goes with the capture
+}
+
 /** Append a capture (newest first) and return it. */
 export function addCapture(input: Omit<BoardCapture, 'id' | 'createdAt'>): BoardCapture {
   const capture: BoardCapture = {

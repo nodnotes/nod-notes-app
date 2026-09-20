@@ -549,6 +549,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
   }, [drawTool])
 
   const tipSizeUndoArmedRef = useRef(false) // One map snapshot per thickness scrub gesture
+  const penTriggerGestureRef = useRef<null | 'arm' | 'open' | 'close'>(null) // This click’s job, set before Radix toggles the menu
   const tipSizePersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null) // Debounce canvas_nodes writes while scrubbing
   const pendingTipPatchesRef = useRef<Map<string, FreehandNodeData>>(new Map()) // Latest data per id for the debounced persist
 
@@ -622,6 +623,44 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
         }
       })()
     }, 250)
+  }
+
+  /** Record whether this Pen press should arm, open the color menu, or only close it.
+   * Must run before Radix’s pointerdown toggle, and stay set until pointerup so a second
+   * open event in the same gesture cannot pop the menu on the arming click. */
+  const notePenTriggerGesture = () => {
+    penTriggerGestureRef.current =
+      openDropdown === 'pencilColor' ? 'close' : drawTool !== 'pencil' ? 'arm' : 'open' // Menu open → close only; off → arm; armed → open
+    const clear = () => {
+      penTriggerGestureRef.current = null // Next gesture starts clean
+      window.removeEventListener('pointerup', clear)
+      window.removeEventListener('pointercancel', clear)
+      window.removeEventListener('keyup', clear)
+    }
+    window.addEventListener('pointerup', clear) // After this pointerdown’s open/close
+    window.addEventListener('pointercancel', clear)
+    window.addEventListener('keyup', clear) // Keyboard toggle uses the same ref
+  }
+
+  /** Pen menu open/close. First click only arms. Click while the menu is open closes it and leaves the pen on. */
+  const handlePenMenuOpenChange = (open: boolean) => {
+    const gesture = penTriggerGestureRef.current // 'arm' / 'close' block a follow-up open in the same click
+    if (open && gesture === 'close') {
+      handleDropdownOpenChange('pencilColor', false) // Re-click closes the menu; pen stays armed
+      return
+    }
+    if (open && (gesture === 'arm' || drawTool !== 'pencil')) {
+      setDrawTool('pencil') // Toggle on — do not open the color menu on this click
+      handleDropdownOpenChange('pencilColor', false) // Explicit closed (controlled)
+      return
+    }
+    if (open) {
+      syncThicknessFromSelection() // Already armed → color + tip, matched to a selected stroke
+      handleDropdownOpenChange('pencilColor', true)
+      return
+    }
+    tipSizeUndoArmedRef.current = false // Next open starts a fresh undo scrub
+    handleDropdownOpenChange('pencilColor', false) // Trigger re-click or outside — pen stays armed
   }
 
   /** When opening the pen menu with drawings selected, sync the bar to the first selected stroke. */
@@ -1435,7 +1474,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
         : editMenuPillMode === 'draw'
           ? [
             { id: 'drawGroup1', width: titledToolWidth('Lasso') + 4 + titledToolWidth('V-space') + 4 + titledToolWidth('H-space') + 16 }, // Rightmost
-            { id: 'drawGroup3', width: titledToolWidth('Pen') + 4 + titledToolWidth('Smart') }, // Pen + Smart toggle
+            { id: 'drawGroup3', width: titledToolWidth('Pen') + 4 + titledToolWidth('Smart draw') }, // Pen + Smart draw — longer title needs room before titles collapse
             { id: 'drawGroup2', width: titledToolWidth('Eraser') + 4 + 5 }, // Eraser + slash after ink cluster
             { id: 'undoRedo', width: 70 },
           ]
@@ -2028,41 +2067,24 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                   )}
                   {!isItemHidden('drawGroup3') && (
                     <>
-                    {/* Freehand: first click arms draw; click again opens ink menu; click while open closes */}
+                    {/* Freehand: first click arms; click again opens the color menu; click while that menu is open closes it and leaves the pen on */}
                     <DropdownMenu
                       modal={false}
                       open={openDropdown === 'pencilColor'}
-                      onOpenChange={(open) => {
-                        if (open && drawTool !== 'pencil') {
-                          // Selected drawing → open color menu without arming the ink overlay
-                          const hasSelectedFreehand = (reactFlowInstance?.getNodes?.() ?? []).some(
-                            (n) => n.selected && n.type === 'freehand',
-                          )
-                          if (hasSelectedFreehand) {
-                            syncThicknessFromSelection() // Bar matches the selected stroke
-                            handleDropdownOpenChange('pencilColor', true)
-                            return
-                          }
-                          // Inactive → arm freehand for drawing; keep the menu closed
-                          setDrawTool('pencil')
-                          handleDropdownOpenChange('pencilColor', false) // Explicit closed (controlled)
-                          return
-                        }
-                        if (open && drawTool === 'pencil') {
-                          // Already armed → open ink / tip menu
-                          syncThicknessFromSelection() // Selected drawing → bar shows its width
-                          handleDropdownOpenChange('pencilColor', true)
-                          return
-                        }
-                        // Closing the menu (trigger re-click or outside) — stay armed so drawing works
-                        tipSizeUndoArmedRef.current = false // Next open starts a fresh undo scrub
-                        handleDropdownOpenChange('pencilColor', false)
-                      }}
+                      onOpenChange={handlePenMenuOpenChange}
                     >
                       <DropdownMenuTrigger asChild>
                         <Button
                           variant="ghost"
                           size="sm"
+                          onPointerDown={(e) => {
+                            if (e.button !== 0 || e.ctrlKey) return // Radix only toggles primary click
+                            notePenTriggerGesture() // Before Radix, so arming cannot also open the menu
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'ArrowDown') return
+                            notePenTriggerGesture() // Same contract from the keyboard
+                          }}
                           className={cn(
                             'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center border border-transparent', // Transparent border reserves space so arming doesn’t jump
                             'transition-[padding,gap] duration-200 ease-out', compactEarlyLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Ink cluster collapses first
@@ -2112,21 +2134,22 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                     <Button
                       variant="ghost"
                       size="sm"
+                      data-smart-draw={smartDraw ? '' : undefined} // Present only while on — grey wash stays; glow matches the focused prompt shadow
                       onClick={(e) => {
                         setSmartDraw(!smartDraw) // On: later pen strokes may become a shape, line, or text
-                        e.currentTarget.blur() // Armed wash, not a focus ring
+                        e.currentTarget.blur() // Glow, not a focus ring
                       }}
                       className={cn(
                         'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center border border-transparent',
-                        'transition-[padding,gap] duration-200 ease-out', compactEarlyLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5',
+                        'transition-[padding,gap,box-shadow] duration-200 ease-out', compactEarlyLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5',
                         smartDraw
-                          ? 'bg-gray-100 dark:bg-gray-800 shadow-sm border-black/10 dark:border-white/10' // On: same wash as an armed Draw tool
+                          ? 'bg-gray-100 dark:bg-gray-800 border-black/10 dark:border-white/10' // On: same grey wash as an armed Draw tool; glow is [data-smart-draw]
                           : 'hover:bg-gray-100 dark:hover:bg-gray-800'
                       )}
                       title={smartDraw ? 'Smart draw on — strokes become shapes, lines, or text' : 'Smart draw'}
                     >
                       <Wand2 className="h-4 w-4 flex-shrink-0" />
-                      <ToolbarTitle show={!compactEarlyLabels}>Smart</ToolbarTitle>
+                      <ToolbarTitle show={!compactEarlyLabels}>Smart draw</ToolbarTitle>
                     </Button>
                     </>
                   )}
@@ -3215,7 +3238,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                       className={smartDraw ? 'bg-gray-100 dark:bg-gray-800' : ''}
                     >
                       <Wand2 className="h-4 w-4 mr-2" />
-                      Smart
+                      Smart draw
                       <Check className={cn('h-4 w-4 ml-auto', smartDraw ? 'opacity-100' : 'opacity-0')} />
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />

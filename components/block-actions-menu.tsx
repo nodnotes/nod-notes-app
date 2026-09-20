@@ -4,6 +4,7 @@
 // wired actions work now; submenu stubs are intentional until we flesh them out.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react' // Search, submenu, focus
+import { watchBoardViewportNav } from '@/lib/board-nav-menu' // Hide while the board pans; reveal when it stops
 import {
   Check,
   ChevronRight,
@@ -606,6 +607,15 @@ export function BlockActionsMenu({
   const connectionsRowRef = useRef<HTMLButtonElement>(null) // Align Connections picker to that row
   const colorRowRef = useRef<HTMLButtonElement>(null) // Align frame Color flyout to Color row
   const [lastFrameColor, setLastFrameColor] = useState<FrameLastColor | null>(null) // Last used fill/border
+  const [hideForBoardNav, setHideForBoardNav] = useState(false) // Same as the text-select menu: gone while panning
+
+  // Stay mounted (parents re-anchor on the same settle) but disappear until the viewport is still
+  useEffect(() => {
+    return watchBoardViewportNav({
+      onStart: () => setHideForBoardNav(true), // Pan/zoom frame → hide
+      onSettle: () => setHideForBoardNav(false), // ~150ms after the last transform → show again
+    })
+  }, [])
 
   useEffect(() => {
     // Phone / touch: skip search autofocus — soft keyboard must not open with the frame menu (I-bar isn’t placed)
@@ -955,6 +965,9 @@ export function BlockActionsMenu({
     transformOrigin:
       positionMode === 'fixed' ? (openLeft ? 'top right' : 'top left') : 'center bottom',
     marginTop: positionMode === 'fixed' ? 0 : '-8px',
+    // Stay mounted so settle can re-place, but don't catch clicks while the board is moving
+    visibility: hideForBoardNav ? ('hidden' as const) : ('visible' as const),
+    pointerEvents: hideForBoardNav ? ('none' as const) : ('auto' as const),
   }
 
   // Slim menu for the Notion connection mark (Live Sync status + Remove)
@@ -1025,6 +1038,8 @@ export function BlockActionsMenu({
         transformOrigin:
           positionMode === 'fixed' ? (openLeft ? 'top right' : 'top left') : 'center bottom',
         marginTop: positionMode === 'fixed' ? 0 : '-8px',
+        visibility: hideForBoardNav ? 'hidden' : 'visible', // Match text-select: hidden during nav, back when it stops
+        pointerEvents: hideForBoardNav ? 'none' : 'auto',
       }}
       onClick={(e) => {
         e.stopPropagation()

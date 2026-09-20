@@ -9,6 +9,7 @@ export type NodSet = {
   id: string // Stable id
   name: string // "Set 1", "Set 2", …
   collapsed?: boolean // Closed hides member thumbs until the name is clicked
+  boardId?: string // Board where + Set was used — This board keeps an empty set
 }
 
 /** One piece of content inside a set. */
@@ -18,6 +19,7 @@ export type SetMember = {
   kind: SetItemKind // Frame, block, or text
   label: string // Shown under the set name
   nodeId?: string // RF node id or chat turn id — frame glow host
+  boardId?: string // Board the frame was on when it was added
 }
 
 const STORAGE_KEY = 'nodnotes-sets-v1' // Survives reload; not a Supabase table
@@ -162,7 +164,7 @@ export function setSetCollapsed(id: string, collapsed: boolean) {
 }
 
 /** Create "Set N" and return it. Does not add content. The picker names it before the frame is stored. */
-export function createSet(): NodSet {
+export function createSet(boardId?: string): NodSet {
   const used = new Set(sets.map((s) => s.name)) // Avoid "Set 1" twice after a delete-less rename collision
   let n = sets.length + 1
   let name = `Set ${n}`
@@ -170,7 +172,7 @@ export function createSet(): NodSet {
     n += 1
     name = `Set ${n}`
   }
-  const set: NodSet = { id: nextId(), name }
+  const set: NodSet = { id: nextId(), name, ...(boardId ? { boardId } : {}) } // Remember the board so This board can show an empty set
   sets = [...sets, set] // New array so the store snapshot changes
   persist()
   notify()
@@ -192,7 +194,7 @@ export function deleteSet(id: string) {
 /** Put a frame in a set. Blocks and text are not members. Skips an identical row. Opens the Sets tab. */
 export function addMember(
   setId: string,
-  partial: { kind: SetItemKind; label: string; nodeId?: string }
+  partial: { kind: SetItemKind; label: string; nodeId?: string; boardId?: string }
 ): void {
   if (partial.kind !== 'frame' || !partial.nodeId) return // Frame menu only — need a board or chat frame id
   const dup = members.some(
@@ -268,4 +270,27 @@ export function highlightSelectedSet() {
   want.forEach((el) => {
     if (!el.hasAttribute('data-set-highlight')) el.setAttribute('data-set-highlight', '') // Halo without selecting the frame
   })
+}
+
+let setBoardNodeKey = '' // Comma-joined ids of frames on the open board
+const setBoardNodeListeners = new Set<Listener>()
+
+/** Live frame ids from the board, so This board can match sets saved before boardId existed. */
+export function publishSetBoardNodeIds(ids: string[]) {
+  const key = ids.join(',')
+  if (key === setBoardNodeKey) return // Same frames — don't wake the Sets list
+  setBoardNodeKey = key
+  setBoardNodeListeners.forEach((fn) => fn())
+}
+
+export function subscribeSetBoardNodes(fn: Listener): () => void {
+  setBoardNodeListeners.add(fn)
+  return () => {
+    setBoardNodeListeners.delete(fn)
+  }
+}
+
+/** Stable until the next publish. Empty string when the Sets tab is not publishing. */
+export function getSetBoardNodeKey(): string {
+  return setBoardNodeKey
 }

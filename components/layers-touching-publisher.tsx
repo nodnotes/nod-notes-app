@@ -4,7 +4,10 @@
 
 import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { useReactFlow, useStore } from 'reactflow'
-import { useSidebarContext } from '@/components/sidebar-context'
+import { useSidebarContext } from '@/components/sidebar-context' // Sets tab needs live node ids for This board
+import {
+  publishSetBoardNodeIds,
+} from '@/lib/sets-list' // This board filter — utility list is outside React Flow
 import { isFrameDragging } from '@/lib/frame-dragging'
 import {
   captureNodeLayerPreview,
@@ -65,6 +68,12 @@ export function LayersTouchingPublisher() {
   const publishKey = scope === 'all' ? `all:${allIdsKey}` : `touch:${selectionKey}` // One key so All doesn't recapture on select
   const captureGenRef = useRef(0) // Cancel stale full-list captures
   const itemIdsKeyRef = useRef('') // Current cluster ids for edit observers
+  const setsOpen = isUtilitySidebarOpen && utilitySidebarMode === 'flashcards' // Sets tab — publish frame ids for This board
+  const setBoardNodeKey = useStore((s) => s.getNodes().map((n) => n.id).join(',')) // Id list only — a drag must not republish
+
+  useEffect(() => {
+    publishSetBoardNodeIds(setsOpen && setBoardNodeKey ? setBoardNodeKey.split(',') : []) // Empty when Sets is closed
+  }, [setsOpen, setBoardNodeKey])
 
   // Publish list + initial thumbs when selection changes
   useEffect(() => {

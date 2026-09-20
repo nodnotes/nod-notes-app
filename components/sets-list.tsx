@@ -23,12 +23,14 @@ import {
   renameSet,
   selectSet,
   setSetCollapsed,
+  subscribeSetBoardNodes,
   subscribeSets,
+  getSetBoardNodeKey,
   type NodSet,
-  type SetItemKind,
 } from '@/lib/sets-list'
 import {
   UtilityFilterOption,
+  UtilityMenuTitle,
   UtilitySearchHeader,
 } from '@/components/utility-search-header'
 import { SetScheduleModal } from '@/components/set-schedule-modal' // Sets ⋯ Schedule full-screen planner
@@ -155,7 +157,7 @@ function SetNameRow({
     <div
       id={`set-name-${set.id}`}
       className={cn(
-        'relative mt-0.5 flex h-7 items-center gap-1.5 rounded-md pl-1.5',
+        'relative mt-0.5 flex h-7 items-center gap-1.5 rounded-md pl-[3px]', // Set icon ink lines up with the Layers toggle icon
         on && 'bg-blue-500/15' // Which set is glowing on the board
       )}
     >
@@ -245,7 +247,7 @@ function SetNameRow({
 }
 
 /** Sets mode body — search + one row per set, with a thumb for each frame. */
-export function SetsList() {
+export function SetsList({ conversationId }: { conversationId?: string }) {
   const sets = useSyncExternalStore(subscribeSets, getSets, () => []) // Oldest first
   const members = useSyncExternalStore(subscribeSets, getSetMembers, () => []) // Newest first
   const selectedId = useSyncExternalStore(subscribeSets, getSelectedSetId, () => null) // Glowing set, or none
@@ -262,7 +264,8 @@ export function SetsList() {
   urlsRef.current = urls
   const [query, setQuery] = useState('') // Filter by set name
   const [filterOpen, setFilterOpen] = useState(false)
-  const [kind, setKind] = useState<SetItemKind | 'all'>('all')
+  const [thisBoardOnly, setThisBoardOnly] = useState(false) // All boards until the filter says this board
+  const boardNodeKey = useSyncExternalStore(subscribeSetBoardNodes, getSetBoardNodeKey, () => '') // Frames on the open board
   const [renamingId, setRenamingId] = useState<string | null>(null) // Set whose name is being edited
   const [scheduleSetId, setScheduleSetId] = useState<string | null>(null) // Set whose Schedule popup is open
   const [organize, setOrganize] = useState<SetOrganize>('set') // ⋯ menu: one list, or set rows
@@ -280,15 +283,30 @@ export function SetsList() {
     return () => window.removeEventListener('pointerdown', onDown, true)
   }, [organizeOpen])
 
+  const nodeIds = useMemo(
+    () => new Set(boardNodeKey ? boardNodeKey.split(',') : []), // Legacy members have no boardId — match the live frame
+    [boardNodeKey]
+  )
+
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase()
     return sets.filter((set) => {
-      const rows = members.filter((m) => m.setId === set.id)
-      if (kind !== 'all' && !rows.some((m) => m.kind === kind)) return false
+      if (thisBoardOnly) {
+        const here =
+          set.boardId === conversationId ||
+          members.some(
+            (m) =>
+              m.setId === set.id &&
+              (m.boardId
+                ? m.boardId === conversationId
+                : Boolean(m.nodeId && nodeIds.has(m.nodeId)))
+          )
+        if (!here) return false // Another board's set
+      }
       if (q && !set.name.toLowerCase().includes(q)) return false
       return true
     })
-  }, [sets, members, query, kind])
+  }, [sets, members, query, thisBoardOnly, conversationId, nodeIds])
 
   const frameIds = useMemo(() => {
     const ids: string[] = [] // Unique board frames across every set
@@ -391,7 +409,7 @@ export function SetsList() {
 
   const onNewSet = () => {
     setOrganize('set') // The new row only shows under By set
-    const created = createSet() // Empty "Set N" at the end of the list
+    const created = createSet(conversationId) // Empty "Set N" at the end of the list, kept on this board
     setRenamingId(created.id) // Name it immediately
   }
 
@@ -400,12 +418,18 @@ export function SetsList() {
     for (const set of visible) {
       for (const m of members) {
         if (m.setId !== set.id || m.kind !== 'frame' || !m.nodeId) continue
+        if (
+          thisBoardOnly &&
+          !(m.boardId ? m.boardId === conversationId : nodeIds.has(m.nodeId))
+        ) {
+          continue // This board hides frames added on another board
+        }
         const prev = byNode.get(m.nodeId)
         if (!prev || set.id === selectedId) byNode.set(m.nodeId, { nodeId: m.nodeId, label: m.label, setId: set.id }) // Prefer the glowing set
       }
     }
     return [...byNode.values()]
-  }, [visible, members, selectedId])
+  }, [visible, members, selectedId, thisBoardOnly, conversationId, nodeIds])
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -414,23 +438,25 @@ export function SetsList() {
         onQueryChange={setQuery}
         filterOpen={filterOpen}
         onFilterOpenChange={setFilterOpen}
-        filterActive={kind !== 'all'} // Blue unless every set kind is showing
+        filterActive={thisBoardOnly} // Blue when limited to this board
         filterTitle="Filter sets"
         filterMenu={
           <>
             <UtilityFilterOption
-              label="All"
-              active={kind === 'all'}
+              label="All boards"
+              active={!thisBoardOnly}
               onSelect={() => {
-                setKind('all')
+                setThisBoardOnly(false)
                 setFilterOpen(false)
               }}
             />
             <UtilityFilterOption
-              label="Frames"
-              active={kind === 'frame'}
+              label="This board"
+              active={thisBoardOnly}
+              disabled={!conversationId} // No board yet — nothing to scope to
               onSelect={() => {
-                setKind('frame')
+                if (!conversationId) return
+                setThisBoardOnly(true)
                 setFilterOpen(false)
               }}
             />
@@ -438,10 +464,11 @@ export function SetsList() {
         }
       />
 
-      <div ref={organizeRef} className="group/set-add relative flex h-8 flex-shrink-0 items-center gap-1 px-1.5 pt-2">
+      <UtilityMenuTitle>Sets</UtilityMenuTitle>
+      <div ref={organizeRef} className="group/set-add relative flex h-8 flex-shrink-0 items-center gap-1 pl-[3px] pr-1.5 pt-1"> {/* Plus ink lines up with the Layers toggle icon */}
         <button
           type="button"
-          className="flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-[13px] font-medium text-gray-500 hover:bg-black/[0.06] dark:text-gray-400 dark:hover:bg-white/[0.08]"
+          className="flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-[13px] font-medium text-gray-900 hover:bg-black/[0.06] dark:text-gray-100 dark:hover:bg-white/[0.08]"
           title="New set"
           aria-label="New set"
           onPointerDown={(e) => e.preventDefault()}
@@ -498,18 +525,19 @@ export function SetsList() {
         )}
       </div>
 
-      {sets.length === 0 ? (
+      {visible.length === 0 || (organize === 'list' && flatFrames.length === 0) ? (
         <div className="px-3 py-3 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-          Use + Set, or Add to set on a frame.
+          {query.trim()
+            ? 'No sets match.'
+            : thisBoardOnly
+              ? 'No sets on this board.'
+              : sets.length === 0
+                ? 'Add frames through the frame menu.'
+                : 'No frames in these sets.'}
         </div>
       ) : (
         <div className="utility-body-scroll min-h-0 flex-1 pl-1.5 pr-2 py-1"> {/* Not a flex column — that compresses thumbs while a drag reorders */}
-          {visible.length === 0 ? (
-            <p className="px-1.5 py-6 text-center text-xs text-gray-400">No matching sets</p>
-          ) : organize === 'list' ? (
-            flatFrames.length === 0 ? (
-              <p className="px-1.5 py-6 text-center text-xs text-gray-400">No matching sets</p>
-            ) : (
+          {organize === 'list' ? (
               <ul className="flex flex-col gap-1">
                 {flatFrames.map((frame) => (
                   <SetFrameThumb
@@ -522,12 +550,17 @@ export function SetsList() {
                   />
                 ))}
               </ul>
-            )
           ) : (
             <ul className="flex flex-col gap-1">
               {visible.map((set) => {
                 const on = selectedId === set.id // This row owns the board halo
-                const frames = members.filter((m) => m.setId === set.id && m.kind === 'frame' && m.nodeId)
+                const frames = members.filter(
+                  (m) =>
+                    m.setId === set.id &&
+                    m.kind === 'frame' &&
+                    m.nodeId &&
+                    (!thisBoardOnly || (m.boardId ? m.boardId === conversationId : nodeIds.has(m.nodeId)))
+                )
                 return (
                   <li key={set.id} className="group/set-row flex flex-col gap-1"> {/* Hover name or thumb shows ⋯ */}
                     <SetNameRow

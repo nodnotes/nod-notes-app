@@ -5028,6 +5028,10 @@ function StudySetFlowInner({ studySetId }: { studySetId?: string }) {
               kind: 'frame',
               label: labelForFlowNode(rightClickedNode),
               nodeId: rightClickedNode.id,
+              boardId:
+                typeof rightClickedNode.data?.conversationId === 'string'
+                  ? rightClickedNode.data.conversationId
+                  : undefined, // Source board, when the study frame has one
             })
           }
           onAction={handleBlockAction}

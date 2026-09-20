@@ -113,6 +113,7 @@ import {
   syncBoardZoomCss,
   touchBoardNavigating,
 } from '@/lib/board-navigating' // Freeze React zoom during pan/pinch; CSS chrome tracks live zoom
+import { watchBoardViewportNav, dismissMenuUnlessBoardNav } from '@/lib/board-nav-menu' // Re-anchor frame / I-bar menus when nav stops; don't close on pan
 import {
   ensureFrameChromeZoomPump,
   registerFrameChromeZoomReader,
@@ -308,8 +309,8 @@ interface ChatPanelNodeData {
 
 const MINIMAP_HEIGHT = 120 // Keep in sync with .minimap-custom-size height in globals.css
 const MINIMAP_WIDTH = 196 // Keep in sync with .minimap-custom-size width in globals.css — fits caret + Zoom + 1000% + rotate + pan
-const MINIMAP_BOTTOM = 8 // Inset from map column bottom edge
-const MINIMAP_LEFT = 8 // Match top-bar menu button (sticky-prompt-panel paddingLeft 0.5rem)
+const MINIMAP_BOTTOM = 12 // Same as chat prompt + utility card pb-3 so bottoms line up
+const MINIMAP_LEFT = MINIMAP_BOTTOM // Same gap on the left as under the Free nav / minimap
 const MINIMAP_NAV_GAP = 6 // Air between Free nav and minimap in the column stack
 const MINIMAP_EXPAND_MS = 220 // Shared open/close/load height tween (expand-up)
 const FREE_NAV_WIDTH = MINIMAP_WIDTH // Same width as the minimap so the column stack lines up
@@ -6857,7 +6858,7 @@ function BoardFlowInner({
       if (selectedNodes.length > 0) {
         setBoardMenuPosition(null)
         boardClickFlowRef.current = null
-        setNodePopupPosition({ x: screenX, y: screenY })
+        setNodePopupPosition({ x: clientX, y: clientY }) // Window coords — menu is position:fixed
         setRightClickedNode(selectedNodes[0] as Node<ChatPanelNodeData>)
         return
       }
@@ -7675,13 +7676,38 @@ function BoardFlowInner({
     const onDoc = (event: MouseEvent) => {
       const t = event.target as HTMLElement
       if (t.closest?.('.block-actions-menu, [data-tt-ibar-grip]')) return
-      setIBarBlockMenu(null)
-      iBarBlockMenuOpenRef.current = false
-      iBarArmedRef.current = true // I-bar still showing — typing is live again
+      dismissMenuUnlessBoardNav(() => {
+        setIBarBlockMenu(null)
+        iBarBlockMenuOpenRef.current = false
+        iBarArmedRef.current = true // I-bar still showing — typing is live again
+      })
     }
     document.addEventListener('mousedown', onDoc, true)
     return () => document.removeEventListener('mousedown', onDoc, true)
   }, [iBarBlockMenu])
+
+  // I-bar block menu is fixed at the grip. Re-read the grip once pan/zoom stops (registered before the menu's reveal).
+  const iBarMenuOpen = iBarBlockMenu != null
+  useEffect(() => {
+    if (!iBarMenuOpen) return
+    return watchBoardViewportNav({
+      onSettle: () => {
+        const grip = document.querySelector('[data-tt-ibar-grip]') as HTMLElement | null
+        if (!grip) return
+        const rect = grip.getBoundingClientRect() // Grip has already followed the settled viewport
+        const MENU_W = 248 // Same estimate as the click-to-open path
+        const GAP = 8
+        const openLeft = rect.left - GAP - MENU_W >= 0
+        const x = openLeft ? rect.left : rect.right
+        const y = rect.top
+        setIBarBlockMenu((prev) => {
+          if (!prev) return prev
+          if (prev.x === x && prev.y === y && prev.openLeft === openLeft) return prev
+          return { x, y, openLeft }
+        })
+      },
+    })
+  }, [iBarMenuOpen])
 
   // Close board menu when clicking / right-clicking outside it
   useEffect(() => {
@@ -8831,10 +8857,10 @@ function BoardFlowInner({
         const screenY = detail.clientY - rect.top
         const viewport = reactFlowInstance.getViewport()
         nodeClickPositionRef.current = {
-          x: screenX / viewport.zoom - viewport.x,
-          y: screenY / viewport.zoom - viewport.y,
+          x: (screenX - viewport.x) / viewport.zoom, // Flow point so settle can map back to the window
+          y: (screenY - viewport.y) / viewport.zoom,
         }
-        setNodePopupPosition({ x: screenX, y: screenY })
+        setNodePopupPosition({ x: detail.clientX, y: detail.clientY }) // Window coords — menu is position:fixed
         nodePopupZoomRef.current = viewport.zoom
       }
       setRightClickedNode(node as Node<ChatPanelNodeData>)
@@ -8843,56 +8869,28 @@ function BoardFlowInner({
     return () => window.removeEventListener('open-block-actions', onOpen as EventListener)
   }, [nodes, reactFlowInstance, setNodes])
 
-  // Update node popup position when node, nodes, or viewport changes
-  // Position follows the click position on the node as viewport changes
+  // Re-anchor the frame menu when pan/zoom stops. Registered before BlockActionsMenu, so this
+  // settle runs first (menu still hidden) and the menu then reveals on the updated point.
+  // Zoom used to close the menu; it now returns, same as the text-select popup.
   useEffect(() => {
     if (!rightClickedNode || !reactFlowInstance || !nodeClickPositionRef.current) return
 
     const updatePosition = () => {
-      // Convert stored flow coordinates to screen coordinates using current viewport
+      const flow = nodeClickPositionRef.current
+      if (!flow) return
       const viewport = reactFlowInstance.getViewport()
-      const screenX = (nodeClickPositionRef.current!.x + viewport.x) * viewport.zoom
-      const screenY = (nodeClickPositionRef.current!.y + viewport.y) * viewport.zoom
-
-      setNodePopupPosition({ x: screenX, y: screenY })
+      const pane = (document.querySelector('.react-flow') as HTMLElement | null)?.getBoundingClientRect()
+      if (!pane) return
+      // Inverse of open: window = flow * zoom + viewport offset + board origin
+      const screenX = Math.round(flow.x * viewport.zoom + viewport.x + pane.left)
+      const screenY = Math.round(flow.y * viewport.zoom + viewport.y + pane.top)
+      setNodePopupPosition((prev) =>
+        prev.x === screenX && prev.y === screenY ? prev : { x: screenX, y: screenY }
+      )
     }
 
-    // Initial position update
-    updatePosition()
-
-    // Update position continuously using requestAnimationFrame to catch viewport changes
-    let animationFrameId: number
-    const animate = () => {
-      updatePosition()
-      animationFrameId = requestAnimationFrame(animate)
-    }
-    animationFrameId = requestAnimationFrame(animate)
-
-    return () => {
-      cancelAnimationFrame(animationFrameId)
-    }
-  }, [rightClickedNode, reactFlowInstance])
-
-  // Close node popup on zoom (viewport change)
-  useEffect(() => {
-    if (!rightClickedNode || !reactFlowInstance) return
-
-    const checkZoomChange = () => {
-      const currentViewport = reactFlowInstance.getViewport()
-      if (nodePopupZoomRef.current !== null && Math.abs(currentViewport.zoom - nodePopupZoomRef.current) > 0.01) {
-        // Zoom changed - close popup
-        setRightClickedNode(null)
-        nodeClickPositionRef.current = null
-        nodePopupZoomRef.current = null
-      }
-    }
-
-    // Check for zoom changes periodically
-    const intervalId = setInterval(checkZoomChange, 100)
-
-    return () => {
-      clearInterval(intervalId)
-    }
+    updatePosition() // Correct the open point once, then only again when nav settles
+    return watchBoardViewportNav({ onSettle: updatePosition })
   }, [rightClickedNode, reactFlowInstance])
 
   // Close node popup when clicking outside (left or right click)
@@ -8915,11 +8913,13 @@ function BoardFlowInner({
       const isOnSameNode = !!target.closest(`[data-id="${rightClickedNode.id}"]`)
       if (isOnSameNode && isFrameDragAreaTarget(event.target)) return
 
-      // Background, other frames, or TipTap/chrome on this frame — dismiss
-      rightClickedNodeRef.current = null
-      setRightClickedNode(null)
-      nodeClickPositionRef.current = null
-      nodePopupZoomRef.current = null
+      // Background, other frames, or TipTap/chrome — dismiss unless this press pans/zooms the board
+      dismissMenuUnlessBoardNav(() => {
+        rightClickedNodeRef.current = null
+        setRightClickedNode(null)
+        nodeClickPositionRef.current = null
+        nodePopupZoomRef.current = null
+      })
     }
 
     // Handle right-click outside to close popup
@@ -11595,6 +11595,7 @@ function BoardFlowInner({
               kind: 'frame',
               label: labelForFlowNode(rightClickedNode),
               nodeId: rightClickedNode.id, // Selected-frame glow host
+              boardId: conversationId, // This board filter
             })
           }
           currentFillColor={

@@ -688,9 +688,9 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
       return
     }
     const TOP_CHROME_H = 104 // Island ends ~60px + mode pill under it — short landscape strip
-    const COMPOSER_FLOOR = 72 // Ask row + padding — keep this fully on screen or iOS yanks it over the tools
+    const COMPOSER_FLOOR = 108 // Stacked prompt + toolbar — keep both on screen or iOS yanks them over the tools
     const DOCK_GAP = 8 // Air between the top chrome and the dock
-    const EXTRAS_MIN = 148 // Transcript + thread chrome + composer
+    const EXTRAS_MIN = 184 // Transcript + thread chrome + stacked composer
     const KEYBOARD_OPEN_PX = 80 // Treat as keyboard-up (ignore tiny address-bar insets)
     const update = () => {
       window.scrollTo(0, 0) // iOS focus-scroll must not drag the board under the dock
@@ -740,15 +740,15 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
     const content = mapDockContentRef.current
     if (!shell || !content) {
       // Closed-opacity dock still mounted — estimate composer height until next open paint
-      setAiMapDockLiftPx(Math.round(72 + keyboardInset + 2)) // Tight to chat when estimate only
-      setAiMapDockComposerLiftPx(Math.round(72 + keyboardInset + 2)) // Same until the floor node measures
+      setAiMapDockLiftPx(Math.round(108 + keyboardInset + 2)) // Tight to stacked composer when estimate only
+      setAiMapDockComposerLiftPx(Math.round(108 + keyboardInset + 2)) // Same until the floor node measures
       return
     }
     const publish = () => {
       const h = shell.offsetHeight // Composer (+ transcript / chrome) height
       setAiMapDockLiftPx(Math.round(h + keyboardInset + 2)) // + keyboard + small gap to chat
       const floor = content.querySelector('[data-chat-map-dock-floor]') as HTMLElement | null // Chrome + Ask (no transcript)
-      const floorH = floor?.offsetHeight ?? 72 // Empty-chat extent so utility can overlap the transcript
+      const floorH = floor?.offsetHeight ?? 108 // Empty-chat extent so utility can overlap the transcript
       setAiMapDockComposerLiftPx(Math.round(floorH + keyboardInset + 2)) // Utility body stops above Ask
       // Prefer measured left (safe-area / subpixel) over geometric
       setAiMapDockLeftPx(Math.round(content.getBoundingClientRect().left))

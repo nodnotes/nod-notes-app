@@ -2305,6 +2305,12 @@ span[data-added="true"] {
       0 1px 2px 0 rgb(0 0 0 / 0.05), /* Keep the same shadow-sm lift */
       0 0 8px 0 color-mix(in srgb, var(--nod-blue) 35%, transparent); /* Light blue glow, not a second border */
   }
+  /* Draw bar Smart draw on — grey wash stays on the button; glow matches the focused prompt shadow. */
+  [data-smart-draw] {
+    box-shadow:
+      0 1px 2px 0 rgb(0 0 0 / 0.05), /* Same shadow-sm lift the button had when toggled */
+      0 0 8px 0 color-mix(in srgb, var(--nod-blue) 35%, transparent); /* Same blue glow as the prompt with the I-bar in it */
+  }
   /* Content in a set — same light blue halo as the focused Ask prompt, only while its frame is selected. */
   .react-flow__node.selected [data-in-set],
   [data-frame-selected='true'] [data-in-set],

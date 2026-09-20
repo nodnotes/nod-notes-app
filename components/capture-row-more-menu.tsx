@@ -1,10 +1,10 @@
 'use client'
 
-// Hover ⋯ on a capture row — go to capture in-tab; copy link for sharing
+// Hover ⋯ on a capture preview — go to capture, copy link, or delete the saved view
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Check, ExternalLink, Link, MoreHorizontal } from 'lucide-react'
+import { Check, ExternalLink, Link, MoreHorizontal, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { copyCaptureLink, navigateToCapture, type CaptureLinkSource } from '@/lib/capture-link'
+import { deleteCapture } from '@/lib/captures' // Remove the view, presentation membership, and chat pill
 import { cn } from '@/lib/utils'
 
 type CaptureRowMoreMenuProps = {
@@ -44,6 +45,10 @@ export function CaptureRowMoreMenu({
   const onGoToCapture = () => {
     navigateToCapture(capture, conversationId, router)
     onNavigate?.()
+  }
+
+  const onDelete = () => {
+    deleteCapture(capture.id) // Thumbnail and any open preview of this id go away
   }
 
   return (
@@ -80,6 +85,13 @@ export function CaptureRowMoreMenu({
         >
           {copied ? <Check className="h-4 w-4 mr-2" /> : <Link className="h-4 w-4 mr-2" />}
           {copied ? 'Copied' : 'Copy link'}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className="text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400" // Same danger row as presentation Delete
+          onSelect={onDelete}
+        >
+          <Trash2 className="h-4 w-4 mr-2" />
+          Delete
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

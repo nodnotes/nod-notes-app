@@ -18,6 +18,7 @@ import { bodyHtmlWithoutBoardTitle } from '@/lib/blocks/turn-into' // Title line
 import { markHtmlWithAiOrigin } from '@/lib/ai/wrap-ai-html' // Assistant chat → board keeps AI provenance
 import { cn } from '@/lib/utils'
 import { clientPointInElement, screenToLocal } from '@/lib/dom-transform' // Rotation-safe hit + grip Y
+import { watchBoardViewportNav, dismissMenuUnlessBoardNav } from '@/lib/board-nav-menu' // Re-anchor ⋮⋮ menu when pan/zoom stops; don't close on pan
 import {
   BlockActionsMenu,
   type BlockActionId,
@@ -476,6 +477,8 @@ export function TipTapBlockHandles({
     blockType: BlockTypeId
     openLeft: boolean // Anchor menu to the left of the frame when there's room
   } | null>(null)
+  const menuRef = useRef(menu) // Settle callback reads the open menu without re-subscribing every move
+  menuRef.current = menu
   // Connections strip ⋮⋮ — same Live Sync / Manual / Remove menu as the Notion mark
   const [connectionsMenu, setConnectionsMenu] = useState<{
     x: number
@@ -821,7 +824,7 @@ export function TipTapBlockHandles({
       ) {
         return
       }
-      clearBlockSelection()
+      dismissMenuUnlessBoardNav(clearBlockSelection) // Pan keeps the menu; a still click outside closes it
     }
     document.addEventListener('mousedown', onDoc, true)
     return () => document.removeEventListener('mousedown', onDoc, true)
@@ -845,6 +848,28 @@ export function TipTapBlockHandles({
     },
     [editor]
   )
+
+  // Block menu is position:fixed at click time. After pan/zoom, park it on the block again
+  // before BlockActionsMenu reveals (this watcher is registered first, so settle runs first).
+  const menuOpen = menu != null
+  useEffect(() => {
+    if (!menuOpen || !editor) return
+    return watchBoardViewportNav({
+      onSettle: () => {
+        const current = menuRef.current
+        if (!current || editor.isDestroyed) return
+        const el = blockDom(editor, current.block) // Live block box after the viewport transform
+        if (!el) return
+        const rect = el.getBoundingClientRect()
+        const next = menuPlacement(rect.left, rect.top + rect.height / 2) // Same left/right slot as open
+        setMenu((prev) => {
+          if (!prev) return prev
+          if (prev.x === next.x && prev.y === next.y && prev.openLeft === next.openLeft) return prev
+          return { ...prev, ...next }
+        })
+      },
+    })
+  }, [menuOpen, editor, menuPlacement])
 
   /** Arm the connections strip + open Live Sync / Manual / Remove (same as the Notion mark). */
   const openForConnections = useCallback(

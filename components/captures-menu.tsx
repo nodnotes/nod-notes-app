@@ -36,6 +36,7 @@ import {
 } from 'lucide-react'
 import {
   UtilityFilterOption,
+  UtilityMenuTitle,
   UtilitySearchHeader,
 } from '@/components/utility-search-header' // Sidebar: AI-chat-style search
 import { useReactFlowContext } from '@/components/react-flow-context' // Current viewport
@@ -65,7 +66,7 @@ import {
 import { cn } from '@/lib/utils' // Class merge
 import { navigateToCapture } from '@/lib/capture-link' // Present starts on the first capture's camera
 import { startPresenting } from '@/lib/presentation-present' // Hide menus while presenting
-import { CaptureRowMoreMenu } from './capture-row-more-menu' // Row hover ⋯ — go to / copy link
+import { CaptureRowMoreMenu } from './capture-row-more-menu' // Preview hover ⋯ — go to / copy link / delete
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -356,7 +357,7 @@ function PresentationHeader({
       ref={setNodeRef}
       id={`presentation-header-${presentation.id}`}
       className={cn(
-        'relative mt-0.5 flex h-7 items-center gap-1.5 rounded-md pl-1.5',
+        'relative mt-0.5 flex h-7 items-center gap-1.5 rounded-md pl-[3px]', // Presentation icon ink lines up with the Layers toggle icon
         isOver && 'bg-blue-500/10'
       )}
     >
@@ -610,6 +611,11 @@ export function CapturesPanel({
 
   const loose = sections.all[sections.all.length - 1] // Captures not under a header
   const nothingToShow = sections.grouped.length === 0 && loose.captures.length === 0
+  const captureEmptyCopy = query.trim()
+    ? 'No captures match.'
+    : thisBoardOnly
+      ? 'No captures on this board.'
+      : 'No captures yet.' // Same line under + Presentation — follows All boards / This board
 
   const renderSectionCaptures = (section: CaptureSectionModel) => {
     const inPresentation = Boolean(section.presentation) // + bars only between captures that belong to a presentation
@@ -693,10 +699,11 @@ export function CapturesPanel({
               </>
             }
           />
-          <div className="flex h-8 flex-shrink-0 items-center gap-1 px-1.5 pt-2">
+          <UtilityMenuTitle>Captures</UtilityMenuTitle>
+          <div className="flex h-8 flex-shrink-0 items-center gap-1 pl-[3px] pr-1.5 pt-1"> {/* Plus ink lines up with the Layers toggle icon */}
             <button
               type="button"
-              className="flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-[13px] font-medium text-gray-500 hover:bg-black/[0.06] dark:text-gray-400 dark:hover:bg-white/[0.08]"
+              className="flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-[13px] font-medium text-gray-900 hover:bg-black/[0.06] dark:text-gray-100 dark:hover:bg-white/[0.08]"
               title="New presentation"
               aria-label="New presentation"
               onPointerDown={(e) => e.preventDefault()}
@@ -717,6 +724,11 @@ export function CapturesPanel({
               <Scan className="h-4 w-4" /> {/* Far right of + Presentation — where Layers/Sets put ⋯ */}
             </button>
           </div>
+          {nothingToShow && (
+            <div className="px-3 py-3 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+              {captureEmptyCopy}
+            </div>
+          )}
         </>
       ) : (
         <div className="flex flex-shrink-0 items-center gap-1 px-2 pb-1.5 pt-2">
@@ -819,9 +831,9 @@ export function CapturesPanel({
         )}
       >
         {nothingToShow ? (
-          <div className="px-1 py-8 text-center text-xs text-gray-400">
-            {captures.length === 0 ? 'No captures yet' : 'No captures match'}
-          </div>
+          sidebar ? null : ( // Sidebar already shows this line under + Presentation
+            <div className="px-1 py-8 text-center text-xs text-gray-400">{captureEmptyCopy}</div>
+          )
         ) : organize === 'list' ? (
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onListDragEnd}>
             <SortableContext items={items.map((c) => c.id)} strategy={verticalListSortingStrategy}>

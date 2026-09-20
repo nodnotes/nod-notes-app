@@ -1,6 +1,6 @@
 'use client'
 
-// AI sidebar composer — Ask/Edit toggle in-box + Cursor-style + skills menu
+// AI sidebar composer — tags then +; prompt above; Auto/Ask at the toolbar's far left
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { Textarea } from '@/components/ui/textarea'
@@ -769,9 +769,9 @@ export function AiComposer({
       onDragLeave={handleDragLeave}
       onDrop={(e) => void handleDrop(e)}
     >
-      {/* Context pills sit at the top of the input box (page + selection + skills/snapshots) */}
-      {hasPills && (
-        <div className="flex flex-wrap gap-1 px-2 pt-2 pb-0.5">
+      {/* Tags first; + sits on the same row, immediately to their right (still shown with no tags) */}
+      {(hasPills || (!voice.listening && !voice.transcribing)) && (
+        <div className="flex flex-wrap items-center gap-1 px-2 pt-1.5 pb-0.5">
           {visibleLivePills.map((p) => (
             <LiveContextPill key={p.id} pill={p} onDismiss={dismissLivePill} />
           ))}
@@ -826,19 +826,13 @@ export function AiComposer({
               </button>
             </span>
           ))}
-        </div>
-      )}
-
-      <form onSubmit={onSubmit} className="relative w-full">
-        {!voice.listening && !voice.transcribing ? (
-          /* items-center keeps + / text / Ask / mic / send on one vertical midline */
-          <div className="flex items-center gap-1 pl-1 pr-1 py-1">
+          {!voice.listening && !voice.transcribing && (
             <div className="relative flex-shrink-0">
               <button
                 ref={plusBtnRef}
                 type="button"
                 className={cn(
-                  'h-8 w-8 rounded-full flex items-center justify-center transition-colors',
+                  'h-6 w-6 rounded-md flex items-center justify-center transition-colors', // Same height and corner as context tags
                   'text-gray-600 dark:text-gray-300',
                   'hover:bg-black/[0.06] dark:hover:bg-white/[0.08]',
                   plusOpen && 'bg-black/[0.08] dark:bg-white/[0.12]'
@@ -851,7 +845,7 @@ export function AiComposer({
                   setPlusOpen((o) => !o)
                 }}
               >
-                <Plus className="h-4 w-4" />
+                <Plus className="h-3.5 w-3.5" />
               </button>
 
               {plusOpen &&
@@ -967,7 +961,14 @@ export function AiComposer({
                 onChange={(e) => void onFilePicked(e)}
               />
             </div>
+          )}
+        </div>
+      )}
 
+      <form onSubmit={onSubmit} className="relative w-full">
+        {!voice.listening && !voice.transcribing ? (
+          /* Prompt above the toolbar; Auto / Ask are the far-left controls under it */
+          <div className="flex flex-col gap-0.5 pl-1 pr-1 py-1">
             <Textarea
               ref={textareaRef}
               value={input}
@@ -998,14 +999,16 @@ export function AiComposer({
               }
               disabled={false}
               className={cn(
-                'block min-h-[32px] max-h-[200px] resize-none border-0 bg-transparent shadow-none',
-                'text-base leading-5 sm:text-sm flex-1 self-center',
+                'block w-full min-h-[36px] max-h-[200px] resize-none border-0 bg-transparent shadow-none', // Full width above the toolbar
+                'text-base leading-5 sm:text-sm',
                 'placeholder:text-gray-400 dark:placeholder:text-gray-500',
                 'caret-gray-900 dark:caret-gray-100', // I-bar matches ink so it shows on the grey box
                 'focus-visible:ring-0 focus-visible:ring-offset-0',
                 'px-1 py-[6px]'
               )}
             />
+            {/* Toolbar under the prompt — far left: Auto / Ask; right: mic + send */}
+            <div className="flex items-center gap-1 w-full">
 
             <AiModelSelect
               value={modelId}
@@ -1047,7 +1050,7 @@ export function AiComposer({
               type="button"
               disabled={!voice.supported || isLoading}
               className={cn(
-                'h-8 w-8 rounded-md flex-shrink-0 flex items-center justify-center transition-colors',
+                'ml-auto h-8 w-8 rounded-md flex-shrink-0 flex items-center justify-center transition-colors', // Pin mic + send to the right of the toolbar
                 'text-gray-600 dark:text-gray-300 hover:bg-black/[0.06] dark:hover:bg-white/[0.08]',
                 'focus-visible:outline-none',
                 (!voice.supported || isLoading) && 'opacity-40 cursor-not-allowed'
@@ -1080,6 +1083,7 @@ export function AiComposer({
                 <ArrowUp className="h-4 w-4" />
               )}
             </Button>
+            </div>
           </div>
         ) : (
           /* Cursor-style strip: draft above, + · waveform · timer · X · check */
