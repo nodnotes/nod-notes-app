@@ -89,7 +89,7 @@ export const DOCS_CATEGORIES: DocsCategory[] = [
           {
             type: 'ul',
             items: [
-              'Capture notes and presentations as linked frames on a board.',
+              'Capture notes and decks as linked frames on a board.',
               'Brainstorm with Nod AI in Ask or Edit mode.',
               'Import Notion pages and databases onto a board and keep them in sync.',
               'Study with contextual flashcards and spaced repetition.',
@@ -597,7 +597,7 @@ export const DOCS_CATEGORIES: DocsCategory[] = [
           },
           {
             type: 'p',
-            text: 'Public boards can open at /view/{id} — a full-screen view suited for presentations and read-only browsing. Showcase boards on the marketing homepage use the same path.',
+            text: 'Public boards can open at /view/{id} — a full-screen view suited for decks and read-only browsing. Showcase boards on the marketing homepage use the same path.',
           },
           {
             type: 'h2',

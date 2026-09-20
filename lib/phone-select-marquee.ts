@@ -109,7 +109,7 @@ export function attachPhoneSelectMarquee(root: HTMLElement, store: RfStore) {
     pointerId = event.pointerId // Capture this finger
     prevNodeCount = 0
     prevEdgeCount = 0
-    state.resetSelectedElements() // New rect replaces the old selection
+    // Do not reset selection yet — a tap must still reach onPaneClick (deselect / I-bar)
     store.setState({
       userSelectionRect: { width: 0, height: 0, startX: x, startY: y, x, y }, // Seed; active after first move
     })
@@ -129,6 +129,9 @@ export function attachPhoneSelectMarquee(root: HTMLElement, store: RfStore) {
     const dx = pos.x - start.startX // Pane-space drift from down
     const dy = pos.y - start.startY
     if (!state.userSelectionActive && dx * dx + dy * dy <= PANE_TAP_SLOP_PX * PANE_TAP_SLOP_PX) return // Still a tap — keep onPaneClick
+    if (!state.userSelectionActive) {
+      state.resetSelectedElements() // Real marquee — replace prior selection now (not on finger-down)
+    }
     const next: PaneRect = {
       startX: start.startX,
       startY: start.startY,

@@ -7,6 +7,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react' //
 import { watchBoardViewportNav } from '@/lib/board-nav-menu' // Hide while the board pans; reveal when it stops
 import {
   Check,
+  ChevronLeft, // Phone sets drill-in — back to the Frame rows
   ChevronRight,
   Columns2,
   Columns3,
@@ -608,6 +609,8 @@ export function BlockActionsMenu({
   const colorRowRef = useRef<HTMLButtonElement>(null) // Align frame Color flyout to Color row
   const [lastFrameColor, setLastFrameColor] = useState<FrameLastColor | null>(null) // Last used fill/border
   const [hideForBoardNav, setHideForBoardNav] = useState(false) // Same as the text-select menu: gone while panning
+  // Phone / touch: Add to set cannot open a side flyout (clamps on top of Search) — drill in instead
+  const [stackSetsInline, setStackSetsInline] = useState(false)
 
   // Stay mounted (parents re-anchor on the same settle) but disappear until the viewport is still
   useEffect(() => {
@@ -615,6 +618,15 @@ export function BlockActionsMenu({
       onStart: () => setHideForBoardNav(true), // Pan/zoom frame → hide
       onSettle: () => setHideForBoardNav(false), // ~150ms after the last transform → show again
     })
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const mq = window.matchMedia('(pointer: coarse)') // Phone / pen — no room for a right flyout
+    const sync = () => setStackSetsInline(mq.matches)
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
   }, [])
 
   useEffect(() => {
@@ -1069,6 +1081,38 @@ export function BlockActionsMenu({
         }
       }}
     >
+      {/* Phone: Add to set drills into this card — New set is a row, not a flyout clamped on Search */}
+      {openSubmenu === 'sets' && onAddToSet && stackSetsInline ? (
+        <>
+          <div className="flex items-center gap-0.5 px-1 pt-1 pb-1">
+            <button
+              type="button"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]"
+              aria-label="Back"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setOpenSubmenu(null) // Return to Frame rows
+              }}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <div className="px-1.5 text-xs text-gray-500 dark:text-gray-400">Add to set</div>
+          </div>
+          <div data-tt-menu-body className="flex min-h-0 flex-col overflow-y-auto px-0.5 pb-0.5">
+            <SetsPickerMenu
+              onChoose={(setId) => {
+                onAddToSet(setId) // Caller records the frame
+                onClose()
+              }}
+            />
+          </div>
+        </>
+      ) : null}
+
+      {!(openSubmenu === 'sets' && stackSetsInline) ? (
+      <>
       <div className="px-1.5 pt-1 pb-1">
         <input
           ref={inputRef}
@@ -1259,9 +1303,11 @@ export function BlockActionsMenu({
           </Button>
         ))}
       </div>
+      </>
+      ) : null}
 
-      {/* Add to set — list of sets + New set. Separate from the Sets utility sidebar. */}
-      {openSubmenu === 'sets' && onAddToSet && (
+      {/* Add to set — desktop flyout. Phone drills in above so New set is not clamped on Search. */}
+      {openSubmenu === 'sets' && onAddToSet && !stackSetsInline && (
         <div
           data-tt-menu-flyout="main"
           className="absolute z-[1001] w-[200px] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f]"
@@ -1864,7 +1910,7 @@ export function BlockActionsMenu({
         </div>
       )}
 
-      {lastEditedLabel && (
+      {lastEditedLabel && !(openSubmenu === 'sets' && stackSetsInline) && (
         <div className="px-2.5 py-1.5 text-[11px] text-gray-400 border-t border-gray-100 dark:border-[#2f2f2f] mt-0.5">
           {lastEditedLabel}
         </div>

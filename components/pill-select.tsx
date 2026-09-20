@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react' // Local selected value + parent sync
 import { ChevronDown } from 'lucide-react' // Phone mode dropdown chevron
 import { cn } from '@/lib/utils' // Class merge
-import { usePhoneModeMenu } from './phone-mode-menu-context' // Portal hosts for tools (inside) and undo/redo (right)
+import { usePhoneModeMenu } from './phone-mode-menu-context' // Portal host for tools (inside the pill)
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,7 +27,7 @@ interface PillSelectProps {
 
 export function PillSelect({ options, value, onChange, className }: PillSelectProps) {
   const [selectedValue, setSelectedValue] = useState(value || options[0]?.value || '')
-  const { setToolsHost, setUndoHost, phoneTools } = usePhoneModeMenu() // Portals; overflow → pill (left-aligned)
+  const { setToolsHost, phoneTools } = usePhoneModeMenu() // Portal; overflow → pill (left-aligned)
   const selectedLabel = options.find((option) => option.value === selectedValue)?.label ?? options[0]?.label // Trigger text
 
   // Stay in sync when the parent drives mode (toolbar / context)
@@ -45,7 +45,7 @@ export function PillSelect({ options, value, onChange, className }: PillSelectPr
   return (
     <div
       className={cn(
-        'relative flex items-stretch w-fit pointer-events-auto', // Cluster sizes to dropdown + tools + undo
+        'relative flex items-stretch w-fit pointer-events-auto', // Cluster sizes to dropdown + tools
         phoneTools ? 'ml-2' : 'mx-auto' // Tools in pill → left-aligned; segmented control stays centered
       )}
     >
@@ -53,7 +53,7 @@ export function PillSelect({ options, value, onChange, className }: PillSelectPr
         data-edit-menu-pill // Mode toggle shell; Filter/Sort aligns to [data-edit-menu-select] inside
         className={cn(
           // Same rounded-xl grey shell as utility mode toggles; hairline matches Ask / chat composer
-          'relative z-10 flex items-center gap-0.5 px-1 py-1 rounded-xl bg-[var(--nod-chat-prompt)] border border-black/10 dark:border-white/10 shadow-sm', // Grey + hairline so the pill reads on the board
+          'relative z-10 flex items-center gap-0.5 px-1 py-1 rounded-xl bg-[var(--nod-chat-prompt)] border border-black/10 dark:border-white/10 shadow-sm overflow-visible', // Grey + hairline; overflow visible so Smart draw glow isn’t clipped by the shell
           className
         )}
       >
@@ -82,9 +82,9 @@ export function PillSelect({ options, value, onChange, className }: PillSelectPr
               </DropdownMenuContent>
             </DropdownMenu>
             <div
-              ref={setToolsHost} // EditorToolbar portals this mode’s tools here (not undo/redo)
+              ref={setToolsHost} // EditorToolbar portals undo|/|mode tools here
               data-phone-mode-tools
-              className="flex items-center gap-0 overflow-x-auto max-w-[min(calc(100vw-11rem),420px)] min-h-7" // gap-0: slash margins space the 6 Draw icons evenly
+              className="flex items-center gap-0 overflow-x-auto max-w-[min(calc(100vw-5rem),480px)] min-h-7" // gap-0: slash margins space groups; undo lives inside now
             />
           </>
         ) : (
@@ -109,13 +109,6 @@ export function PillSelect({ options, value, onChange, className }: PillSelectPr
           })
         )}
       </div>
-      {phoneTools ? (
-        <div
-          ref={setUndoHost} // Toolbar portals undo/redo here — right of the toggle, outside it
-          data-phone-undo
-          className="relative z-0 flex items-center gap-0.5 py-1 flex-shrink-0 empty:hidden rounded-r-xl bg-gray-50 dark:bg-[#0f0f0f]" // Board fill under the tools cap; padding/overlap in CSS so the arrows don’t move
-        />
-      ) : null}
     </div>
   )
 }

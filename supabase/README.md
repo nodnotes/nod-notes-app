@@ -27,6 +27,9 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260920212614_utility_preview_phone_tap` — Utility preview ⋯ inset + solid hover; Layers/Sets click-again deselect; filter prefs; phone pan/tap select
+- `20260920185400_top_bar_chrome_fit` — Top-bar chrome fit (shrink/dock chat when path would collide); boards nav height; utility thumb side inset
+- `20260920172227_board_menus_sets_this_board` — Board menus through pan/zoom; Sets This board; Captures Delete; utility titles under search
 - `20260920143359_utility_create_rows_calendar_schedule` — Utility + Group/+ Set/+ Presentation with organize ⋯ (Capture on Views); account calendar connections; Sets Schedule (FSRS-6)
 - `20260919210149_smart_draw_frames` — Smart Draw shapes are frames with that silhouette, same chrome as any other frame
 - `20260919203843_smart_draw` — Smart Draw snaps pencil strokes to shapes, lines, or text frames; circles include wobbly ovals; utility + / filter menus match sidebar chrome

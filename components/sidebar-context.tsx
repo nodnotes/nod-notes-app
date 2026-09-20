@@ -13,7 +13,7 @@ import {
 } from 'react'
 import { getStoredLogoDrawing, NN_LOGO_DRAWING_STORAGE_KEY } from './personalize-ai-modal'
 import { ACCOUNT_CHANGED_EVENT } from '@/lib/auth-session-isolation'
-import { SETS_REVEAL_EVENT } from '@/lib/sets-list' // Add to set → open this sidebar on Sets
+import { SETS_REVEAL_EVENT, clearSelectedSet } from '@/lib/sets-list' // Reveal Sets; clear halo when leaving
 import { SetMembershipSync } from '@/components/set-membership-sync' // Restamp frames that belong to a set
 import {
   planTopBarChromeFit,
@@ -640,6 +640,7 @@ export function SidebarContextProvider({
   }, [])
 
   const setUtilitySidebarMode = useCallback((mode: UtilitySidebarMode) => {
+    if (mode !== 'flashcards') clearSelectedSet() // Leaving Sets drops the board halo
     setUtilitySidebarModeState(mode) // Switch layers / sets / capture
     if (!previewModeRef.current) persistUtilitySidebarMode(mode) // Remember across reload
   }, [])

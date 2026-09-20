@@ -81,6 +81,11 @@ import { createLongPressController } from '@/lib/long-press' // Phone long-press
 import { createPhoneUnselectedFrameDragController } from '@/lib/phone-unselected-frame-drag' // Phone hold → drag unselected frames
 import { PhoneFrameDragProvider } from './phone-frame-drag-context' // Blue move border during phone hold-drag
 import { attachPhoneSelectMarquee } from '@/lib/phone-select-marquee' // Touch select-tool marquee (RF Pane is mouse-only)
+import { attachPhonePanTapSlop } from '@/lib/phone-pan-tap-slop' // Phone pan tool: don't let d3 steal taps as nav
+import {
+  applyD3PaneClickSlop,
+  attachPaneSelectClickSlop,
+} from '@/lib/pane-click-slop' // Finger jitter still places the I-bar (d3 + desktop select)
 import { attachFreehandLassoSelect } from '@/lib/freehand-lasso-select' // Draw bar Lasso — freehand trail, auto-closed
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
@@ -123,7 +128,9 @@ import { beginFrameDragging, endFrameDragging, isFrameDragging } from '@/lib/fra
 import {
   clearFrameTextEditActive,
   isFrameTextEditActive,
-} from '@/lib/frame-text-edit' // First-select Delete vs TipTap text edit
+  suppressEditorAutoSelect,
+} from '@/lib/frame-text-edit' // First-select Delete vs TipTap text edit; pane-deselect guard
+import { attachPhoneFrameTapSelect } from '@/lib/phone-frame-tap-select' // Phone: select frame on finger-up (click is flaky)
 import { readFrameChromePad } from '@/lib/frame-chrome-offset' // Persist fill-origin, not chrome-shifted RF xy
 import { takeBoardCapture, getCaptures, readCaptureCameraInput } from '@/lib/captures' // Board-menu Capture view
 import { captureLinkHtmlFromText } from '@/lib/capture-link-html' // I-bar paste → capture chip not raw URL
@@ -2146,6 +2153,10 @@ function BoardFlowInner({
   const selectedNodeIdRef = useRef<string | null>(null) // Track selected node ID
   // Frame ids that just finished a real move — ignore onNodeClick so drag never selects
   const justDraggedFrameRef = useRef<Set<string>>(new Set())
+  // Phone pointerup just selected — same-gesture click must not open the frame menu
+  const justPhoneSelectedRef = useRef<Set<string>>(new Set())
+  // Phone/desktop pane tap just deselected — same-gesture click must not place the I-bar
+  const justPaneDeselectedRef = useRef(false)
   // Position at drag-start — distinguish tap (RF fires drag start at threshold 0) from a real move
   const frameDragOriginRef = useRef<{ id: string; x: number; y: number } | null>(null)
   // Track selected node IDs for restoring selection after pane click (when zoom !== 100%)
@@ -7413,6 +7424,94 @@ function BoardFlowInner({
     return () => document.removeEventListener('pointerdown', onRightPress, { capture: true })
   }, [embedded, markFrameMenuRightPress, openFrameMenuAt])
 
+  // d3-zoom clickDistance defaults to 0 — 1px pan/jitter skips onPaneClick (I-bar / deselect)
+  useEffect(() => {
+    if (embedded) return // Embed host owns gestures
+    return applyD3PaneClickSlop(rfStore) // Pan-tool taps (desktop + phone) keep a click through ~slop
+  }, [embedded, rfStore])
+
+  // Desktop select: swallow pane mousemove inside slop so selectionOnDrag never kills the click
+  useEffect(() => {
+    if (embedded || isMobileMode || !marqueeArmed) return // Phone has attachPhoneSelectMarquee; pan tool uses d3
+    const root = boardRootRef.current
+    if (!root) return
+    return attachPaneSelectClickSlop(root)
+  }, [embedded, isMobileMode, marqueeArmed])
+
+  // Phone pan tool: d3 touch ignores clickDistance — gate touchmove so taps aren't eaten as nav
+  useEffect(() => {
+    if (embedded || !isMobileMode) return
+    if (marqueeArmed || insertSpaceArmed || eraserArmed || isDrawing || lassoArmed) return // Select / draw own the finger
+    const root = boardRootRef.current
+    if (!root) return
+    return attachPhonePanTapSlop(root)
+  }, [embedded, isMobileMode, marqueeArmed, insertSpaceArmed, eraserArmed, isDrawing, lassoArmed])
+
+  // Phone: select / deselect on finger-up (synthetic click often misses after pan/jitter)
+  useEffect(() => {
+    if (embedded || !isMobileMode) return
+    const root = boardRootRef.current
+    if (!root) return
+
+    const deselectFrames = () => {
+      suppressEditorAutoSelect(500) // TipTap focus lag must not snap the frame back
+      clearFrameTextEditActive()
+      selectedNodeIdsRef.current = [] // Sync before the following click reads this ref
+      justPaneDeselectedRef.current = true // onPaneClick must not place I-bar this gesture
+      window.setTimeout(() => {
+        justPaneDeselectedRef.current = false
+      }, 350)
+      const ae = document.activeElement as HTMLElement | null
+      if (ae && ae !== document.body && typeof ae.blur === 'function') {
+        if (ae.closest?.('.react-flow__node')) ae.blur()
+      }
+      setNodes((nds) => nds.map((n) => (n.selected ? { ...n, selected: false } : n)))
+      try {
+        rfStore.getState().resetSelectedElements()
+      } catch {
+        // Store may not be ready
+      }
+      setIBarPosition(null)
+      setIBarInputAnchor(null)
+      iBarArmedRef.current = false
+    }
+
+    return attachPhoneFrameTapSelect(root, {
+      resolveUnselectedFrameId: (clientX, clientY, target) => {
+        const el = target instanceof Element ? target : document.elementFromPoint(clientX, clientY)
+        if (!el) return null
+        const nodeEl = el.closest('.react-flow__node') as HTMLElement | null
+        if (!nodeEl) return null
+        const id = nodeEl.getAttribute('data-id')
+        if (!id) return null
+        const node = nodesRef.current.find((n) => n.id === id)
+        if (!node || node.selected) return null // Already selected — caret / menu own the tap
+        if (node.type !== 'chatPanel' && node.type !== 'blockGroup') return null
+        return id
+      },
+      hasSelectedFrame: () =>
+        nodesRef.current.some(
+          (n) => n.selected && (n.type === 'chatPanel' || n.type === 'blockGroup')
+        ) || selectedNodeIdsRef.current.length > 0,
+      selectFrame: (nodeId) => {
+        clearFrameTextEditActive() // First select → Delete removes frame
+        const ae = document.activeElement as HTMLElement | null
+        if (ae?.closest?.('.react-flow__node .ProseMirror, .react-flow__node [contenteditable="true"]')) {
+          ae.blur()
+        }
+        justPhoneSelectedRef.current.add(nodeId) // Click that follows must not open the menu
+        window.setTimeout(() => justPhoneSelectedRef.current.delete(nodeId), 350)
+        setNodes((nds) =>
+          nds.map((n) => {
+            if (n.id === nodeId) return { ...n, selected: true }
+            return n.selected ? { ...n, selected: false } : n
+          })
+        )
+      },
+      deselectFrames,
+    })
+  }, [embedded, isMobileMode, setNodes, rfStore])
+
   // Phone select tool: RF Pane marquee is mouse-only; drive the same store rect from touch/pen
   useEffect(() => {
     if (embedded || !isMobileMode || !marqueeArmed) return // Pan tool / desktop / ink tools keep RF defaults
@@ -10577,6 +10676,7 @@ function BoardFlowInner({
           const alreadySelected = nodesRef.current.some((n) => n.id === node.id && n.selected)
           // Phone: first tap selects only; tap drag strip again → frame menu (unchanged)
           if (isMobileMode) {
+            if (justPhoneSelectedRef.current.has(node.id)) return // Pointerup already selected this gesture
             if (alreadySelected && isFrameDragAreaTarget(event.target)) {
               openFrameMenuAt(event.clientX, event.clientY, node as Node<ChatPanelNodeData>) // Opens or toggles closed
               return
@@ -10654,9 +10754,31 @@ function BoardFlowInner({
             if (inFrame) ae.blur()
           }
 
-          // If a panel is selected, let React Flow deselect — don't place I-bar on that click
-          const hasSelectedPanel = selectedNodeIdsRef.current.length > 0
+          // Phone finger-up already cleared selection — don't place I-bar on the follow-up click
+          if (justPaneDeselectedRef.current) {
+            justPaneDeselectedRef.current = false
+            setIBarPosition(null)
+            setIBarInputAnchor(null)
+            iBarArmedRef.current = false
+            return
+          }
+
+          // Live nodes + ref — ref alone lagged a frame after phone pointerup select
+          const hasSelectedPanel =
+            selectedNodeIdsRef.current.length > 0 ||
+            nodesRef.current.some(
+              (n) => n.selected && (n.type === 'chatPanel' || n.type === 'blockGroup')
+            )
           if (hasSelectedPanel) {
+            // Deselect in this click (don't only rely on RF resetSelectedElements after us)
+            suppressEditorAutoSelect(500)
+            clearFrameTextEditActive()
+            selectedNodeIdsRef.current = []
+            justPaneDeselectedRef.current = true
+            window.setTimeout(() => {
+              justPaneDeselectedRef.current = false
+            }, 350)
+            setNodes((nds) => nds.map((n) => (n.selected ? { ...n, selected: false } : n)))
             setIBarPosition(null)
             setIBarInputAnchor(null)
             iBarArmedRef.current = false
@@ -10728,7 +10850,9 @@ function BoardFlowInner({
         // Sticky tool / Draw Lasso owns plain left-drag; Shift flips for one gesture (marquee↔pan). Embed always pans.
         panOnDrag={previewLive ? panOnDragSetting : false}
         selectionOnDrag={
-          previewLive && !embedded && marqueeArmed && !shiftHeld // Shift held → pan, not marquee
+          // Phone uses attachPhoneSelectMarquee — RF selectionOnDrag forces isSelecting and
+          // drops Pane onClick (mouse-only), so empty-board deselect/I-bar never fired on touch.
+          previewLive && !embedded && !isMobileMode && marqueeArmed && !shiftHeld
         }
         zoomOnScroll={previewLive && !navScrollMode && !isDrawing && !eraserArmed && !hideMapChrome}
         zoomOnPinch={previewLive && !isDrawing && !eraserArmed} // Homepage still pinches; plain wheel scrolls the page

@@ -11,9 +11,9 @@ export const SHOWCASE_BOARD_SLOTS: ShowcaseBoardSlot[] = [
   {
     slug: 'brainstorm',
     envKey: 'NEXT_PUBLIC_SHOWCASE_BRAINSTORM_BOARD_ID',
-    title: 'Notes and presentations',
+    title: 'Notes and decks',
     description:
-      'Capture ideas as frames on a board, then rearrange them into a clear presentation without leaving the same space.',
+      'Capture ideas as frames on a board, then rearrange them into a clear deck without leaving the same space.',
   },
   {
     slug: 'workflow',

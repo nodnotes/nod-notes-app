@@ -74,6 +74,7 @@ import { setFramePanelSelected } from '@/lib/frame-panel-selected' // DB NodeVie
 import {
   clearFrameTextEditActive,
   setFrameTextEditActive,
+  isEditorAutoSelectSuppressed,
 } from '@/lib/frame-text-edit' // Select-before-caret: Delete removes frame until caret is placed
 import {
   fillOriginFromFlowPosition,
@@ -5809,6 +5810,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const handleEditorActiveChange = useCallback((isActive: boolean) => {
     editorActiveRef.current = isActive
     if (isActive && !selected) {
+      if (isEditorAutoSelectSuppressed()) return // Pane just deselected — don't snap it back
       // Editor is active (focused or has selection) but panel is not selected - auto-select it
       // First deselect all other nodes, then select this one
       setNodes((nodes) =>

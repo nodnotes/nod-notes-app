@@ -1,4 +1,4 @@
-// Board view captures + presentations (local until persisted). Searchable by board path, date/time, and captured words.
+// Board view captures + decks (local until persisted). Searchable by board path, date/time, and captured words.
 
 import { htmlToPlain } from '@/lib/ai/context-pack' // Strip frame HTML → searchable text
 import { boardTitleOrDefault, DEFAULT_BOARD_TITLE } from '@/lib/board-title' // Capture path uses the same empty-board name
@@ -6,7 +6,8 @@ import { boardRotationRef } from '@/lib/board-rotation' // Live camera heading a
 import { readScrollModePreference } from '@/lib/capture-link' // Free-nav Scroll vs Zoom at capture time
 
 const CAPTURES_KEY = 'nodnotes-board-captures' // localStorage: capture list
-const PRESENTATIONS_KEY = 'nodnotes-board-presentations' // localStorage: presentation list
+const DECKS_KEY = 'nodnotes-board-decks' // localStorage: deck list
+const LEGACY_PRESENTATIONS_KEY = 'nodnotes-board-presentations' // Migrate old key once
 
 /** Saved camera/region of a board (timestamp + path + words). */
 export type BoardCapture = {
@@ -29,11 +30,11 @@ export type CaptureCameraInput = {
 }
 
 /** Ordered set of captures to step through later. */
-export type BoardPresentation = {
+export type BoardDeck = {
   id: string // UUID
   name: string // Display title (search key)
   createdAt: string // ISO
-  captureIds: string[] // Captures in this presentation
+  captureIds: string[] // Captures in this deck
   collapsed?: boolean // Closed hides captures until the name is clicked
 }
 
@@ -46,15 +47,15 @@ export type CapturePathBoard = {
 
 type CaptureListener = () => void // Store subscribers (menus + composer)
 
-const captureListeners = new Set<CaptureListener>() // Capture/presentation list
+const captureListeners = new Set<CaptureListener>() // Capture/deck list
 const chatListeners = new Set<CaptureListener>() // Chat-attached capture ids
 
 let capturesCache: BoardCapture[] | null = null // Stable snapshot for useSyncExternalStore
-let presentationsCache: BoardPresentation[] | null = null // Stable snapshot
+let decksCache: BoardDeck[] | null = null // Stable snapshot
 let chatCaptureIds: string[] = [] // In-memory ids attached to the composer
 let chatCapturesCache: BoardCapture[] = [] // Stable resolved pills
 
-/** Notify capture/presentation list subscribers. */
+/** Notify capture/deck list subscribers. */
 function notifyCaptures() {
   captureListeners.forEach((fn) => fn())
 }
@@ -64,7 +65,7 @@ function notifyChat() {
   chatListeners.forEach((fn) => fn())
 }
 
-/** Subscribe to capture/presentation list changes. */
+/** Subscribe to capture/deck list changes. */
 export function subscribeCaptures(fn: CaptureListener): () => void {
   captureListeners.add(fn)
   return () => {
@@ -114,24 +115,29 @@ function setCaptures(next: BoardCapture[]) {
   notifyCaptures()
 }
 
-/** Read presentations (newest first). SSR → empty. Cached for useSyncExternalStore. */
-export function getPresentations(): BoardPresentation[] {
+/** Read decks (newest first). SSR → empty. Cached for useSyncExternalStore. */
+export function getDecks(): BoardDeck[] {
   if (typeof window === 'undefined') return []
-  if (presentationsCache) return presentationsCache
+  if (decksCache) return decksCache
   try {
-    const raw = localStorage.getItem(PRESENTATIONS_KEY)
-    const list = raw ? (JSON.parse(raw) as BoardPresentation[]) : []
-    presentationsCache = Array.isArray(list) ? list : []
+    const raw = localStorage.getItem(DECKS_KEY) ?? localStorage.getItem(LEGACY_PRESENTATIONS_KEY) // Prefer new key; migrate old
+    const list = raw ? (JSON.parse(raw) as BoardDeck[]) : []
+    decksCache = Array.isArray(list) ? list : []
+    if (localStorage.getItem(DECKS_KEY) == null && localStorage.getItem(LEGACY_PRESENTATIONS_KEY) != null) {
+      localStorage.setItem(DECKS_KEY, JSON.stringify(decksCache)) // Copy onto the deck key
+      localStorage.removeItem(LEGACY_PRESENTATIONS_KEY) // Drop the old presentations key
+    }
   } catch {
-    presentationsCache = []
+    decksCache = []
   }
-  return presentationsCache
+  return decksCache
 }
 
-/** Persist presentations and notify. */
-function setPresentations(next: BoardPresentation[]) {
-  presentationsCache = next
-  localStorage.setItem(PRESENTATIONS_KEY, JSON.stringify(next))
+/** Persist decks and notify. */
+function setDecks(next: BoardDeck[]) {
+  decksCache = next
+  localStorage.setItem(DECKS_KEY, JSON.stringify(next))
+  localStorage.removeItem(LEGACY_PRESENTATIONS_KEY) // Keep only the deck key after writes
   notifyCaptures()
 }
 
@@ -198,23 +204,23 @@ export function filterCaptures(
   return scoped.filter((c) => captureSearchHaystack(c).includes(q))
 }
 
-/** Filter presentations by name. */
-export function filterPresentations(
-  presentations: BoardPresentation[],
+/** Filter decks by name. */
+export function filterDecks(
+  decks: BoardDeck[],
   query: string
-): BoardPresentation[] {
+): BoardDeck[] {
   const q = query.trim().toLowerCase()
-  if (!q) return presentations
-  return presentations.filter((p) => p.name.toLowerCase().includes(q))
+  if (!q) return decks
+  return decks.filter((d) => d.name.toLowerCase().includes(q))
 }
 
-/** Next unused "Presentation" / "Presentation 2" name. */
-export function nextPresentationName(existing: BoardPresentation[]): string {
+/** Next unused "Deck" / "Deck 2" name. */
+export function nextDeckName(existing: BoardDeck[]): string {
   const used = new Set(existing.map((p) => p.name))
-  if (!used.has('Presentation')) return 'Presentation'
+  if (!used.has('Deck')) return 'Deck'
   let n = 2
-  while (used.has(`Presentation ${n}`)) n += 1
-  return `Presentation ${n}`
+  while (used.has(`Deck ${n}`)) n += 1
+  return `Deck ${n}`
 }
 
 type QueryDataGetter = (key: unknown[]) => unknown // react-query getQueryData
@@ -464,13 +470,13 @@ export async function takeBoardCaptureSelected(
   return addCapture({ ...input, imageDataUrl })
 }
 
-/** Remove one capture, drop it from presentations, and dismiss its chat pill. */
+/** Remove one capture, drop it from decks, and dismiss its chat pill. */
 export function deleteCapture(id: string): void {
   setCaptures(getCaptures().filter((c) => c.id !== id)) // Drop the saved view
-  const presentations = getPresentations() // Headers that may still list this id
-  if (presentations.some((p) => p.captureIds.includes(id))) {
-    setPresentations(
-      presentations.map((p) =>
+  const decks = getDecks() // Headers that may still list this id
+  if (decks.some((p) => p.captureIds.includes(id))) {
+    setDecks(
+      decks.map((p) =>
         p.captureIds.includes(id)
           ? { ...p, captureIds: p.captureIds.filter((captureId) => captureId !== id) } // No dangling slide
           : p
@@ -491,9 +497,9 @@ export function addCapture(input: Omit<BoardCapture, 'id' | 'createdAt'>): Board
   return capture
 }
 
-/** Ids that sit under a presentation header (not the loose list). */
-function groupedCaptureIds(presentations: BoardPresentation[]): Set<string> {
-  return new Set(presentations.flatMap((p) => p.captureIds)) // Every membership, including duplicates
+/** Ids that sit under a deck header (not the loose list). */
+function groupedCaptureIds(decks: BoardDeck[]): Set<string> {
+  return new Set(decks.flatMap((p) => p.captureIds)) // Every membership, including duplicates
 }
 
 /** Replace capture list order (ids must cover the current list). */
@@ -509,7 +515,7 @@ export function setCaptureOrder(captureIds: string[]): void {
 
 /** Reorder captures that are not under a header; grouped rows keep their slots. */
 export function setUngroupedCaptureOrder(ungroupedIds: string[]): void {
-  const grouped = groupedCaptureIds(getPresentations()) // Slots that must stay put
+  const grouped = groupedCaptureIds(getDecks()) // Slots that must stay put
   const byId = new Map(getCaptures().map((c) => [c.id, c])) // Id → row
   const queue = ungroupedIds
     .map((id) => byId.get(id))
@@ -537,7 +543,7 @@ export function insertNewCaptureAt(capture: BoardCapture, index: number): void {
 
 /** Insert a new capture among loose rows (index is within the ungrouped list, not global). */
 export function insertUngroupedCaptureAt(capture: BoardCapture, index: number): void {
-  const grouped = groupedCaptureIds(getPresentations()) // Skip header members when counting
+  const grouped = groupedCaptureIds(getDecks()) // Skip header members when counting
   const list = getCaptures().filter((c) => c.id !== capture.id) // takeBoardCapture already prepended it
   let seen = 0 // How many loose rows we've passed
   let global = list.length // Default: append (trailing +)
@@ -553,24 +559,24 @@ export function insertUngroupedCaptureAt(capture: BoardCapture, index: number): 
   setCaptures(list)
 }
 
-/** Create a presentation seeded with the given capture ids. */
-export function createPresentation(captureIds: string[]): BoardPresentation {
-  const existing = getPresentations()
-  const presentation: BoardPresentation = {
+/** Create a deck seeded with the given capture ids. */
+export function createDeck(captureIds: string[]): BoardDeck {
+  const existing = getDecks()
+  const deck: BoardDeck = {
     id: crypto.randomUUID(),
-    name: nextPresentationName(existing),
+    name: nextDeckName(existing),
     createdAt: new Date().toISOString(),
     captureIds: [...new Set(captureIds)],
   }
-  setPresentations([presentation, ...existing])
-  return presentation
+  setDecks([deck, ...existing])
+  return deck
 }
 
-/** Append capture ids onto an existing presentation (deduped). */
-export function addCapturesToPresentation(presentationId: string, captureIds: string[]): void {
-  setPresentations(
-    getPresentations().map((p) => {
-      if (p.id !== presentationId) return p
+/** Append capture ids onto an existing deck (deduped). */
+export function addCapturesToDeck(deckId: string, captureIds: string[]): void {
+  setDecks(
+    getDecks().map((p) => {
+      if (p.id !== deckId) return p
       const ids = [...new Set([...p.captureIds, ...captureIds])]
       return { ...p, captureIds: ids }
     })
@@ -578,30 +584,30 @@ export function addCapturesToPresentation(presentationId: string, captureIds: st
 }
 
 /**
- * Move a capture under a presentation header, or back to the loose list.
- * Membership is exclusive: the capture leaves every other presentation.
- * `presentationId` null = ungrouped. `index` is within that section.
+ * Move a capture under a deck header, or back to the loose list.
+ * Membership is exclusive: the capture leaves every other deck.
+ * `deckId` null = ungrouped. `index` is within that section.
  */
-export function moveCaptureUnderPresentation(
+export function moveCaptureUnderDeck(
   captureId: string,
-  presentationId: string | null,
+  deckId: string | null,
   index: number
 ): void {
-  const stripped = getPresentations().map((p) => ({
+  const stripped = getDecks().map((p) => ({
     ...p,
     captureIds: p.captureIds.filter((id) => id !== captureId), // Leave every header first
   }))
-  const next = presentationId
+  const next = deckId
     ? stripped.map((p) => {
-        if (p.id !== presentationId) return p
+        if (p.id !== deckId) return p
         const ids = [...p.captureIds]
         const i = Math.max(0, Math.min(index, ids.length)) // Clamp into the header's list
         ids.splice(i, 0, captureId) // Sit under that header at `index`
         return { ...p, captureIds: ids }
       })
     : stripped
-  setPresentations(next)
-  if (presentationId) return // Header order is captureIds; global order can stay
+  setDecks(next)
+  if (deckId) return // Header order is captureIds; global order can stay
   const grouped = groupedCaptureIds(next) // After the move, so this id is loose
   const list = getCaptures()
   const moving = list.find((c) => c.id === captureId)
@@ -621,15 +627,15 @@ export function moveCaptureUnderPresentation(
   setCaptures(without)
 }
 
-/** Insert a capture at index (no-op if already in the presentation). */
-export function insertCaptureIntoPresentation(
-  presentationId: string,
+/** Insert a capture at index (no-op if already in the deck). */
+export function insertCaptureIntoDeck(
+  deckId: string,
   captureId: string,
   index: number
 ): void {
-  setPresentations(
-    getPresentations().map((p) => {
-      if (p.id !== presentationId) return p
+  setDecks(
+    getDecks().map((p) => {
+      if (p.id !== deckId) return p
       if (p.captureIds.includes(captureId)) return p
       const ids = [...p.captureIds]
       const i = Math.max(0, Math.min(index, ids.length))
@@ -639,41 +645,41 @@ export function insertCaptureIntoPresentation(
   )
 }
 
-/** Replace the capture order for a presentation (reorder). */
-export function setPresentationCaptureOrder(presentationId: string, captureIds: string[]): void {
-  setPresentations(
-    getPresentations().map((p) => (p.id === presentationId ? { ...p, captureIds } : p))
+/** Replace the capture order for a deck (reorder). */
+export function setDeckCaptureOrder(deckId: string, captureIds: string[]): void {
+  setDecks(
+    getDecks().map((p) => (p.id === deckId ? { ...p, captureIds } : p))
   )
 }
 
-/** Rename a presentation (empty → Untitled). */
-export function renamePresentation(id: string, name: string): void {
+/** Rename a deck (empty → Untitled). */
+export function renameDeck(id: string, name: string): void {
   const trimmed = name.trim() || 'Untitled'
-  setPresentations(getPresentations().map((p) => (p.id === id ? { ...p, name: trimmed } : p)))
+  setDecks(getDecks().map((p) => (p.id === id ? { ...p, name: trimmed } : p)))
 }
 
-/** Open or close a presentation. Closed hides its captures. */
-export function setPresentationCollapsed(id: string, collapsed: boolean): void {
-  setPresentations(getPresentations().map((p) => (p.id === id ? { ...p, collapsed } : p)))
+/** Open or close a deck. Closed hides its captures. */
+export function setDeckCollapsed(id: string, collapsed: boolean): void {
+  setDecks(getDecks().map((p) => (p.id === id ? { ...p, collapsed } : p)))
 }
 
-/** Drop a presentation header. Its captures return to the loose list. */
-export function deletePresentation(id: string): void {
-  setPresentations(getPresentations().filter((p) => p.id !== id))
+/** Drop a deck header. Its captures return to the loose list. */
+export function deleteDeck(id: string): void {
+  setDecks(getDecks().filter((p) => p.id !== id))
 }
 
-/** Merge selected presentations into the first: union captures, drop the rest. */
-export function mergePresentations(ids: string[]): BoardPresentation | null {
+/** Merge selected decks into the first: union captures, drop the rest. */
+export function mergeDecks(ids: string[]): BoardDeck | null {
   const unique = [...new Set(ids)]
   if (unique.length < 2) return null
-  const all = getPresentations()
-  const ordered = unique.map((id) => all.find((p) => p.id === id)).filter((p): p is BoardPresentation => Boolean(p))
+  const all = getDecks()
+  const ordered = unique.map((id) => all.find((p) => p.id === id)).filter((p): p is BoardDeck => Boolean(p))
   if (ordered.length < 2) return null
   const keep = ordered[0]
   const captureIds = [...new Set(ordered.flatMap((p) => p.captureIds))]
   const drop = new Set(ordered.slice(1).map((p) => p.id))
-  const merged: BoardPresentation = { ...keep, captureIds }
-  setPresentations(all.filter((p) => !drop.has(p.id)).map((p) => (p.id === keep.id ? merged : p)))
+  const merged: BoardDeck = { ...keep, captureIds }
+  setDecks(all.filter((p) => !drop.has(p.id)).map((p) => (p.id === keep.id ? merged : p)))
   return merged
 }
 

@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-20T18:54:00Z`
+- Snapped at: `2026-09-20T21:26:14Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`/`migration list`; versions from `.temp` + Management API list; cli-latest reports `v2.117.0`)
@@ -9,6 +9,14 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260920212614_utility_preview_phone_tap.sql`.
+- **Utility previews**: Layers / Sets / Captures ⋯ sits inset from the thumb; resting wash stays `bg-white/90`, solid only on ⋯ hover. Second click on a selected Layers/Sets thumb clears the board selection.
+- **Utility filters**: Layers All/touching/selected and Sets/Captures All boards / This board persist across tab switches (`lib/utility-filter-prefs.ts`).
+- **Phone**: pan-tool tap slop + frame finger-up select so taps are not stolen as nav; Add to set drills in on coarse pointers.
+- Schema unchanged; remote DDL top remains `20260914104046_notion_multi_workspace`.
+
+## Prior: Top-bar chrome fit
 
 - DDL: none. Marker `20260920185400_top_bar_chrome_fit.sql`.
 - **Top-bar chrome fit** (`lib/top-bar-chrome-fit.ts`): when the board path would sit under Share or the utility toggle, live chat width shrinks toward the 360 minimum without writing `nodnotes-chat-sidebar-width` (utility width stays at the user’s preference). If that is still not enough, chat docks on the map (`chatFitPhone`) like the phone layout so the utility toggle can move right.
@@ -117,7 +125,7 @@
 - DDL: none. Marker `20260917024930_board_filter_sort_hide_frames.sql`.
 - **Board Filter / Sort**: `+ Filter` opens Filter by… (Contains + Name + properties; selected frames when any); editor card with operators / … menu; Enter or click-out applies blue Notion chip (`Name: Contains test`).
 - **Hide frames**: with no selection, applied filters AND-match and hide non-matches (`lib/board-frame-filters.ts` — Name=`blockTitle`, Content=body, propertyBlocks); stack collapse preserved; selecting frames clears hide.
-- **Layout**: board-colored hug plate; desktop center when wider than mode pill; wrap ~1.5–2.5× pill; phone max width to redo (`[data-phone-undo]`).
+- **Layout**: board-colored hug plate; desktop center when wider than mode pill; wrap ~1.5–2.5× pill; phone max width = pill width (undo lives inside).
 - Remote also shows applied `20260914104046_notion_multi_workspace` (Management API); schema for this save unchanged aside from that remote top.
 
 ## Prior: Notion sync review UX (Revert/Accept)

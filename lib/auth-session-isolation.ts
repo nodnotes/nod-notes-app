@@ -34,9 +34,13 @@ const IDENTITY_EXACT_KEYS = [
   'nodnotes-utility-sidebar-open',
   'nodnotes-utility-sidebar-mode',
   'nodnotes-utility-sidebar-width',
+  'nodnotes-utility-layers-filter',
+  'nodnotes-utility-sets-this-board',
+  'nodnotes-utility-captures-this-board',
   'nodnotes-pinned-ai-threads',
   'nodnotes-board-captures',
-  'nodnotes-board-presentations',
+  'nodnotes-board-decks',
+  'nodnotes-board-presentations', // Legacy decks key — clear on account switch until migrate runs
   'nodnotes-boards-nav-pinned',
 ] as const
 

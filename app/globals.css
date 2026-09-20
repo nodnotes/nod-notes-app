@@ -563,12 +563,13 @@
   }
 }
 
-/* Top-bar board path crumbs while titles fetch — reserve width so tools don’t collapse */
+/* Top-bar board path crumbs while titles fetch — prefer ~one title; shrink under --tt-path-max */
 .tt-topbar-path-shimmer {
   display: inline-block; /* Row crumb, not a stacked frame line */
   height: 1rem; /* Match text-sm path label */
   border-radius: 4px; /* Same soft chip as frame shimmer lines */
-  flex-shrink: 0; /* Hold left-chrome width during load */
+  flex-shrink: 1; /* Yield when the path box is capped against Share / tools */
+  min-width: 2rem; /* Keep a readable stub when the bar is tight */
   pointer-events: none; /* Placeholder only */
   vertical-align: middle; /* Sit on the path text baseline */
   background: linear-gradient(
@@ -608,6 +609,9 @@ html:not(:has([data-toolbar-center][data-toolbar-ready])) [data-edit-menu-contex
 /* Phone pill: desktop cluster px-2 + slash mx-1 is too wide — pack Draw’s 6 icons evenly */
 [data-phone-mode-tools] {
   gap: 0; /* Slash margins are the only group gap (same idea as Free nav) */
+  /* overflow-x-auto also clips y; pad so [data-smart-draw]’s 8px blue glow isn’t cut off */
+  padding-block: 0.5rem; /* 8px — matches the Smart draw / prompt glow blur */
+  margin-block: -0.5rem; /* Cancel the pad so the pill chrome stays the same height */
 }
 [data-phone-mode-tools] > div {
   padding-inline: 0; /* Drop the desktop bar’s cluster padding */
@@ -615,19 +619,6 @@ html:not(:has([data-toolbar-center][data-toolbar-ready])) [data-edit-menu-contex
 [data-phone-mode-tools] > span[aria-hidden] {
   margin-inline: 0.125rem; /* 2px — match in-group gap so the slash doesn’t blow the rhythm */
   font-size: 1.25rem; /* text-xl thin slash, not the desktop text-2xl */
-}
-[data-phone-undo] {
-  /* Tools pill is ~40px tall → rounded-full radius 20px; tuck under that cap so the curve has no board gap */
-  margin-left: -1.25rem; /* Pull fill under the tools right curve */
-  padding-left: 1.5rem; /* 20px overlap + former 4px — arrows stay where they were */
-  padding-right: 0.25rem; /* Tight to redo — same inset as the tools pill’s px-1, not another 20px cap */
-}
-[data-phone-undo] > [data-undo-redo] {
-  padding-inline: 0.125rem; /* Undo/redo sit tight to the pill seam, not desktop px-2 */
-  gap: 0; /* No flex gap — the w-7 hit boxes were holding the glyphs apart */
-}
-[data-phone-undo] > [data-undo-redo] > button + button {
-  margin-left: -0.25rem; /* 4px pull — tighter than gap-1, looser than the -8px overlap */
 }
 
 /* Cookie-SSR may paint the desktop chat column; never steal map width on phone */
@@ -2310,6 +2301,12 @@ span[data-added="true"] {
     box-shadow:
       0 1px 2px 0 rgb(0 0 0 / 0.05), /* Same shadow-sm lift the button had when toggled */
       0 0 8px 0 color-mix(in srgb, var(--nod-blue) 35%, transparent); /* Same blue glow as the prompt with the I-bar in it */
+  }
+  /* Phone mode pill — tighter glow so it doesn’t dominate the compact toolbar chrome */
+  [data-phone-mode-tools] [data-smart-draw] {
+    box-shadow:
+      0 1px 2px 0 rgb(0 0 0 / 0.05), /* Keep the same shadow-sm lift */
+      0 0 4px 0 color-mix(in srgb, var(--nod-blue) 25%, transparent); /* Half blur + softer blue for the pill */
   }
   /* Content in a set — same light blue halo as the focused Ask prompt, only while its frame is selected. */
   .react-flow__node.selected [data-in-set],

@@ -100,7 +100,18 @@ export function UtilityFilterDivider() {
   return <div className="mx-2 my-1 h-px bg-gray-200 dark:bg-[#2f2f2f]" role="separator" /> // Same hairline as the search divider
 }
 
-/** Permanent menu name under search, above + Group / + Set / + Presentation. Same type as the old empty Layers title. */
+/** Hairline under an expanded group / set / deck’s previews — closes the open section before the next header. */
+export function UtilitySectionDivider() {
+  return (
+    <div
+      className="mx-1.5 mt-1.5 mb-0.5 h-px flex-shrink-0 bg-gray-200 dark:bg-[#2f2f2f]" // mt + list gap below keep even air; a touch more than a plain gap-1
+      role="separator"
+      aria-hidden
+    />
+  )
+}
+
+/** Permanent menu name under search, above + Group / + Set / + Deck. Same type as the old empty Layers title. */
 export function UtilityMenuTitle({ children }: { children: string }) {
   return (
     <p className="flex-shrink-0 px-3 pt-2 text-xs font-medium text-gray-500 dark:text-gray-400"> {/* Grey title; + row under it is black */}

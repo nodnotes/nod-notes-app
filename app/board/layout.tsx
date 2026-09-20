@@ -2,7 +2,7 @@
 import React from 'react'
 import { cookies } from 'next/headers'
 import AppAuthShell from '@/components/app-auth-shell'
-import { PresentingMode } from '@/components/presenting-mode' // html[data-presenting] while a presentation is playing
+import { PresentingMode } from '@/components/presenting-mode' // html[data-presenting] while a deck is playing
 import { SidebarContextProvider } from '@/components/sidebar-context'
 
 // Always re-read auth cookies — never serve another account's SSR user from the router cache

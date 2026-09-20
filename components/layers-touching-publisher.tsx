@@ -18,6 +18,7 @@ import {
   getLayersTouching,
   isLayerableNode,
   patchLayersTouchingPreviews,
+  patchLayersTouchingSelection,
   publishLayersTouching,
   subscribeLayersPublishScope,
   subscribeLayersTouching,
@@ -41,19 +42,20 @@ export function LayersTouchingPublisher() {
   const scope = useSyncExternalStore(subscribeLayersPublishScope, getLayersPublishScope, () => 'touching') // All vs touching
   // Selection only — do NOT key on width/height (selected-frame chrome resize cancels captures)
   const selectionKey = useStore((s) => {
-    if (!active || getLayersPublishScope() === 'all') return '' // All mode ignores selection churn
     const selected = s
       .getNodes()
       .filter((n) => n.selected)
       .map((n) => n.id)
       .sort()
       .join(',')
+    if (!active) return selected // Still track so a reopen patches borders
+    if (getLayersPublishScope() === 'all') return selected // All: selection only updates blue borders (see patch effect)
     const edges = s.edges
       .filter((e) => e.selected)
       .map((e) => e.id)
       .sort()
       .join(',')
-    return `${selected}|${edges}`
+    return `${selected}|${edges}` // Touching: selection rebuilds the cluster
   })
   // All mode republishes when a layer is added or removed, not on every drag
   const allIdsKey = useStore((s) => {
@@ -74,6 +76,18 @@ export function LayersTouchingPublisher() {
   useEffect(() => {
     publishSetBoardNodeIds(setsOpen && setBoardNodeKey ? setBoardNodeKey.split(',') : []) // Empty when Sets is closed
   }, [setsOpen, setBoardNodeKey])
+
+  // Keep preview blue borders in sync with the board — All mode never republishes on select alone
+  useEffect(() => {
+    if (!active) return
+    const ids = new Set(
+      selectionKey
+        .split('|')[0] // Touching keys are selected|edges; All is selected only
+        .split(',')
+        .filter(Boolean)
+    )
+    patchLayersTouchingSelection(ids)
+  }, [active, selectionKey])
 
   // Publish list + initial thumbs when selection changes
   useEffect(() => {

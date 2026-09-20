@@ -14,6 +14,8 @@ When the user says **block**, they mean the TipTap line (blue wash + ⋮⋮), no
 | **Thread** | Line connecting two frames. | “edge”, “arrow”, “connector” | RF `Edge`, `panel_edges` |
 | **Connection point** | Knob on a frame that starts / receives a thread. | “handle”, “nodule”, “node” | RF `Handle` |
 
+**Deck** (Views / Capture): ordered set of **captures** you can **Present**. Not a board object. Prefer **deck** over “presentation” in product copy.
+
 ## What is not an official type
 
 - **Block group** — not a product object. Multiple blocks in one **frame** is still a frame. RF type `blockGroup` is a legacy dashed wrapper around several frames; speak of it as frame chrome, not a “group”.
@@ -35,8 +37,8 @@ When the user says **block**, they mean the TipTap line (blue wash + ⋮⋮), no
 
 ## Prefer in new writing
 
-**board**, **frame**, **block**, **thread**, **connection point**.
+**board**, **frame**, **block**, **thread**, **connection point**, **deck** (ordered captures; action remains **Present**).
 
-Avoid: page/map/canvas (for the board), card/panel/map card (for the frame), block group/group (as a type), edge/arrow (for the thread), handle/nodule/node (for the connection point).
+Avoid: page/map/canvas (for the board), card/panel/map card (for the frame), block group/group (as a type), edge/arrow (for the thread), handle/nodule/node (for the connection point), presentation (use **deck**).
 
 Notion **pages** (Notion API objects) keep that name — they are not NodNotes boards.

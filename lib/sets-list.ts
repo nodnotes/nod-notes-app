@@ -96,6 +96,13 @@ export function selectSet(id: string) {
   notify() // List row + board halo
 }
 
+/** Drop the utility selection and board halo (e.g. leaving the Sets tab). */
+export function clearSelectedSet() {
+  if (!selectedSetId) return // Already clear — skip notify
+  selectedSetId = null
+  notify() // List row + remove data-set-highlight
+}
+
 /** Open the utility sidebar on Sets. */
 export function requestRevealSets() {
   if (typeof window === 'undefined') return
@@ -211,6 +218,17 @@ export function addMember(
   }
   if (partial.kind === 'frame' && partial.nodeId) stampFrame(partial.nodeId) // Glow host, even on a duplicate add
   requestRevealSets()
+}
+
+/** Drop one membership row. Re-stamps frame glow for anything still in another set. */
+export function removeMember(memberId: string): void {
+  const before = members.length
+  const gone = members.find((m) => m.id === memberId)
+  members = members.filter((m) => m.id !== memberId)
+  if (members.length === before) return // Unknown id
+  persist()
+  notify()
+  if (gone?.kind === 'frame' && gone.nodeId) stampFramesInSets() // Drop data-in-set when this was the last set
 }
 
 /** RF node ids (and chat turn ids) whose whole frame is in some set. */

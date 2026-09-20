@@ -15,7 +15,8 @@ type RfZoomStore = {
 
 /** d3-zoom default clickDistance is 0, so a 1px pan swallows the click that places the I-bar. */
 export function applyD3PaneClickSlop(store: RfZoomStore) {
-  const apply = () => store.getState().d3Zoom?.clickDistance?.(PANE_CLICK_SLOP_PX) // Allow click after tiny pans
+  // Touch needs the larger tap slop; mouse pan is fine with the same ceiling
+  const apply = () => store.getState().d3Zoom?.clickDistance?.(PANE_TAP_SLOP_PX)
   apply()
   if (store.getState().d3Zoom) return () => undefined // Already mounted
   const unsub = store.subscribe((state) => {

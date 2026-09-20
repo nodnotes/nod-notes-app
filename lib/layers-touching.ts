@@ -106,6 +106,20 @@ export function patchLayersTouchingPreviews(urls: Record<string, string>) {
   notify()
 }
 
+/** Sync RF selection onto existing rows — blue border without a full recapture (All mode). */
+export function patchLayersTouchingSelection(selectedIds: Set<string>) {
+  let changed = false
+  const next = snapshot.items.map((item) => {
+    const selected = selectedIds.has(item.id)
+    if (item.selected === selected) return item
+    changed = true
+    return { ...item, selected }
+  })
+  if (!changed) return
+  snapshot = { ...snapshot, items: next }
+  notify()
+}
+
 /**
  * Reorder the layers list (top = front). Updates stored zIndex labels to match
  * (n…1). Caller applies the same order to RF node zIndex.

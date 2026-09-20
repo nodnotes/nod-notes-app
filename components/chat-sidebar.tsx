@@ -750,8 +750,15 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
       const h = shell.offsetHeight // Composer (+ transcript / chrome) height
       setAiMapDockLiftPx(Math.round(h + keyboardInset + 2)) // + keyboard + small gap to chat
       const floor = content.querySelector('[data-chat-map-dock-floor]') as HTMLElement | null // Chrome + Ask (no transcript)
-      const floorH = floor?.offsetHeight ?? 108 // Empty-chat extent so utility can overlap the transcript
-      setAiMapDockComposerLiftPx(Math.round(floorH + keyboardInset + 2)) // Utility body stops above Ask
+      const root = shell.closest('[data-board-root]') as HTMLElement | null // Same box utility pads against
+      // Geometric: include shell safe-area padding so utility jumps as soon as it would hit Ask/chrome
+      if (floor && root) {
+        const lift = root.getBoundingClientRect().bottom - floor.getBoundingClientRect().top + 2
+        setAiMapDockComposerLiftPx(Math.max(0, Math.round(lift)))
+      } else {
+        const floorH = floor?.offsetHeight ?? 108 // Estimate until the floor node measures
+        setAiMapDockComposerLiftPx(Math.round(floorH + keyboardInset + 2))
+      }
       // Prefer measured left (safe-area / subpixel) over geometric
       setAiMapDockLeftPx(Math.round(content.getBoundingClientRect().left))
     }

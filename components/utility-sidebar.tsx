@@ -127,6 +127,7 @@ export function UtilitySidebar() {
     setUtilitySidebarMode,
     setUtilitySidebarOpen,
     isMobileMode,
+    chatFitPhone,
     isChatSidebarOpen,
     aiMapDockLiftPx,
     aiMapDockComposerLiftPx,
@@ -135,13 +136,15 @@ export function UtilitySidebar() {
   const params = useParams<{ conversationId?: string }>() // Board id when on /board/{id}
   const conversationId =
     typeof params?.conversationId === 'string' ? params.conversationId : undefined
+  // Same dock gate as Free nav / chat — fit can map-dock chat before the phone breakpoint
+  const useChatMapDock = isMobileMode || chatFitPhone
   // Brand mark only mounts while chat is closed — clear it then; full height when chat owns the right
   const clearBrand = !isChatSidebarOpen
-  // Phone + keyboard: keep the mode tabs, hide the grey body until the keyboard drops (chat, I-bar, any field)
-  const hideUtilityBody = isMobileMode && aiKeyboardOpen
+  // Map-docked + keyboard: keep the mode tabs, hide the grey body until the keyboard drops
+  const hideUtilityBody = useChatMapDock && aiKeyboardOpen
   const composerPad = aiMapDockComposerLiftPx || aiMapDockLiftPx // Empty-chat floor (chrome + Ask + keyboard)
   const bottomPad =
-    isMobileMode && isChatSidebarOpen
+    useChatMapDock && isChatSidebarOpen
       ? hideUtilityBody
         ? 0 // Header-only while the keyboard is up
         : composerPad // Overlap the transcript; stop above Ask like a new chat
@@ -162,7 +165,7 @@ export function UtilitySidebar() {
       data-utility-sidebar
       className={cn(
         'pointer-events-none absolute inset-y-0 right-0 flex flex-col isolate', // isolate: under-thread SVG (z-0) stacks under chrome
-        isMobileMode ? 'z-[46]' : 'z-20', // Phone: above the map-docked chat (z-45) so the body can overlap the transcript
+        useChatMapDock ? 'z-[46]' : 'z-20', // Map dock: above chat (z-45) so the body can overlap the transcript
         'bg-transparent', // Board paints through; chrome is tabs / list only
         transitionOn && 'transition-transform duration-200 ease-out' // Match RF viewport open/close; off while seam-resizing
       )}
@@ -241,8 +244,7 @@ export function UtilitySidebar() {
         {/* Content card — same fill as Actions/Layout/Draw pill; tabs stay outside */}
         <div
           className={cn(
-            'flex min-h-0 flex-1 flex-col rounded-xl border border-black/10 bg-[var(--nod-chat-prompt)] shadow-md dark:border-white/10 dark:shadow-black/40', // Same grey + hairline as the mode pill and hide button
-            'overflow-hidden' // Search stays put; body scrolls inside
+            'flex min-h-0 flex-1 flex-col rounded-xl border border-black/10 bg-[var(--nod-chat-prompt)] shadow-md dark:border-white/10 dark:shadow-black/40' // Same grey + hairline as the mode pill and hide button — no overflow clip so filter menus can hang past the card edge; lists scroll via .utility-body-scroll
           )}
         >
           <UtilityModeBody mode={utilitySidebarMode} conversationId={conversationId} />

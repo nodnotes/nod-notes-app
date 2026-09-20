@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { CalendarDays, Check, List, MoreHorizontal, Pencil, Plus, SquareStack, Trash2 } from 'lucide-react' // Schedule, organize check, + Set, list mark, row ⋯, rename, delete
 import { cn } from '@/lib/utils' // Selected-row wash + thumb border
+import { Button } from '@/components/ui/button'
 import { captureNodePreviewImage } from '@/lib/captures' // Same node-only thumb Layers uses
 import { isFrameDragging } from '@/lib/frame-dragging' // Don't snapshot mid-drag
 import { useReactFlowContext } from '@/components/react-flow-context' // Thumb click selects that frame
@@ -20,6 +21,7 @@ import {
   getSelectedSetId,
   getSetMembers,
   getSets,
+  removeMember,
   renameSet,
   selectSet,
   setSetCollapsed,
@@ -32,8 +34,13 @@ import {
   UtilityFilterOption,
   UtilityMenuTitle,
   UtilitySearchHeader,
-} from '@/components/utility-search-header'
+  UtilitySectionDivider,
+} from '@/components/utility-search-header' // Search chrome + expanded-set hairline
 import { SetScheduleModal } from '@/components/set-schedule-modal' // Sets ⋯ Schedule full-screen planner
+import {
+  readUtilityThisBoardOnly,
+  writeUtilityThisBoardOnly,
+} from '@/lib/utility-filter-prefs' // Remember All boards / This board across tab switches
 
 /** How the Sets list is arranged. By set is the default. */
 type SetOrganize = 'list' | 'set'
@@ -72,54 +79,86 @@ function SetIcon({ className, collapsed }: { className?: string; collapsed?: boo
 
 const previewCache = new Map<string, string>() // Last good thumb per frame — survives leaving the Sets tab
 
-/** One frame in a set — same bordered 4:3 thumb as a Layers row. */
+/** One frame in a set — same bordered 4:3 thumb as a Layers row; ⋯ like Captures. */
 function SetFrameThumb({
   label,
   url,
   pending,
-  lit,
+  selected,
   onOpen,
+  onRemove,
 }: {
   label: string
   url?: string // Data URL, or missing while the node is off this board
   pending: boolean // Still capturing
-  lit: boolean // This set is the one glowing on the board
+  selected: boolean // This frame is the one selected — blue ring like Captures
   onOpen: () => void
+  onRemove: () => void // Drop this membership row
 }) {
   return (
-    <li className="w-full shrink-0">
-      <button
-        type="button"
-        onClick={onOpen} // Select this frame, same as a Layers row
-        className="w-full text-left"
-        title={label}
-        aria-label={label}
-      >
-        <div
-          className={cn(
-            'relative w-full aspect-[4/3] overflow-hidden rounded-md bg-gray-50 dark:bg-[#1a1a1a]',
-            lit
-              ? 'border-2 border-blue-500' // Set is selected — same blue ring as a selected layer
-              : 'border border-gray-200/80 dark:border-white/10'
-          )}
+    <li className="group/set-preview w-full shrink-0"> {/* Hover reveals top-right ⋯ */}
+      <div className="relative">
+        <button
+          type="button"
+          onClick={onOpen} // Select this frame, same as a Layers row
+          className="w-full text-left"
+          title={label}
+          aria-label={selected ? `Deselect ${label}` : label}
+          aria-pressed={selected}
         >
-          {url ? (
-            // eslint-disable-next-line @next/next/no-img-element -- local data URL, same as Layers
-            <img
-              src={url}
-              alt=""
-              className="absolute inset-0 h-full w-full object-contain pointer-events-none"
-              draggable={false}
-            />
-          ) : pending ? (
-            <div className="absolute inset-0 animate-pulse bg-gray-100 dark:bg-white/[0.06]" />
-          ) : (
-            <span className="absolute inset-0 flex items-center justify-center px-2 text-center text-[11px] text-gray-400">
-              {label}
-            </span>
-          )}
-        </div>
-      </button>
+          <div
+            className={cn(
+              'relative w-full aspect-[4/3] overflow-hidden rounded-md bg-gray-50 dark:bg-[#1a1a1a]',
+              selected
+                ? 'border-2 border-blue-500' // Same blue ring as Captures / selected Layers
+                : 'border border-gray-200/80 dark:border-white/10'
+            )}
+          >
+            {url ? (
+              // eslint-disable-next-line @next/next/no-img-element -- local data URL, same as Layers
+              <img
+                src={url}
+                alt=""
+                className="absolute inset-0 h-full w-full object-contain pointer-events-none"
+                draggable={false}
+              />
+            ) : pending ? (
+              <div className="absolute inset-0 animate-pulse bg-gray-100 dark:bg-white/[0.06]" />
+            ) : (
+              <span className="absolute inset-0 flex items-center justify-center px-2 text-center text-[11px] text-gray-400">
+                {label}
+              </span>
+            )}
+          </div>
+        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(
+                'absolute right-1.5 top-1.5 z-10 h-8 w-6 flex-shrink-0 bg-white/90 text-gray-500 shadow-sm hover:bg-white hover:text-gray-700 dark:bg-[#1a1a1a]/90 dark:hover:bg-[#1a1a1a]',
+                'opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/set-preview:opacity-100'
+              )}
+              title="Frame options"
+              aria-label={`${label} options`}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()} // Don’t select via the ⋯
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44" onClick={(e) => e.stopPropagation()}>
+            <DropdownMenuItem
+              className="text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400"
+              onSelect={onRemove}
+            >
+              <Trash2 className="mr-2 h-4 w-4" />
+              Remove from set
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </li>
   )
 }
@@ -264,14 +303,19 @@ export function SetsList({ conversationId }: { conversationId?: string }) {
   urlsRef.current = urls
   const [query, setQuery] = useState('') // Filter by set name
   const [filterOpen, setFilterOpen] = useState(false)
-  const [thisBoardOnly, setThisBoardOnly] = useState(false) // All boards until the filter says this board
+  const [thisBoardOnly, setThisBoardOnly] = useState(() => readUtilityThisBoardOnly('sets')) // Restore All / This board
   const boardNodeKey = useSyncExternalStore(subscribeSetBoardNodes, getSetBoardNodeKey, () => '') // Frames on the open board
   const [renamingId, setRenamingId] = useState<string | null>(null) // Set whose name is being edited
   const [scheduleSetId, setScheduleSetId] = useState<string | null>(null) // Set whose Schedule popup is open
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null) // Thumb blue ring — which frame is selected
   const [organize, setOrganize] = useState<SetOrganize>('set') // ⋯ menu: one list, or set rows
   const [organizeOpen, setOrganizeOpen] = useState(false) // Organize sets menu
   const organizeRef = useRef<HTMLDivElement>(null) // + Set row + ⋯ menu, so outside clicks can close it
   const scheduleSet = scheduleSetId ? sets.find((s) => s.id === scheduleSetId) : null // Title for the Schedule modal
+
+  useEffect(() => {
+    writeUtilityThisBoardOnly('sets', thisBoardOnly) // Tab switch unmounts Sets — keep the filter for next open
+  }, [thisBoardOnly])
 
   useEffect(() => {
     if (!organizeOpen) return // Listener only while the ⋯ menu is up
@@ -395,8 +439,21 @@ export function SetsList({ conversationId }: { conversationId?: string }) {
   }, [frameKey, frameIds])
 
   const openFrame = (setId: string, nodeId: string) => {
-    if (selectedId !== setId) selectSet(setId) // Glow the set without toggling it off
+    const already =
+      selectedNodeId === nodeId ||
+      !!reactFlowInstance?.getNodes().find((n) => n.id === nodeId)?.selected // Second click clears
     const setNodes = getSetNodes()
+    if (already) {
+      setSelectedNodeId(null) // Drop the thumb blue ring
+      const clear = (nds: Array<{ id: string; selected?: boolean }>) =>
+        nds.map((n) => ({ ...n, selected: false }))
+      if (setNodes) setNodes(clear)
+      else reactFlowInstance?.setNodes(clear)
+      reactFlowInstance?.setEdges((eds) => eds.map((e) => ({ ...e, selected: false })))
+      return
+    }
+    setSelectedNodeId(nodeId) // Blue ring on this thumb only — not every frame in the set
+    if (selectedId !== setId) selectSet(setId) // Glow the set without toggling it off
     if (setNodes) {
       setNodes((nds: Array<{ id: string; selected?: boolean }>) =>
         nds.map((n) => ({ ...n, selected: n.id === nodeId })) // Same single-select as Layers
@@ -414,7 +471,7 @@ export function SetsList({ conversationId }: { conversationId?: string }) {
   }
 
   const flatFrames = useMemo(() => {
-    const byNode = new Map<string, { nodeId: string; label: string; setId: string }>() // One thumb per frame
+    const byNode = new Map<string, { nodeId: string; label: string; setId: string; memberId: string }>() // One thumb per frame
     for (const set of visible) {
       for (const m of members) {
         if (m.setId !== set.id || m.kind !== 'frame' || !m.nodeId) continue
@@ -425,7 +482,9 @@ export function SetsList({ conversationId }: { conversationId?: string }) {
           continue // This board hides frames added on another board
         }
         const prev = byNode.get(m.nodeId)
-        if (!prev || set.id === selectedId) byNode.set(m.nodeId, { nodeId: m.nodeId, label: m.label, setId: set.id }) // Prefer the glowing set
+        if (!prev || set.id === selectedId) {
+          byNode.set(m.nodeId, { nodeId: m.nodeId, label: m.label, setId: set.id, memberId: m.id }) // Prefer the glowing set
+        }
       }
     }
     return [...byNode.values()]
@@ -545,8 +604,9 @@ export function SetsList({ conversationId }: { conversationId?: string }) {
                     label={frame.label}
                     url={urls[frame.nodeId]}
                     pending={!urls[frame.nodeId] && !failed[frame.nodeId]}
-                    lit={selectedId === frame.setId} // Glow follows the set this thumb was taken from
+                    selected={selectedNodeId === frame.nodeId}
                     onOpen={() => openFrame(frame.setId, frame.nodeId)}
+                    onRemove={() => removeMember(frame.memberId)}
                   />
                 ))}
               </ul>
@@ -571,19 +631,25 @@ export function SetsList({ conversationId }: { conversationId?: string }) {
                       onRenameEnd={() => setRenamingId((current) => (current === set.id ? null : current))}
                       onSchedule={() => setScheduleSetId(set.id)}
                     />
-                    {!set.collapsed && frames.length > 0 ? (
-                      <ul className="flex flex-col gap-1 pl-7"> {/* Name column: icon width + gap */}
-                        {frames.map((frame) => (
-                          <SetFrameThumb
-                            key={frame.id}
-                            label={frame.label}
-                            url={frame.nodeId ? urls[frame.nodeId] : undefined}
-                            pending={!!frame.nodeId && !urls[frame.nodeId] && !failed[frame.nodeId]}
-                            lit={on}
-                            onOpen={() => frame.nodeId && openFrame(set.id, frame.nodeId)}
-                          />
-                        ))}
-                      </ul>
+                    {!set.collapsed ? (
+                      <div className="flex flex-col"> {/* No gap here — hairline mt matches the list gap below */}
+                        {frames.length > 0 ? (
+                          <ul className="flex flex-col gap-1"> {/* Full-width thumbs — section hairline marks the set */}
+                            {frames.map((frame) => (
+                              <SetFrameThumb
+                                key={frame.id}
+                                label={frame.label}
+                                url={frame.nodeId ? urls[frame.nodeId] : undefined}
+                                pending={!!frame.nodeId && !urls[frame.nodeId] && !failed[frame.nodeId]}
+                                selected={!!frame.nodeId && selectedNodeId === frame.nodeId}
+                                onOpen={() => frame.nodeId && openFrame(set.id, frame.nodeId)}
+                                onRemove={() => removeMember(frame.id)}
+                              />
+                            ))}
+                          </ul>
+                        ) : null}
+                        <UtilitySectionDivider /> {/* Hairline under the open set’s previews */}
+                      </div>
                     ) : null}
                   </li>
                 )

@@ -12,7 +12,7 @@ const COL_LINK =
 
 /** Homepage section titles — Product column only */
 const PRODUCT_LINKS = [
-  { href: '/#notes-and-presentations', label: 'Notes and presentations' },
+  { href: '/#notes-and-decks', label: 'Notes and decks' },
   { href: '/#connections-and-automations', label: 'Connections and frame automations' },
   { href: '/#brainstorm-with-ai', label: 'Brainstorm with AI' },
   { href: '/#get-started', label: 'Ready to map your ideas?' },

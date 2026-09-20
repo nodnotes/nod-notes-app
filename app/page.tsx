@@ -256,13 +256,13 @@ export default async function Home() {
           <section className="space-y-32 pb-24 min-[900px]:space-y-40">
             {first ? (
               <SplitShowcase
-                id="notes-and-presentations"
+                id="notes-and-decks"
                 board={first}
                 previewSlot={1}
                 copySlot={1}
                 imageAbove={{
                   src: '/home/home-notes-presentations-example.png',
-                  alt: 'Notes arranged as frames on a board for presentations',
+                  alt: 'Notes arranged as frames on a board for decks',
                 }}
               />
             ) : null}

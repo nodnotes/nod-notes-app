@@ -278,7 +278,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
   }, [conversationId, queryClient])
 
   const presentBoard = useCallback(() => {
-    setUtilitySidebarMode('capture') // Presentations / captures live in utility Capture
+    setUtilitySidebarMode('capture') // Decks / captures live in utility Capture
     setUtilitySidebarOpen(true) // Open the column if it was closed
   }, [setUtilitySidebarMode, setUtilitySidebarOpen])
 

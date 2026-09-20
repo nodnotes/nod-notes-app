@@ -1,0 +1,2 @@
+-- Utility preview ⋯ gap/hover + click-again deselect; filter prefs; phone pan/tap select.
+-- App/docs marker only; no DDL. Remote DDL top: 20260914104046_notion_multi_workspace.

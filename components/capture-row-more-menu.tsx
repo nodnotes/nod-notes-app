@@ -13,16 +13,17 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { copyCaptureLink, navigateToCapture, type CaptureLinkSource } from '@/lib/capture-link'
-import { deleteCapture } from '@/lib/captures' // Remove the view, presentation membership, and chat pill
+import { deleteCapture } from '@/lib/captures' // Remove the view, deck membership, and chat pill
 import { cn } from '@/lib/utils'
 
 type CaptureRowMoreMenuProps = {
   capture: CaptureLinkSource
   conversationId?: string // Current board — same-board nav skips route change
-  className?: string
+  className?: string // Absolute top-right chrome from the parent thumb
   onNavigate?: () => void // Close parent popover after go-to
 }
 
+/** Top-right ⋯ on a capture preview — same hover reveal as Layers / Sets thumbs. */
 export function CaptureRowMoreMenu({
   capture,
   conversationId,
@@ -58,13 +59,13 @@ export function CaptureRowMoreMenu({
           variant="ghost"
           size="icon"
           className={cn(
-            'h-8 w-6 flex-shrink-0 hover:bg-transparent text-gray-500 hover:text-gray-700',
+            'h-8 w-6 flex-shrink-0 text-gray-500 hover:bg-white hover:text-gray-700 dark:hover:bg-[#1a1a1a]',
             className
           )}
           title="Capture options"
           aria-label="Capture options"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()} // Don’t start a thumb drag
+          onClick={(e) => e.stopPropagation()} // Don’t toggle select
         >
           <MoreHorizontal className="h-4 w-4" />
         </Button>
@@ -75,7 +76,7 @@ export function CaptureRowMoreMenu({
             onGoToCapture()
           }}
         >
-          <ExternalLink className="h-4 w-4 mr-2" />
+          <ExternalLink className="mr-2 h-4 w-4" />
           Go to capture
         </DropdownMenuItem>
         <DropdownMenuItem
@@ -83,14 +84,14 @@ export function CaptureRowMoreMenu({
             void onCopyLink()
           }}
         >
-          {copied ? <Check className="h-4 w-4 mr-2" /> : <Link className="h-4 w-4 mr-2" />}
+          {copied ? <Check className="mr-2 h-4 w-4" /> : <Link className="mr-2 h-4 w-4" />}
           {copied ? 'Copied' : 'Copy link'}
         </DropdownMenuItem>
         <DropdownMenuItem
-          className="text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400" // Same danger row as presentation Delete
+          className="text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400"
           onSelect={onDelete}
         >
-          <Trash2 className="h-4 w-4 mr-2" />
+          <Trash2 className="mr-2 h-4 w-4" />
           Delete
         </DropdownMenuItem>
       </DropdownMenuContent>

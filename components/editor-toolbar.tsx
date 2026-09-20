@@ -10,7 +10,7 @@ import {
   type ThreadStylePref,
 } from '@/components/threads' // Board default Smooth / Sharp / Linear + path algorithm
 import { useState, useEffect, useLayoutEffect, useRef } from 'react'
-import { createPortal } from 'react-dom' // Phone: mode tools inside the pill; undo/redo to its right
+import { createPortal } from 'react-dom' // Phone: undo|/|mode tools inside the pill
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -293,7 +293,7 @@ function titledToolWidth(label: string) {
   return 16 + 6 + Math.ceil(label.length * 7.5) + 16 // icon + gap-1.5 + glyph estimate + px-2
 }
 
-/** Phone: mount mode tools in the Actions/Layout/Draw/View pill; desktop: keep them in the top bar. */
+/** Phone: mount undo|/|mode tools in the Actions/Layout/Draw/View pill; desktop: keep them in the top bar. */
 function PhoneModeToolsPortal({
   enabled,
   host,
@@ -301,26 +301,9 @@ function PhoneModeToolsPortal({
 }: {
   enabled: boolean // phoneTools — icon-only tools no longer fit the top bar
   host: HTMLElement | null // Phone tools row right of the mode dropdown
-  children: React.ReactNode // Mode tools (not undo/redo)
+  children: React.ReactNode // Undo/redo + slash + mode tools (same order as the top bar)
 }) {
-  if (enabled) {
-    if (!host) return null // Host mounts with the phone pill — undo/redo sit beside it
-    return createPortal(children, host) // Same buttons, right of the mode dropdown inside the pill
-  }
-  return <>{children}</>
-}
-
-/** Phone: mount undo/redo to the right of the mode pill, outside it; desktop: keep them in the top bar. */
-function PhoneUndoRedoPortal({
-  enabled,
-  host,
-  children,
-}: {
-  enabled: boolean // phoneTools — tools have left the bar for the pill
-  host: HTMLElement | null // Sibling of the pill; null until that node mounts
-  children: React.ReactNode // Undo/redo cluster
-}) {
-  if (enabled && host) return createPortal(children, host) // Outside the toggle chrome, to its right
+  if (enabled && host) return createPortal(children, host) // Same cluster, right of the mode dropdown inside the pill
   return <>{children}</> // Stay on the bar until the host exists (no flash) or until desktop
 }
 
@@ -339,7 +322,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
   const utilityToggleInset =
     isUtilitySidebarOpen && !isMobileMode ? UTILITY_TOGGLE_TOP_BAR_INSET_PX : 0 // Share clears only the right-aligned mode pill / close
   const hideShareMore = isMobileMode && isUtilitySidebarOpen // Phone: Share + More yield the right edge to the overlay
-  const { toolsHost, undoHost, phoneTools, setPhoneTools, setShareCompact } = usePhoneModeMenu() // Pill + share/AI→More before tools leave
+  const { toolsHost, phoneTools, setPhoneTools, setShareCompact } = usePhoneModeMenu() // Pill + share/AI→More before tools leave
   const { hasAiContent, aiTopBarPinned } = useAiEditSession() // Pinned sparkles fold with shareCompact
   const { reactFlowInstance, isLocked, lineStyle: verticalLineStyle, setLineStyle: setVerticalLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, isDrawing, setIsDrawing, drawTool: contextDrawTool, setDrawTool: setContextDrawTool, smartDraw, setSmartDraw, eraserMode, setEraserMode, drawTipSize, setDrawTipSize, drawTipZoomLocked, setDrawTipZoomLocked, eraserTipSize, setEraserTipSize, eraserTipZoomLocked, setEraserTipZoomLocked, pencilPalette, pencilColorIndex, setPencilColorIndex, setPencilColorAt, addPencilColor, removePencilColor, mapUndo, mapRedo, canMapUndo, canMapRedo, getMapTakeSnapshot, getSetNodes } = useReactFlowContext()
   const queryClientForAi = useQueryClient() // Turn into board list + conversations invalidate
@@ -1395,7 +1378,25 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       const rightSection = toolbar.querySelector('[data-right-section]') as HTMLElement
 
       const pathReady = !leftChrome || leftChrome.getAttribute('data-path-ready') === 'true' // Wait for board path (not shimmer)
-      if (!pathReady) return // Path still a placeholder — left inset will grow
+      if (!pathReady) {
+        // Still cap the loading crumb against Share / tools — skipping left a stale or uncapped --tt-path-max under the right cluster
+        if (rightSection && bar) {
+          const PATH_GAP = 8 // Same air as the live path → tools / Share gap
+          const SHIMMER_FLOOR = 32 // Stub chip; clears a prior board’s wide --tt-path-min
+          const rightSectionRect = rightSection.getBoundingClientRect()
+          const hamEl = leftChrome?.querySelector('[data-nav-logo-trigger]') as HTMLElement | null
+          const hamRight = hamEl?.getBoundingClientRect().right ?? toolbarRect.left + 40
+          const shareLeft = rightSectionRect.left // Absolute Share cluster
+          const centerEl = toolbar.querySelector('[data-toolbar-center]') as HTMLElement | null
+          const centerLeft = centerEl?.getBoundingClientRect().left
+          const capLeft =
+            centerLeft != null && centerLeft > 0 ? Math.min(shareLeft, centerLeft) : shareLeft // Further-left of Share vs undo cluster
+          const pathMax = Math.max(SHIMMER_FLOOR, Math.floor(capLeft - PATH_GAP - hamRight))
+          bar.style.setProperty('--tt-path-max', `${pathMax}px`)
+          bar.style.setProperty('--tt-path-min', `${SHIMMER_FLOOR}px`)
+        }
+        return // Defer tool collapse until titles land — left inset still grows
+      }
 
       if (!rightSection) {
         toolbarLayoutReadyRef.current = true
@@ -1563,7 +1564,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       if (nextPhone) { // Tools + undo have left the bar — path can run to Share
         const pathMax = Math.max(minPathW, Math.floor(shareLeft - PATH_GAP - hamRight)) // Title uses the empty bar; icon stays whole
         if (bar) bar.style.setProperty('--tt-path-max', `${pathMax}px`)
-        setHideUndoMoreSlash((prev) => (prev === true ? prev : true)) // Nothing after undo on the bar
+        setHideUndoMoreSlash((prev) => (prev === false ? prev : false)) // Slash travels into the pill with undo|/|tools
         measuredModeRef.current = editMenuPillMode // This mode is fitted — next switch is a fresh first-pass
         toolbarLayoutReadyRef.current = true
         setToolbarLayoutReady(true)
@@ -1652,8 +1653,8 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
         >
       {/* Left Section - collapsible items */}
       <div ref={leftSectionRef} className="flex items-center gap-1 flex-shrink min-w-0">
-        {/* Undo/redo — first in the board-centered cluster; on phone, portal to the right of the mode pill */}
-        <PhoneUndoRedoPortal enabled={phoneTools} host={undoHost}>
+        {/* Undo|/|mode tools — board-centered on desktop; on phone, portal into the mode pill */}
+        <PhoneModeToolsPortal enabled={phoneTools} host={toolsHost}>
         <div className="flex items-center gap-1 px-2 flex-shrink-0" data-undo-redo>
               <Button
                 variant="ghost"
@@ -1702,13 +1703,11 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                 <Redo2 className="h-4 w-4" />
               </Button>
             </div>
-        </PhoneUndoRedoPortal>
             {/* Slash before mode tools — hide when only More remains and path is truncated */}
             {!hideUndoMoreSlash && (
               <span className="flex h-7 items-center text-2xl font-thin text-gray-300 dark:text-gray-500 mx-1 flex-shrink-0 select-none leading-none" aria-hidden>/</span>
             )}
 
-        <PhoneModeToolsPortal enabled={phoneTools} host={toolsHost}>
         {/* Turn into — Actions bar, own section left of Filter (same Format/Property as ⋮⋮) */}
         {editMenuPillMode === 'home' && !isItemHidden('turnInto') && (
           <>

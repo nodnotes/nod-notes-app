@@ -1165,18 +1165,10 @@ export function BoardFilterSortBar() {
         pillWidth,
         2 * Math.min(Math.max(0, pillCenter - EDGE), Math.max(0, parentR.width - pillCenter - EDGE))
       )
-      // Wrap soon after outgrowing the toggle (~1.5× pill) on desktop; phone → redo edge
+      // Wrap soon after outgrowing the toggle (~1.5× pill) on desktop; phone → full pill width
       const wrapCap = Math.max(pillWidth, pillWidth * 1.5)
-      const undo = phoneTools
-        ? (document.querySelector('[data-phone-undo]') as HTMLElement | null)
-        : null
-      const undoR = undo && undo.offsetWidth > 0 ? undo.getBoundingClientRect() : null
       const maxWidth = phoneTools
-        ? Math.max(
-            0,
-            // Grow from the mode pill’s left to the redo cluster’s right edge
-            (undoR ? undoR.right : parentR.right - EDGE) - pillR.left
-          )
+        ? Math.max(0, pillWidth) // Undo lives inside the pill now — grow to the pill’s right edge
         : Math.min(maxCentered, wrapCap)
 
       // Unwrapped natural width = sum of visible chip boxes + gaps + horizontal pad
@@ -1228,10 +1220,8 @@ export function BoardFilterSortBar() {
 
     sync()
     const pill = document.querySelector('[data-edit-menu-pill]') as HTMLElement | null
-    const undo = document.querySelector('[data-phone-undo]') as HTMLElement | null
     const ro = new ResizeObserver(sync)
     if (pill) ro.observe(pill)
-    if (undo) ro.observe(undo) // Phone: max width tracks undo/redo cluster
     if (barRef.current?.offsetParent) ro.observe(barRef.current.offsetParent as Element)
     if (barRef.current) ro.observe(barRef.current)
     if (chipsRef.current) ro.observe(chipsRef.current)

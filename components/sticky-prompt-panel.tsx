@@ -105,11 +105,11 @@ function slotsForPath(path: BoardPathSegment[]): PathSlot[] {
   ]
 }
 
-// One crumb bar while the board path query is pending (holds left-chrome width)
+// One crumb bar while the board path query is pending (holds left-chrome width until --tt-path-max forces a shrink)
 function BoardPathShimmer() {
   return (
-    <span className="h-8 truncate select-none flex items-center min-w-0" aria-busy="true" aria-label="Loading board path">
-      <span className="tt-topbar-path-shimmer w-32" /> {/* ~one title; not a fake ancestor / current pair */}
+    <span className="h-8 truncate select-none flex min-w-0 max-w-full items-center" aria-busy="true" aria-label="Loading board path">
+      <span className="tt-topbar-path-shimmer w-32 max-w-full" /> {/* ~one title; shrinks when the path box is capped */}
     </span>
   )
 }
@@ -1002,6 +1002,7 @@ export function EditPanel({ conversationId, projectId }: EditPanelProps) {
             {showPathShimmer ? (
               <span
                 className={cn(
+                  'min-w-0 max-w-full', // Shrink with --tt-path-max while titles load
                   pathReady && 'absolute inset-0 z-[1] flex items-center', // Overlay once the real path is in-flow
                   pathEntering && 'tt-board-load-fade-out' // Dissolve as the path appears
                 )}

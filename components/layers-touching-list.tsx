@@ -24,6 +24,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { Check, Folder, FolderOpen, List, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react' // Folder row, list mark, organize check, row ⋯, + Group, rename, delete
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
 import { useReactFlowContext } from '@/components/react-flow-context'
 import {
   DropdownMenu,
@@ -35,7 +36,8 @@ import {
   UtilityFilterOption,
   UtilityMenuTitle,
   UtilitySearchHeader,
-} from '@/components/utility-search-header' // AI-chat-style search + filter
+  UtilitySectionDivider,
+} from '@/components/utility-search-header' // AI-chat-style search + filter + expanded-header hairline
 import {
   EMPTY_LAYER_STACK,
   createLayerGroup,
@@ -60,12 +62,14 @@ import {
   subscribeLayersTouching,
   type LayersTouchingItem,
 } from '@/lib/layers-touching'
+import {
+  readUtilityLayersFilter,
+  writeUtilityLayersFilter,
+  type UtilityLayersFilter,
+} from '@/lib/utility-filter-prefs' // Remember All / touching / selected across tab switches
 
 /** How the Layers list is arranged. By group is the default. */
 type LayerOrganize = 'list' | 'group'
-
-/** Filter rows in the Layers utility menu. */
-type LayersFilter = 'all' | 'touching' | 'selected'
 
 /** Loose list id — layers that are not under a group header. */
 const UNGROUPED_SECTION = 'ungrouped'
@@ -97,20 +101,16 @@ function findLayerSection(layerId: string, sections: LayerSection[]) {
   return null
 }
 
-/** Map a droppable id (group header, trailing gap, or layer) to a section index. */
+/** Map a droppable id (trailing gap, empty zone, or layer) to a section index. Folder rows (`g:`) are stack slots, not join targets. */
 function resolveDropTarget(overId: string, sections: LayerSection[]) {
-  if (overId.startsWith('g:')) {
-    const section = sections.find((s) => s.id === overId.slice(2)) // Header row is the group's stack token
-    if (!section) return null
-    return { sectionId: section.id, index: 0 } // Drop on the folder row → first slot under that header
-  }
+  if (overId.startsWith('g:')) return null // Handled as mixed-list reorder — do not treat as “first under header”
   const prefixed = /^(header|section|end):([\s\S]+)$/.exec(overId) // Synthetic ids, not RF node ids
   if (prefixed) {
     const sectionId = prefixed[2]
     const section = sections.find((s) => s.id === sectionId)
     if (!section) return null
     if (prefixed[1] === 'end') return { sectionId, index: section.items.length } // After the last thumb
-    return { sectionId, index: 0 } // Header or empty zone → first slot under the header
+    return { sectionId, index: 0 } // Empty zone → first slot under the header
   }
   const hit = findLayerSection(overId, sections)
   if (!hit) return null
@@ -246,16 +246,23 @@ function shiftToken(tokens: string[], token: string, anchor: string | null): str
 }
 
 /** Trailing gap is also a drop target so a layer can land at the end of a section. */
-function TrailingDrop({ sectionId, children }: { sectionId: string; children: ReactNode }) {
+function TrailingDrop({ sectionId, children }: { sectionId: string; children?: ReactNode }) {
   const { setNodeRef, isOver } = useDroppable({ id: `end:${sectionId}` }) // Drop → append
   return (
-    <div ref={setNodeRef} className={cn('min-h-5 rounded-md', isOver && 'bg-blue-500/10')}>
+    <div
+      ref={setNodeRef}
+      className={cn(
+        'rounded-md',
+        children == null && 'min-h-5', // Empty end-of-list keeps a hit strip; wrapping the section hairline stays flush under thumbs
+        isOver && 'bg-blue-500/10'
+      )}
+    >
       {children}
     </div>
   )
 }
 
-/** Group name row — drag it among loose layers; drop a layer on it to put that layer first. */
+/** Group name row — drag it among loose layers; drop a loose thumb on it to park that thumb before the group. */
 function GroupHeader({
   group,
   renaming,
@@ -383,16 +390,21 @@ function GroupHeader({
   )
 }
 
-/** One sortable layer row — drag anywhere to reorder or drop into a group; click selects. */
+/** One sortable layer row — drag to reorder or drop into a group; click selects; ⋯ like Captures. */
 function SortableLayerRow({
   item,
   onSelect,
+  canReorder,
+  onRemoveFromGroup,
 }: {
   item: LayersTouchingItem
   onSelect: (id: string) => void
+  canReorder: boolean // Off while search / Selected filter
+  onRemoveFromGroup?: () => void // Only when this thumb sits under a folder
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.id,
+    disabled: !canReorder, // Search and Selected stay put
   })
   const style: CSSProperties = {
     transform: CSS.Translate.toString(transform), // Move only — scale would shrink the thumb onto a shorter row
@@ -402,37 +414,66 @@ function SortableLayerRow({
   }
 
   return (
-    <li ref={setNodeRef} style={style} className="w-full shrink-0"> {/* Keep the 4:3 box; a flex shrink mid-drag makes it smaller */}
-      <button
-        type="button"
-        {...attributes}
-        {...listeners}
-        onClick={() => onSelect(item.id)}
-        className="w-full text-left cursor-grab active:cursor-grabbing"
-        title={item.label}
-        aria-label={item.label}
-      >
-        <div
-          className={cn(
-            'relative w-full aspect-[4/3] overflow-hidden rounded-md bg-gray-50 dark:bg-[#1a1a1a]',
-            item.selected
-              ? 'border-2 border-blue-500'
-              : 'border border-gray-200/80 dark:border-white/10'
-          )}
+    <li ref={setNodeRef} style={style} className="group/layer-preview w-full shrink-0"> {/* Hover reveals top-right ⋯ */}
+      <div className="relative">
+        <button
+          type="button"
+          {...(canReorder ? { ...attributes, ...listeners } : {})}
+          onClick={() => onSelect(item.id)}
+          className={cn('w-full text-left', canReorder && 'cursor-grab active:cursor-grabbing')}
+          title={canReorder ? `${item.label} — drag to reorder` : item.label}
+          aria-label={item.selected ? `Deselect ${item.label}` : item.label}
+          aria-pressed={item.selected}
         >
-          {item.previewUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element -- local data URL
-            <img
-              src={item.previewUrl}
-              alt=""
-              className="absolute inset-0 h-full w-full object-contain pointer-events-none"
-              draggable={false}
-            />
-          ) : (
-            <div className="absolute inset-0 animate-pulse bg-gray-100 dark:bg-white/[0.06]" />
-          )}
-        </div>
-      </button>
+          <div
+            className={cn(
+              'relative w-full aspect-[4/3] overflow-hidden rounded-md bg-gray-50 dark:bg-[#1a1a1a]',
+              item.selected
+                ? 'border-2 border-blue-500'
+                : 'border border-gray-200/80 dark:border-white/10'
+            )}
+          >
+            {item.previewUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element -- local data URL
+              <img
+                src={item.previewUrl}
+                alt=""
+                className="absolute inset-0 h-full w-full object-contain pointer-events-none"
+                draggable={false}
+              />
+            ) : (
+              <div className="absolute inset-0 animate-pulse bg-gray-100 dark:bg-white/[0.06]" />
+            )}
+          </div>
+        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(
+                'absolute right-1.5 top-1.5 z-10 h-8 w-6 flex-shrink-0 bg-white/90 text-gray-500 shadow-sm hover:bg-white hover:text-gray-700 dark:bg-[#1a1a1a]/90 dark:hover:bg-[#1a1a1a]',
+                'opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/layer-preview:opacity-100'
+              )}
+              title="Layer options"
+              aria-label={`${item.label} options`}
+              onPointerDown={(e) => e.stopPropagation()} // Don’t start a thumb drag
+              onClick={(e) => e.stopPropagation()} // Don’t select via the ⋯
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44" onClick={(e) => e.stopPropagation()}>
+            <DropdownMenuItem
+              disabled={!onRemoveFromGroup}
+              onSelect={() => onRemoveFromGroup?.()}
+            >
+              <Folder className="mr-2 h-4 w-4" />
+              Remove from group
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </li>
   )
 }
@@ -449,7 +490,7 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
   const { reactFlowInstance, getSetNodes } = useReactFlowContext()
   const [query, setQuery] = useState('') // Filter thumbs by label
   const [filterOpen, setFilterOpen] = useState(false) // Filter menu
-  const [filter, setFilter] = useState<LayersFilter>('touching') // Default stays the touching cluster
+  const [filter, setFilter] = useState<UtilityLayersFilter>(readUtilityLayersFilter) // Restore last All / touching / selected
   const [renamingId, setRenamingId] = useState<string | null>(null) // Header whose name is being edited
   const [organize, setOrganize] = useState<LayerOrganize>('group') // ⋯ menu: one list, or file rows
   const [organizeOpen, setOrganizeOpen] = useState(false) // Organize layers menu
@@ -459,6 +500,7 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
   )
 
   useEffect(() => {
+    writeUtilityLayersFilter(filter) // Tab switch unmounts this list — keep the choice for next open
     setLayersPublishScope(filter === 'all' ? 'all' : 'touching') // All loads every layer; the rest use the cluster
     return () => setLayersPublishScope('touching') // Leaving Layers stops the whole-board publish
   }, [filter])
@@ -536,14 +578,12 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
   const listEmpty = visible.length === 0 && (organize === 'list' || sections.grouped.length === 0) // No thumbs — the line under + follows the filter
 
   const selectItem = (id: string) => {
+    const already = !!reactFlowInstance?.getNodes().find((n) => n.id === id)?.selected // Second click clears
     const setNodes = getSetNodes()
-    if (setNodes) {
-      setNodes((nds: Array<{ id: string; selected?: boolean }>) =>
-        nds.map((n) => ({ ...n, selected: n.id === id }))
-      )
-    } else {
-      reactFlowInstance?.setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === id })))
-    }
+    const apply = (nds: Array<{ id: string; selected?: boolean }>) =>
+      nds.map((n) => ({ ...n, selected: already ? false : n.id === id }))
+    if (setNodes) setNodes(apply)
+    else reactFlowInstance?.setNodes(apply)
     reactFlowInstance?.setEdges((eds) => eds.map((e) => ({ ...e, selected: false })))
   }
 
@@ -639,6 +679,23 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
       return
     }
 
+    // A folder row is a mixed-list slot — dropping a thumb on it parks that thumb before the group
+    // (join still happens by dropping on a member or the end gap under the header).
+    if (overId.startsWith('g:')) {
+      const from = findLayerSection(activeId, sections.all)
+      if (!from) return
+      if (from.sectionId !== UNGROUPED_SECTION) {
+        moveLayerUnderGroup(activeId, null, 0, conversationId) // Peel out; the stack owns this thumb now
+      }
+      const groups = groupsNow()
+      const tokens = reconcileStack(getLayerStack(conversationId), groups, looseIdsOf(groups))
+      const next = shiftToken(tokens, layerStackToken(activeId), overId) // Same slot as the header — loose can sit above it
+      if (next === tokens) return
+      setLayerStack(conversationId, next)
+      applyOrder(orderFromTokens(next, groups, items))
+      return
+    }
+
     const from = findLayerSection(activeId, sections.all)
     const to = resolveDropTarget(overId, sections.all)
     if (!from || !to) return
@@ -680,18 +737,30 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
     applyOrder(orderFromTokens(reconcileStack(getLayerStack(conversationId), after, looseIdsOf(after)), after, items))
   }
 
+  const peelFromGroup = (layerId: string) => {
+    if (!conversationId) return
+    moveLayerUnderGroup(layerId, null, 0, conversationId) // Membership only — stack picks the thumb up as loose
+    const after = getLayerGroups().filter((g) => g.boardId === conversationId)
+    const tokens = reconcileStack(getLayerStack(conversationId), after, looseIdsOf(after))
+    setLayerStack(conversationId, tokens)
+    applyOrder(orderFromTokens(tokens, after, items))
+  }
+
   const renderSection = (section: LayerSection) =>
     section.items.length === 0 ? null : (
-      <>
-        <SortableContext items={section.items.map((item) => item.id)} strategy={verticalListSortingStrategy}>
-          <ul className="flex flex-col gap-1 pl-7"> {/* Name column: folder width + gap */}
-            {section.items.map((item) => (
-              <SortableLayerRow key={item.id} item={item} onSelect={selectItem} />
-            ))}
-          </ul>
-        </SortableContext>
-        {canReorder && <TrailingDrop sectionId={section.id}>{null}</TrailingDrop>}
-      </>
+      <SortableContext items={section.items.map((item) => item.id)} strategy={verticalListSortingStrategy}>
+        <ul className="flex flex-col gap-1"> {/* Full-width thumbs — section hairline marks the group */}
+          {section.items.map((item) => (
+            <SortableLayerRow
+              key={item.id}
+              item={item}
+              onSelect={selectItem}
+              canReorder={canReorder}
+              onRemoveFromGroup={section.group ? () => peelFromGroup(item.id) : undefined}
+            />
+          ))}
+        </ul>
+      </SortableContext>
     )
 
   return (
@@ -811,9 +880,18 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onListDragEnd}>
                   <SortableContext items={visible.map((item) => item.id)} strategy={verticalListSortingStrategy}>
                     <ul className="flex flex-col gap-1">
-                      {visible.map((item) => (
-                        <SortableLayerRow key={item.id} item={item} onSelect={selectItem} />
-                      ))}
+                      {visible.map((item) => {
+                        const groupId = boardGroups.find((g) => g.layerIds.includes(item.id))?.id
+                        return (
+                          <SortableLayerRow
+                            key={item.id}
+                            item={item}
+                            onSelect={selectItem}
+                            canReorder={canReorder}
+                            onRemoveFromGroup={groupId ? () => peelFromGroup(item.id) : undefined}
+                          />
+                        )
+                      })}
                     </ul>
                   </SortableContext>
                 </DndContext>
@@ -823,7 +901,12 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
                 <SortableContext items={topIds} strategy={verticalListSortingStrategy}>
                   {rows.map((row) =>
                     row.kind === 'layer' ? (
-                      <SortableLayerRow key={row.item.id} item={row.item} onSelect={selectItem} />
+                      <SortableLayerRow
+                        key={row.item.id}
+                        item={row.item}
+                        onSelect={selectItem}
+                        canReorder={canReorder}
+                      />
                     ) : (
                       <li key={row.section.id} className="group/layer-group list-none w-full shrink-0">
                         {row.section.group && (
@@ -838,7 +921,18 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
                             onDelete={() => deleteLayerGroup(row.section.id)}
                           />
                         )}
-                        {row.section.group && !row.section.group.collapsed && renderSection(row.section)}
+                        {row.section.group && !row.section.group.collapsed && (
+                          <>
+                            {renderSection(row.section)}
+                            {canReorder ? (
+                              <TrailingDrop sectionId={row.section.id}>
+                                <UtilitySectionDivider /> {/* Drop-at-end hit sits on the hairline — no extra strip above it */}
+                              </TrailingDrop>
+                            ) : (
+                              <UtilitySectionDivider />
+                            )}
+                          </>
+                        )}
                       </li>
                     )
                   )}
