@@ -3,6 +3,7 @@
 // Utility Sets body — set names, plus a Layers-style thumb for each frame in the set
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import type { Node } from 'reactflow' // RF v11 node — setNodes updater must return this, not a selection stub
 import { CalendarDays, Check, List, MoreHorizontal, Pencil, Plus, SquareStack, Trash2 } from 'lucide-react' // Schedule, organize check, + Set, list mark, row ⋯, rename, delete
 import { cn } from '@/lib/utils' // Selected-row wash + thumb border
 import { Button } from '@/components/ui/button'
@@ -445,8 +446,7 @@ export function SetsList({ conversationId }: { conversationId?: string }) {
     const setNodes = getSetNodes()
     if (already) {
       setSelectedNodeId(null) // Drop the thumb blue ring
-      const clear = (nds: Array<{ id: string; selected?: boolean }>) =>
-        nds.map((n) => ({ ...n, selected: false }))
+      const clear = (nds: Node[]) => nds.map((n) => ({ ...n, selected: false }))
       if (setNodes) setNodes(clear)
       else reactFlowInstance?.setNodes(clear)
       reactFlowInstance?.setEdges((eds) => eds.map((e) => ({ ...e, selected: false })))
@@ -454,13 +454,9 @@ export function SetsList({ conversationId }: { conversationId?: string }) {
     }
     setSelectedNodeId(nodeId) // Blue ring on this thumb only — not every frame in the set
     if (selectedId !== setId) selectSet(setId) // Glow the set without toggling it off
-    if (setNodes) {
-      setNodes((nds: Array<{ id: string; selected?: boolean }>) =>
-        nds.map((n) => ({ ...n, selected: n.id === nodeId })) // Same single-select as Layers
-      )
-    } else {
-      reactFlowInstance?.setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === nodeId })))
-    }
+    const apply = (nds: Node[]) => nds.map((n) => ({ ...n, selected: n.id === nodeId }))
+    if (setNodes) setNodes(apply)
+    else reactFlowInstance?.setNodes(apply)
     reactFlowInstance?.setEdges((eds) => eds.map((e) => ({ ...e, selected: false })))
   }
 

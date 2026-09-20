@@ -580,8 +580,7 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
   const selectItem = (id: string) => {
     const already = !!reactFlowInstance?.getNodes().find((n) => n.id === id)?.selected // Second click clears
     const setNodes = getSetNodes()
-    const apply = (nds: Array<{ id: string; selected?: boolean }>) =>
-      nds.map((n) => ({ ...n, selected: already ? false : n.id === id }))
+    const apply = (nds: Node[]) => nds.map((n) => ({ ...n, selected: already ? false : n.id === id }))
     if (setNodes) setNodes(apply)
     else reactFlowInstance?.setNodes(apply)
     reactFlowInstance?.setEdges((eds) => eds.map((e) => ({ ...e, selected: false })))
