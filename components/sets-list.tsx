@@ -33,7 +33,6 @@ import {
 } from '@/lib/sets-list'
 import {
   UtilityFilterOption,
-  UtilityMenuTitle,
   UtilitySearchHeader,
   UtilitySectionDivider,
 } from '@/components/utility-search-header' // Search chrome + expanded-set hairline
@@ -519,7 +518,6 @@ export function SetsList({ conversationId }: { conversationId?: string }) {
         }
       />
 
-      <UtilityMenuTitle>Sets</UtilityMenuTitle>
       <div ref={organizeRef} className="group/set-add relative flex h-8 flex-shrink-0 items-center gap-1 pl-[3px] pr-1.5 pt-1"> {/* Plus ink lines up with the Layers toggle icon */}
         <button
           type="button"

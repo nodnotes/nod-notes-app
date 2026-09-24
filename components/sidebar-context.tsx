@@ -77,8 +77,8 @@ function persistChatSidebarOpen(open: boolean) {
   document.cookie = `${NN_CHAT_SIDEBAR_COOKIE}=${open ? 'true' : 'false'}; Path=/; Max-Age=31536000; SameSite=Lax` // First HTML paint
 }
 
-/** Default / minimum width of the thin right utility column (layers / study / capture). */
-export const UTILITY_SIDEBAR_WIDTH = 152
+/** Default / minimum width of the thin right utility column (layers / sets / views / templates). Matches toggle shell + header `px-1.5`. */
+export const UTILITY_SIDEBAR_WIDTH = 184
 
 /** Air to the right of utility chrome so close/open sit 8px from the map/chat edge — same as the header gap between the mode pill and close (`flex-1` leftover + `gap-0.5`). Header already has `px-1.5` (6), so aside pad is 2. */
 export const UTILITY_RIGHT_GAP_PX = 2
@@ -115,8 +115,8 @@ function persistUtilitySidebarWidth(width: number) {
   localStorage.setItem(NN_UTILITY_SIDEBAR_WIDTH_KEY, String(Math.max(UTILITY_SIDEBAR_WIDTH, Math.round(width))))
 }
 
-/** Which menu the utility column shows — layers by default; study / capture later. */
-export type UtilitySidebarMode = 'layers' | 'flashcards' | 'capture'
+/** Which menu the utility column shows — layers by default; sets / views / comments / templates / changes. */
+export type UtilitySidebarMode = 'layers' | 'flashcards' | 'capture' | 'comments' | 'templates' | 'changes'
 
 /** localStorage + cookie — reopen utility column after reload when it was open. */
 export const NN_UTILITY_SIDEBAR_OPEN_KEY = 'nodnotes-utility-sidebar-open'
@@ -124,7 +124,7 @@ export const NN_UTILITY_SIDEBAR_OPEN_KEY = 'nodnotes-utility-sidebar-open'
 /** Cookie twin so SSR can paint the thin column already open (avoids top-bar measure jump). */
 export const NN_UTILITY_SIDEBAR_COOKIE = 'nodnotes-utility-sidebar-open'
 
-/** localStorage — last utility menu (layers / flashcards / capture). */
+/** localStorage — last utility menu (layers / flashcards / capture / comments / templates / changes). */
 export const NN_UTILITY_SIDEBAR_MODE_KEY = 'nodnotes-utility-sidebar-mode'
 
 /** Read whether the utility column was open last session (SSR-safe → false). */
@@ -143,7 +143,16 @@ function persistUtilitySidebarOpen(open: boolean) {
 /** Normalize a stored mode string to a known utility menu. */
 function parseUtilitySidebarMode(raw: string | null | undefined): UtilitySidebarMode {
   if (raw === 'present') return 'capture' // Legacy tab id → Capture
-  if (raw === 'flashcards' || raw === 'capture' || raw === 'layers') return raw // Known menus only
+  if (
+    raw === 'flashcards' ||
+    raw === 'capture' ||
+    raw === 'layers' ||
+    raw === 'comments' ||
+    raw === 'templates' ||
+    raw === 'changes'
+  ) {
+    return raw // Known menus only
+  }
   return 'layers' // Default: layers sidebar
 }
 
@@ -200,10 +209,10 @@ interface SidebarContextType {
   isUtilitySidebarOpen: boolean // True when thin right utility column (left of chat) is visible
   utilitySidebarWidth: number // Live utility column width (preferred clamped to this window; may be fit-shrunk)
   setUtilitySidebarWidth: (width: number) => void // Seam drag-resize; preferred persisted, display clamped
-  utilitySidebarMode: UtilitySidebarMode // layers (default) | flashcards | capture
+  utilitySidebarMode: UtilitySidebarMode // layers (default) | flashcards | capture | comments | templates | changes
   toggleUtilitySidebar: () => void // Top-bar toggle right of More (open only — close via seam / header)
   setUtilitySidebarOpen: (open: boolean) => void // Explicit open/close for utility column
-  setUtilitySidebarMode: (mode: UtilitySidebarMode) => void // Switch layers / sets / capture menus
+  setUtilitySidebarMode: (mode: UtilitySidebarMode) => void // Switch layers / sets / views / comments / templates / changes
   logoDrawing: string | null // Custom logo PNG data URL (shared by chat + map open icon)
   setLogoDrawing: (url: string | null) => void // Persist + sync custom logo across chrome
   /** Phone: AiComposer registers focus so brand tap can open the soft keyboard in the same gesture. */
@@ -373,7 +382,7 @@ export function SidebarContextProvider({
     isUtilityOpenRef.current = nextUtilityOpen
     setIsUtilitySidebarOpen(nextUtilityOpen)
     if (!narrow) persistUtilitySidebarOpen(storedUtilityOpen) // Backfill utility cookie for next SSR
-    setUtilitySidebarModeState(getStoredUtilitySidebarMode()) // Restore layers / study / capture
+    setUtilitySidebarModeState(getStoredUtilitySidebarMode()) // Restore last utility menu
     const storedPinned = getStoredBoardsNavPinned() // Last click-pin on the boards menu
     if (storedPinned) {
       isSidebarPinnedRef.current = true // scheduleClose must see pin before paint
@@ -641,7 +650,7 @@ export function SidebarContextProvider({
 
   const setUtilitySidebarMode = useCallback((mode: UtilitySidebarMode) => {
     if (mode !== 'flashcards') clearSelectedSet() // Leaving Sets drops the board halo
-    setUtilitySidebarModeState(mode) // Switch layers / sets / capture
+    setUtilitySidebarModeState(mode) // Switch the utility dropdown menu
     if (!previewModeRef.current) persistUtilitySidebarMode(mode) // Remember across reload
   }, [])
 

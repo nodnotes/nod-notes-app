@@ -7,10 +7,10 @@ const CHAT_SIDEBAR_WIDTH = 360
 
 /**
  * Top-bar Share/More clear this much from the map’s right when utility is open.
- * Toggle shell is min body-card width (UTILITY_SIDEBAR_WIDTH − 12), right-aligned — keep in sync with `utility-sidebar` header.
- * = UTILITY_RIGHT_GAP(2) + header pr(6) + shell(140).
+ * Toggle shell is right-aligned — keep in sync with `utility-sidebar` header.
+ * = UTILITY_RIGHT_GAP(2) + header pr(6) + shell(172). Mode dropdown + close.
  */
-export const UTILITY_TOGGLE_TOP_BAR_INSET_PX = 148
+export const UTILITY_TOGGLE_TOP_BAR_INSET_PX = 180
 
 /** Air between the board path (or hamburger) and the Share / More cluster. */
 const LEFT_RIGHT_GAP_PX = 8

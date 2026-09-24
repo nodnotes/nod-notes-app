@@ -127,6 +127,14 @@ export function mintEphemeralSandbox(master: PublicBoardPayload): string {
   return sandboxId
 }
 
+/** Clone at a chosen id so the host can target `[data-page-preview-frame={id}]`. */
+export function mintEphemeralSandboxAt(master: PublicBoardPayload, sandboxId: string): string {
+  unregisterEphemeralSandbox(sandboxId) // Drop a stale remount of the same preview
+  const payload = clonePublicBoardPayload(master, sandboxId) // Remap row ids; conversation id stays sandboxId
+  registerEphemeralSandbox(sandboxId, payload) // Host tools key off this id
+  return sandboxId
+}
+
 /** Patch a cloned message in memory (positions, content). No DB write. */
 export function patchEphemeralMessage(
   messageId: string,

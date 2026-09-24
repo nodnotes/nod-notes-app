@@ -34,7 +34,6 @@ import {
 } from '@/components/ui/dropdown-menu'
 import {
   UtilityFilterOption,
-  UtilityMenuTitle,
   UtilitySearchHeader,
   UtilitySectionDivider,
 } from '@/components/utility-search-header' // AI-chat-style search + filter + expanded-header hairline
@@ -801,7 +800,6 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
         }
       />
 
-      <UtilityMenuTitle>Layers</UtilityMenuTitle>
       <div ref={organizeRef} className="group/layer-row relative flex h-8 flex-shrink-0 items-center gap-1 pl-[3px] pr-1.5 pt-1"> {/* Plus ink lines up with the Layers toggle icon */}
         <button
           type="button"

@@ -6,7 +6,7 @@ import { useEffect, useLayoutEffect, useRef } from 'react' // Escape close + aut
 import {
   Scan, // Capture — 4 disconnected rounded corners
   ClipboardPaste,
-  LayoutTemplate, // Add template — layout glyph, distinct from Add frame Plus
+  LayoutTemplate, // Create public template — same glyph Add template used
   Link2,
   Maximize2,
   Plus,
@@ -22,7 +22,7 @@ import { applyMenuPlacement, watchMenuSafeRect } from '@/lib/menu-placement' // 
 /** Actions the board menu can emit (wired + stubs). */
 export type BoardActionId =
   | 'addFrame'
-  | 'addTemplate' // Stub — insert a saved template at the click (thread Save as template is the pair)
+  | 'createPublicTemplate' // Are you sure? then /board/{id}/template
   | 'paste'
   | 'selectAll'
   | 'undo'
@@ -88,8 +88,8 @@ export function BoardActionsMenu({
     },
     {
       kind: 'action',
-      id: 'addTemplate', // Directly under Add frame — add a saved template at the click
-      label: 'Add template',
+      id: 'createPublicTemplate', // Under Add frame — save this board; opens utility Templates
+      label: 'Create public template',
       icon: <LayoutTemplate className="h-4 w-4" />,
     },
     {

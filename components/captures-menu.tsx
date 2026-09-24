@@ -36,7 +36,6 @@ import {
 } from 'lucide-react'
 import {
   UtilityFilterOption,
-  UtilityMenuTitle,
   UtilitySearchHeader,
   UtilitySectionDivider,
 } from '@/components/utility-search-header' // Sidebar: AI-chat-style search + expanded-deck hairline
@@ -702,7 +701,6 @@ export function CapturesPanel({
               </>
             }
           />
-          <UtilityMenuTitle>Captures</UtilityMenuTitle>
           <div className="flex h-8 flex-shrink-0 items-center gap-1 pl-[3px] pr-1.5 pt-1"> {/* Plus ink lines up with the Layers toggle icon */}
             <button
               type="button"

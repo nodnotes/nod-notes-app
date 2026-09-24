@@ -56,6 +56,8 @@ async function persistBoardStyle(
     .eq('user_id', user.id)
     .maybeSingle()
 
+  if (!conversation) return // Template / missing ids have no conversations row — style stays local
+
   const existing = (conversation?.metadata as Record<string, unknown>) || {}
   await supabase
     .from('conversations')

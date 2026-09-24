@@ -58,13 +58,24 @@ import {
 import {
   ArrowDown,
   ChevronsRight,
-  MessageSquarePlus,
+  MessageSquare,
+  Plus,
   Settings2,
 } from 'lucide-react' // Icons
 
 interface ChatSidebarProps {
   conversationId?: string // Current board id
   projectId?: string // Kept for call-site compat
+}
+
+/** Chat mark with a corner plus — same badge as Add to chat, not Lucide’s centered plus. */
+function NewChatIcon() {
+  return (
+    <span className="relative block h-4 w-4 flex-shrink-0"> {/* Same 16px hit as other header glyphs */}
+      <MessageSquare className="h-4 w-4" /> {/* Bubble */}
+      <Plus className="absolute -bottom-px -right-px h-2.5 w-2.5 rounded-full bg-[var(--nod-chat-prompt)]" /> {/* Corner add, knocked out of the bubble */}
+    </span>
+  )
 }
 
 /** Write / clear the active thread id so reload restores the same chat. */
@@ -1233,7 +1244,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                   title="New chat"
                   aria-label="New chat"
                 >
-                  <MessageSquarePlus className="h-4 w-4" />
+                  <NewChatIcon />
                 </button>
                 <button
                   type="button"
@@ -1345,7 +1356,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
               title="New chat"
               aria-label="New chat"
             >
-              <MessageSquarePlus className="h-4 w-4" />
+              <NewChatIcon />
             </button>
             <button
               type="button"

@@ -1,10 +1,10 @@
 'use client'
 
-// Transparent right utility overlay on the map — left of chat when both open; layers / sets / views
+// Transparent right utility overlay on the map — left of chat when both open; layers / sets / views / comments / templates / changes
 
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react' // Seam drag + hover tip
-import { useParams } from 'next/navigation' // Board id for Capture panel
-import { ChevronsRight, Layers, Scan, SquareStack } from 'lucide-react' // Mode icons + header close
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react' // Seam drag + hover tip + menu dismiss
+import { useParams } from 'next/navigation' // Board id for Capture / Templates panels
+import { ChevronDown, ChevronsRight, History, Layers, LayoutTemplate, MessageSquare, Scan, SquareStack, type LucideIcon } from 'lucide-react' // Mode icons + dropdown + header close
 import { cn } from '@/lib/utils' // Class merge
 import { useSidebarContext, UTILITY_RIGHT_GAP_PX, UTILITY_SIDEBAR_WIDTH, type UtilitySidebarMode } from './sidebar-context' // Open state + live width + right air gap + min chrome
 import {
@@ -14,6 +14,9 @@ import {
 import { LayersTouchingList } from './layers-touching-list' // Preview list of touching selection
 import { SetsList } from './sets-list' // Snapshots added from frame / block / text menus
 import { CapturesPanel } from './captures-menu' // Capture list (same as View-bar menu)
+import { CommentsPanel } from './comments-menu' // Board comments (between Views and Templates)
+import { TemplatesPanel } from './templates-menu' // All approved + Submissions pending review
+import { ChangesPanel } from './changes-menu' // Change history — last menu in the dropdown
 
 /** Clear the map brand chat toggle (42px + 8px inset + air) so Capture footer / lists don’t sit on it. */
 const UTILITY_BRAND_CLEARANCE_PX = 64
@@ -21,11 +24,14 @@ const UTILITY_BRAND_CLEARANCE_PX = 64
 /** Header / body share `px-1.5` (6×2) — toggle shell matches the body card at the min chrome width. */
 const UTILITY_TOGGLE_SHELL_WIDTH_PX = UTILITY_SIDEBAR_WIDTH - 12
 
-/** Mode tab labels for the utility header strip. */
-const MODE_TABS: { id: UtilitySidebarMode; label: string; icon: typeof Layers }[] = [
+/** Dropdown rows — same icons as the old icon tabs, plus the menu name. */
+const MODE_TABS: { id: UtilitySidebarMode; label: string; icon: LucideIcon }[] = [
   { id: 'layers', label: 'Layers', icon: Layers }, // Default — frame stacking order
   { id: 'flashcards', label: 'Sets', icon: SquareStack }, // Snapshots added from menus (stored mode id stays flashcards)
   { id: 'capture', label: 'Views', icon: Scan }, // Board views — utility Views tab (mode id stays capture)
+  { id: 'comments', label: 'Comments', icon: MessageSquare }, // Between Views (captures) and Templates
+  { id: 'templates', label: 'Templates', icon: LayoutTemplate }, // Public templates — same as Create public template
+  { id: 'changes', label: 'Changes', icon: History }, // Change history — last row
 ]
 
 /**
@@ -101,7 +107,7 @@ function UtilitySidebarSeam() {
   )
 }
 
-/** Mode body — layers list, sets list, or embedded captures panel. */
+/** Mode body — layers, sets, views, comments, templates, or changes. */
 function UtilityModeBody({
   mode,
   conversationId,
@@ -114,6 +120,15 @@ function UtilityModeBody({
   }
   if (mode === 'flashcards') {
     return <SetsList conversationId={conversationId} /> // Sets tab — All boards, or only this board
+  }
+  if (mode === 'comments') {
+    return <CommentsPanel conversationId={conversationId} /> // Between Views and Templates
+  }
+  if (mode === 'templates') {
+    return <TemplatesPanel conversationId={conversationId} /> // All approved + Submissions
+  }
+  if (mode === 'changes') {
+    return <ChangesPanel conversationId={conversationId} /> // Last dropdown row
   }
   return <CapturesPanel conversationId={conversationId} variant="sidebar" />
 }
@@ -140,8 +155,29 @@ export function UtilitySidebar() {
   const useChatMapDock = isMobileMode || chatFitPhone
   // Brand mark only mounts while chat is closed — clear it then; full height when chat owns the right
   const clearBrand = !isChatSidebarOpen
-  // Map-docked + keyboard: keep the mode tabs, hide the grey body until the keyboard drops
+  // Map-docked + keyboard: keep the mode dropdown, hide the grey body until the keyboard drops
   const hideUtilityBody = useChatMapDock && aiKeyboardOpen
+  const currentTab = MODE_TABS.find((tab) => tab.id === utilitySidebarMode) ?? MODE_TABS[0] // Icon + name on the trigger
+  const CurrentIcon = currentTab.icon // Same glyph as the selected dropdown row
+  const [modeOpen, setModeOpen] = useState(false) // Name dropdown under the toggle bar
+  const toggleRef = useRef<HTMLDivElement>(null) // Click-away + Escape close
+
+  useEffect(() => {
+    if (!modeOpen) return // Nothing to dismiss
+    const onDoc = (e: Event) => {
+      if (toggleRef.current?.contains(e.target as Node)) return // Click stayed on the bar / menu
+      setModeOpen(false) // Outside → close
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setModeOpen(false) // Same as other menus
+    }
+    document.addEventListener('pointerdown', onDoc) // Board / chrome click
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [modeOpen])
   const composerPad = aiMapDockComposerLiftPx || aiMapDockLiftPx // Empty-chat floor (chrome + Ask + keyboard)
   const bottomPad =
     useChatMapDock && isChatSidebarOpen
@@ -181,40 +217,54 @@ export function UtilitySidebar() {
       {shown ? <UtilitySidebarSeam /> : null}
       <header
         className={cn(
-          'relative z-10 flex h-[52px] flex-shrink-0 items-center justify-end px-1.5 pointer-events-none' // Toggle hugs the right; left strip stays pass-through over the top bar
+          'relative z-20 flex h-[52px] flex-shrink-0 items-center justify-end overflow-visible px-1.5 pointer-events-none' // Above the body so the dropdown paints over the card; left strip stays pass-through
         )}
       >
-        {/* Modes left + close right — fixed to min body-card width; right-aligned when the panel is wider */}
+        {/* Modes left + close right — dropdown hangs from this bar (no Radix portal) */}
         <div
+          ref={toggleRef}
           className={cn(
-            'flex flex-shrink-0 items-center justify-between rounded-xl border border-black/10 bg-[var(--nod-chat-prompt)] px-1 py-1 shadow-sm dark:border-white/10', // Same grey + hairline as Actions/Layout/Draw pill
+            'relative flex flex-shrink-0 items-center justify-between rounded-xl border border-black/10 bg-[var(--nod-chat-prompt)] px-1 py-1 shadow-sm dark:border-white/10', // Same grey + hairline as the utility body
             shown ? 'pointer-events-auto' : 'pointer-events-none' // Only this control captures clicks
           )}
           style={{ width: UTILITY_TOGGLE_SHELL_WIDTH_PX }} // Same as the body card at UTILITY_SIDEBAR_WIDTH
         >
-          <div className="flex items-center gap-0.5" role="tablist" aria-label="Utility modes">
-            {MODE_TABS.map(({ id, label, icon: Icon }) => {
-              const active = utilitySidebarMode === id // White chip when selected
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => setUtilitySidebarMode(id)}
-                  className={cn(
-                    'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg transition-all duration-200',
-                    active
-                      ? 'bg-white shadow-sm text-gray-700 dark:bg-white dark:text-gray-300' // Match mode-pill selected chip fill + lift
-                      : 'bg-transparent text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100'
-                  )}
-                  title={label}
-                  aria-label={label}
-                >
-                  <Icon className="h-3.5 w-3.5" />
-                </button>
-              )
-            })}
+          <div className="relative min-w-0"> {/* Chip hugs its label — leftover bar width stays between chip and divider */}
+            <button
+              type="button"
+              className={cn(
+                'inline-flex h-7 items-center gap-1 rounded-lg bg-[var(--nod-chat-prompt)] px-2.5 text-sm font-medium text-gray-700 hover:bg-[var(--nod-on-chrome)] dark:text-gray-300', // Hug icon + name + chevron; even px like the old icon tabs
+                modeOpen && 'bg-[var(--nod-on-chrome)]' // Open = selected wash
+              )}
+              aria-label="Utility menu"
+              aria-expanded={modeOpen}
+              onClick={() => setModeOpen((open) => !open)} // Toggle the list under this bar
+            >
+              <CurrentIcon className="h-3.5 w-3.5 flex-shrink-0" />
+              <span className="whitespace-nowrap">{currentTab.label}</span>
+              <ChevronDown className="h-3.5 w-3.5 flex-shrink-0" />
+            </button>
+            {modeOpen ? (
+              <div className="absolute left-0 top-[calc(100%+5px)] z-50 flex min-w-full flex-col gap-0.5 rounded-xl border border-black/10 bg-[var(--nod-chat-prompt)] p-1 shadow-md dark:border-white/10"> {/* At least as wide as the chip; p-1 matches the bar inset */}
+                {MODE_TABS.map(({ id, label, icon: Icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={cn(
+                      'inline-flex h-7 w-full min-w-0 items-center gap-1 rounded-lg px-2.5 text-sm font-medium text-gray-700 hover:bg-[var(--nod-on-chrome)] dark:text-gray-300', // Same rounded chip as the selected toggle button
+                      id === utilitySidebarMode && 'bg-[var(--nod-on-chrome)]' // Current menu
+                    )}
+                    onClick={() => {
+                      setUtilitySidebarMode(id) // Switch the utility body
+                      setModeOpen(false) // Close after pick
+                    }}
+                  >
+                    <Icon className="h-3.5 w-3.5 flex-shrink-0" />
+                    <span className="truncate">{label}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
           <div className="flex items-center gap-0.5">
             <div
@@ -224,7 +274,7 @@ export function UtilitySidebar() {
             <button
               type="button"
               onClick={() => setUtilitySidebarOpen(false)}
-              className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-gray-500 transition-colors hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
+              className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-[var(--nod-on-chrome)] hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
               title="Hide sidebar"
               aria-label="Hide utility sidebar"
             >

@@ -48,6 +48,7 @@ function isPreviewFocusChrome(target: EventTarget | null): boolean {
   return Boolean(
     target.closest('[data-page-preview]') ||
       target.closest('[data-page-preview-frame]') ||
+      target.closest('[data-template-preview]') ||
       target.closest('[data-preview-style-chrome]') ||
       target.closest('[data-radix-popper-content-wrapper]') ||
       target.closest('[role="menu"]') ||

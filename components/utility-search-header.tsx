@@ -1,6 +1,6 @@
 'use client'
 
-// Shared search chrome for utility Layers / Sets / Views — matches AI chat thread picker
+// Shared search chrome for utility Layers / Sets / Views / Comments / Templates / Changes — matches AI chat thread picker
 
 import type { ReactNode } from 'react'
 import { ListFilter, Search } from 'lucide-react'
@@ -108,15 +108,6 @@ export function UtilitySectionDivider() {
       role="separator"
       aria-hidden
     />
-  )
-}
-
-/** Permanent menu name under search, above + Group / + Set / + Deck. Same type as the old empty Layers title. */
-export function UtilityMenuTitle({ children }: { children: string }) {
-  return (
-    <p className="flex-shrink-0 px-3 pt-2 text-xs font-medium text-gray-500 dark:text-gray-400"> {/* Grey title; + row under it is black */}
-      {children}
-    </p>
   )
 }
 

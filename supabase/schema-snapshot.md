@@ -1,14 +1,21 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-20T21:26:14Z`
+- Snapped at: `2026-09-24T02:00:36Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`/`migration list`; versions from `.temp` + Management API list; cli-latest reports `v2.117.0`)
-- Remote applied tops out at `20260914104046_notion_multi_workspace` (includes `20260912192948_panel_edges_canvas_endpoints`)
+- Remote applied tops out at `20260924003615_board_templates_review` (includes `20260924001853_board_templates`; local files `20260924001841` / `20260924003557`)
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: `board_templates` + review freeze. Local `20260924001841_board_templates.sql` / `20260924003557_board_templates_review.sql` (remote `20260924001853` / `20260924003615`).
+- **Templates**: utility Templates tab lists frozen snapshots; Create public template submits `pending` for `easayani@goalfish.io` review; approved public rows show in All; later board edits do not change a submitted row.
+- **Utility**: Comments / Templates / Changes join Layers / Sets / Views; Templates filter All vs Submissions persists (`lib/utility-filter-prefs.ts`); min sidebar width 184.
+- Advisors: new `search_path` warnings on `update_board_templates_updated_at`, `is_board_template_reviewer`, `board_templates_freeze_content` (same class as other public triggers). RLS is on.
+
+## Prior: Utility preview phone tap
 
 - DDL: none. Marker `20260920212614_utility_preview_phone_tap.sql`.
 - **Utility previews**: Layers / Sets / Captures ⋯ sits inset from the thumb; resting wash stays `bg-white/90`, solid only on ⋯ hover. Second click on a selected Layers/Sets thumb clears the board selection.

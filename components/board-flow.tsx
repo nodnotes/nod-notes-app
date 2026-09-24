@@ -77,6 +77,7 @@ import {
   BoardActionsMenu,
   type BoardActionId,
 } from './board-actions-menu' // Empty-board right-click menu
+import { CreatePublicTemplateConfirmDialog } from './create-public-template-confirm-dialog' // Are you sure? then /template
 import { createLongPressController } from '@/lib/long-press' // Phone long-press → context menus
 import { createPhoneUnselectedFrameDragController } from '@/lib/phone-unselected-frame-drag' // Phone hold → drag unselected frames
 import { PhoneFrameDragProvider } from './phone-frame-drag-context' // Blue move border during phone hold-drag
@@ -132,7 +133,8 @@ import {
 } from '@/lib/frame-text-edit' // First-select Delete vs TipTap text edit; pane-deselect guard
 import { attachPhoneFrameTapSelect } from '@/lib/phone-frame-tap-select' // Phone: select frame on finger-up (click is flaky)
 import { readFrameChromePad } from '@/lib/frame-chrome-offset' // Persist fill-origin, not chrome-shifted RF xy
-import { takeBoardCapture, getCaptures, readCaptureCameraInput } from '@/lib/captures' // Board-menu Capture view
+import { takeBoardCapture, getCaptures, readCaptureCameraInput, captureBoardViewImage } from '@/lib/captures' // Board-menu Capture + template cover
+import { stashTemplatePreview } from '@/lib/board-templates' // JPEG for /board/{id}/template
 import { captureLinkHtmlFromText } from '@/lib/capture-link-html' // I-bar paste → capture chip not raw URL
 import {
   captureCameraMatches,
@@ -2035,7 +2037,7 @@ function BoardFlowInner({
     if (boardStyle === 'grid') return BackgroundVariant.Lines // Grid pattern (both horizontal and vertical lines)
     return null // Default to none
   }, [boardStyle])
-  const { setIsMobileMode, isMobileMode, chatFitPhone, isChatSidebarOpen, isUtilitySidebarOpen, toggleChatSidebar, logoDrawing, aiMapDockLiftPx, aiMapDockLeftPx } =
+  const { setIsMobileMode, isMobileMode, chatFitPhone, isChatSidebarOpen, isUtilitySidebarOpen, toggleChatSidebar, logoDrawing, aiMapDockLiftPx, aiMapDockLeftPx, setUtilitySidebarMode, setUtilitySidebarOpen } =
     useSidebarContext()
   const useChatMapDock = isMobileMode || chatFitPhone // Phone breakpoint or top-bar fit dock
   useChatSidebarViewportAdjust(reactFlowInstance, isChatSidebarOpen && !useChatMapDock) // No column shrink on phone / fit dock
@@ -2357,6 +2359,8 @@ function BoardFlowInner({
   const [rightClickedNode, setRightClickedNode] = useState<Node<ChatPanelNodeData> | null>(null) // Track right-clicked node for popup
   const [nodePopupPosition, setNodePopupPosition] = useState({ x: 0, y: 0 }) // Position for node popup
   const [boardMenuPosition, setBoardMenuPosition] = useState<{ x: number; y: number } | null>(null) // Empty-board right-click menu
+  const [createPublicTemplateConfirmOpen, setCreatePublicTemplateConfirmOpen] = useState(false) // Are you sure?
+  const [createPublicTemplateBusy, setCreatePublicTemplateBusy] = useState(false) // Capture + navigate
   const boardClickFlowRef = useRef<{ x: number; y: number } | null>(null) // Flow coords for Add frame / zoom-to-100%
   const edgesRef = useRef(edges) // Phone thread tap: was-selected without stale closure
   edgesRef.current = edges
@@ -3138,6 +3142,18 @@ function BoardFlowInner({
     }
     void run()
   }, [searchParams, conversationId, queryClient, reactFlowInstance])
+
+  // After Create public template publish: open utility Templates and strip the flag
+  useEffect(() => {
+    if (!searchParams || searchParams.get('templates') !== '1') return // Only after the creation page
+    setUtilitySidebarMode('templates') // Show the new thumb
+    setUtilitySidebarOpen(true) // Open the utility column
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href)
+      url.searchParams.delete('templates')
+      window.history.replaceState({}, '', url.pathname + url.search)
+    }
+  }, [searchParams, setUtilitySidebarMode, setUtilitySidebarOpen])
 
   // Check if board has flashcards - check messages for isFlashcard metadata
   const hasFlashcardsInBoard = useMemo(() => {
@@ -6997,8 +7013,12 @@ function BoardFlowInner({
           return false
         }
 
-        // Empty board pane → board menu (always — ignore mid-hold marquee selection)
-        if (el.closest('.react-flow__pane') || el.closest('.react-flow__renderer')) {
+        // Empty board pane or draw/erase capture layer → board menu (always — ignore mid-hold marquee)
+        if (
+          el.closest('.freehand-overlay') ||
+          el.closest('.react-flow__pane') ||
+          el.closest('.react-flow__renderer')
+        ) {
           openBoardMenuAt(point.clientX, point.clientY, { forceBoard: true })
           clearDomSelection()
           // iOS sometimes re-applies selection after the menu paints — clear again next frames
@@ -7048,6 +7068,12 @@ function BoardFlowInner({
       return !!el?.closest('[data-tt-ibar-chrome], [data-tt-ibar-grip]')
     }
 
+    // Pen / highlighter / eraser sit on `.freehand-overlay` above the pane — RF never sees the click
+    const inkOverlayFromEvent = (e: Event): boolean => {
+      const el = eventElement(e.target)
+      return !!el?.closest('.freehand-overlay')
+    }
+
     const onDown = (e: PointerEvent) => {
       // Desktop right-press: open the frame menu here. RF panOnDrag includes 2, so
       // contextmenu is often preventDefault'd and never reaches onNodeContextMenu.
@@ -7065,6 +7091,13 @@ function BoardFlowInner({
           e.preventDefault()
           e.stopPropagation()
           openBoardMenuAt(e.clientX, e.clientY, { forceBoard: true })
+          return
+        }
+        // Draw / erase overlay is not the RF pane — open the same board menu as empty-pane right-click
+        if (inkOverlayFromEvent(e)) {
+          e.preventDefault()
+          e.stopPropagation()
+          openBoardMenuAt(e.clientX, e.clientY)
         }
         return
       }
@@ -7162,6 +7195,13 @@ function BoardFlowInner({
         e.preventDefault()
         e.stopPropagation()
         openBoardMenuAt(mouseEvent.clientX, mouseEvent.clientY, { forceBoard: true })
+        return
+      }
+      // Draw / erase overlay never hits RF onPaneContextMenu — same board menu as empty pane
+      if (inkOverlayFromEvent(e)) {
+        e.preventDefault()
+        e.stopPropagation()
+        openBoardMenuAt(mouseEvent.clientX, mouseEvent.clientY)
       }
     }
     const onClickCapture = (e: MouseEvent) => {
@@ -7855,8 +7895,9 @@ function BoardFlowInner({
           void createBlockAtFlowPosition(flow.x, flow.y)
           break
         }
-        case 'addTemplate': {
-          // Stub until saved templates exist (pairs with thread Save as template)
+        case 'createPublicTemplate': {
+          if (!conversationId) return // Need a board to publish
+          setCreatePublicTemplateConfirmOpen(true) // Are you sure? then the creation page
           break
         }
         case 'paste': {
@@ -7932,7 +7973,7 @@ function BoardFlowInner({
           break
       }
     },
-    [createBlockAtFlowPosition, mapUndo, mapRedo, reactFlowInstance, setNodes, conversationId, queryClient]
+    [createBlockAtFlowPosition, mapUndo, mapRedo, reactFlowInstance, setNodes, conversationId]
   )
 
   // Close popup when right-clicking on background or different node
@@ -11845,6 +11886,26 @@ function BoardFlowInner({
           />,
           document.body
         )}
+
+      <CreatePublicTemplateConfirmDialog
+        open={createPublicTemplateConfirmOpen}
+        busy={createPublicTemplateBusy}
+        onOpenChange={setCreatePublicTemplateConfirmOpen}
+        onConfirm={() => {
+          if (!conversationId || createPublicTemplateBusy) return // Need a board; ignore double Yes
+          setCreatePublicTemplateBusy(true) // Lock Yes while the JPEG lands
+          void (async () => {
+            try {
+              const preview = await captureBoardViewImage() // Cover for the creation page
+              stashTemplatePreview(conversationId, preview ?? null) // sessionStorage → /template
+            } catch (err) {
+              console.error('Create public template preview failed', err) // Still open the editor
+              stashTemplatePreview(conversationId, null) // Fall back to the live embed
+            }
+            router.push(`/board/${conversationId}/template`) // Miro-style listing page
+          })()
+        }}
+      />
 
       {/* Thread click menu — same chrome as ⋮⋮ handle / text-select menus */}
       {clickedEdge && reactFlowInstance && (

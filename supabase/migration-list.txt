@@ -1,9 +1,9 @@
 # Remote Supabase migration/version snapshot
 # project_ref=yhsyhtnnklpkfcpydbst
 # project_name=Nod Notes
-# snapped_at=2026-09-20T14:33:59Z
+# snapped_at=2026-09-24T02:00:36Z
 # postgres=17.6.1.052 gotrue=v2.196.0 rest=v14.5 storage=v1.73.1
-# local_marker=20260920143359_utility_create_rows_calendar_schedule (no DDL; remote DDL=20260914104046_notion_multi_workspace)
+# local_ddl=20260924001841_board_templates + 20260924003557_board_templates_review (remote 20260924001853 / 20260924003615)
 # production=https://nodnotes.com
 # Remote applied (via Supabase Management API on nod-notes):
 # 20251124231547 create_saas_schema
@@ -26,6 +26,8 @@
 # 20260811225342 conversations_owner_select_for_insert_returning
 # 20260912192948 panel_edges_canvas_endpoints
 # 20260914104046 notion_multi_workspace
+# 20260924001853 board_templates
+# 20260924003615 board_templates_review
 #
 # Local migration files:
 20251203111351_schema_documentation.md
@@ -235,3 +237,8 @@
 20260919203843_smart_draw.sql
 20260919210149_smart_draw_frames.sql
 20260920143359_utility_create_rows_calendar_schedule.sql
+20260920172227_board_menus_sets_this_board.sql
+20260920185400_top_bar_chrome_fit.sql
+20260920212614_utility_preview_phone_tap.sql
+20260924001841_board_templates.sql
+20260924003557_board_templates_review.sql
