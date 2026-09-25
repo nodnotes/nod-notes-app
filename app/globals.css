@@ -1725,12 +1725,12 @@ span[data-added="true"] {
 
   /* Frame connection points stay on the **fill** edge; selected gutters are outside that.
      Park L/R handles at `--tt-adjust-pad-x` so RF geometry + settled threads meet the peach
-     frame, not the blue adjust box. Top/bottom have no chrome band (pad Y = 0). */
+     frame, not the blue adjust box. T/B pads are the property / connections bands. */
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point[data-handlepos="left"],
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-left {
     left: var(--tt-adjust-pad-x, 0px) !important;
     right: auto !important;
-    top: 50% !important;
+    top: calc(var(--tt-adjust-pad-y-top, 0px) + (100% - var(--tt-adjust-pad-y-top, 0px) - var(--tt-adjust-pad-y-bottom, 0px)) / 2) !important;
     bottom: auto !important;
     transform: translate(-50%, -50%) !important;
   }
@@ -1738,7 +1738,7 @@ span[data-added="true"] {
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-right {
     left: auto !important;
     right: var(--tt-adjust-pad-x, 0px) !important;
-    top: 50% !important;
+    top: calc(var(--tt-adjust-pad-y-top, 0px) + (100% - var(--tt-adjust-pad-y-top, 0px) - var(--tt-adjust-pad-y-bottom, 0px)) / 2) !important;
     bottom: auto !important;
     transform: translate(50%, -50%) !important;
   }
@@ -2289,6 +2289,13 @@ span[data-added="true"] {
   /* Ask composer — same grey as the chat bar. */
   [data-chat-prompt] {
     background-color: var(--nod-chat-prompt-box); /* Prompt input fill */
+  }
+  /* Frame comment / reactions card — same outer blue glow as the focused Ask prompt. */
+  [data-tt-comment-box] {
+    box-shadow:
+      0 10px 15px -3px rgb(0 0 0 / 0.1), /* Keep the existing shadow-lg lift */
+      0 4px 6px -4px rgb(0 0 0 / 0.1),
+      0 0 8px 0 color-mix(in srgb, var(--nod-blue) 35%, transparent); /* Light blue halo, not a second border */
   }
   /* I-bar in the prompt — hairline stays; a blue glow sits outside it. */
   [data-chat-prompt][data-chat-prompt-focused] {
@@ -3432,8 +3439,7 @@ span[data-added="true"] {
   pointer-events: auto !important; /* Dashed padding ring still moves the group */
 }
 .react-flow__node-chatPanel {
-  z-index: 1 !important;
-  pointer-events: auto !important;
+  pointer-events: auto !important; /* Do not pin z-index — Layers / drag-front set it inline */
 }
 
 /* Drop-target highlight while dragging a frame onto the legacy wrapper */

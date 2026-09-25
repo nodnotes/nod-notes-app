@@ -1,15 +1,16 @@
 'use client'
 
-// Template click → popup left of utility. Host Free nav / toolbar apply; edits are local-only.
+// Change click → popup left of utility. Host Free nav / toolbar apply; edits are local-only.
 
 import { useCallback, useEffect, useRef, useState } from 'react' // Focus, resize, first-edit note
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react' // Close — same as NestedBoardPreview
 import { boardTitleOrDefault } from '@/lib/board-title'
 import {
-  TEMPLATE_PREVIEW_EDIT_MESSAGE,
-  type BoardTemplate,
-} from '@/lib/board-templates'
+  CHANGE_PREVIEW_EDIT_MESSAGE,
+  type BoardChange,
+} from '@/lib/board-changes'
+import { formatCaptureTimestamp } from '@/lib/captures' // Save time under the board name
 import {
   PREVIEW_READY_MESSAGE,
   PREVIEW_RESIZE_MESSAGE,
@@ -23,20 +24,20 @@ import {
 } from '@/components/sidebar-context' // Right inset = chat + utility
 import { cn } from '@/lib/utils'
 
-type TemplatePreviewPopupProps = {
-  template: BoardTemplate // Listing + frozen embed id
+type ChangePreviewPopupProps = {
+  change: BoardChange // Listing + frozen embed id
   onClose: () => void
 }
 
 /** Clicks that should keep this preview focused (host nav / utility / More menus). */
-function isTemplatePreviewChrome(target: EventTarget | null): boolean {
+function isChangePreviewChrome(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false
   return Boolean(
     target.closest('[data-page-preview]') ||
       target.closest('[data-page-preview-frame]') ||
       target.closest('[data-preview-style-chrome]') ||
-      target.closest('[data-template-preview]') ||
       target.closest('[data-change-preview]') ||
+      target.closest('[data-template-preview]') ||
       target.closest('[data-utility-sidebar]') ||
       target.closest('[data-edit-menu-context]') ||
       target.closest('[data-edit-menu-pill]') ||
@@ -50,10 +51,10 @@ function isTemplatePreviewChrome(target: EventTarget | null): boolean {
   )
 }
 
-/** Fixed popup left of the utility bar — iframe is `/embed/template/{id}` (editable sandbox). */
-export function TemplatePreviewPopup({ template, onClose }: TemplatePreviewPopupProps) {
-  const title = boardTitleOrDefault(template.title) // Same empty-board label
-  const description = template.description?.trim() || '' // Optional listing copy
+/** Fixed popup left of the utility bar — iframe is `/embed/change/{id}` (editable sandbox). */
+export function ChangePreviewPopup({ change, onClose }: ChangePreviewPopupProps) {
+  const title = boardTitleOrDefault(change.title) // Same empty-board label
+  const description = formatCaptureTimestamp(change.created_at) // When this save was taken
   const previewFocus = usePreviewFocus()
   const {
     isChatSidebarOpen,
@@ -71,7 +72,7 @@ export function TemplatePreviewPopup({ template, onClose }: TemplatePreviewPopup
   const [navReady, setNavReady] = useState(false) // Hide the load veil after PREVIEW_READY
   const [editNote, setEditNote] = useState(false) // First-edit “won’t be saved”
   const [topInset, setTopInset] = useState(104) // Below Actions/Layout/Draw pill (52+4+40+8)
-  const isFocused = previewFocus?.focusedBoardId === template.id
+  const isFocused = previewFocus?.focusedBoardId === change.id
   const useChatMapDock = isMobileMode || chatFitPhone // Chat is not a right column
   const chatRight = !useChatMapDock && isChatSidebarOpen ? chatSidebarWidth : 0
   const utilityRight = isUtilitySidebarOpen ? utilityOccupiedWidth(utilitySidebarWidth) : 0
@@ -108,53 +109,53 @@ export function TemplatePreviewPopup({ template, onClose }: TemplatePreviewPopup
 
   // Select on open so host pan/zoom/draw/Board style apply like NestedBoardPreview
   useEffect(() => {
-    previewFocusRef.current?.selectPreview({ pageId: template.id, title })
-  }, [template.id, title])
+    previewFocusRef.current?.selectPreview({ pageId: change.id, title })
+  }, [change.id, title])
 
   useEffect(() => {
-    const pageId = template.id // Close this preview only
+    const pageId = change.id // Close this preview only
     return () => {
       const focus = previewFocusRef.current
       if (focus?.focusedBoardId === pageId) focus.clearPreviewFocus()
     }
-  }, [template.id])
+  }, [change.id])
 
   useEffect(() => {
     setNavReady(false) // New iframe
-    setEditNote(false) // Fresh note for this template
-  }, [template.id])
+    setEditNote(false) // Fresh note for this save
+  }, [change.id])
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return
       const data = event.data as { type?: string; pageId?: string } | null
       if (!data) return
-      if (data.type === PREVIEW_READY_MESSAGE && data.pageId === template.id) {
+      if (data.type === PREVIEW_READY_MESSAGE && data.pageId === change.id) {
         setNavReady(true) // Embed can pan/zoom
       }
-      if (data.type === TEMPLATE_PREVIEW_EDIT_MESSAGE && data.pageId === template.id) {
+      if (data.type === CHANGE_PREVIEW_EDIT_MESSAGE && data.pageId === change.id) {
         setEditNote(true) // Local edits only
       }
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [template.id])
+  }, [change.id])
 
   useEffect(() => {
     if (navReady) return
     const t = window.setTimeout(() => setNavReady(true), 1200) // Veil fallback
     return () => window.clearTimeout(t)
-  }, [navReady, template.id])
+  }, [navReady, change.id])
 
   // Remeasure embed when the popup box changes
   useEffect(() => {
     const win = iframeRef.current?.contentWindow
     if (!win || !navReady) return
     win.postMessage(
-      { type: PREVIEW_RESIZE_MESSAGE, pageId: template.id, fit: true },
+      { type: PREVIEW_RESIZE_MESSAGE, pageId: change.id, fit: true },
       window.location.origin
     )
-  }, [template.id, navReady, rightInset, topInset])
+  }, [change.id, navReady, rightInset, topInset])
 
   useEffect(() => {
     if (!isFocused || !previewFocus) return
@@ -173,7 +174,7 @@ export function TemplatePreviewPopup({ template, onClose }: TemplatePreviewPopup
   useEffect(() => {
     if (!isFocused || !previewFocus) return
     const onPointerDown = (event: PointerEvent) => {
-      if (isTemplatePreviewChrome(event.target)) return // Host nav / utility / this popup
+      if (isChangePreviewChrome(event.target)) return // Host nav / utility / this popup
       previewFocus.clearPreviewFocus() // Click-away: keep popup, idle the embed
     }
     document.addEventListener('pointerdown', onPointerDown, true)
@@ -201,15 +202,15 @@ export function TemplatePreviewPopup({ template, onClose }: TemplatePreviewPopup
   }, [isFocused])
 
   const handleSelectChrome = useCallback(() => {
-    previewFocus?.selectPreview({ pageId: template.id, title })
-  }, [previewFocus, template.id, title])
+    previewFocus?.selectPreview({ pageId: change.id, title })
+  }, [previewFocus, change.id, title])
 
   if (typeof document === 'undefined') return null // SSR
 
   return createPortal(
     <div
-      data-template-preview
-      data-page-preview={template.id}
+      data-change-preview
+      data-page-preview={change.id}
       role="dialog"
       aria-modal="false"
       aria-label={title}
@@ -274,17 +275,17 @@ export function TemplatePreviewPopup({ template, onClose }: TemplatePreviewPopup
       >
         <iframe
           ref={iframeRef}
-          data-page-preview-frame={template.id}
+          data-page-preview-frame={change.id}
           data-preview-selected={isFocused ? 'true' : 'false'}
           title={title}
-          src={`/embed/template/${template.id}`}
+          src={`/embed/change/${change.id}`}
           className="absolute inset-0 h-full w-full border-0"
           style={{ pointerEvents: isFocused ? 'auto' : 'none' }}
           onLoad={() => {
             const win = iframeRef.current?.contentWindow
             if (!win) return
             win.postMessage(
-              { type: PREVIEW_RESIZE_MESSAGE, pageId: template.id, fit: true },
+              { type: PREVIEW_RESIZE_MESSAGE, pageId: change.id, fit: true },
               window.location.origin
             )
             if (!isFocused || !previewFocus) return
@@ -309,7 +310,7 @@ export function TemplatePreviewPopup({ template, onClose }: TemplatePreviewPopup
             className="absolute left-2 right-2 top-2 z-20 flex items-start gap-2 rounded-lg border border-black/10 bg-white/95 px-2.5 py-1.5 text-[12px] leading-4 text-gray-700 shadow-sm dark:border-white/10 dark:bg-[#1a1a1a]/95 dark:text-gray-200"
           >
             <p className="min-w-0 flex-1">
-              Template preview changes won’t be saved.
+              Change preview changes won’t be saved.
             </p>
             <button
               type="button"

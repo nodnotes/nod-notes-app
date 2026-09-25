@@ -1,9 +1,9 @@
 # Remote Supabase migration/version snapshot
 # project_ref=yhsyhtnnklpkfcpydbst
 # project_name=Nod Notes
-# snapped_at=2026-09-24T02:00:36Z
+# snapped_at=2026-09-25T03:19:34Z
 # postgres=17.6.1.052 gotrue=v2.196.0 rest=v14.5 storage=v1.73.1
-# local_ddl=20260924001841_board_templates + 20260924003557_board_templates_review (remote 20260924001853 / 20260924003615)
+# local_ddl=20260924222048_board_changes + 20260924223507_board_changes_autosave (remote 20260924222109 / 20260924223511)
 # production=https://nodnotes.com
 # Remote applied (via Supabase Management API on nod-notes):
 # 20251124231547 create_saas_schema
@@ -28,6 +28,8 @@
 # 20260914104046 notion_multi_workspace
 # 20260924001853 board_templates
 # 20260924003615 board_templates_review
+# 20260924222109 board_changes
+# 20260924223511 board_changes_autosave
 #
 # Local migration files:
 20251203111351_schema_documentation.md
@@ -242,3 +244,5 @@
 20260920212614_utility_preview_phone_tap.sql
 20260924001841_board_templates.sql
 20260924003557_board_templates_review.sql
+20260924222048_board_changes.sql
+20260924223507_board_changes_autosave.sql

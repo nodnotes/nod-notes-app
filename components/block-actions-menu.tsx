@@ -689,9 +689,12 @@ export function BlockActionsMenu({
     // first measure can read a frame box that is still missing it — re-place once it has laid out.
     const raf = requestAnimationFrame(place)
     const stop = watchMenuSafeRect(place) // Window + phone keyboard move the chat dock
+    const onCommentSide = () => place() // Reactions card appeared / flipped — sit on the other side
+    window.addEventListener('tt-comment-side', onCommentSide)
     return () => {
       cancelAnimationFrame(raf)
       stop()
+      window.removeEventListener('tt-comment-side', onCommentSide)
     }
   }, [x, y, positionMode, openLeft, openSubmenu, notionConnected, query, propertyQuery, showPropertySearch, turnIntoPane])
 

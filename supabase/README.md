@@ -18,6 +18,8 @@ The database includes the following tables:
 See `migration-list.txt` + `schema-snapshot.md` for the full local/remote snapshot.
 
 Latest on Nod Notes (DDL):
+- `20260924223511_board_changes_autosave` (+ local `20260924223507_…`) — `board_changes.kind` named/auto + `content_hash`
+- `20260924222109_board_changes` (+ local `20260924222048_…`) — Private board change history + RLS
 - `20260924003615_board_templates_review` (+ local `20260924003557_…`) — Frozen `board_templates` snapshots + pending / approved / rejected review
 - `20260924001853_board_templates` (+ local `20260924001841_…`) — Public board templates table + RLS
 - `20260914104046_notion_multi_workspace` — Notion multi-workspace (remote)

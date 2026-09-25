@@ -291,6 +291,20 @@ function hostFrameRect(inner: MenuRect): MenuRect | null {
   return best ? visualNodeRect(best) : null
 }
 
+/** Which side of `host` a visible reactions / comment card sits on, or null. */
+function commentBoxSideBeside(host: MenuRect): 'left' | 'right' | null {
+  let side: 'left' | 'right' | null = null // Last matching card
+  document.querySelectorAll('[data-tt-comment-box]').forEach((el) => {
+    const r = (el as HTMLElement).getBoundingClientRect() // Card screen box
+    if (r.width < 8 || r.height < 8) return // Hidden
+    const midY = (r.top + r.bottom) / 2 // Vertical center
+    if (midY < host.top - 48 || midY > host.bottom + 48) return // Different frame's band
+    const hostMid = (host.left + host.right) / 2 // Frame mid X
+    side = (r.left + r.right) / 2 < hostMid ? 'left' : 'right' // Card vs fill
+  })
+  return side
+}
+
 /** Smallest box covering both inputs. */
 function unionBox(a: MenuRect, b: MenuRect): MenuRect {
   const left = Math.min(a.left, b.left) // Outer edges
@@ -531,7 +545,12 @@ export function applyMenuPlacement(root: HTMLElement, opts: ApplyMenuPlacementOp
     const host = hostFrameRect(primaryAvoid) // Frame that owns the block / the frame itself
     const beside = host ? unionBox(primaryAvoid, host) : primaryAvoid // Box the card must clear
     const top = clampStart(opts.anchorY, clusterH, safe.top, safe.bottom) // Same vertical lane as any candidate
-    const slots = [beside.left - GAP - menuW, beside.right + GAP] // Left first, then right
+    const leftSlot = beside.left - GAP - menuW // Flush left of the frame
+    const rightSlot = beside.right + GAP // Flush right of the frame
+    // Reactions card already on one side → try the other first when that lane has room
+    const reactionSide = commentBoxSideBeside(beside)
+    const slots =
+      reactionSide === 'left' ? [rightSlot, leftSlot] : [leftSlot, rightSlot]
     for (const menuLeft of slots) {
       if (menuLeft < safe.left || menuLeft + menuW > safe.right) continue // No room on this side
       if (hardHandleScore(box(menuLeft, top, menuW, menuMaxH), handles) > 0) continue // Would bury a ⋮⋮

@@ -115,11 +115,12 @@ function stampConnectionIndicators(panel: HTMLElement, ui: number): void {
     // translate centers on the edge; scale(ui) keeps the disc screen-constant
     if (side === 'left') {
       dot.style.setProperty('left', `${-out}px`, 'important')
-      dot.style.setProperty('top', '50%', 'important')
+      // Mid of the fill — not the taller adjust box when T/B bands are reserved
+      dot.style.setProperty('top', 'calc(var(--tt-adjust-pad-y-top, 0px) + (100% - var(--tt-adjust-pad-y-top, 0px) - var(--tt-adjust-pad-y-bottom, 0px)) / 2)', 'important')
       dot.style.setProperty('transform', `translate(-50%, -50%) scale(${ui})`, 'important')
     } else if (side === 'right') {
       dot.style.setProperty('right', `${-out}px`, 'important')
-      dot.style.setProperty('top', '50%', 'important')
+      dot.style.setProperty('top', 'calc(var(--tt-adjust-pad-y-top, 0px) + (100% - var(--tt-adjust-pad-y-top, 0px) - var(--tt-adjust-pad-y-bottom, 0px)) / 2)', 'important')
       dot.style.setProperty('transform', `translate(50%, -50%) scale(${ui})`, 'important')
     } else if (side === 'top') {
       dot.style.setProperty('top', `${-out}px`, 'important')

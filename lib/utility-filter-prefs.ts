@@ -6,6 +6,7 @@ export type UtilityLayersFilter = 'all' | 'touching' | 'selected'
 const LAYERS_KEY = 'nodnotes-utility-layers-filter' // Survives reload + leaving the Layers tab
 const SETS_KEY = 'nodnotes-utility-sets-this-board' // '1' = This board only
 const CAPTURES_KEY = 'nodnotes-utility-captures-this-board' // '1' = This board only
+const CHANGES_KEY = 'nodnotes-utility-changes-this-board' // '1' = This board only
 const TEMPLATES_KEY = 'nodnotes-utility-templates-scope' // all | submissions
 
 const DEFAULT_LAYERS: UtilityLayersFilter = 'touching' // Same default as the first-visit Layers list
@@ -36,10 +37,10 @@ export function writeUtilityLayersFilter(filter: UtilityLayersFilter): void {
   }
 }
 
-/** Last Sets or Views “This board only” flag (SSR-safe → All boards). */
-export function readUtilityThisBoardOnly(which: 'sets' | 'captures'): boolean {
+/** Last Sets, Views, or Changes “This board only” flag (SSR-safe → All boards). */
+export function readUtilityThisBoardOnly(which: 'sets' | 'captures' | 'changes'): boolean {
   if (typeof window === 'undefined') return false // Server default = All boards
-  const key = which === 'sets' ? SETS_KEY : CAPTURES_KEY // Separate prefs per utility tab
+  const key = which === 'sets' ? SETS_KEY : which === 'captures' ? CAPTURES_KEY : CHANGES_KEY // Separate prefs per utility tab
   try {
     return window.localStorage.getItem(key) === '1' // '1' means This board only
   } catch {
@@ -47,10 +48,13 @@ export function readUtilityThisBoardOnly(which: 'sets' | 'captures'): boolean {
   }
 }
 
-/** Persist Sets or Views board-scope filter. */
-export function writeUtilityThisBoardOnly(which: 'sets' | 'captures', thisBoardOnly: boolean): void {
+/** Persist Sets, Views, or Changes board-scope filter. */
+export function writeUtilityThisBoardOnly(
+  which: 'sets' | 'captures' | 'changes',
+  thisBoardOnly: boolean
+): void {
   if (typeof window === 'undefined') return // No storage on server
-  const key = which === 'sets' ? SETS_KEY : CAPTURES_KEY // Same keys as the readers
+  const key = which === 'sets' ? SETS_KEY : which === 'captures' ? CAPTURES_KEY : CHANGES_KEY // Same keys as the readers
   try {
     if (thisBoardOnly) window.localStorage.setItem(key, '1') // Remember This board
     else window.localStorage.removeItem(key) // Missing key = All boards (default)

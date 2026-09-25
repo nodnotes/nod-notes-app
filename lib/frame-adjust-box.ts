@@ -76,9 +76,12 @@ export function nominalAdjustChromeInsets(
   meta: Record<string, unknown>,
   zoom: number
 ): AdjustChromeInsets {
-  const x = Math.round(adjustChromeXFlow(zoom, metaFrameScale(meta)))
-  // Property + connections strips live inside the fill, so the blue box only insets L/R.
-  return { x, yTop: 0, yBottom: 0 }
+  const fs = metaFrameScale(meta)
+  const x = Math.round(adjustChromeXFlow(zoom, fs))
+  const band = Math.round(CONNECTIONS_GROUP_H * fs)
+  const yTop = typeof meta.propertyType === 'string' && meta.propertyType ? band : 0
+  const yBottom = meta.notionConnected === true ? band : 0
+  return { x, yTop, yBottom }
 }
 
 /** Adjust-box width/height in flow px (selected RF outer box already includes chrome). */

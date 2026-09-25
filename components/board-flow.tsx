@@ -155,6 +155,7 @@ import { markHtmlWithAiOrigin } from '@/lib/ai/wrap-ai-html' // Persist AI prove
 import { markdownToTipTapHtml } from '@/lib/ai/markdown-to-tiptap' // Chat drop → TipTap blocks (lists as listItems)
 import { AiEditReviewBar } from '@/components/ai/ai-edit-review-bar' // Pending edit review chrome
 import { LayersTouchingPublisher } from '@/components/layers-touching-publisher' // Utility Layers list cluster
+import { layerZIndexFromMeta } from '@/lib/layers-touching' // Restore Layers z-order from message metadata
 import { useAiEditSession } from '@/lib/ai/edit-session' // Frame pending glow / focus
 import {
   BLOCK_GROUP_PADDING,
@@ -3867,6 +3868,7 @@ function BoardFlowInner({
         // resizable: true, // Enable resizing (removed - not a valid Node property)
         selectable: true, // Enable selection
         draggable: true, // Enable dragging
+        zIndex: layerZIndexFromMeta(savedNode.data as Record<string, unknown> | undefined), // Layers order on drawings/shapes
       } as Node
 
       return reactFlowNode
@@ -5601,6 +5603,7 @@ function BoardFlowInner({
             // Load panel styling from message metadata (fillColor, borderColor, borderStyle, borderWeight)
             const messageMetadata = message.metadata || {}
             const stackIndex = minStackIndex(messageMetadata as Record<string, unknown>)
+            const savedLayerZ = layerZIndexFromMeta(messageMetadata as Record<string, unknown>) // Layers thumb order
             const panelNode: Node<ChatPanelNodeData> = {
               id: nodeId,
               type: 'chatPanel',
@@ -5627,7 +5630,7 @@ function BoardFlowInner({
                     messageMetadata as Record<string, unknown>,
                     String(message.content || '')
                   )),
-              zIndex: stackIndex == null ? undefined : Math.max(0, 10 - stackIndex),
+              zIndex: savedLayerZ ?? (stackIndex == null ? undefined : Math.max(0, 10 - stackIndex)),
             }
 
             // Store position
@@ -5652,6 +5655,7 @@ function BoardFlowInner({
           // Load panel styling from message metadata (fillColor, borderColor, borderStyle, borderWeight)
           const messageMetadata = message.metadata || {}
           const stackIndex = minStackIndex(messageMetadata as Record<string, unknown>)
+          const savedLayerZ = layerZIndexFromMeta(messageMetadata as Record<string, unknown>) // Layers thumb order
           const panelNode: Node<ChatPanelNodeData> = {
             id: baseNodeId,
             type: 'chatPanel',
@@ -5678,7 +5682,7 @@ function BoardFlowInner({
                   messageMetadata as Record<string, unknown>,
                   String(message.content || '')
                 )),
-            zIndex: stackIndex == null ? undefined : Math.max(0, 10 - stackIndex),
+            zIndex: savedLayerZ ?? (stackIndex == null ? undefined : Math.max(0, 10 - stackIndex)),
           }
 
           // Store position
@@ -5735,7 +5739,7 @@ function BoardFlowInner({
       delete (node as { parentId?: string }).parentId // RF treats the key as parented even if undefined
       delete (node as { parentNode?: string }).parentNode
       delete (node as { extent?: unknown }).extent
-      node.zIndex = 1 // Cards above the dashed group frame
+      if (typeof node.zIndex !== 'number' || node.zIndex < 1) node.zIndex = 1 // Above dashed group (0); keep Layers order
     }
 
     // Deduplicate nodes by ID to prevent duplicate key errors
@@ -10286,6 +10290,7 @@ function BoardFlowInner({
       <ReactFlow
         // Hide React Flow watermark; Pro license by launch
         proOptions={{ hideAttribution: true }}
+        elevateNodesOnSelect={false} // Layers zIndex is the stack — RF's selected +1000 hid every reorder
         nodes={nodes}
         edges={edges}
         onNodesChange={handleNodesChange}

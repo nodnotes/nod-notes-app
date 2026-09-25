@@ -56,11 +56,13 @@ import {
 import {
   getLayersTouching,
   layerZIndexByOrder,
+  persistLayerZIndex,
   reorderLayersTouching,
   setLayersPublishScope,
   subscribeLayersTouching,
   type LayersTouchingItem,
 } from '@/lib/layers-touching'
+import { useQueryClient } from '@tanstack/react-query' // Patch messages cache so a rebuild keeps the new z-order
 import {
   readUtilityLayersFilter,
   writeUtilityLayersFilter,
@@ -487,6 +489,7 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
     () => EMPTY_LAYER_STACK
   )
   const { reactFlowInstance, getSetNodes } = useReactFlowContext()
+  const queryClient = useQueryClient() // Layer z-order must survive the next messages→panels pass
   const [query, setQuery] = useState('') // Filter thumbs by label
   const [filterOpen, setFilterOpen] = useState(false) // Filter menu
   const [filter, setFilter] = useState<UtilityLayersFilter>(readUtilityLayersFilter) // Restore last All / touching / selected
@@ -588,7 +591,8 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
   const applyOrder = (orderedIds: string[]) => {
     reorderLayersTouching(orderedIds) // Optimistic list order (top = front)
     const getNodes = () => reactFlowInstance?.getNodes() ?? []
-    const zById = layerZIndexByOrder(orderedIds, getNodes())
+    const current = getNodes()
+    const zById = layerZIndexByOrder(orderedIds, current)
     const setNodes = getSetNodes()
     const patch = (nds: Node[]) => {
       let changed = false
@@ -602,6 +606,20 @@ export function LayersTouchingList({ conversationId }: { conversationId?: string
     }
     if (setNodes) setNodes(patch)
     else reactFlowInstance?.setNodes(patch)
+    if (conversationId) {
+      persistLayerZIndex(conversationId, current, zById) // messages.metadata.zIndex / canvas_nodes.data.zIndex
+      const patchCache = (old: unknown) => {
+        if (!Array.isArray(old)) return old
+        return old.map((m: { id: string; metadata?: Record<string, unknown> }) => {
+          const z = zById.get(`panel-${m.id}`)
+          if (z == null) return m
+          return { ...m, metadata: { ...(m.metadata || {}), zIndex: z } } // Next rebuild reads this
+        })
+      }
+      queryClient.setQueriesData({ queryKey: ['messages-for-panels', conversationId] }, patchCache)
+      queryClient.setQueriesData({ queryKey: ['messages-for-panels', conversationId, 'full'] }, patchCache)
+      queryClient.setQueriesData({ queryKey: ['messages-for-panels', conversationId, 'embed'] }, patchCache)
+    }
   }
 
   const onNewGroup = () => {

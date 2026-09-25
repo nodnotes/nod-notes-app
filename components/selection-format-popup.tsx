@@ -79,6 +79,7 @@ export function SelectionFormatPopup({
   showRevertText = false,
   canRevertText = false,
   onRevertText,
+  onComment,
 }: {
   editor: Editor | null
   /** List Revert text (chat frames; board omits until wired). */
@@ -87,6 +88,8 @@ export function SelectionFormatPopup({
   canRevertText?: boolean
   /** Restore the original prompt/response body (closes selection naturally). */
   onRevertText?: () => void
+  /** Open a comment box for the current selection. */
+  onComment?: (selectedText: string, from: number, to: number) => void
 }) {
   const [, setTick] = useState(0) // Re-render when marks/align change so active styles stay in sync
   const [openFlyout, setOpenFlyout] = useState<'color' | 'align' | null>(null) // One flyout at a time
@@ -295,6 +298,12 @@ export function SelectionFormatPopup({
           type="button"
           className="flex flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-gray-50 dark:hover:bg-gray-800"
           tabIndex={-1}
+          onClick={() => {
+            if (!editor || editor.isDestroyed || !onComment) return
+            const { from, to } = editor.state.selection
+            if (from === to) return
+            onComment(editor.state.doc.textBetween(from, to, ' '), from, to)
+          }}
         >
           <MessageSquare className="h-4 w-4 shrink-0 text-gray-600 dark:text-gray-300" />
           <span>Comment</span>
@@ -583,6 +592,7 @@ export function SelectionFormatPopupAnchor({
   showRevertText = false,
   canRevertText = false,
   onRevertText,
+  onComment,
 }: {
   editor: Editor | null // Active TipTap editor for this panel section
   containerRef: React.RefObject<HTMLDivElement | null> // TipTapContent root (ownership / click tests)
@@ -592,6 +602,8 @@ export function SelectionFormatPopupAnchor({
   canRevertText?: boolean
   /** Restore the original prompt/response body. */
   onRevertText?: () => void
+  /** Open a comment box for the current selection. */
+  onComment?: (selectedText: string, from: number, to: number) => void
 }) {
   const [showPopup, setShowPopup] = useState(false) // Whether a valid selection is active
   const [isNavigating, setIsNavigating] = useState(false) // Hide while the board pans/zooms; return when nav stops
@@ -865,6 +877,7 @@ export function SelectionFormatPopupAnchor({
         showRevertText={showRevertText}
         canRevertText={canRevertText}
         onRevertText={onRevertText}
+        onComment={onComment}
       />
     </div>,
     document.body

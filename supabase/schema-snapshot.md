@@ -1,14 +1,21 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-24T02:00:36Z`
+- Snapped at: `2026-09-25T03:19:34Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`/`migration list`; versions from `.temp` + Management API list; cli-latest reports `v2.117.0`)
-- Remote applied tops out at `20260924003615_board_templates_review` (includes `20260924001853_board_templates`; local files `20260924001841` / `20260924003557`)
+- Remote applied tops out at `20260924223511_board_changes_autosave` (includes `20260924222109_board_changes`; local files `20260924222048` / `20260924223507`)
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: `board_changes` + named/auto columns. Local `20260924222048_board_changes.sql` / `20260924223507_board_changes_autosave.sql` (remote `20260924222109` / `20260924223511`).
+- **Changes**: utility Changes tab lists frozen snapshots; + Save pins a named version; Docs-style auto sessions dirty on durable board writes, flush after 45s idle / 5 min heartbeat / tab hide, coalesce 30 min, skip unchanged `content_hash`, keep 40 autos/board.
+- **Preview**: click opens `/embed/change/{id}` left of the utility bar (host tools apply; first edit says changes won’t be saved; snapshot stays frozen). Filter All vs This board persists.
+- Advisors: new `search_path` warning on `update_board_changes_updated_at` (same class as other public triggers). RLS is on.
+
+## Prior: Public board templates with review
 
 - DDL: `board_templates` + review freeze. Local `20260924001841_board_templates.sql` / `20260924003557_board_templates_review.sql` (remote `20260924001853` / `20260924003615`).
 - **Templates**: utility Templates tab lists frozen snapshots; Create public template submits `pending` for `easayani@goalfish.io` review; approved public rows show in All; later board edits do not change a submitted row.

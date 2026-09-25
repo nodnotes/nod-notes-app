@@ -34,11 +34,26 @@ function coalesceKey(url: string, init?: RequestInit): string | null {
  * Collapse concurrent identical GETs into one network request.
  * In-flight only — nothing is cached past resolution, so a read after a write is never stale.
  */
+const BOARD_WRITE_RE = /\/rest\/v1\/(messages|panel_edges|canvas_nodes|conversations)\b/ // Durable board rows
+
+/** After a successful board write, mark history dirty (idle snapshot). */
+function noteBoardWrite(url: string, init?: RequestInit): void {
+  const method = (init?.method || 'GET').toUpperCase()
+  if (method === 'GET' || method === 'HEAD') return // Reads are not edits
+  if (!BOARD_WRITE_RE.test(url)) return // Other tables are not this board
+  void import('@/lib/board-change-autosave').then((m) => m.noteActiveBoardEdited()) // Avoid a client cycle
+}
+
 function coalescingFetch(...args: FetchArgs): Promise<Response> {
   const [input, init] = args
   const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
   const key = coalesceKey(url, init)
-  if (!key) return fetch(...args)
+  if (!key) {
+    return fetch(...args).then((res) => {
+      if (res.ok) noteBoardWrite(url, init) // POST/PATCH/DELETE landed
+      return res
+    })
+  }
   const pending = inflight.get(key)
   // Response bodies read once — hand every caller its own clone and keep the original untouched.
   if (pending) return pending.then((res) => res.clone())

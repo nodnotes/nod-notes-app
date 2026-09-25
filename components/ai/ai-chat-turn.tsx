@@ -15,7 +15,9 @@ import {
 import { createPortal } from 'react-dom'
 import { useEditor, EditorContent, type Editor } from '@tiptap/react'
 import { ReactFlowProvider } from 'reactflow'
-import { GripVertical } from 'lucide-react'
+import { GripVertical, X } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
 import { NodNotesIcon, NN_BLOB_CY_FRAC, NN_BRAND_INK_CLASS, NN_CONNECTION_T_PATH, NN_CONNECTION_T_VIEWBOX } from '@/components/nod-notes-icon'
 import type { AiMessage, AiChatBlockDragPayload, AiChatBlockDragItem } from '@/lib/ai/types'
 import { AI_CHAT_BLOCK_MIME } from '@/lib/ai/types'
@@ -86,6 +88,35 @@ const STUB_R = 6 // Same visual weight as the 12px chat-turn indicators
 
 /** Cropped T aspect (width / height) — matches ChatLinkConnectionCue. */
 const LINK_T_ASPECT = 35 / 63
+const COMMENT_BOX_W = 256 // w-64 — same card as board-frame comments
+const COMMENT_BOX_GAP = 16 // Air between the sidebar seam and the card
+
+/** Left edge for chat-frame comments — always outside the desktop sidebar (over the board). */
+function chatSidebarCommentLeft(): number {
+  const desktop = document.querySelector('[data-chat-sidebar]:not([data-chat-map-dock])')
+  if (desktop instanceof HTMLElement) {
+    const r = desktop.getBoundingClientRect()
+    if (r.width > 8) return r.left - COMMENT_BOX_GAP - COMMENT_BOX_W
+  }
+  const dock = document.querySelector('[data-chat-map-dock]')
+  if (dock instanceof HTMLElement) {
+    const r = dock.getBoundingClientRect()
+    if (r.width > 8) return Math.max(8, r.left - COMMENT_BOX_GAP - COMMENT_BOX_W)
+  }
+  return 8
+}
+
+/** Mid-Y of a TipTap range — comment cards sit beside that line. */
+function commentAnchorY(ed: Editor | null, pos: number): number {
+  if (!ed) return typeof window === 'undefined' ? 120 : window.innerHeight / 2
+  try {
+    const coords = ed.view.coordsAtPos(pos) // Screen box of the commented glyphs
+    if (coords) return (coords.top + coords.bottom) / 2
+  } catch {
+    // Stale pos after an edit — fall back to mid-viewport
+  }
+  return typeof window === 'undefined' ? 120 : window.innerHeight / 2
+}
 
 const SIDES: ChatTurnSide[] = ['left', 'right', 'top', 'bottom']
 
@@ -173,6 +204,17 @@ export function AiChatTurn({
   const [frameMenu, setFrameMenu] = useState<{ x: number; y: number } | null>(null)
   const [canRevertFrame, setCanRevertFrame] = useState(false) // Whole turn ≠ baseline
   const [canRevertSelection, setCanRevertSelection] = useState(false) // Selection ≠ original range
+  const [comments, setComments] = useState<
+    { id: string; from: number; to: number; comment: string }[]
+  >([]) // Comments on this chat frame
+  const [commentDraft, setCommentDraft] = useState<{
+    from: number
+    to: number
+    text: string
+  } | null>(null) // Composer for a new comment
+  const [showComments, setShowComments] = useState(false) // Show saved comment cards
+  const [commentTick, setCommentTick] = useState(0) // Re-place cards on scroll / resize
+  const [selectedCommentId, setSelectedCommentId] = useState<string | null>(null) // White card vs blue wash
 
   const seedHtml = useMemo(() => {
     const stored = typeof message.metadata?.html === 'string' ? (message.metadata.html as string) : ''
@@ -424,6 +466,39 @@ export function AiChatTurn({
       document.removeEventListener('keydown', onKey, true)
     }
   }, [frameMenu])
+
+  // Re-place comment cards when the transcript scrolls or the sidebar resizes
+  useEffect(() => {
+    if (!showComments && !commentDraft) return
+    const bump = () => setCommentTick((n) => n + 1)
+    const scroller = transcriptScrollerEl()
+    scroller?.addEventListener('scroll', bump, { passive: true })
+    window.addEventListener('resize', bump)
+    return () => {
+      scroller?.removeEventListener('scroll', bump)
+      window.removeEventListener('resize', bump)
+    }
+  }, [showComments, commentDraft])
+
+  // Persist a sidebar comment and paint the range blue (same mark as board frames)
+  const saveChatComment = useCallback(() => {
+    if (!commentDraft || !commentDraft.text.trim() || !editor) return
+    const { from, to, text } = commentDraft
+    try {
+      const tr = editor.state.tr
+      tr.removeMark(from, to, editor.schema.marks.highlight) // Drop yellow selection wash
+      tr.addMark(from, to, editor.schema.marks.highlight.create({ color: '#dbeafe' })) // blue-100
+      editor.view.dispatch(tr)
+    } catch {
+      // Range may be stale after an edit — still keep the card
+    }
+    setComments((prev) => [
+      ...prev,
+      { id: `comment-${Date.now()}-${Math.random()}`, from, to, comment: text.trim() },
+    ])
+    setCommentDraft(null)
+    setShowComments(true)
+  }, [commentDraft, editor])
 
   const startDrag = useCallback(
     (event: React.DragEvent) => {
@@ -1340,6 +1415,11 @@ export function AiChatTurn({
                 showRevertText
                 canRevertText={canRevertSelection}
                 onRevertText={revertSelection}
+                onComment={(selectedText, from, to) => {
+                  void selectedText
+                  setCommentDraft({ from, to, text: '' }) // Open composer for this range
+                  setShowComments(true)
+                }}
               />
             ) : null}
             {streaming && (
@@ -1480,6 +1560,110 @@ export function AiChatTurn({
             height="100%"
           />,
           utilityHostEl
+        )}
+      {/* Chat-frame comments — always left of the sidebar, over the board (sidebar clips overflow) */}
+      {typeof document !== 'undefined' &&
+        (commentDraft || (showComments && comments.length > 0)) &&
+        createPortal(
+          <>
+            {commentDraft && (
+              <div
+                data-chat-sidebar-comment="true"
+                className="fixed w-64 rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] bg-white dark:bg-[#171717] z-[110] pointer-events-auto"
+                style={{
+                  left: Math.max(8, chatSidebarCommentLeft()), // Stay on-screen if the sidebar is narrow
+                  top: commentAnchorY(editor, commentDraft.from),
+                  transform: 'translateY(-50%)', // Center on the selected line
+                  width: COMMENT_BOX_W,
+                }}
+              >
+                <div className="p-3 flex items-center justify-end">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    onClick={() => setCommentDraft(null)}
+                  >
+                    <X className="h-4 w-4 text-gray-600 dark:text-gray-300" />
+                  </Button>
+                </div>
+                <div className="p-3 pt-0">
+                  <Textarea
+                    value={commentDraft.text}
+                    onChange={(e) =>
+                      setCommentDraft((d) => (d ? { ...d, text: e.target.value } : d))
+                    }
+                    placeholder="Add a comment..."
+                    data-comment-input="true"
+                    className="text-sm resize-none min-h-[52px] rounded-[26px] px-4 focus-visible:ring-1 focus-visible:ring-blue-500 dark:focus-visible:ring-blue-400"
+                    autoFocus
+                  />
+                  <div className="mt-2 flex justify-end gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setCommentDraft(null)}
+                      className="text-xs"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={saveChatComment}
+                      disabled={!commentDraft.text.trim()}
+                      className="text-xs rounded-full"
+                    >
+                      Save
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {showComments &&
+              comments.map((c) => {
+                void commentTick // Re-read coords after scroll / resize
+                const isSelected = selectedCommentId === c.id
+                return (
+                  <div
+                    key={c.id}
+                    data-chat-sidebar-comment="true"
+                    className={cn(
+                      'fixed w-64 rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] z-[110] pointer-events-auto cursor-pointer',
+                      isSelected
+                        ? 'bg-white dark:bg-[#171717]'
+                        : 'bg-blue-50 dark:bg-[#2a2a3a]'
+                    )}
+                    style={{
+                      left: Math.max(8, chatSidebarCommentLeft()),
+                      top: commentAnchorY(editor, c.from),
+                      transform: 'translateY(-50%)',
+                      width: COMMENT_BOX_W,
+                    }}
+                    onClick={() => setSelectedCommentId(isSelected ? null : c.id)}
+                  >
+                    <div className="p-3 flex items-start gap-2">
+                      <div className="flex-1 text-sm text-gray-700 dark:text-gray-300 break-words min-w-0">
+                        {c.comment}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 flex-shrink-0"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setComments((prev) => prev.filter((x) => x.id !== c.id))
+                          if (selectedCommentId === c.id) setSelectedCommentId(null)
+                        }}
+                      >
+                        <X className="h-4 w-4 text-gray-600 dark:text-gray-300" />
+                      </Button>
+                    </div>
+                  </div>
+                )
+              })}
+          </>,
+          document.body
         )}
     </>
   )

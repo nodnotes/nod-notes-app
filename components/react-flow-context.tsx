@@ -8,6 +8,7 @@ import { usePathname } from 'next/navigation'
 import { parseBoardFontId, publishBoardFont, readStoredBoardFont, type BoardFontId } from '@/lib/board-font'
 
 import { isPublicBoardId } from '@/lib/public-showcase-boards'
+import { useBoardChangeAutosave } from '@/lib/board-change-autosave' // Docs-style session history
 import { getEphemeralSandbox, isEphemeralSandboxId } from '@/lib/ephemeral-sandbox'
 import {
   DEFAULT_HIGHLIGHTER_PALETTE,
@@ -342,6 +343,7 @@ function remapTipForZoomLockToggle(
 }
 
 export function ReactFlowContextProvider({ children, conversationId, projectId }: { children: ReactNode; conversationId?: string; projectId?: string }) {
+  useBoardChangeAutosave(conversationId) // Idle / hide session snapshots for this live board
   const pathname = usePathname() // Track route changes to reload preferences
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null)
   const setNodesRef = useRef<((nodes: any) => void) | undefined>(undefined) // Use ref to avoid setState during render

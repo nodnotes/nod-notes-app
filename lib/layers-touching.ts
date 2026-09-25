@@ -165,6 +165,47 @@ export function layerZIndexByOrder(
   return zById
 }
 
+/** Frame stack key from saved metadata (Layers reorder) or edge-snap index. */
+export function layerZIndexFromMeta(meta?: Record<string, unknown> | null): number | undefined {
+  if (typeof meta?.zIndex === 'number' && Number.isFinite(meta.zIndex)) return meta.zIndex // Layers order wins
+  return undefined // Caller may still apply a stack-index fallback
+}
+
+/** Persist Layers z-order on frames (messages.metadata) and drawings (canvas_nodes.data). */
+export function persistLayerZIndex(
+  conversationId: string,
+  nodes: Array<{
+    id: string
+    type?: string
+    data?: { promptMessage?: { id?: string } } & Record<string, unknown>
+  }>,
+  zById: Map<string, number>
+): void {
+  if (!conversationId || zById.size === 0) return
+  void (async () => {
+    const { createClient } = await import('@/lib/supabase/client')
+    const supabase = createClient()
+    for (const n of nodes) {
+      const z = zById.get(n.id)
+      if (z == null) continue
+      if (n.type === 'chatPanel') {
+        const messageId = n.data?.promptMessage?.id
+        if (!messageId) continue
+        const { data: row } = await supabase.from('messages').select('metadata').eq('id', messageId).maybeSingle()
+        if (!row) continue
+        const meta = { ...((row.metadata as Record<string, unknown>) || {}), zIndex: z }
+        await supabase.from('messages').update({ metadata: meta }).eq('id', messageId)
+        continue
+      }
+      if (n.type !== 'freehand' && n.type !== 'shape') continue
+      const { data: row } = await supabase.from('canvas_nodes').select('data').eq('id', n.id).maybeSingle()
+      if (!row) continue
+      const data = { ...((row.data as Record<string, unknown>) || {}), zIndex: z }
+      await supabase.from('canvas_nodes').update({ data }).eq('id', n.id)
+    }
+  })()
+}
+
 type Box = {
   id: string
   minX: number

@@ -2,6 +2,19 @@ import { Position, type Node, type XYPosition } from 'reactflow' // Node box →
 import { normalizeHandleId, INDICATOR_OUTSET } from './handle-ids' // left-indicator → left; exit stub length
 import { readFrameChromePad } from '@/lib/frame-chrome-offset' // Selected L/R gutter — not part of the fill
 
+/** Selected T/B chrome bands — not stored on frameChromePad (upright uses margins). */
+function readChromeYBands(nodeId: string): { yTop: number; yBottom: number } {
+  if (typeof document === 'undefined') return { yTop: 0, yBottom: 0 }
+  const el = document.querySelector(
+    `.react-flow__node[data-id="${CSS.escape(nodeId)}"] [data-panel-container="true"]`
+  ) as HTMLElement | null
+  if (!el) return { yTop: 0, yBottom: 0 }
+  return {
+    yTop: parseFloat(el.getAttribute('data-tt-chrome-pad-y-top') || '') || 0,
+    yBottom: parseFloat(el.getAttribute('data-tt-chrome-pad-y-bottom') || '') || 0,
+  }
+}
+
 /**
  * Mid-side point on a node's **frame** edge (the connection **point**).
  * Ignores outer indicator Handle positions entirely.
@@ -18,21 +31,24 @@ export function connectionPointOnNode(
   const w = node.width ?? 0
   const h = node.height ?? 0
   if (w <= 0 || h <= 0) return null // Not measured yet — caller falls back to RF coords
-  // Fill box = RF node minus selection chrome (⋮⋮ gutters). Unselected pad is 0.
+  // Fill box = RF node minus selection chrome (⋮⋮ gutters + T/B property/connection bands).
   const pad = readFrameChromePad(node.data)
+  const { yTop, yBottom } = readChromeYBands(node.id)
+  // Upright RF XY is the fill origin (negative margins grow the painted box). T/B bands
+  // are extra height on the node — subtract them to find the fill, then attach T/B on the adjust box.
   const fillX = x + pad.x
   const fillY = y + pad.y
   const fillW = Math.max(1, w - pad.x * 2)
-  const fillH = Math.max(1, h - pad.y * 2)
+  const fillH = Math.max(1, h - pad.y * 2 - yTop - yBottom)
   switch (side) {
     case Position.Left:
       return { x: fillX, y: fillY + fillH / 2 }
     case Position.Right:
       return { x: fillX + fillW, y: fillY + fillH / 2 }
     case Position.Top:
-      return { x: fillX + fillW / 2, y: fillY }
+      return { x: fillX + fillW / 2, y: fillY - yTop } // Adjust-box top (above properties)
     case Position.Bottom:
-      return { x: fillX + fillW / 2, y: fillY + fillH }
+      return { x: fillX + fillW / 2, y: fillY + fillH + yBottom } // Adjust-box bottom (below connections)
     default:
       return null
   }

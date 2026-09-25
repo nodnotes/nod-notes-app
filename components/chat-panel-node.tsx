@@ -137,7 +137,7 @@ import { pruneEmptyTextblocks, isEmptyTextblock } from '@/lib/tiptap/empty-block
 import { setAiTextSelection } from '@/lib/ai/selection-bridge' // Live highlighted-text pills in AI composer
 import { BlockActionsMenu, type BoardInTarget } from '@/components/block-actions-menu'
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, Fragment, memo } from 'react'
-import { MoreHorizontal, Trash2, Loader2, X, ChevronRight, ChevronLeft, ChevronsRight, ChevronsLeft, Plus, RotateCw, ScanText, WrapText, FileText } from 'lucide-react' // Rotate + fit-to-text / wrap; FileText = deferred boardLink fallback icon
+import { MoreHorizontal, Trash2, Loader2, X, ChevronRight, ChevronLeft, ChevronsRight, ChevronsLeft, Plus, RotateCw, ScanText, WrapText, FileText } from 'lucide-react' // Rotate + fit / wrap; FileText = deferred boardLink fallback icon
 import { useAiEditSession } from '@/lib/ai/edit-session' // Pending rainbow / review focus
 
 // Helper to check if content is effectively empty (handling HTML tags)
@@ -163,6 +163,25 @@ const FRAME_CORNER_RADIUS = 6
 const FRAME_RESIZE_MIN = 40
 /** Locked scale epsilon — avoid 0; no 0.15 floor (shrink matches grow). */
 const FRAME_SCALE_EPSILON = 0.001
+/** Chat bubble with two centered text lines — Lucide MessageSquare body, not the 3 left-ragged lines. */
+function ReactionsChatIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z" />
+      <path d="M8 9h8" />
+      <path d="M9.5 13h5" />
+    </svg>
+  )
+}
 const DATABASE_BLOCK_HTML_RE = /data-type=["']databaseBlock["']/i // TipTap Notion DB atom in frame HTML
 const FRAME_ATOM_HTML_RE =
   /data-type=["'](?:boardLink|pageLink|captureLink|databaseBlock|imageBlock|videoBlock|audioBlock|fileBlock|bookmarkBlock|propertyBlock)["']/i // Attr-only TipTap atoms
@@ -253,31 +272,26 @@ const PROPERTY_VALUE_WRAP_W = 160
  * Pure measurement via Range (actual glyph extents) — children are width:100%, so offsetWidth /
  * scrollWidth report the frame width, not the text. Never mutates live styles (RO-safe).
  */
-function measureTextWidthLocal(
-  text: string,
-  fontEl: Element,
-  toLocal: (screenW: number) => number
-): number {
-  const trimmed = text.trim()
-  if (!trimmed) return 0
-  const span = document.createElement('span')
-  const cs = getComputedStyle(fontEl)
-  span.style.position = 'absolute'
-  span.style.visibility = 'hidden'
-  span.style.whiteSpace = 'nowrap'
-  span.style.font = cs.font
-  span.textContent = trimmed
-  document.body.appendChild(span)
-  const w = toLocal(span.getBoundingClientRect().width)
-  span.remove()
-  return w
+function measureTextWidthLocal(text: string, fontEl: Element): number {
+  const trimmed = text.trim() // Ignore leading/trailing space so hug matches painted glyphs
+  if (!trimmed) return 0 // Empty → no contribution (placeholder handled by caller)
+  const span = document.createElement('span') // Off-tree probe — must not mutate live layout / RO
+  const cs = getComputedStyle(fontEl) // Copy used font (transform does not change computed px)
+  span.style.position = 'absolute' // Stay out of document flow
+  span.style.visibility = 'hidden' // Invisible; still laid out so gBCR is real
+  span.style.whiteSpace = 'nowrap' // One line — same as fit-to-text cells
+  span.style.font = cs.font // Match the cell/title face + size
+  span.textContent = trimmed // Glyph run to measure
+  document.body.appendChild(span) // Body is outside the RF viewport transform
+  // gBCR here is already local CSS px (no board zoom). Do not ÷ zoom — that inflated
+  // row-card titles / property values on zoom-out and grew the fill.
+  const w = span.getBoundingClientRect().width
+  span.remove() // Drop the probe
+  return w // Local px for hug
 }
 
 /** Filled property cell — icon + value box (never the width:100% stretch of the textarea). */
-function measurePropertyBlockWidth(
-  block: HTMLElement,
-  toLocal: (screenW: number) => number
-): number {
+function measurePropertyBlockWidth(block: HTMLElement): number {
   if (block.getAttribute('data-header-only') === 'true') return 0
   if (getComputedStyle(block).display === 'none') return 0
   const icon = block.querySelector('.tt-property-block-icon') as HTMLElement | null
@@ -296,7 +310,7 @@ function measurePropertyBlockWidth(
       const text = input.value || input.placeholder || 'Empty'
       textW = Number.isFinite(styled) && styled > 0
         ? styled
-        : measureTextWidthLocal(text, input, toLocal)
+        : measureTextWidthLocal(text, input) // Body probe is already local — no ÷zoom
     } else {
       textW = PROPERTY_VALUE_WRAP_W // Wrap mode: value re-wraps to the frame, so hug the column
     }
@@ -321,9 +335,6 @@ function measureRowCardContentWidth(contentFit: HTMLElement): number {
 
   const row = pm.closest('.relative') as HTMLElement | null
   const gutter = row && row !== contentFit ? parseFloat(getComputedStyle(row).paddingLeft) || 0 : 0
-  const fitRect = contentFit.getBoundingClientRect()
-  const scale = contentFit.offsetWidth > 0 ? fitRect.width / contentFit.offsetWidth : 1
-  const toLocal = (screenW: number) => (scale > 0 ? screenW / scale : screenW)
 
   let maxLine = 0
   const label = pm.querySelector(
@@ -337,12 +348,12 @@ function measureRowCardContentWidth(contentFit: HTMLElement): number {
     const gap = link ? parseFloat(getComputedStyle(link).gap) || 6 : 6
     const iconW = icon?.offsetWidth ?? 0
     const labelText = label.textContent || ''
-    const labelW = labelText.trim() ? measureTextWidthLocal(labelText, label, toLocal) : 0
+    const labelW = labelText.trim() ? measureTextWidthLocal(labelText, label) : 0 // Title run; local px
     maxLine = Math.max(maxLine, iconW + gap + labelW)
   }
 
   pm.querySelectorAll('.tt-property-block').forEach((el) => {
-    maxLine = Math.max(maxLine, measurePropertyBlockWidth(el as HTMLElement, toLocal))
+    maxLine = Math.max(maxLine, measurePropertyBlockWidth(el as HTMLElement))
   })
 
   const padR = parseFloat(cs.paddingRight) || 0
@@ -405,7 +416,7 @@ function measureNaturalContentWidth(contentFit: HTMLElement): number {
       (child.classList.contains('tt-property-block') && child) ||
       (child.querySelector('.tt-property-block:not([data-header-only="true"])') as HTMLElement | null)
     if (propBlock) {
-      maxLine = Math.max(maxLine, measurePropertyBlockWidth(propBlock, toLocal))
+      maxLine = Math.max(maxLine, measurePropertyBlockWidth(propBlock))
       continue
     }
     // databaseBlock: Range over the live Notion table is transform-fragile during RF frame
@@ -494,26 +505,13 @@ function measureNaturalContentHeight(
       body = Number.isFinite(lh) && lh > 0 ? lh : BLOCK_MIN_FRAME_H - padT - padB
     }
   }
-  // Connections / Notion strip sits under blocks inside contentFit (outside .ProseMirror)
-  const stripEl = contentFit.querySelector(
-    '[data-tt-connections-header], [data-tt-notion-hug]'
-  ) as HTMLElement | null
-  // Only count a mounted strip — don't reserve phantom band on plain text (was db-only before)
-  const stripH = stripEl && stripEl.offsetHeight > 0 ? stripEl.offsetHeight : 0
-  void reserveConnectionsStrip // Kept for call-site parity with db measure path
-  if (body > 0 || stripH > 0) {
-    return Math.max(1, Math.round((padT + body + padB + stripH) * 100) / 100) // 2dp — kill float dust
+  // Connections / properties sit in outer chrome — hug the blocks + fill pad only
+  void reserveConnectionsStrip // Call-site parity with db measure path
+  if (body > 0) {
+    return Math.max(1, Math.round((padT + body + padB) * 100) / 100) // 2dp — kill float dust
   }
   const fallback = contentFit.offsetHeight || contentFit.scrollHeight || 1 // Detached / display:none
   return Math.max(1, Math.round(fallback * 100) / 100)
-}
-
-/** h-7 Notion connections band when present (or reserved while Notion-linked). */
-function measureConnectionsStripHeight(contentFit: HTMLElement): number {
-  const el = contentFit.querySelector(
-    '[data-tt-connections-header], [data-tt-notion-hug]'
-  ) as HTMLElement | null
-  return el && el.offsetHeight > 0 ? el.offsetHeight : 0
 }
 
 /** Full Notion table box (all columns × rows + title/toolbar) — not the free-resize clip viewport. */
@@ -539,10 +537,7 @@ function measureDatabaseBlockExtents(
   const titleH = titleRow ? titleRow.offsetHeight + 8 : 0 // mb-2 under title row
   const notionH = notionDb.scrollHeight // Toolbar + full row stack (not scroll cap)
 
-  let connectionsH = measureConnectionsStripHeight(contentFit)
-  if (connectionsH === 0 && reserveConnectionsStrip) {
-    connectionsH = CONNECTIONS_GROUP_H // Footer not mounted yet — still reserve the in-fill band
-  }
+  void reserveConnectionsStrip // Connections sit in bottom chrome — not in the fill hug
 
   const cs = getComputedStyle(contentFit)
   const padL = parseFloat(cs.paddingLeft) || 0
@@ -556,7 +551,7 @@ function measureDatabaseBlockExtents(
 
   return {
     width: Math.ceil(padL + gripGutter + Math.max(tableW, 420) + rightInset),
-    height: Math.ceil(padT + padB + titleH + notionH + connectionsH),
+    height: Math.ceil(padT + padB + titleH + notionH),
   }
 }
 
@@ -655,7 +650,6 @@ import { usePhoneFrameDrag } from './phone-frame-drag-context' // Blue move bord
 import { useTheme } from './theme-provider'
 import { SelectionFormatPopupAnchor } from './selection-format-popup' // Notion-style selection menu (stable edge anchor)
 import { BoardLinkProvider, type BoardLinkActions } from '@/lib/board-link-context' // Bridge boardLink NodeViews → frame preview/open/rename
-import { PropertyHeaderSlotProvider } from '@/lib/property-header-context' // Empty property icons under the card title
 import { BoardOpenMenu } from '@/components/board-open-menu' // Preview/open chrome for page frames without a boardLink
 import { NestedBoardPreview, prefetchBoardEmbed } from './nested-board-preview' // Page-within-page board preview
 import { unwrapNestedFramesHtml } from '@/lib/tiptap/unwrap-nested-frames' // Flatten legacy nest wrappers
@@ -690,6 +684,38 @@ interface Comment {
   section: 'prompt' | 'response'
   comment: string
   createdAt: string
+}
+
+const COMMENT_BOX_W = 256 // w-64 — comment card width
+const COMMENT_BOX_GAP = 16 // Air off the fill edge — ignore simulated connection points
+
+/** Fixed flow gap; do not × ui-scale (that was clearing the connection disc). */
+function commentBoxGapCss(): string {
+  return `${COMMENT_BOX_GAP}px`
+}
+
+/** Pick the side with room for a comment card. Right chrome (utility / chat) shrinks the right lane. */
+function pickCommentSide(panel: HTMLElement | null): 'left' | 'right' {
+  if (!panel) return 'right'
+  const rect = panel.getBoundingClientRect()
+  const zoom = panel.offsetWidth > 0 ? rect.width / panel.offsetWidth : 1 // Flow → screen
+  const need = COMMENT_BOX_W * zoom + COMMENT_BOX_GAP * zoom // Card + air in screen px
+  let rightLimit = window.innerWidth
+  const chat = document.querySelector('[data-chat-sidebar]:not([data-chat-map-dock])')
+  if (chat instanceof HTMLElement) {
+    const cr = chat.getBoundingClientRect()
+    if (cr.width > 8) rightLimit = Math.min(rightLimit, cr.left)
+  }
+  const util = document.querySelector('[data-utility-sidebar]')
+  if (util instanceof HTMLElement) {
+    const ur = util.getBoundingClientRect()
+    if (ur.width > 8) rightLimit = Math.min(rightLimit, ur.left)
+  }
+  const rightSpace = rightLimit - rect.right
+  const leftSpace = rect.left
+  if (rightSpace >= need) return 'right'
+  if (leftSpace >= need) return 'left'
+  return leftSpace > rightSpace ? 'left' : 'right'
 }
 
 interface EmojiReaction {
@@ -792,7 +818,18 @@ function formatResponseContent(content: string): string {
   return htmlParagraphs
 }
 
-/** In-frame strip: **empty** type icons in doc order — one block (⋮⋮ from TipTapBlockHandles); wraps to frame width. */
+/** Empty property icons for the top chrome band (outside the fill). */
+function seedPropertyHeaders(
+  html: string,
+  propertyType: PropertyTypeId | null
+): PropertyHeaderItem[] {
+  const fromHtml = readPropertyBlockHeadersFromHtml(html) // Persisted header-only cells
+  if (fromHtml.length > 0) return fromHtml
+  if (htmlHasPropertyBlocks(html)) return [] // Filled/inlined cells live in the body only
+  return propertyType ? [{ type: propertyType, name: '', from: -1 }] : []
+}
+
+/** Top chrome: **empty** type icons in doc order — one block (⋮⋮ from TipTapBlockHandles); wraps to frame width. */
 function FramePropertyGroup({
   items,
   className,
@@ -916,7 +953,7 @@ function FramePropertyGroup({
   )
 }
 
-/** Bottom strip: Notion (and later connectors) — one **block** (⋮⋮ from TipTapBlockHandles). */
+/** Bottom chrome: Notion (and later connectors) — one **block** (⋮⋮ from TipTapBlockHandles). */
 function FrameConnectionsGroup({
   notionSync,
   onNotionConnection,
@@ -1214,7 +1251,7 @@ function TipTapContentLive({
   onNotionConnection,
   propertyType = null, // Turn into → Property on this frame
   onPropertyTurnInto,
-  pinConnectionsToFrame = false, // Free-frame clip: hug spacer only; real group is pinned to the frame
+  onPropertyHeadersChange, // Host paints empty property icons above the fill
   loadCrossfade = false, // Board load: keep the shell overlay and fade it out; new frames skip this
   viewportCrossfade = false, // Viewport mount: dissolve shell when TipTap first mounts off cold load
   deferredBox = null, // Cached box/kind — sizes the cold copy held while a re-promotion mounts
@@ -1266,7 +1303,7 @@ function TipTapContentLive({
   onNotionConnection?: (next: { connected: boolean; sync?: NotionSyncMode }) => void
   propertyType?: PropertyTypeId | null // Frame property chrome at top
   onPropertyTurnInto?: (propertyType: PropertyTypeId) => void // ⋮⋮ Turn into → Property
-  pinConnectionsToFrame?: boolean
+  onPropertyHeadersChange?: (items: PropertyHeaderItem[]) => void // Live top-chrome icons
   loadCrossfade?: boolean // Fade the load shell out as TipTap fades in (skip for fadeIn creates)
   viewportCrossfade?: boolean // Pan-in mount: same dissolve as load crossfade
   deferredBox?: DeferredFrameBox | null
@@ -1629,29 +1666,10 @@ function TipTapContentLive({
     }
   }, [editor, propertyType])
 
-  // Card-view frames lead with a title boardLink — paint empty property icons under that name.
-  const [propertyUnderBoardLink, setPropertyUnderBoardLink] = useState(() => {
-    const trimmed = (content || '').trimStart()
-    if (!trimmed.startsWith('<div')) return false
-    return (
-      /^<div\b[^>]*data-type=["']boardLink["'][^>]*data-variant=["']title["']/i.test(trimmed) ||
-      /^<div\b[^>]*data-variant=["']title["'][^>]*data-type=["']boardLink["']/i.test(trimmed)
-    )
-  })
+  // Host paints the top chrome band — keep icons live as the doc changes.
   useEffect(() => {
-    if (!editor || editor.isDestroyed) return
-    const sync = () => {
-      const first = editor.state.doc.firstChild
-      setPropertyUnderBoardLink(
-        !!first && first.type.name === 'boardLink' && first.attrs.variant === 'title'
-      )
-    }
-    sync()
-    editor.on('update', sync)
-    return () => {
-      editor.off('update', sync)
-    }
-  }, [editor])
+    onPropertyHeadersChange?.(propertyHeaders)
+  }, [propertyHeaders, onPropertyHeadersChange])
 
   // Editable only when this frame is selected (and share role allows). Unselected = no iOS text loupe.
   useEffect(() => {
@@ -2147,13 +2165,6 @@ function TipTapContentLive({
   const showFrameShimmer =
     !!enableBlockHandles && !isFlashcard && !coldPlaceholder && (!editor || keepShimmer) // Mount shell, then load overlay
   const shimmerHasText = frameHasVisibleText(content) // Text lines vs solid box (empty / spaces)
-  const showPropertyStrip = Boolean(
-    propertyHeaders.length > 0 && enableBlockHandles && !isFlashcard && !showFrameShimmer
-  )
-  const propertyStrip = showPropertyStrip ? (
-    <FramePropertyGroup items={propertyHeaders} editor={editor} />
-  ) : null
-
   useEffect(() => {
     if (!editor || !keepShimmer) return // Nothing to fade, or already gone
     if (!enableBlockHandles || isFlashcard || (!loadCrossfade && !viewportCrossfade)) {
@@ -2187,7 +2198,13 @@ function TipTapContentLive({
       }}
     >
       {/* Notion-style format popup — outside highlight edge, stays open with selection */}
-      {editor ? <SelectionFormatPopupAnchor editor={editor} containerRef={containerRef} /> : null}
+      {editor ? (
+        <SelectionFormatPopupAnchor
+          editor={editor}
+          containerRef={containerRef}
+          onComment={onComment}
+        />
+      ) : null}
 
       {/* Apply shimmer animation to prompt text when response is loading (not for flashcards) */}
       <div
@@ -2198,14 +2215,7 @@ function TipTapContentLive({
         )}
       >
         {editor ? (
-          <PropertyHeaderSlotProvider value={propertyUnderBoardLink ? propertyStrip : null}>
           <div>
-            {/* Default: top of the fill. Card frames mount the same strip under the title boardLink. */}
-            {!propertyUnderBoardLink && showPropertyStrip && (
-              <div className="w-full min-w-0 max-w-full" data-tt-property-band>
-                {propertyStrip}
-              </div>
-            )}
             {/* ⋮⋮ paints outside the fill (negative left into panel chrome); no pl-6 inside the frame.
                 Keep mounted during RF drag — unmounting mid-drag remounted atom NodeViews. */}
             <div>
@@ -2236,7 +2246,6 @@ function TipTapContentLive({
               )}
             />
           </div>
-          </PropertyHeaderSlotProvider>
         ) : null}
         {coldPlaceholder ? (
           <TipTapContentDeferred
@@ -2272,20 +2281,6 @@ function TipTapContentLive({
             />
           </div>
         ) : null}
-        {/* Connections: last block INSIDE the fill (host pins it only when the frame clips) */}
-        {notionConnected &&
-          enableBlockHandles &&
-          !isFlashcard &&
-          !showFrameShimmer &&
-          !coldPlaceholder && // Cold copy owns the whole fill; a second connections band would double up
-          (pinConnectionsToFrame ? (
-            <div className="h-7" aria-hidden data-tt-notion-hug />
-          ) : (
-            <FrameConnectionsGroup
-              notionSync={notionSync}
-              onNotionConnection={onNotionConnection}
-            />
-          ))}
       </div>
     </div>
   )
@@ -2999,6 +2994,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const [showPromptMoreMenu, setShowPromptMoreMenu] = useState(!dataCollapsed) // Track if prompt more menu should be visible (with delay)
   const [comments, setComments] = useState<Comment[]>([]) // Store all comments for this panel
   const [showComments, setShowComments] = useState(false) // Toggle comment panels visibility
+  const [commentSide, setCommentSide] = useState<'left' | 'right'>('right') // Park comments on the side with room
   const [selectedCommentId, setSelectedCommentId] = useState<string | null>(null) // Track which comment is selected
   const [replyTexts, setReplyTexts] = useState<Record<string, string>>({}) // Reply input text per comment
   const [newCommentData, setNewCommentData] = useState<{
@@ -3215,6 +3211,25 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       document.removeEventListener('mousedown', handleClickOutside, true)
     }
   }, [showComments, selectedCommentId, comments])
+
+  // Re-pick left/right whenever comments (or the composer) are up — chrome + pan change available air
+  useEffect(() => {
+    if (!showComments && !newCommentData) return
+    const update = () => setCommentSide(pickCommentSide(panelRef.current))
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [showComments, newCommentData, comments.length])
+
+  // Tell the frame menu which side the reactions card uses so it can park opposite
+  useEffect(() => {
+    const visible = Boolean(newCommentData) || (showComments && comments.length > 0)
+    window.dispatchEvent(
+      new CustomEvent('tt-comment-side', {
+        detail: { nodeId: id, side: visible ? commentSide : null },
+      })
+    )
+  }, [id, commentSide, showComments, newCommentData, comments.length])
 
   // Sync with data prop
   useEffect(() => {
@@ -3502,6 +3517,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const handleComment = useCallback((selectedText: string, from: number, to: number, section: 'prompt' | 'response') => {
     setNewCommentData({ selectedText, from, to, section })
     setNewCommentText('') // Reset comment text
+    setShowComments(true) // Reactions toggle stays on while the composer is up
   }, [])
 
   // Handle adding emoji reaction
@@ -3748,6 +3764,27 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const framePropertyType = readFramePropertyType(
     promptMessage?.metadata as Record<string, unknown> | undefined
   ) // Turn into → Property → top chrome
+  // Empty property icons — HTML seed until the live editor reports the doc list
+  const [chromePropertyHeaders, setChromePropertyHeaders] = useState<PropertyHeaderItem[]>(() =>
+    seedPropertyHeaders(promptContent || '', framePropertyType)
+  )
+  const onPropertyHeadersChange = useCallback((items: PropertyHeaderItem[]) => {
+    setChromePropertyHeaders((prev) =>
+      prev.length === items.length &&
+      prev.every(
+        (it, i) =>
+          it.type === items[i].type && it.name === items[i].name && it.from === items[i].from
+      )
+        ? prev
+        : items
+    )
+  }, [])
+  useEffect(() => {
+    setChromePropertyHeaders((prev) => {
+      if (prev.some((it) => it.from >= 0)) return prev // Live editor owns positions
+      return seedPropertyHeaders(promptContent || '', framePropertyType)
+    })
+  }, [promptContent, framePropertyType])
 
   // Live silhouette from menu / optimistic node patch (not only first metadata load)
   useEffect(() => {
@@ -3812,8 +3849,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const showAdjustFrame = Boolean(selected && isBlock && !isThreadConnecting && !dragging)
   // Transient blue outline while moving; selected frames keep `selected` and regain adjust chrome on release
   const showDragBorderOnly = Boolean((dragging || manualDragNodeId === id) && isBlock)
-  // Blue-box L/R gutters when selected. Property / connections strips paint INSIDE the fill,
-  // so the blue box never reserves an empty band above or below the frame.
+  // Blue-box L/R gutters when selected. Property / connections sit OUTSIDE the fill
+  // (above / below). Selected T/B bands reserve room in the blue box; unselected they hang out.
   // Full L/R gutters + RF position shift only when selected — not on unselected drag (showDragBorderOnly).
   // Turning chrome on at drag-start used to shift RF position while d3 already had the grab point → jump.
   const showFrameChrome = Boolean(isBlock && selected && !isThreadConnecting)
@@ -3837,12 +3874,20 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // pushAabb / painted sync read this — callbacks must not close over a stale pad
   const adjustChromeXRef = useRef(0)
   adjustChromeXRef.current = adjustChromeX
-  const connStripH = Math.round(CONNECTIONS_GROUP_H * screenChromeScale) // In-fill bottom connections strip
+  const chromeBandH = Math.round(CONNECTIONS_GROUP_H * chromeScale) // Property / connections strip
   const chromePadX = Math.round(BLOCK_FRAME_PAD_X * chromeScale) // Band inset matches scaled fill pad
-  // No T/B chrome bands: property icons and the connections strip both live inside the fill,
-  // so the blue adjust box hugs the blocks vertically (no empty strip under the last block).
-  const adjustChromeYTop = 0
-  const adjustChromeYBottom = 0
+  const hasPropBand =
+    chromePropertyHeaders.length > 0 && isBlock && !isFlashcard
+  const hasConnBand = Boolean(notionConnected && isBlock && !isFlashcard)
+  // Selected: property / connections live in the adjust box (above / below the fill).
+  const uprightChrome = Math.abs(rotation) <= 0.5
+  const adjustChromeYTop = showFrameChrome && hasPropBand && uprightChrome ? chromeBandH : 0
+  const adjustChromeYBottom = showFrameChrome && hasConnBand && uprightChrome ? chromeBandH : 0
+  const adjustChromeYTopRef = useRef(0)
+  adjustChromeYTopRef.current = adjustChromeYTop
+  const adjustChromeYBottomRef = useRef(0)
+  adjustChromeYBottomRef.current = adjustChromeYBottom
+  // Unselected: hang by the same band height so icons do not jump on select.
   // Rotated chrome is baked into the upright AABB — shift RF by half the AABB delta so the fill
   // stays centered. Upright frames do not move: negative margins cancel the pad in the same paint.
   // A deferred −X shift lost the race to drag-stop and only stuck on the second select.
@@ -4743,7 +4788,13 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         : Math.abs(rot) > 0.5
           ? // Inflate unrotated width by chrome so ⋮⋮ overhang stays inside the upright AABB
             rotatedFrameAabbSize(dims.width + chromeX, dims.height, rot, frameShapeRef.current)
-          : { width: dims.width + chromeX, height: dims.height }
+          : {
+              width: dims.width + chromeX,
+              height:
+                dims.height +
+                adjustChromeYTopRef.current +
+                adjustChromeYBottomRef.current,
+            }
       const boxW = Math.round(aabb.width)
       const boxH = Math.round(aabb.height)
       const prev = lastPushedBoxRef.current
@@ -6700,15 +6751,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     contentOverflows && isFrameHovering && !dragging && !pagePreviewOpen && !isThreadConnecting
   // After ~500ms hover: temporarily unclip so the full blocks read (saved size unchanged)
   const showClipPreview = clipPreviewEligible && clipPreviewReady
-  // Free-frame clip: keep the connections group on the visible box (not inside overflow)
-  const pinConnectionsToFrame =
-    notionConnected && isBlock && !isFlashcard && overflowBottom && !showClipPreview
-  const clipBoxH =
-    unlockedInnerH != null
-      ? pinConnectionsToFrame
-        ? Math.max(1, unlockedInnerH - connStripH) // Leave a strip for the scaled pinned group
-        : unlockedInnerH
-      : undefined
+  // Connections hang below the fill — clip the blocks only (no in-fill footer reservation)
+  const clipBoxH = unlockedInnerH != null ? unlockedInnerH : undefined
   // Soften chopped edges while clipped (removed during hover preview)
   const clipFadeStyle =
     !showClipPreview && contentOverflows
@@ -8014,6 +8058,13 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         data-block-node={isBlock ? 'true' : undefined} // Marks blocks for selected connection-dot styling
         data-tt-frame-scale={showFrameChrome ? String(chromeScale) : undefined} // Grip/chrome scale context
         data-tt-chrome-pad-x={showFrameChrome ? String(adjustChromeX) : undefined} // Live L/R pad for rAF CSS var / connection points
+        data-tt-chrome-pad-y-top={adjustChromeYTop ? String(adjustChromeYTop) : undefined} // Selected property band
+        data-tt-chrome-pad-y-bottom={
+          adjustChromeYBottom ? String(adjustChromeYBottom) : undefined
+        } // Selected connections band — L/R dots stay on the fill mid
+        data-tt-comment-side={
+          newCommentData || (showComments && comments.length > 0) ? commentSide : undefined
+        } // Reactions card side — frame menu parks opposite when the lane is free
         data-on-thread={isOnThreadFrame ? 'true' : undefined}
         data-block-resized={wrapActive ? 'wrap' : undefined} // Wrap (locked/unlocked): soft-wrap in fixed width; else nowrap / clip
         data-clip-preview={showClipPreview ? 'true' : undefined} // Unlocked hover: full-content peek
@@ -8070,7 +8121,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           ? '520px'
           : outerWidthCss,
         height: textLockedHug
-          ? `${huggedSize.height}px` // Exact scaled hug — fit-content could include PM strut under the wash
+          ? `${huggedSize.height + adjustChromeYTop + adjustChromeYBottom}px` // Hug fill + selected connections band
           : layoutBox
           ? `${layoutBox.height}px`
           : pagePreviewOpen
@@ -8101,7 +8152,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                 ? '300px'
                 : '200px',
         minHeight: textLockedHug
-          ? `${huggedSize.height}px` // Lock to scaled hug — don't grow from PM strut
+          ? `${huggedSize.height + adjustChromeYTop + adjustChromeYBottom}px` // Lock to scaled hug + connections band
           : layoutBox
           ? `${layoutBox.height}px`
           : pagePreviewOpen
@@ -8113,22 +8164,25 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           ? outerWidthCss
           : undefined,
         maxHeight: textLockedHug
-          ? `${huggedSize.height}px`
+          ? `${huggedSize.height + adjustChromeYTop + adjustChromeYBottom}px`
           : layoutBox
           ? `${layoutBox.height}px`
           : isContentRotated
           ? `${displayBox.height + adjustChromeYTop + adjustChromeYBottom}px`
           : undefined,
-        // Bands outside the fill: property (top) / connections (bottom); L/R gutters when selected.
-        // Rotated: chrome is in the upright AABB (pre-rotate inflate) — padding would squeeze the shell.
-        paddingTop: adjustChromeYTop || undefined,
+        // L/R gutters + T/B property/connections bands when selected.
+        // Height already includes the bands so border-box padding does not eat the fill.
+        paddingTop: isContentRotated ? undefined : adjustChromeYTop || undefined,
         paddingRight: isContentRotated ? undefined : adjustPadCss,
-        paddingBottom: adjustChromeYBottom || undefined,
+        paddingBottom: isContentRotated ? undefined : adjustChromeYBottom || undefined,
         paddingLeft: isContentRotated ? undefined : adjustPadCss,
-        // Same paint as the pad: margin box stays the fill width, border box grows both ways.
-        // A later RF position write cannot shove the text — there is no −X shift to lose.
-        marginLeft: showFrameChrome && !isContentRotated ? -adjustChromeX : undefined,
+        // Same paint as the pad: margin box stays the fill, border box grows both ways.
+        marginTop:
+          showFrameChrome && !isContentRotated && adjustChromeYTop
+            ? -adjustChromeYTop
+            : undefined,
         marginRight: showFrameChrome && !isContentRotated ? -adjustChromeX : undefined,
+        marginLeft: showFrameChrome && !isContentRotated ? -adjustChromeX : undefined,
         boxSizing: 'border-box',
         // `isInitialShrinkComplete` starts false and is only flipped by an effect, so *every* mount
         // paints one frame at 0 and then transitions to 1 over 300ms (the class above transitions
@@ -8174,6 +8228,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             ? 0
             : FRAME_BORDER_WEIGHT,
         ['--tt-frame-radius' as string]: `${frameCornerRadius}px`, // Fill radius only — adjust ring is square
+        ['--tt-adjust-pad-y-top' as string]: `${adjustChromeYTop || 0}px`, // Property band
+        ['--tt-adjust-pad-y-bottom' as string]: `${adjustChromeYBottom || 0}px`, // Connections band — L/R dots stay on the fill mid
         // Handle / line / ui-scale sizes come from live `--tt-board-zoom` CSS (not React)
       }}
       onPointerEnter={() => {
@@ -8390,7 +8446,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         </>
       )}
 
-      {/* Frame chrome — rotate · fit · wrap (selected + idle only; hidden while dragging).
+      {/* Frame chrome — rotate · fit · wrap · reactions (selected + idle only; hidden while dragging).
           Scale + margin-left from live `--tt-frame-ui-scale` CSS; marginTop keeps clear of indicators. */}
       {isBlock && !pagePreviewOpen && !isThreadConnecting && selected && !dragging && (
           <div
@@ -8455,6 +8511,41 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                 <WrapText className="h-2.5 w-2.5 pointer-events-none" />
               </button>
             )}
+            <button
+              type="button"
+              className={cn(
+                'flex h-5 w-5 items-center justify-center rounded-full text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800', // Same chrome as rotate / fit / wrap — no fill
+                showComments && 'bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-50' // Active wash only while open
+              )}
+              title={showComments ? 'Hide reactions' : 'Reactions'}
+              aria-label={showComments ? 'Hide reactions' : 'Reactions'}
+              aria-pressed={showComments}
+              onClick={(e) => {
+                e.stopPropagation() // Don't start frame drag / deselect
+                e.preventDefault()
+                const next = !showComments
+                setShowComments(next) // Show / hide the reactions panel
+                if (!next) {
+                  setSelectedCommentId(null) // Drop highlight when hiding
+                  setNewCommentData(null) // Close composer with the panel
+                  setNewCommentText('')
+                  return
+                }
+                if (comments.length > 0 || newCommentData) return // Saved cards / open composer already paint
+                const editor = promptEditorRef.current
+                const sel = editor && !editor.isDestroyed ? editor.state.selection : null
+                const from = sel && !sel.empty ? sel.from : 1 // Selection, else empty caret
+                const to = sel && !sel.empty ? sel.to : 1
+                const selectedText =
+                  sel && !sel.empty && editor
+                    ? editor.state.doc.textBetween(from, to, ' ')
+                    : ''
+                setNewCommentData({ selectedText, from, to, section: 'prompt' }) // Empty panel = composer
+                setNewCommentText('')
+              }}
+            >
+              <ReactionsChatIcon className="h-2.5 w-2.5 pointer-events-none" /> {/* Two centered lines in the bubble */}
+            </button>
           </div>
       )}
 
@@ -8658,6 +8749,58 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         </>
       )}
 
+      {/* Property icons — above the fill, inset to match fill content */}
+      {hasPropBand && !pagePreviewOpen && (
+        <div
+          data-tt-frame-chrome-top
+          className="nodrag nopan absolute z-[2] flex items-center"
+          style={{
+            top: adjustChromeYTop ? 0 : -chromeBandH, // Same Y selected (in-pad) or not (hang)
+            left: (showFrameChrome ? adjustChromeX : 0) + chromePadX,
+            right: (showFrameChrome ? adjustChromeX : 0) + chromePadX,
+            height: chromeBandH,
+          }}
+        >
+          <div
+            style={{
+              transform: chromeScale !== 1 ? `scale(${chromeScale})` : undefined,
+              transformOrigin: 'left center',
+            }}
+          >
+            <FramePropertyGroup
+              items={chromePropertyHeaders}
+              editor={promptEditorRef.current}
+              editorRef={promptEditorRef}
+            />
+          </div>
+        </div>
+      )}
+      {/* Connections — below the fill, same horizontal inset as properties */}
+      {hasConnBand && !pagePreviewOpen && (
+        <div
+          data-tt-frame-chrome-bottom
+          className="nodrag nopan absolute z-[2] flex items-center"
+          style={{
+            bottom: adjustChromeYBottom ? 0 : -chromeBandH, // Same Y selected (in-pad) or not (hang)
+            left: (showFrameChrome ? adjustChromeX : 0) + chromePadX,
+            right: (showFrameChrome ? adjustChromeX : 0) + chromePadX,
+            height: chromeBandH,
+          }}
+        >
+          <div
+            style={{
+              transform: chromeScale !== 1 ? `scale(${chromeScale})` : undefined,
+              transformOrigin: 'left center',
+            }}
+          >
+            <FrameConnectionsGroup
+              notionSync={notionSync}
+              onNotionConnection={handleNotionConnection}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Single text body — when rotated, one centered shell holds fill + shape + blocks (no double card).
           This shell IS the shape-capable frame surface: same fill + radius selected or not. */}
       <div
@@ -8665,10 +8808,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           'relative z-[1] w-full', // Above shape backdrop; fills the padded content box
           // Always fill the panel for blocks — h-auto on-thread left peach shorter than the blue ring
           isBlock || !(isOnThreadFrame && !layoutBox) ? 'h-full' : 'h-auto flex items-center',
-          shapeCenterContent &&
-            (pinConnectionsToFrame
-              ? 'flex flex-col items-center justify-center'
-              : 'flex items-center justify-center'),
+          shapeCenterContent && 'flex items-center justify-center',
           !isFillTransparent && !frameShape && 'backdrop-blur-sm',
           !isBlock && 'p-1',
           pagePreviewOpen && 'flex flex-col h-full min-h-0',
@@ -8676,7 +8816,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           // Sole image: clip via ProseMirror/CSS only — this shell must stay visible when selected
           // so negative-left ⋮⋮ can reach the blue gutter (same as text frames).
           unlockedResized && !showClipPreview && !isContentRotated
-            ? cn('overflow-hidden', pinConnectionsToFrame && 'flex flex-col')
+            ? 'overflow-hidden'
             : soleImageContent && !selected
               ? 'overflow-hidden'
               : 'overflow-visible',
@@ -8760,7 +8900,6 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           <>
           <div
             className={cn(
-              pinConnectionsToFrame ? 'min-h-0 flex-1' : undefined,
               shapeCenterContent && 'flex items-center justify-center',
               frameShape && 'relative z-[1]' // TipTap above stroke-only shape SVG in the fill shell
             )}
@@ -8951,7 +9090,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               onNotionConnection={handleNotionConnection}
               propertyType={framePropertyType}
               onPropertyTurnInto={handlePropertyTurnInto}
-              pinConnectionsToFrame={pinConnectionsToFrame}
+              onPropertyHeadersChange={onPropertyHeadersChange}
               loadCrossfade={promptMessage?.metadata?.fadeIn !== true} // Load: dissolve the shell; new frames use note-fade-in
               mountImmediately={promptMessage?.metadata?.fadeIn === true} // I-bar / grip creates mount TipTap immediately
               coldReady={coldReady} // Snapshot exists → proximity alone must not mount a live editor
@@ -9006,30 +9145,6 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             </BoardLinkProvider>
           </div>
           </div>
-          {pinConnectionsToFrame && (
-            <div
-              className="flex-shrink-0"
-              style={{
-                paddingLeft: chromePadX, // Match scaled fill content inset when pinned in-flow
-                height: connStripH,
-                display: 'flex',
-                alignItems: 'center',
-                backgroundColor: frameShape ? 'transparent' : responseAreaBackgroundColor,
-              }}
-            >
-              <div
-                style={{
-                  transform: screenChromeScale !== 1 ? `scale(${screenChromeScale})` : undefined,
-                  transformOrigin: 'left center',
-                }}
-              >
-                <FrameConnectionsGroup
-                  notionSync={notionSync}
-                  onNotionConnection={handleNotionConnection}
-                />
-              </div>
-            </div>
-          )}
           </>
         )}
 
@@ -9132,17 +9247,27 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       {/* Non-flashcard right Handle removed — edge connection points cover all sides above */}
 
 
-      {/* New comment box - appears to the right when creating a comment */}
+      {/* New comment box — left or right of the frame, whichever has room */}
       {newCommentData && (
         <div
-          className="absolute left-full ml-4 top-0 w-64 bg-white dark:bg-[#171717] rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] z-30"
+          data-tt-comment-box=""
+          className="tt-menu-surface absolute z-30 w-64 rounded-lg border border-gray-200 text-gray-900 dark:border-[#2f2f2f] dark:text-gray-100"
+          style={{
+            top: 'var(--tt-adjust-pad-y-top, 0px)', // Fill top — select must not pin to the property band
+            ...(commentSide === 'right'
+              ? { left: '100%', marginLeft: commentBoxGapCss() } // Off the fill, not past the disc
+              : { right: '100%', marginRight: commentBoxGapCss() }),
+          }}
         >
           <div className="p-3 flex items-center justify-end">
             <Button
               variant="ghost"
               size="icon"
               className="h-6 w-6"
-              onClick={() => setNewCommentData(null)}
+              onClick={() => {
+                setNewCommentData(null)
+                if (comments.length === 0) setShowComments(false) // Empty panel: X = toggle off
+              }}
             >
               <X className="h-4 w-4 text-gray-600 dark:text-gray-300" />
             </Button>
@@ -9171,7 +9296,10 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setNewCommentData(null)}
+                onClick={() => {
+                  setNewCommentData(null)
+                  if (comments.length === 0) setShowComments(false) // Empty panel: Cancel = toggle off
+                }}
                 className="text-xs"
               >
                 Cancel
@@ -9232,7 +9360,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         </div>
       )}
 
-      {/* Comment panels - appear to the right, vertically aligned with highlighted text */}
+      {/* Comment panels — left or right of the frame, aligned with highlighted text */}
       {showComments && comments.length > 0 && (
         <div 
           ref={commentPanelsRef}
@@ -9266,6 +9394,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                 key={comment.id}
                 comment={comment}
                 isSelected={isSelected}
+                side={commentSide}
                 topPosition={topPosition}
                 onSelect={() => {
                   const newSelectedId = isSelected ? null : comment.id
@@ -9353,6 +9482,7 @@ function EmojiReactionPill({
 function CommentPanel({
   comment,
   isSelected,
+  side = 'right',
   topPosition,
   onSelect,
   onDelete,
@@ -9362,6 +9492,7 @@ function CommentPanel({
 }: {
   comment: Comment
   isSelected: boolean
+  side?: 'left' | 'right' // Park on the side with room
   topPosition: number
   onSelect: () => void
   onDelete: () => void
@@ -9373,15 +9504,14 @@ function CommentPanel({
 
   return (
     <div
-      className={cn(
-        "absolute left-full ml-4 w-64 rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] z-30 cursor-pointer transition-colors",
-        isSelected
-          ? "bg-white dark:bg-[#171717]"
-          : "bg-blue-50 dark:bg-[#2a2a3a]"
-      )}
+      data-tt-comment-box=""
+      className="tt-menu-surface absolute z-30 w-64 cursor-pointer rounded-lg border border-gray-200 text-gray-900 dark:border-[#2f2f2f] dark:text-gray-100"
       style={{
         top: `${topPosition}px`,
         transform: 'translateY(-50%)', // Center vertically with highlighted text
+        ...(side === 'right'
+          ? { left: '100%', marginLeft: commentBoxGapCss() } // Off the fill, not past the disc
+          : { right: '100%', marginRight: commentBoxGapCss() }),
       }}
       onMouseEnter={() => setIsHovering(true)}
       onMouseLeave={() => setIsHovering(false)}
