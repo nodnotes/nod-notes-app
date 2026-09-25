@@ -1,0 +1,2 @@
+-- Frame menu on selected-frame / adjust-box click; live frame+adjust resize; property strip wrap + icon size.
+-- App/docs marker only; no DDL. Remote DDL top: 20260924223511_board_changes_autosave.

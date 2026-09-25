@@ -1,14 +1,22 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-25T03:19:34Z`
+- Snapped at: `2026-09-25T23:21:37Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
-- CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`/`migration list`; versions from `.temp` + Management API list; cli-latest reports `v2.117.0`)
+- CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`/`migration list`; versions from `.temp` + Management API list; cli-latest reports `v2.118.0`)
 - Remote applied tops out at `20260924223511_board_changes_autosave` (includes `20260924222109_board_changes`; local files `20260924222048` / `20260924223507`)
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260925232137_frame_menu_live_adjust_property_strip.sql`.
+- **Frame menu**: first click selects only; a later click on that selected frame or its adjust box opens the menu (corner knobs still resize; ⋮⋮ / connections keep their own gesture).
+- **Live adjust**: frame fill + blue adjust box track corner/side drag on the pointer tick (not only on release).
+- **Property strip**: empty icons wrap to the fill text width; top gap grows with wrapped rows; glyphs match in-frame 16px / 20×24 cells and scale with the fill.
+- Schema unchanged; remote DDL top remains `20260924223511_board_changes_autosave`.
+
+## Prior: Board change history with autosave
 
 - DDL: `board_changes` + named/auto columns. Local `20260924222048_board_changes.sql` / `20260924223507_board_changes_autosave.sql` (remote `20260924222109` / `20260924223511`).
 - **Changes**: utility Changes tab lists frozen snapshots; + Save pins a named version; Docs-style auto sessions dirty on durable board writes, flush after 45s idle / 5 min heartbeat / tab hide, coalesce 30 min, skip unchanged `content_hash`, keep 40 autos/board.

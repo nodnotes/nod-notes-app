@@ -3255,16 +3255,18 @@ span[data-added="true"] {
     min-width: 160px;
     min-height: 28px;
   }
-  .ProseMirror .tt-property-block-icon {
+  .ProseMirror .tt-property-block-icon,
+  [data-tt-property-header] .tt-property-block-icon {
     flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
     width: 20px;
-    height: 24px; /* Centers the glyph on the first value line (line-height 1.7 × 14px) */
+    height: 24px; /* Same box as in-frame cells — glyph is h-4 (16px) */
     color: #6b7280;
   }
-  .dark .ProseMirror .tt-property-block-icon {
+  .dark .ProseMirror .tt-property-block-icon,
+  .dark [data-tt-property-header] .tt-property-block-icon {
     color: #9ca3af;
   }
   .ProseMirror .tt-property-block-cell {

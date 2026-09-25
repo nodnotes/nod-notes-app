@@ -398,6 +398,26 @@ function isFrameDragAreaTarget(target: EventTarget | null): boolean {
   return !!el.closest('.react-flow__node') // Must be on a frame
 }
 
+/** Chrome that owns the click — ⋮⋮, corner knobs, connections — not the selected frame / adjust box. */
+const FRAME_MENU_CHROME_SEL =
+  '.react-flow__resize-control.handle, [data-frame-chrome], [data-tt-block-handle], [data-tt-insert-line], .block-actions-menu, [data-tt-connection-indicator], [data-tt-property-header] span, [data-tt-connections-header] button, input, textarea, a, button, [data-page-link-preview], [data-tt-ibar-grip], .tt-database-block, .tt-notion-db'
+
+/** True when the click hit the blue adjust box (line hit target), not a corner knob. */
+function isFrameAdjustBoxTarget(target: EventTarget | null): boolean {
+  const el = eventElement(target)
+  if (!el) return false
+  if (el.closest('.react-flow__resize-control.handle')) return false // Corner knobs still resize
+  return !!el.closest('.react-flow__resize-control.line, .tt-frame-resize-line, [data-tt-adjust-ring]')
+}
+
+/** True when the click belongs to block/corner chrome, not the frame menu. */
+function isFrameMenuChromeTarget(target: EventTarget | null): boolean {
+  const el = eventElement(target)
+  if (!el) return false
+  if (isFrameAdjustBoxTarget(target)) return false // Adjust box click opens the frame menu
+  return !!el.closest(FRAME_MENU_CHROME_SEL) // ⋮⋮ / corners / marks keep their own gesture
+}
+
 /** Thread path hit band — not endpoint updaters or bend knobs (those drag). */
 function isThreadDragAreaTarget(target: EventTarget | null): boolean {
   const el = eventElement(target)
@@ -9054,9 +9074,9 @@ function BoardFlowInner({
 
       if (isOnPopup || isOnButton) return // Menu owns the gesture
 
-      // Same-frame drag strip: leave open for click toggle (mousedown close + click open fought each other)
+      // Same-frame body: leave open for click toggle (mousedown close + click open fought each other)
       const isOnSameNode = !!target.closest(`[data-id="${rightClickedNode.id}"]`)
-      if (isOnSameNode && isFrameDragAreaTarget(event.target)) return
+      if (isOnSameNode && !isFrameMenuChromeTarget(event.target)) return
 
       // Background, other frames, or TipTap/chrome — dismiss unless this press pans/zooms the board
       dismissMenuUnlessBoardNav(() => {
@@ -10720,30 +10740,29 @@ function BoardFlowInner({
           if (node?.type !== 'chatPanel') return
           if (justDraggedFrameRef.current.has(node.id)) return // Drag release is not a select / menu
           const alreadySelected = nodesRef.current.some((n) => n.id === node.id && n.selected)
-          // Phone: first tap selects only; tap drag strip again → frame menu (unchanged)
-          if (isMobileMode) {
-            if (justPhoneSelectedRef.current.has(node.id)) return // Pointerup already selected this gesture
-            if (alreadySelected && isFrameDragAreaTarget(event.target)) {
-              openFrameMenuAt(event.clientX, event.clientY, node as Node<ChatPanelNodeData>) // Opens or toggles closed
+          // First click selects only; later click on that selected frame opens the menu
+          if (isMobileMode && justPhoneSelectedRef.current.has(node.id)) return // Pointerup already selected this gesture
+          const additive = event.metaKey || event.ctrlKey || event.shiftKey
+          if (!additive && alreadySelected && !isFrameMenuChromeTarget(event.target)) {
+            const onText = !!eventElement(event.target)?.closest('.ProseMirror') // Body click vs ⋮⋮ / chrome
+            const dragSelect =
+              onText && typeof window.getSelection === 'function' && !!window.getSelection()?.toString()
+            if (dragSelect) {
+              // Text drag-select just ended — keep the range, don't open the menu
+            } else if (rightClickedNodeRef.current?.id === node.id) {
+              // Menu already open: close without blur so this click can place the I-bar
+              rightClickedNodeRef.current = null
+              setRightClickedNode(null)
+              setNodePopupPosition({ x: 0, y: 0 })
+              nodeClickPositionRef.current = null
+              nodePopupZoomRef.current = null
+              return
+            } else if (!(isFrameTextEditActive(node.id) && onText)) {
+              openFrameMenuAt(event.clientX, event.clientY, node as Node<ChatPanelNodeData>) // Opens the frame menu
               return
             }
-          } else {
-            // Desktop: selecting a frame opens the frame menu (same as thread/block select)
-            const additive = event.metaKey || event.ctrlKey || event.shiftKey
-            if (!additive) {
-              if (!alreadySelected) {
-                openFrameMenuAt(event.clientX, event.clientY, node as Node<ChatPanelNodeData>)
-                return
-              }
-              // Already selected: drag strip toggles menu; text/chrome dismisses if open
-              if (isFrameDragAreaTarget(event.target)) {
-                openFrameMenuAt(event.clientX, event.clientY, node as Node<ChatPanelNodeData>)
-                return
-              }
-            }
           }
-          // Already selected + text/chrome click (incl. drag-select mouseup→click): keep TipTap
-          // selection. Falling through used to blur ProseMirror and wipe every range.
+          // Already selected + text/chrome (or additive): keep TipTap; dismiss menu if open
           if (alreadySelected && !isFrameDragAreaTarget(event.target)) {
             if (rightClickedNodeRef.current?.id === node.id) {
               rightClickedNodeRef.current = null
@@ -10754,7 +10773,7 @@ function BoardFlowInner({
             }
             return
           }
-          // Phone first-tap / desktop multi-select: select frame, dismiss menu if open
+          // First select / multi-select: select frame, dismiss menu if open
           if (rightClickedNodeRef.current?.id === node.id) {
             rightClickedNodeRef.current = null
             setRightClickedNode(null)
@@ -10768,7 +10787,6 @@ function BoardFlowInner({
           if (ae?.closest?.('.react-flow__node .ProseMirror, .react-flow__node [contenteditable="true"]')) {
             ae.blur()
           }
-          const additive = event.metaKey || event.ctrlKey || event.shiftKey
           setNodes((nds) =>
             nds.map((n) => {
               if (n.id === node.id) return { ...n, selected: true }

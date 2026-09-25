@@ -74,6 +74,7 @@ import { setFramePanelSelected } from '@/lib/frame-panel-selected' // DB NodeVie
 import {
   clearFrameTextEditActive,
   setFrameTextEditActive,
+  isFrameTextEditActive,
   isEditorAutoSelectSuppressed,
 } from '@/lib/frame-text-edit' // Select-before-caret: Delete removes frame until caret is placed
 import {
@@ -850,8 +851,7 @@ function FramePropertyGroup({
     return null
   }
   const containerRef = useRef<HTMLDivElement>(null) // Icon row — drag target
-  const scale = iconScale > 0 ? iconScale : 1
-  const iconPx = Math.max(16, Math.round(20 * scale))
+  const scale = iconScale > 0 ? iconScale : 1 // Gap/pad only — glyph size matches in-frame (h-4 / 20×24)
   const gapPx = Math.max(4, Math.round(6 * scale))
   const rowPadY = Math.max(2, Math.round(4 * scale))
   const [editorOpen, setEditorOpen] = useState<PropertyEditorAnchor & { from: number; type: PropertyTypeId; name: string; value: string } | null>(null)
@@ -899,9 +899,6 @@ function FramePropertyGroup({
 
   if (items.length === 0) return null
 
-  const markClass =
-    'nodrag nopan flex shrink-0 items-center justify-center rounded text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]'
-
   return (
     <>
     <div
@@ -918,9 +915,10 @@ function FramePropertyGroup({
           key={`${item.type}-${item.name}-${item.from}-${i}`}
           type={item.type}
           name={item.name}
-          iconClassName="h-4 w-4"
-          className={cn(markClass, item.from >= 0 && liveEditor() && 'cursor-grab active:cursor-grabbing')}
-          style={{ width: iconPx, height: iconPx }}
+          className={cn(
+            'tt-property-block-icon nodrag nopan rounded hover:bg-gray-100 dark:hover:bg-[#2a2a2a]',
+            item.from >= 0 && liveEditor() && 'cursor-grab active:cursor-grabbing'
+          )}
           onPointerDown={(e) => onHeaderPointerDown(e, item)}
         />
       ))}
@@ -1421,7 +1419,13 @@ function TipTapContentLive({
           // would kill the native selection gesture, so press+drag could never select text.
           pe.stopPropagation()
           selectOnlyClickRef.current = false
-          if (hostNodeIdRef.current) setFrameTextEditActive(hostNodeIdRef.current) // Selected-frame press → text edit mode
+          // Don't arm text-edit on the click that opens the frame menu (caret already in this frame only)
+          if (
+            hostNodeIdRef.current &&
+            (isFrameTextEditActive(hostNodeIdRef.current) || view.hasFocus())
+          ) {
+            setFrameTextEditActive(hostNodeIdRef.current) // Already editing → keep Delete on text
+          }
           return false // Browser/PM own caret placement + drag-select
         },
         mousedown: (view: any, event: Event) => {
@@ -1452,7 +1456,15 @@ function TipTapContentLive({
             return false
           }
           selectOnlyClickRef.current = false
-          if (hostNodeIdRef.current) setFrameTextEditActive(hostNodeIdRef.current) // Already selected → caret / text select
+          // Menu-open click must not arm text-edit; keep it only when a caret is already here
+          if (
+            hostNodeIdRef.current &&
+            (isFrameTextEditActive(hostNodeIdRef.current) ||
+              document.activeElement === view.dom ||
+              view.dom.contains(document.activeElement))
+          ) {
+            setFrameTextEditActive(hostNodeIdRef.current) // Already editing → caret / text select
+          }
           // No preventDefault — the browser needs the default mousedown to run a drag-select.
           mouseEvent.stopPropagation()
 
@@ -2109,6 +2121,10 @@ function TipTapContentLive({
       clearFrameTextEditActive() // First-select click must not arm text-edit Delete
       return
     }
+    // Selected-frame click opens the frame menu; I-bar only after that (menu open) or while editing
+    if (hostNodeId && !isFrameTextEditActive(hostNodeId) && !document.querySelector('.node-popup')) {
+      return
+    }
     // Drag-select ends with a click — collapsing to a caret here wiped the range every time
     if (!editor.state.selection.empty) {
       if (hostNodeId) setFrameTextEditActive(hostNodeId) // Keep text-edit Delete armed
@@ -2120,7 +2136,7 @@ function TipTapContentLive({
     }
     e.stopPropagation()
     if (editor.isDestroyed) return
-    if (hostNodeId) setFrameTextEditActive(hostNodeId) // Second click → caret; Backspace edits text
+    if (hostNodeId) setFrameTextEditActive(hostNodeId) // Later text click → caret; Backspace edits text
     // Sync in this tap — setTimeout(0) broke iOS: first tap focused nothing, second placed I-bar
     try {
       // Always resolve against click coords so empty lines get the caret (not doc start/end)
@@ -3051,7 +3067,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const isResizingRef = useRef(false) // Track if currently resizing
   const contentFitRef = useRef<HTMLDivElement>(null) // Inner unscaled content wrapper for intrinsic measure
   const frameScaleRef = useRef(1) // Latest scale — resize-end must not close over a stale render
-  frameScaleRef.current = frameScale // Keep ref in sync every render
+  if (!isResizingRef.current) frameScaleRef.current = frameScale // Mid-adjust: handleResize owns the ref
   const frameUnlockedRef = useRef(frameUnlocked) // Live lock — resize callbacks stay identity-stable
   frameUnlockedRef.current = frameUnlocked // Sync every render so d3-drag can read without rebinding
   const unlockedFrameSizeRef = useRef(unlockedFrameSize) // Last free-resize box — restore after fit-to-text
@@ -3074,6 +3090,12 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   fontScaleRef.current = fontScale
   const resizeRafRef = useRef<number | null>(null) // Coalesce live resize setState to one paint
   const pendingResizeRef = useRef<{ width: number; height: number; scale?: number } | null>(null) // Last drag sample waiting for rAF
+  // Same-tick drag sample — render + DOM read this so peach / adjust ring don't wait for rAF setState
+  const liveResizeBoxRef = useRef<{ width: number; height: number; scale?: number } | null>(null)
+  // Identity-stable apply — handleResize must not close over push/setNodes (phone d3-drag rebind)
+  const applyLiveAdjustBoxRef = useRef<(contentW: number, contentH: number, outerAlready?: boolean) => void>(
+    () => {}
+  )
   const persistFrameMetaTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null) // Debounce hug-to-text saves
   const lockedResizeStartRef = useRef<{ width: number; height: number; scale: number } | null>(null) // Locked drag baseline
   const initialResizeWidthRef = useRef<number | null>(null) // Track initial panel width when resize starts (for note panels)
@@ -3768,6 +3790,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const [chromePropertyHeaders, setChromePropertyHeaders] = useState<PropertyHeaderItem[]>(() =>
     seedPropertyHeaders(promptContent || '', framePropertyType)
   )
+  const [propBandH, setPropBandH] = useState(CONNECTIONS_GROUP_H) // Live wrapped strip (grows past one row)
+  const propHeaderHostRef = useRef<HTMLDivElement>(null) // Measure flex-wrap height for the adjust-box top gap
   const onPropertyHeadersChange = useCallback((items: PropertyHeaderItem[]) => {
     setChromePropertyHeaders((prev) =>
       prev.length === items.length &&
@@ -3881,13 +3905,35 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const hasConnBand = Boolean(notionConnected && isBlock && !isFlashcard)
   // Selected: property / connections live in the adjust box (above / below the fill).
   const uprightChrome = Math.abs(rotation) <= 0.5
-  const adjustChromeYTop = showFrameChrome && hasPropBand && uprightChrome ? chromeBandH : 0
+  // Top gap follows wrapped icon rows (one-row floor); connections stay a single strip
+  const propBandPaintH = hasPropBand ? Math.max(chromeBandH, propBandH) : chromeBandH
+  const adjustChromeYTop = showFrameChrome && hasPropBand && uprightChrome ? propBandPaintH : 0
   const adjustChromeYBottom = showFrameChrome && hasConnBand && uprightChrome ? chromeBandH : 0
   const adjustChromeYTopRef = useRef(0)
   adjustChromeYTopRef.current = adjustChromeYTop
   const adjustChromeYBottomRef = useRef(0)
   adjustChromeYBottomRef.current = adjustChromeYBottom
-  // Unselected: hang by the same band height so icons do not jump on select.
+  // Wrapped property rows: grow the adjust-box top gap to the painted strip (CSS scale is visual-only)
+  useLayoutEffect(() => {
+    const host = propHeaderHostRef.current
+    if (!host || !hasPropBand) {
+      if (propBandH !== chromeBandH) setPropBandH(chromeBandH) // Reset when the strip is gone
+      return
+    }
+    const measure = () => {
+      const inner = host.querySelector('[data-tt-property-header]') as HTMLElement | null
+      const raw = inner?.offsetHeight ?? 0 // Unscaled 20×24 icons — same as in-frame cells
+      if (raw < 1) return
+      const visual = Math.max(chromeBandH, Math.round(raw * chromeScale)) // Match fill CSS scale
+      setPropBandH((prev) => (Math.abs(prev - visual) <= 0.5 ? prev : visual))
+    }
+    measure()
+    const ro = new ResizeObserver(measure) // Width change → wrap rows → new top gap
+    const inner = host.querySelector('[data-tt-property-header]')
+    if (inner) ro.observe(inner)
+    ro.observe(host)
+    return () => ro.disconnect()
+  }, [hasPropBand, chromePropertyHeaders.length, chromeScale, chromeBandH, selected, resizeDimensions?.width, frameScale])
   // Rotated chrome is baked into the upright AABB — shift RF by half the AABB delta so the fill
   // stays centered. Upright frames do not move: negative margins cancel the pad in the same paint.
   // A deferred −X shift lost the race to drag-stop and only stuck on the second select.
@@ -4852,13 +4898,69 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     [isBlock, id, getSetNodes, updateNodeInternals]
   )
 
+  // Paint frame + RF adjust box on the pointer tick (not the later rAF React commit)
+  applyLiveAdjustBoxRef.current = (contentW: number, contentH: number, outerAlready = false) => {
+    const rot = rotationRef.current // Live angle — AABB when rotated
+    const chromeX = adjustChromeXRef.current // L/R gutter already in the RF outer box
+    const yTop = adjustChromeYTopRef.current // Selected property band
+    const yBottom = adjustChromeYBottomRef.current // Selected connections band
+    // Unlocked upright: NodeResizeControl params already are the RF outer box — don't add chrome again
+    const aabb = outerAlready
+      ? { width: contentW, height: contentH }
+      : Math.abs(rot) > 0.5
+        ? rotatedFrameAabbSize(contentW + chromeX * 2, contentH, rot, frameShapeRef.current)
+        : { width: contentW + chromeX * 2, height: contentH + yTop + yBottom }
+    const boxW = Math.round(aabb.width) // RF + panel outer (fill + chrome)
+    const boxH = Math.round(aabb.height)
+    lastPushedBoxRef.current = { w: boxW, h: boxH, rot } // Skip the post-setState pushAabb echo
+    const panel = panelRef.current
+    if (panel) {
+      panel.style.width = `${boxW}px` // Peach + painted ring follow the drag now
+      panel.style.height = `${boxH}px`
+      panel.style.minWidth = `${boxW}px`
+      panel.style.minHeight = `${boxH}px`
+      panel.style.maxWidth = `${boxW}px`
+      panel.style.maxHeight = `${boxH}px`
+    }
+    const setNodesFunc = getSetNodes()
+    if (!setNodesFunc) return
+    setNodesFunc((nodes: any[]) => {
+      let changed = false
+      const next = nodes.map((node: any) => {
+        if (node.id !== id) return node
+        const styleW =
+          typeof node.style?.width === 'number' ? node.style.width : parseFloat(node.style?.width)
+        const styleH =
+          typeof node.style?.height === 'number'
+            ? node.style.height
+            : parseFloat(node.style?.height)
+        if (
+          Number.isFinite(styleW) &&
+          Number.isFinite(styleH) &&
+          Math.abs(styleW - boxW) <= 0.5 &&
+          Math.abs(styleH - boxH) <= 0.5
+        ) {
+          return node // RF already at this adjust box
+        }
+        changed = true
+        return {
+          ...node,
+          width: boxW,
+          height: boxH,
+          style: { ...node.style, width: boxW, height: boxH },
+        }
+      })
+      return changed ? next : nodes
+    })
+  }
+
   useEffect(() => {
     if (!isBlock || !isUserResized || !resizeDimensions) {
       if (!isUserResized) lastPushedBoxRef.current = null // Next resize must push fresh
       return
     }
-    // Skip effect while pointer-rotating — move handler pushes AABB+mates every tick
-    if (isRotatingRef.current) return
+    // Skip effect while pointer-rotating / adjusting — those gestures push AABB every tick
+    if (isRotatingRef.current || isResizingRef.current) return
     pushAabbAndSnapMates(rotation)
   }, [
     isBlock,
@@ -4873,6 +4975,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     rotation,
     frameShape,
     adjustChromeX, // Live L/R pad — RF outer box must include chrome as zoom changes
+    adjustChromeYTop, // Wrapped property rows grow the top gap
     pushAabbAndSnapMates,
   ])
 
@@ -5157,6 +5260,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // changes, and teardown drops element touchmove (phone) while window mouse listeners survive.
   const handleResizeStart = useCallback(() => {
     isResizingRef.current = true // Block hug observer from fighting live resize
+    liveResizeBoxRef.current = null // First onResize sample owns the live box
     if (resizeRafRef.current != null) cancelAnimationFrame(resizeRafRef.current) // Drop a stale paint
     resizeRafRef.current = null
     pendingResizeRef.current = null // Fresh gesture — don't flush a previous drag
@@ -5172,6 +5276,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     if (resizeRafRef.current != null) cancelAnimationFrame(resizeRafRef.current) // Apply final size now, not next frame
     resizeRafRef.current = null
     pendingResizeRef.current = null // Don't let a queued sample overwrite the commit
+    liveResizeBoxRef.current = null // End render uses committed resizeDimensions
     isResizingRef.current = false // Allow size-sync observer again
     isFirstResizeCallRef.current = true // Reset first-call bookkeeping
     setIsUserResized(true) // Persist mode: explicit frame box
@@ -5217,6 +5322,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     // content clips the overflow (chevron expands), same for wrapped and non-wrapped text.
     if (width > 0 && height > 0) {
       setResizeDimensions({ width, height }) // Lock final box size into local state
+      applyLiveAdjustBoxRef.current(width, height) // Commit peach + adjust box before persist
     }
     // Unlocked drag refreshes the last free-resize shape (restored on unlock after fit-to-text).
     if (unlocked) {
@@ -5279,7 +5385,22 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         height = hugged.height
       }
     }
-    pendingResizeRef.current = { width, height, scale: nextScale } // Latest sample wins
+    const unlockedUpright = frameUnlockedRef.current && Math.abs(rot) <= 0.5 // RF params are the outer box
+    const contentW = unlockedUpright
+      ? Math.max(1, width - adjustChromeXRef.current * 2) // Strip L/R gutter so React doesn't add it twice
+      : width
+    const contentH = unlockedUpright
+      ? Math.max(1, height - adjustChromeYTopRef.current - adjustChromeYBottomRef.current)
+      : height
+    pendingResizeRef.current = { width: contentW, height: contentH, scale: nextScale } // Latest sample wins
+    liveResizeBoxRef.current = { width: contentW, height: contentH, scale: nextScale } // Render reads this before rAF setState
+    if (nextScale != null) frameScaleRef.current = nextScale // Keep ratio math + CSS on this sample
+    resizeDimensionsRef.current = { width: contentW, height: contentH } // Other live readers (pushAabb) see this tick
+    applyLiveAdjustBoxRef.current(unlockedUpright ? width : contentW, unlockedUpright ? height : contentH, unlockedUpright)
+    if (nextScale != null && contentFitRef.current) {
+      contentFitRef.current.style.transform = `scale(${nextScale})` // Text scales with the box this tick
+      contentFitRef.current.style.transformOrigin = 'top left' // Same origin as applyFrameScale
+    }
     if (resizeRafRef.current == null) {
       resizeRafRef.current = requestAnimationFrame(flushPendingResize) // One React paint per frame
     }
@@ -6580,9 +6701,12 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       !isDbFrame &&
       !isRowCardAtomHtml(promptContent)
   )
+  const liveAdjust =
+    isResizingRef.current && liveResizeBoxRef.current ? liveResizeBoxRef.current : null // Mid-adjust sample
+  const renderFrameScale = liveAdjust?.scale ?? frameScale // Live scale so hug/spacer match the drag
   const huggedSize = scaledFrameSize(
     shapeFitContentBox(intrinsicSize, frameShape, !frameUnlocked),
-    frameScale,
+    renderFrameScale,
     1, // Fit-to-text: hug glyphs — FRAME_RESIZE_MIN (40) left empty pad with text stuck top-left
     1
   ) // Scaled content (no phantom border)
@@ -6699,7 +6823,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const scaledDbSize = databaseExtents
     ? scaledFrameSize(
         shapeFitContentBox(databaseExtents, frameShape, !frameUnlocked),
-        frameScale,
+        renderFrameScale, // Live scale while adjusting
         1,
         1
       )
@@ -6709,7 +6833,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // Sole-image: fill sticky resizeDimensions directly — CSS scale + unscaled px caused overflow + RO loops
   const applyFrameScale =
     isBlock &&
-    Math.abs(frameScale - 1) > FRAME_SCALE_EPSILON &&
+    Math.abs(renderFrameScale - 1) > FRAME_SCALE_EPSILON &&
     !soleImageContent // Place + locked resize — CSS scale text/glyphs (not images)
   // Place seeds isUserResized; if only frameScale landed, still treat as resized so hug/box track scale
   const scaledAsResized = isUserResized || applyFrameScale
@@ -6733,12 +6857,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     paintBorderOnFillShell // Inset on fill shell — not part of the panel box
       ? 0
       : 2 * FRAME_BORDER_WEIGHT // Fixed stroke — ignore stored borderWeight variation
-  const unlockedInnerW = resizeDimensions
-    ? Math.max(1, resizeDimensions.width - panelBorderBox)
-    : null
-  const unlockedInnerH = resizeDimensions
-    ? Math.max(1, resizeDimensions.height - panelBorderBox)
-    : null
+  const liveBox = liveAdjust ?? resizeDimensions // Mid-adjust sample wins over last commit
+  const unlockedInnerW = liveBox ? Math.max(1, liveBox.width - panelBorderBox) : null
+  const unlockedInnerH = liveBox ? Math.max(1, liveBox.height - panelBorderBox) : null
   // Unlocked frame smaller than its visual content → blocks are clipped (nowrap: both axes; wrap: height only)
   const overflowRight =
     clipUnlocked && unlockedInnerW! < contentVisualW // Nowrap may hide trailing glyphs / table columns
@@ -6764,7 +6885,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     wrapActive && !frameUnlocked && wrapColWidth != null // LOCKED wrap: FIXED columns — no reflow on proportional resize, stable across unwrap/rewrap
       ? wrapColWidth
       : (unlockedResized || wrapActive) && unlockedInnerW != null // UNLOCKED wrap / clip: derive from current width (re-wrap on drag)
-        ? Math.max(1, Math.floor(unlockedInnerW / Math.max(FRAME_SCALE_EPSILON, frameScale)))
+        ? Math.max(1, Math.floor(unlockedInnerW / Math.max(FRAME_SCALE_EPSILON, renderFrameScale)))
         : null
   // Frames start at plain-text hug; chat/flashcards use their fixed starting widths
   const initialWidth = isFlashcard ? 600 : (usesFitContent ? BLOCK_LOCKED_MIN_W : 768)
@@ -7902,25 +8023,27 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     !wrapActive
   const lockedDbSize = scaledDbSize ?? huggedSize
   const contentBoxW =
-    (rowCardLockedHug
-      ? huggedSize.width
-      : dbLockedHug
-        ? lockedDbSize.width
-        : textLockedHug
-          ? huggedSize.width
-          : isUserResized && resizeDimensions?.width) ||
+    (liveAdjust?.width ??
+      (rowCardLockedHug
+        ? huggedSize.width
+        : dbLockedHug
+          ? lockedDbSize.width
+          : textLockedHug
+            ? huggedSize.width
+            : isUserResized && resizeDimensions?.width)) ||
     (Math.abs(rotation) > 0.5
       ? Math.max(intrinsicSize.width + 8, BLOCK_MIN_FRAME_W) // +pad; outer RO is AABB — don't use it
       : itemBoxSize.width) ||
     FRAME_SHAPE_DEFAULT_SIZE.width
   const contentBoxH =
-    (rowCardLockedHug
-      ? huggedSize.height
-      : dbLockedHug
-        ? lockedDbSize.height
-        : textLockedHug
-          ? huggedSize.height
-          : isUserResized && resizeDimensions?.height) ||
+    (liveAdjust?.height ??
+      (rowCardLockedHug
+        ? huggedSize.height
+        : dbLockedHug
+          ? lockedDbSize.height
+          : textLockedHug
+            ? huggedSize.height
+            : isUserResized && resizeDimensions?.height)) ||
     (Math.abs(rotation) > 0.5
       ? Math.max(intrinsicSize.height + 8, BLOCK_MIN_FRAME_H)
       : itemBoxSize.height) ||
@@ -7940,6 +8063,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // Row cards only: never rely on fit-content — NodeView remount on first select+drag collapses
   // the box. Locked cards always live-hug from intrinsic measure (not stale resizeDimensions).
   const rowCardLiveBox =
+    !liveAdjust &&
     isBlock &&
     isRowCardAtomHtml(promptContent) &&
     intrinsicMeasured &&
@@ -7952,6 +8076,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         }
       : null
   const dbLiveBox =
+    !liveAdjust &&
     isBlock &&
     isDbFrame &&
     intrinsicMeasured &&
@@ -7963,7 +8088,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         }
       : null
   const textLockedLiveBox =
-    textLockedHug && !layoutBoxFreeze
+    !liveAdjust && textLockedHug && !layoutBoxFreeze
       ? {
           width: huggedSize.width + adjustChromeX * 2,
           height: huggedSize.height + adjustChromeYTop + adjustChromeYBottom,
@@ -8009,7 +8134,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     bottom: adjustChromeYBottom || 0,
   }
   // Fill width (no chrome). Rotated: content box only — displayBox already baked L/R chrome into the AABB.
-  const fillWidthPx = layoutBox
+  const fillWidthPx = liveAdjust
+    ? liveAdjust.width // Mid-adjust fill — don't wait for hug / stale dims
+    : layoutBox
     ? layoutBox.width - (showFrameChrome ? adjustChromeX * 2 : 0)
     : pagePreviewOpen
       ? 520
@@ -8120,7 +8247,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           : pagePreviewOpen && !showFrameChrome
           ? '520px'
           : outerWidthCss,
-        height: textLockedHug
+        height: liveAdjust
+          ? `${liveAdjust.height + adjustChromeYTop + adjustChromeYBottom}px` // Live adjust box
+          : textLockedHug
           ? `${huggedSize.height + adjustChromeYTop + adjustChromeYBottom}px` // Hug fill + selected connections band
           : layoutBox
           ? `${layoutBox.height}px`
@@ -8151,7 +8280,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               : isFlashcard
                 ? '300px'
                 : '200px',
-        minHeight: textLockedHug
+        minHeight: liveAdjust
+          ? `${liveAdjust.height + adjustChromeYTop + adjustChromeYBottom}px` // Live adjust box
+          : textLockedHug
           ? `${huggedSize.height + adjustChromeYTop + adjustChromeYBottom}px` // Lock to scaled hug + connections band
           : layoutBox
           ? `${layoutBox.height}px`
@@ -8163,7 +8294,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           : isContentRotated && fillWidthPx != null
           ? outerWidthCss
           : undefined,
-        maxHeight: textLockedHug
+        maxHeight: liveAdjust
+          ? `${liveAdjust.height + adjustChromeYTop + adjustChromeYBottom}px`
+          : textLockedHug
           ? `${huggedSize.height + adjustChromeYTop + adjustChromeYBottom}px`
           : layoutBox
           ? `${layoutBox.height}px`
@@ -8749,22 +8882,38 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         </>
       )}
 
-      {/* Property icons — above the fill, inset to match fill content */}
+      {/* Property icons — same 16px glyph / 20×24 box as in-frame; scale with the fill */}
       {hasPropBand && !pagePreviewOpen && (
         <div
+          ref={propHeaderHostRef}
           data-tt-frame-chrome-top
-          className="nodrag nopan absolute z-[2] flex items-center"
+          data-tt-property-band
+          className="nodrag nopan absolute z-[2] min-w-0"
           style={{
-            top: adjustChromeYTop ? 0 : -chromeBandH, // Same Y selected (in-pad) or not (hang)
+            top: adjustChromeYTop ? 0 : -propBandPaintH, // Same Y selected (in-pad) or not (hang)
             left: (showFrameChrome ? adjustChromeX : 0) + chromePadX,
-            right: (showFrameChrome ? adjustChromeX : 0) + chromePadX,
-            height: chromeBandH,
+            width:
+              fillWidthPx != null
+                ? `${Math.max(1, fillWidthPx - chromePadX * 2)}px`
+                : undefined,
+            right:
+              fillWidthPx != null
+                ? 'auto'
+                : (showFrameChrome ? adjustChromeX : 0) + chromePadX,
+            height: propBandPaintH, // Grows when icons wrap to more rows
+            boxSizing: 'border-box',
           }}
         >
           <div
+            className="min-w-0"
             style={{
+              // Layout at unscaled fill width, then scale — wrap + glyph size match the peach
+              width:
+                fillWidthPx != null
+                  ? `${Math.max(1, fillWidthPx - chromePadX * 2) / chromeScale}px`
+                  : '100%',
               transform: chromeScale !== 1 ? `scale(${chromeScale})` : undefined,
-              transformOrigin: 'left center',
+              transformOrigin: 'left top',
             }}
           >
             <FramePropertyGroup
@@ -9004,7 +9153,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                 : {}), // Soft-wrap inside frame
               ...(applyFrameScale
                 ? {
-                    transform: `scale(${frameScale})`,
+                    transform: `scale(${renderFrameScale})`, // Live scale while adjusting
                     transformOrigin: shapeCenterContent ? 'center center' : 'top left', // Top-left — hug height must be exact (no bottom slack)
                   }
                 : {}),

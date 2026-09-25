@@ -33,7 +33,7 @@ When the user says **block**, they mean the TipTap line (blue wash + ⋮⋮), no
 - Armed ⋮⋮ drag → reorder blocks, drop into another frame, or extract onto the board as a new frame.
 - Drag a **frame** until its edge snaps flush to another’s **adjust box** (both stay visible; stack line per gap on that side). Each side (top / bottom / left / right) has its own stack tree. Frames attached to a mate’s other sides nest with it when stacked (preview / Open stack show the whole pack). Snap does **not** lock. Click the line for **Open stack** / directional stack arrows (which frame the pack sits under — first Stack locks that side’s group) / **Lock**. Unlock then drag away to delink; same drag can snap to another side or frame (the edge you left stays blocked until release). Blue resize box stays upright; blocks + shape rotate inside. Hover preview is fast (~100ms).
 - Frame menu → **Shape** applies a silhouette (circle, diamond, …) to that **frame**; **Default** clears it. Boards / board preview remain the deep-hierarchy tool; shapes are on-board composition.
-- Clicking an unselected frame selects it only — I-bar on a later click.
+- Clicking an unselected frame selects it only (no frame menu). Clicking that **already-selected** frame or its **adjust box** opens the frame menu; I-bar on a later text click.
 
 ## Prefer in new writing
 

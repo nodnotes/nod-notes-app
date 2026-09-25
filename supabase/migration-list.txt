@@ -1,7 +1,7 @@
 # Remote Supabase migration/version snapshot
 # project_ref=yhsyhtnnklpkfcpydbst
 # project_name=Nod Notes
-# snapped_at=2026-09-25T03:19:34Z
+# snapped_at=2026-09-25T23:21:37Z
 # postgres=17.6.1.052 gotrue=v2.196.0 rest=v14.5 storage=v1.73.1
 # local_ddl=20260924222048_board_changes + 20260924223507_board_changes_autosave (remote 20260924222109 / 20260924223511)
 # production=https://nodnotes.com
@@ -246,3 +246,4 @@
 20260924003557_board_templates_review.sql
 20260924222048_board_changes.sql
 20260924223507_board_changes_autosave.sql
+20260925232137_frame_menu_live_adjust_property_strip.sql
