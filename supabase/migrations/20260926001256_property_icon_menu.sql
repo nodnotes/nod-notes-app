@@ -1,0 +1,2 @@
+-- Property icon click opens the property menu (top strip + in-frame).
+-- App/docs marker only; no DDL. Remote DDL top: 20260924223511_board_changes_autosave.

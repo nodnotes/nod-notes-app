@@ -166,15 +166,74 @@ export function setPropertyBlockValue(editor: Editor, from: number, value: strin
 export function readPropertyBlockAt(
   editor: Editor,
   from: number
-): { type: PropertyTypeId; name: string; value: string } | null {
-  if (!editor || editor.isDestroyed || from < 0) return null
+): { type: PropertyTypeId; name: string; value: string; inline: boolean } | null {
+  if (!editor || editor.isDestroyed || from < 0) return null // Unmounted or unknown pos
   const node = editor.state.doc.nodeAt(from)
-  if (!node || node.type.name !== 'propertyBlock') return null
+  if (!node || node.type.name !== 'propertyBlock') return null // Not a property cell
   const raw = node.attrs.propertyType
-  const type = isPropertyTypeId(raw) ? raw : 'text'
+  const type = isPropertyTypeId(raw) ? raw : 'text' // Unknown type ids fall back to text
   const name = typeof node.attrs.propertyName === 'string' ? node.attrs.propertyName.trim() : ''
   const value = typeof node.attrs.value === 'string' ? node.attrs.value : ''
-  return { type, name, value }
+  return { type, name, value, inline: isPropertyBlockInline(node.attrs) } // inline = stay in body when empty
+}
+
+/** Patch propertyBlock attrs at `from` (type / name / inline). */
+export function updatePropertyBlockAttrs(
+  editor: Editor,
+  from: number,
+  patch: Partial<{ propertyType: PropertyTypeId; propertyName: string; inline: boolean; value: string }>
+): boolean {
+  if (!editor || editor.isDestroyed || from < 0) return false // Nothing to write
+  const node = editor.state.doc.nodeAt(from)
+  if (!node || node.type.name !== 'propertyBlock') return false // Wrong node
+  return editor
+    .chain()
+    .command(({ tr }) => {
+      tr.setNodeMarkup(from, undefined, { ...node.attrs, ...patch }) // Merge so value/name survive type change
+      return true
+    })
+    .run()
+}
+
+/** Insert an empty sibling property to the left or right of `from`. */
+export function insertPropertyBlockBeside(
+  editor: Editor,
+  from: number,
+  side: 'left' | 'right'
+): boolean {
+  if (!editor || editor.isDestroyed || from < 0) return false
+  const node = editor.state.doc.nodeAt(from)
+  if (!node || node.type.name !== 'propertyBlock') return false
+  const insertAt = side === 'left' ? from : from + node.nodeSize // Before this cell, or after it
+  const headerOnly = isPropertyBlockHeaderOnly(node.attrs) // New empty matches strip vs body
+  const raw = node.attrs.propertyType
+  const propertyType = isPropertyTypeId(raw) ? raw : 'text'
+  return editor
+    .chain()
+    .insertContentAt(insertAt, {
+      type: 'propertyBlock',
+      attrs: { propertyType, value: '', inline: !headerOnly, propertyName: '' }, // Empty sibling; strip if source is strip
+    })
+    .run()
+}
+
+/** Clone the propertyBlock after itself (same type / name / value / placement). */
+export function duplicatePropertyBlock(editor: Editor, from: number): boolean {
+  if (!editor || editor.isDestroyed || from < 0) return false
+  const node = editor.state.doc.nodeAt(from)
+  if (!node || node.type.name !== 'propertyBlock') return false
+  return editor
+    .chain()
+    .insertContentAt(from + node.nodeSize, { type: 'propertyBlock', attrs: { ...node.attrs } })
+    .run()
+}
+
+/** Remove the propertyBlock at `from`. */
+export function deletePropertyBlock(editor: Editor, from: number): boolean {
+  if (!editor || editor.isDestroyed || from < 0) return false
+  const node = editor.state.doc.nodeAt(from)
+  if (!node || node.type.name !== 'propertyBlock') return false
+  return editor.chain().deleteRange({ from, to: from + node.nodeSize }).run()
 }
 
 /** A block whose payload is a property type + optional cell value + placement. */

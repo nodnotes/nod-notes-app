@@ -106,7 +106,10 @@ import {
   readPropertyBlockHeadersFromDoc,
   readPropertyBlockHeadersFromHtml,
   readPropertyBlockAt,
-  setPropertyBlockValue,
+  updatePropertyBlockAttrs,
+  insertPropertyBlockBeside,
+  duplicatePropertyBlock,
+  deletePropertyBlock,
   type PropertyHeaderItem,
 } from '@/lib/tiptap/property-block' // Top icons = empty propertyBlocks only
 import {
@@ -117,7 +120,7 @@ import {
 import { PropertyDropLinePortal } from '@/components/property-drop-line-portal' // Blue dashed insert line
 import type { Editor } from '@tiptap/core' // Property header drag + popup edits
 import { PropertyIconWithTooltip } from '@/components/property-icon-with-tooltip' // Top-strip icon + name popup
-import { PropertyValuePopup, type PropertyEditorAnchor } from '@/components/property-value-popup' // Calendar / checkbox / text
+import { PropertyMenu, type PropertyMenuAction } from '@/components/property-menu' // Icon click → property menu
 
 import { NotionMarkIcon } from '@/components/notion-mark-icon' // Logo at bottom of a Notion-connected frame
 import { createPortal } from 'react-dom'
@@ -854,21 +857,29 @@ function FramePropertyGroup({
   const scale = iconScale > 0 ? iconScale : 1 // Gap/pad only — glyph size matches in-frame (h-4 / 20×24)
   const gapPx = Math.max(4, Math.round(6 * scale))
   const rowPadY = Math.max(2, Math.round(4 * scale))
-  const [editorOpen, setEditorOpen] = useState<PropertyEditorAnchor & { from: number; type: PropertyTypeId; name: string; value: string } | null>(null)
+  const [menuOpen, setMenuOpen] = useState<{
+    from: number
+    type: PropertyTypeId
+    name: string
+    inline: boolean
+    left: number
+    top: number
+    width: number
+    height: number
+  } | null>(null)
   const [dropLine, setDropLine] = useState<PropertyDropLine | null>(null)
   const [ghost, setGhost] = useState<{ x: number; y: number; type: PropertyTypeId } | null>(null)
 
-  const openEditorAt = useCallback(
+  const openMenuAt = useCallback(
     (item: PropertyHeaderItem, el: HTMLElement) => {
       const ed = liveEditor()
-      if (!ed || item.from < 0) return
-      const live = readPropertyBlockAt(ed, item.from)
+      const live = ed && item.from >= 0 ? readPropertyBlockAt(ed, item.from) : null
       const r = el.getBoundingClientRect()
-      setEditorOpen({
+      setMenuOpen({
         from: item.from,
         type: live?.type ?? item.type,
         name: live?.name || item.name,
-        value: live?.value ?? '',
+        inline: live?.inline ?? false,
         left: r.left,
         top: r.top,
         width: r.width,
@@ -878,23 +889,48 @@ function FramePropertyGroup({
     [editor, editorRef]
   )
 
+  const onMenuAction = useCallback(
+    (action: PropertyMenuAction, payload?: { type?: PropertyTypeId; name?: string }) => {
+      const ed = liveEditor()
+      if (!ed || !menuOpen || menuOpen.from < 0) return
+      const from = menuOpen.from
+      if (action === 'editType' && payload?.type) updatePropertyBlockAttrs(ed, from, { propertyType: payload.type })
+      else if (action === 'editName' && payload?.name != null) updatePropertyBlockAttrs(ed, from, { propertyName: payload.name })
+      else if (action === 'displayIcon') updatePropertyBlockAttrs(ed, from, { inline: false })
+      else if (action === 'displayInline') updatePropertyBlockAttrs(ed, from, { inline: true })
+      else if (action === 'insertLeft') insertPropertyBlockBeside(ed, from, 'left')
+      else if (action === 'insertRight') insertPropertyBlockBeside(ed, from, 'right')
+      else if (action === 'duplicate') duplicatePropertyBlock(ed, from)
+      else if (action === 'delete') deletePropertyBlock(ed, from)
+    },
+    [editor, editorRef, menuOpen]
+  )
+
   const onHeaderPointerDown = useCallback(
     (e: React.PointerEvent<HTMLSpanElement>, item: PropertyHeaderItem) => {
+      const el = e.currentTarget // Capture now — React clears currentTarget after pointerdown
       const ed = liveEditor()
-      if (!ed) return
-      const from = resolvePropertyHeaderFrom(ed, item)
-      if (from < 0) return
-      bindPropertyIconDrag(e, {
-        getEditor: liveEditor,
-        from,
-        el: e.currentTarget,
-        headerEl: containerRef.current,
-        iconType: item.type,
-        onClick: () => openEditorAt({ ...item, from }, e.currentTarget),
-        callbacks: { setGhost, setDropLine },
-      })
+      const from = ed ? resolvePropertyHeaderFrom(ed, item) : item.from
+      if (ed && from >= 0) {
+        bindPropertyIconDrag(e, {
+          getEditor: liveEditor,
+          from,
+          el,
+          headerEl: containerRef.current,
+          iconType: item.type,
+          onClick: () => openMenuAt({ ...item, from }, el),
+          callbacks: { setGhost, setDropLine },
+        })
+        return
+      }
+      e.stopPropagation() // No live cell yet — still open the menu on release
+      const onUp = () => {
+        window.removeEventListener('pointerup', onUp)
+        openMenuAt({ ...item, from }, el)
+      }
+      window.addEventListener('pointerup', onUp)
     },
-    [editor, editorRef, openEditorAt]
+    [editor, editorRef, openMenuAt]
   )
 
   if (items.length === 0) return null
@@ -916,7 +952,7 @@ function FramePropertyGroup({
           type={item.type}
           name={item.name}
           className={cn(
-            'tt-property-block-icon nodrag nopan rounded hover:bg-gray-100 dark:hover:bg-[#2a2a2a]',
+            'tt-property-block-icon nodrag nopan pointer-events-auto rounded hover:bg-gray-100 dark:hover:bg-[#2a2a2a]',
             item.from >= 0 && liveEditor() && 'cursor-grab active:cursor-grabbing'
           )}
           onPointerDown={(e) => onHeaderPointerDown(e, item)}
@@ -935,17 +971,14 @@ function FramePropertyGroup({
         document.body
       )}
     <PropertyDropLinePortal line={dropLine} />
-    <PropertyValuePopup
-      open={!!editorOpen}
-      anchor={editorOpen}
-      type={editorOpen?.type ?? 'text'}
-      name={editorOpen?.name ?? ''}
-      value={editorOpen?.value ?? ''}
-      onCommit={(next) => {
-        const ed = liveEditor()
-        if (ed && editorOpen && editorOpen.from >= 0) setPropertyBlockValue(ed, editorOpen.from, next)
-      }}
-      onClose={() => setEditorOpen(null)}
+    <PropertyMenu
+      open={!!menuOpen}
+      anchor={menuOpen}
+      type={menuOpen?.type ?? 'text'}
+      name={menuOpen?.name ?? ''}
+      inline={menuOpen?.inline ?? false}
+      onAction={onMenuAction}
+      onClose={() => setMenuOpen(null)}
     />
     </>
   )

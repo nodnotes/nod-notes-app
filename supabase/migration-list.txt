@@ -247,3 +247,4 @@
 20260924222048_board_changes.sql
 20260924223507_board_changes_autosave.sql
 20260925232137_frame_menu_live_adjust_property_strip.sql
+20260926001256_property_icon_menu.sql

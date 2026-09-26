@@ -14,6 +14,7 @@ import {
 } from '@/lib/blocks/property'
 import { PropertyIconWithTooltip } from '@/components/property-icon-with-tooltip' // Type glyph + name popup
 import { PropertyValuePopup, type PropertyEditorAnchor } from '@/components/property-value-popup' // Calendar / checkbox / text
+import { PropertyMenu, type PropertyMenuAction } from '@/components/property-menu' // Icon click → property menu
 import {
   bindPropertyIconDrag,
   type PropertyDropLine,
@@ -22,6 +23,10 @@ import { PropertyDropLinePortal } from '@/components/property-drop-line-portal' 
 import {
   isPropertyBlockHeaderOnly,
   isPropertyBlockInline,
+  updatePropertyBlockAttrs,
+  insertPropertyBlockBeside,
+  duplicatePropertyBlock,
+  deletePropertyBlock,
 } from '@/lib/tiptap/property-block'
 
 // Caret room past the last glyph — the frame hug reads the width we set here, so any slack
@@ -72,6 +77,7 @@ export function PropertyBlockView({ node, updateAttributes, selected, editor, ge
   const iconRef = useRef<HTMLSpanElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [editorOpen, setEditorOpen] = useState<PropertyEditorAnchor | null>(null)
+  const [menuOpen, setMenuOpen] = useState<PropertyEditorAnchor | null>(null)
   const [ghost, setGhost] = useState<{ x: number; y: number; type: PropertyTypeId } | null>(null)
   const [dropLine, setDropLine] = useState<PropertyDropLine | null>(null)
   const [canEditCell, setCanEditCell] = useState(() => !!editor?.isEditable)
@@ -102,12 +108,37 @@ export function PropertyBlockView({ node, updateAttributes, selected, editor, ge
     updateAttributes({ value: next })
   }, [draft, stored, updateAttributes])
 
-  const openValuePopup = useCallback(() => {
+  const openAtIcon = useCallback((set: (a: PropertyEditorAnchor) => void) => {
     const el = iconRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
-    setEditorOpen({ left: r.left, top: r.top, width: r.width, height: r.height })
+    set({ left: r.left, top: r.top, width: r.width, height: r.height })
   }, [])
+
+  const openValuePopup = useCallback(() => {
+    openAtIcon(setEditorOpen) // Value editors still park on the icon box
+  }, [openAtIcon])
+
+  const openPropertyMenu = useCallback(() => {
+    openAtIcon(setMenuOpen) // Icon click opens the property menu, not the value editor
+  }, [openAtIcon])
+
+  const onMenuAction = useCallback(
+    (action: PropertyMenuAction, payload?: { type?: PropertyTypeId; name?: string }) => {
+      if (!editor || editor.isDestroyed) return
+      const from = getPos?.()
+      if (from == null || from < 0) return
+      if (action === 'editType' && payload?.type) updatePropertyBlockAttrs(editor, from, { propertyType: payload.type })
+      else if (action === 'editName' && payload?.name != null) updatePropertyBlockAttrs(editor, from, { propertyName: payload.name })
+      else if (action === 'displayIcon') updatePropertyBlockAttrs(editor, from, { inline: false })
+      else if (action === 'displayInline') updatePropertyBlockAttrs(editor, from, { inline: true })
+      else if (action === 'insertLeft') insertPropertyBlockBeside(editor, from, 'left')
+      else if (action === 'insertRight') insertPropertyBlockBeside(editor, from, 'right')
+      else if (action === 'duplicate') duplicatePropertyBlock(editor, from)
+      else if (action === 'delete') deletePropertyBlock(editor, from)
+    },
+    [editor, getPos]
+  )
 
   const focusInput = useCallback(() => {
     const input = inputRef.current
@@ -152,14 +183,11 @@ export function PropertyBlockView({ node, updateAttributes, selected, editor, ge
         from,
         el: e.currentTarget,
         iconType: propertyType,
-        onClick: () => {
-          if (propertyTypeNeedsPopup(propertyType)) openValuePopup()
-          else focusInput()
-        },
+        onClick: () => openPropertyMenu(),
         callbacks: { setGhost, setDropLine },
       })
     },
-    [canEditCell, editor, getPos, propertyType, openValuePopup, focusInput]
+    [canEditCell, editor, getPos, propertyType, openPropertyMenu]
   )
 
   if (headerOnly) {
@@ -194,7 +222,8 @@ export function PropertyBlockView({ node, updateAttributes, selected, editor, ge
             if ((e.target as HTMLElement).closest('[data-tt-property-icon]')) return
             e.stopPropagation()
             e.preventDefault()
-            focusInput()
+            if (propertyTypeNeedsPopup(propertyType)) openValuePopup()
+            else focusInput()
           }}
         >
           <span ref={iconRef} className="inline-flex">
@@ -265,6 +294,15 @@ export function PropertyBlockView({ node, updateAttributes, selected, editor, ge
           updateAttributes({ value: next })
         }}
         onClose={() => setEditorOpen(null)}
+      />
+      <PropertyMenu
+        open={!!menuOpen}
+        anchor={menuOpen}
+        type={propertyType}
+        name={propertyName}
+        inline={inline}
+        onAction={onMenuAction}
+        onClose={() => setMenuOpen(null)}
       />
       {ghost &&
         typeof document !== 'undefined' &&

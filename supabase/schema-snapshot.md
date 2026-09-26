@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-25T23:21:37Z`
+- Snapped at: `2026-09-26T00:12:56Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`/`migration list`; versions from `.temp` + Management API list; cli-latest reports `v2.118.0`)
@@ -9,6 +9,12 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260926001256_property_icon_menu.sql`.
+- **Property menu**: click a property icon (top strip above the frame, or in-frame) opens the Notion-style property menu (Edit property / Display as / Insert / Duplicate / Delete; Filter/Sort/Group stubs). Value cells still open the type editor.
+- Schema unchanged; remote DDL top remains `20260924223511_board_changes_autosave`.
+
+## Prior: Frame menu, live adjust, property strip
 
 - DDL: none. Marker `20260925232137_frame_menu_live_adjust_property_strip.sql`.
 - **Frame menu**: first click selects only; a later click on that selected frame or its adjust box opens the menu (corner knobs still resize; ⋮⋮ / connections keep their own gesture).
