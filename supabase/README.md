@@ -31,6 +31,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260926023539_property_phone_menu_preview_fill` — Property/phone menus match utility chrome; board preview keeps the 6px fill
 - `20260926001256_property_icon_menu` — Property icon click opens the property menu (top strip + in-frame)
 - `20260925232137_frame_menu_live_adjust_property_strip` — Selected-frame / adjust-box click opens the frame menu; live frame+adjust resize; property strip wrap + in-frame icon size
 - `20260920212614_utility_preview_phone_tap` — Utility preview ⋯ inset + solid hover; Layers/Sets click-again deselect; filter prefs; phone pan/tap select

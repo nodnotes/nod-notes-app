@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-26T00:12:56Z`
+- Snapped at: `2026-09-26T02:35:39Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`/`migration list`; versions from `.temp` + Management API list; cli-latest reports `v2.118.0`)
@@ -9,6 +9,14 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260926023539_property_phone_menu_preview_fill.sql`.
+- **Property menu**: same Search / context label / ghost-row chrome as the frame menu (Delete is red).
+- **Phone + utility menus**: mode lists hang under the chip with a radio dot for the current item; utility drops the hairline before close.
+- **Board preview**: host fill + portal stay 6px (same as idle) — no square / `rounded-xl` second curve.
+- Schema unchanged; remote DDL top remains `20260924223511_board_changes_autosave`.
+
+## Prior: Property icon menu
 
 - DDL: none. Marker `20260926001256_property_icon_menu.sql`.
 - **Property menu**: click a property icon (top strip above the frame, or in-frame) opens the Notion-style property menu (Edit property / Display as / Insert / Duplicate / Delete; Filter/Sort/Group stubs). Value cells still open the type editor.

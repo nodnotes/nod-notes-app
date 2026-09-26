@@ -8197,6 +8197,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const shapeSelectChrome = Boolean(
     frameShape && (showAdjustFrame || showDragBorderOnly) && !pagePreviewOpen && !isContentRotated
   )
+  // Same 6px as idle — preview must not square the fill (adjust ring stays square)
+  const paintedFrameRadius = frameShape ? 0 : frameCornerRadius
   const fillShellBorderShadow = (() => {
     if (frameShape || isContentRotated) return undefined
     // Blue adjust / drag ring already outlines the frame — skip empty grey so it doesn’t read as an inner border
@@ -8393,7 +8395,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           paintBorderOnFillShell
             ? 0
             : FRAME_BORDER_WEIGHT,
-        ['--tt-frame-radius' as string]: `${frameCornerRadius}px`, // Fill radius only — adjust ring is square
+        ['--tt-frame-radius' as string]: `${paintedFrameRadius}px`, // Fill radius only — adjust ring is square; keep 6px while previewing
         ['--tt-adjust-pad-y-top' as string]: `${adjustChromeYTop || 0}px`, // Property band
         ['--tt-adjust-pad-y-bottom' as string]: `${adjustChromeYBottom || 0}px`, // Connections band — L/R dots stay on the fill mid
         // Handle / line / ui-scale sizes come from live `--tt-board-zoom` CSS (not React)
@@ -8997,8 +8999,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           // Clip content inside the fill; ⋮⋮ paints in the panel’s left chrome (overflow visible on panel).
           // Sole image: clip via ProseMirror/CSS only — this shell must stay visible when selected
           // so negative-left ⋮⋮ can reach the blue gutter (same as text frames).
-          unlockedResized && !showClipPreview && !isContentRotated
-            ? 'overflow-hidden'
+          (pagePreviewOpen || (unlockedResized && !showClipPreview && !isContentRotated))
+            ? 'overflow-hidden' // Preview clips to the default 6px fill so the square portal doesn’t peek
             : soleImageContent && !selected
               ? 'overflow-hidden'
               : 'overflow-visible',
@@ -9011,7 +9013,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           // Shaped frames: SVG silhouette paints fill + stroke; shell stays transparent
           backgroundColor: frameShape ? 'transparent' : responseAreaBackgroundColor || panelBackgroundColor,
           // Live radius: property cells sit inside CSS scale (6px grows); fill must match
-          borderRadius: frameCornerRadius || undefined,
+          borderRadius: paintedFrameRadius || undefined, // Default 6px — same while board preview is open
           // Empty / selected custom borders paint here — panel border is off while adjust chrome is on
           boxShadow: fillShellBorderShadow,
           // Polygon clips work in CSS; cylinder/ellipse use SVG fill instead (path clip is unreliable).
@@ -9054,7 +9056,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             aria-hidden
             className="pointer-events-none absolute left-0 top-0 -z-[1]"
             style={{
-              borderRadius: frameCornerRadius || undefined, // Same as fill so hover-unclip corners don’t snap square
+              borderRadius: paintedFrameRadius || undefined, // Same as fill so hover-unclip corners don’t snap square
               width: Math.max(resizeDimensions.width, contentVisualW),
               height: Math.max(resizeDimensions.height, contentVisualH),
               backgroundColor: responseAreaBackgroundColor || panelBackgroundColor,
@@ -9335,7 +9337,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         {pagePreviewMounted && activePreviewBoardId && (
           <div
             className={cn(
-              pagePreviewOpen ? 'flex-1 min-h-0 min-w-0 flex flex-col p-2 pt-2' : 'hidden'
+              pagePreviewOpen ? 'flex-1 min-h-0 min-w-0 flex flex-col' : 'hidden' // Flush to fill — no pad that stacked a second radius
             )}
           >
             <NestedBoardPreview
@@ -9345,6 +9347,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               visible={pagePreviewOpen}
               fill={pagePreviewOpen}
               hostNodeId={id} // Chrome drag moves this host item
+              cornerRadius={paintedFrameRadius} // Match host fill — portal is outside RF so it cannot inherit --tt-frame-radius
               onClose={() => setPagePreviewOpen(false)}
             />
           </div>

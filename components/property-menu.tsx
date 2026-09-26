@@ -1,18 +1,17 @@
 'use client'
 
-// Property icon click menu — Notion column menu chrome (Edit / Display as / insert / delete).
+// Property icon click menu — same chrome as the frame menu (search + rows + flyouts).
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react' // Place, flyouts, name draft
-import { createPortal } from 'react-dom' // Escape RF isolate so the card can sit beside the icon
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react' // Search, place, flyouts
+import { createPortal } from 'react-dom' // Escape RF isolate so the card sits beside the icon
 import {
   ArrowLeftToLine, // Insert left
-  ArrowRightFromLine, // Unwrap content (arrow through a bar)
+  ArrowRightFromLine, // Unwrap content
   ArrowRightToLine, // Insert right
   ArrowUpDown, // Sort
   Copy, // Duplicate
   Eye, // Display as
   EyeOff, // Hide
-  Info, // Header info glyph
   LayoutGrid, // Group
   ListFilter, // Filter
   Lock, // Property access
@@ -23,20 +22,20 @@ import {
   Trash2, // Delete
   ChevronRight, // Flyout chevron
 } from 'lucide-react'
-import { Button } from '@/components/ui/button' // Same ghost rows as other tt-menu-surface cards
+import { Button } from '@/components/ui/button' // Same ghost rows as BlockActionsMenu
 import { cn } from '@/lib/utils' // Class merge
 import { applyMenuPlacement, watchMenuSafeRect } from '@/lib/menu-placement' // Stay in the chrome-free lane
 import { watchBoardViewportNav } from '@/lib/board-nav-menu' // Hide while the board pans; reveal when it stops
 import {
-  propertyTypeIcon, // Type glyph in the header + Edit flyout
-  propertyTypeLabel, // Fallback title when the property has no name
+  propertyTypeIcon, // Type glyph in the Edit flyout
+  propertyTypeLabel, // Context header + name fallback
   type PropertyTypeId,
 } from '@/lib/blocks/property'
 
 /** Screen box of the clicked property icon (top strip or in-frame). */
 export type PropertyMenuAnchor = { left: number; top: number; width: number; height: number }
 
-/** Wired rows; stubs omit a call so the card still matches the Notion list. */
+/** Wired rows; stubs omit a call so the card still lists every Notion column option. */
 export type PropertyMenuAction =
   | 'editType'
   | 'editName'
@@ -75,20 +74,23 @@ const EDIT_TYPES: PropertyTypeId[] = [
   'lastEditedBy',
 ]
 
-type Row = {
+type ActionRow = {
+  kind: 'action' // Clickable row
   id: string // Stable key
   label: string // Visible copy
   icon: ReactNode // Leading glyph
-  flyout?: Exclude<Flyout, null> // Opens a right pane instead of firing immediately
+  flyout?: Exclude<Flyout, null> // Opens a right pane
   badge?: string // Alpha / Now with agents
   trailing?: string // Display as current value
-  muted?: boolean // Delete / disabled stubs
+  danger?: boolean // Delete — red like the frame menu
   stub?: boolean // Visible but not wired yet
 }
 
+type MenuRow = ActionRow | { kind: 'separator' } // Hairline between bands
+
 /**
- * Property menu for a clicked type icon.
- * Header = name + type; Edit property changes name/type; Display as toggles strip vs in-frame.
+ * Property menu — frame-menu chrome (Search + context label + ghost rows).
+ * Edit property changes name/type; Display as toggles strip vs in-frame.
  */
 export function PropertyMenu({
   open,
@@ -108,15 +110,18 @@ export function PropertyMenu({
   onClose: () => void // Click-away / Escape / after a mutating action
 }) {
   const rootRef = useRef<HTMLDivElement>(null) // Placement root
+  const searchRef = useRef<HTMLInputElement>(null) // Search actions — desktop autofocus
   const nameRef = useRef<HTMLInputElement>(null) // Edit-property name field
+  const [query, setQuery] = useState('') // Filters rows like the frame menu
   const [flyout, setFlyout] = useState<Flyout>(null) // Which right pane is open
-  const [navHidden, setNavHidden] = useState(false) // Hide during pan/zoom
+  const [hideForBoardNav, setHideForBoardNav] = useState(false) // Same hide as the frame menu
   const [nameDraft, setNameDraft] = useState(name) // Local rename until blur / type pick
-  const title = name.trim() || propertyTypeLabel(type) // Header label
+  const title = name.trim() || propertyTypeLabel(type) // Context label under Search
   const displayAs = inline ? 'In frame' : 'Icon' // Current Display as caption
 
   useEffect(() => {
     setNameDraft(name) // Re-seed when the host opens a different icon
+    setQuery('') // Fresh search each open
   }, [name, open])
 
   useEffect(() => {
@@ -126,9 +131,15 @@ export function PropertyMenu({
   useEffect(() => {
     if (!open) return // Closed — no nav watch
     return watchBoardViewportNav({
-      onStart: () => setNavHidden(true), // Board is moving — hide the card
-      onSettle: () => setNavHidden(false), // Re-place via layout effect, then show
+      onStart: () => setHideForBoardNav(true), // Board is moving — hide the card
+      onSettle: () => setHideForBoardNav(false), // Re-place via layout effect, then show
     })
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return // Closed — skip autofocus
+    if (typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches) return
+    searchRef.current?.focus() // Desktop: caret in Search like the frame menu
   }, [open])
 
   useEffect(() => {
@@ -174,34 +185,36 @@ export function PropertyMenu({
       cancelAnimationFrame(raf)
       stop()
     }
-  }, [open, anchor, anchorX, anchorY, flyout, navHidden])
+  }, [open, anchor, anchorX, anchorY, flyout, hideForBoardNav])
 
-  if (!open || !anchor || typeof document === 'undefined') return null // SSR / closed
+  const icon = 'h-4 w-4' // Same 16px as frame-menu rows
+  const allRows: MenuRow[] = useMemo(
+    () => [
+      { kind: 'action', id: 'edit', label: 'Edit property', icon: <Settings2 className={icon} />, flyout: 'edit' },
+      { kind: 'action', id: 'access', label: 'Property access', icon: <Lock className={icon} />, badge: 'Alpha', stub: true },
+      { kind: 'action', id: 'autofill', label: 'AI Autofill', icon: <Sparkles className={icon} />, badge: 'Now with agents', flyout: 'autofill', stub: true },
+      { kind: 'separator' },
+      { kind: 'action', id: 'filter', label: 'Filter', icon: <ListFilter className={icon} />, stub: true },
+      { kind: 'action', id: 'sort', label: 'Sort', icon: <ArrowUpDown className={icon} />, flyout: 'sort', stub: true },
+      { kind: 'action', id: 'group', label: 'Group', icon: <LayoutGrid className={icon} />, stub: true },
+      { kind: 'action', id: 'calc', label: 'Calculate', icon: <Sigma className={icon} />, flyout: 'calculate', stub: true },
+      { kind: 'action', id: 'freeze', label: 'Freeze', icon: <Pin className={icon} />, stub: true },
+      { kind: 'action', id: 'hide', label: 'Hide', icon: <EyeOff className={icon} />, stub: true },
+      { kind: 'action', id: 'unwrap', label: 'Unwrap content', icon: <ArrowRightFromLine className={icon} />, stub: true },
+      { kind: 'action', id: 'display', label: 'Display as', icon: <Eye className={icon} />, flyout: 'display', trailing: displayAs },
+      { kind: 'separator' },
+      { kind: 'action', id: 'insertLeft', label: 'Insert left', icon: <ArrowLeftToLine className={icon} /> },
+      { kind: 'action', id: 'insertRight', label: 'Insert right', icon: <ArrowRightToLine className={icon} /> },
+      { kind: 'action', id: 'duplicate', label: 'Duplicate property', icon: <Copy className={icon} /> },
+      { kind: 'action', id: 'delete', label: 'Delete property', icon: <Trash2 className={icon} />, danger: true },
+    ],
+    [displayAs]
+  )
 
-  const icon = 'h-4 w-4' // Same 16px as other menu rows
-  const rows: Row[] = [
-    { id: 'edit', label: 'Edit property', icon: <Settings2 className={icon} />, flyout: 'edit' },
-    { id: 'access', label: 'Property access', icon: <Lock className={icon} />, badge: 'Alpha', stub: true },
-    { id: 'autofill', label: 'AI Autofill', icon: <Sparkles className={icon} />, badge: 'Now with agents', flyout: 'autofill', stub: true },
-    { id: 'filter', label: 'Filter', icon: <ListFilter className={icon} />, stub: true },
-    { id: 'sort', label: 'Sort', icon: <ArrowUpDown className={icon} />, flyout: 'sort', stub: true },
-    { id: 'group', label: 'Group', icon: <LayoutGrid className={icon} />, stub: true },
-    { id: 'calc', label: 'Calculate', icon: <Sigma className={icon} />, flyout: 'calculate', stub: true },
-    { id: 'freeze', label: 'Freeze', icon: <Pin className={icon} />, stub: true },
-    { id: 'hide', label: 'Hide', icon: <EyeOff className={icon} />, stub: true },
-    { id: 'unwrap', label: 'Unwrap content', icon: <ArrowRightFromLine className={icon} />, stub: true },
-    {
-      id: 'display',
-      label: 'Display as',
-      icon: <Eye className={icon} />,
-      flyout: 'display',
-      trailing: displayAs,
-    },
-    { id: 'insertLeft', label: 'Insert left', icon: <ArrowLeftToLine className={icon} /> },
-    { id: 'insertRight', label: 'Insert right', icon: <ArrowRightToLine className={icon} /> },
-    { id: 'duplicate', label: 'Duplicate property', icon: <Copy className={icon} /> },
-    { id: 'delete', label: 'Delete property', icon: <Trash2 className={icon} />, muted: true },
-  ]
+  const q = query.trim().toLowerCase() // Empty = show every row
+  const rows = q
+    ? allRows.filter((row) => row.kind === 'action' && row.label.toLowerCase().includes(q))
+    : allRows
 
   const commitName = () => {
     const next = nameDraft.trim()
@@ -218,95 +231,93 @@ export function PropertyMenu({
     onClose() // Mutating rows dismiss the card
   }
 
+  if (!open || !anchor || typeof document === 'undefined') return null // SSR / closed
+
   return createPortal(
     <div
       ref={rootRef}
       tabIndex={-1}
       data-tt-property-menu
-      className={cn(
-        'fixed z-[1002] w-[300px] tt-menu-surface rounded-[10px] shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1.5 outline-none',
-        navHidden && 'invisible pointer-events-none' // Stay mounted so placement is ready after nav
-      )}
+      className="block-actions-menu node-popup fixed z-[1000] min-w-[240px] overflow-visible rounded-lg border border-gray-200 p-1 shadow-lg outline-none tt-menu-surface dark:border-[#2f2f2f]"
+      style={{
+        visibility: hideForBoardNav ? 'hidden' : 'visible', // Stay mounted so settle can re-place
+        pointerEvents: hideForBoardNav ? 'none' : 'auto',
+      }}
+      onClick={(e) => {
+        e.stopPropagation()
+        if ((e.target as HTMLElement | null)?.closest?.('input')) return // Name / search need the click
+        e.preventDefault()
+      }}
       onMouseDown={(e) => {
         e.stopPropagation()
-        if ((e.target as HTMLElement | null)?.closest?.('input')) return // Let the name field take the caret
+        if ((e.target as HTMLElement | null)?.closest?.('input')) return // Let the field take the caret
         e.preventDefault()
       }}
       onPointerDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.stopPropagation()
+          if (flyout) setFlyout(null)
+          else onClose()
+        }
+      }}
     >
-      <div className="mb-1 flex h-8 items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2 dark:border-[#3a3a3a] dark:bg-[#2a2a2a]">
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center text-gray-500 dark:text-gray-400">
-          {propertyTypeIcon(type, 'h-4 w-4')}
-        </span>
+      <div className="px-1.5 pt-1 pb-1">
         <input
-          value={nameDraft}
-          onChange={(e) => setNameDraft(e.target.value)}
-          onBlur={commitName}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              commitName()
-              ;(e.target as HTMLInputElement).blur()
-            }
-          }}
-          placeholder={title}
-          aria-label="Property name"
-          className="min-w-0 flex-1 bg-transparent text-sm text-gray-900 outline-none dark:text-gray-100"
+          ref={searchRef}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search actions..."
+          className="h-8 w-full rounded-md border border-gray-200 bg-gray-50 px-2 text-sm text-gray-900 outline-none dark:border-[#3a3a3a] dark:bg-[#2a2a2a] dark:text-gray-100"
         />
-        <Info className="h-3.5 w-3.5 shrink-0 text-gray-400" aria-hidden />
       </div>
-      <div data-tt-menu-body className="flex min-h-0 max-h-[70vh] flex-col gap-0.5 overflow-y-auto px-0.5 pb-0.5">
-        {rows.map((row) => {
+      <div className="px-2.5 pb-1 text-xs text-gray-500 dark:text-gray-400">
+        Property · {title}
+      </div>
+
+      <div data-tt-menu-body className="flex min-h-0 flex-col gap-0.5 overflow-y-auto px-0.5 pb-0.5">
+        {rows.length === 0 && (
+          <div className="px-2 py-2 text-xs text-gray-400">No matching actions</div>
+        )}
+        {rows.map((row, index) => {
+          if (row.kind === 'separator') {
+            return <div key={`sep-${index}`} className="mx-1 my-1 h-px bg-gray-100 dark:bg-[#2f2f2f]" />
+          }
           const subOpen = row.flyout != null && flyout === row.flyout
-          const afterDisplay = row.id === 'insertLeft' // Hairline before insert / duplicate / delete
-          const afterAutofill = row.id === 'filter'
           return (
-            <div key={row.id} className="flex w-full flex-col">
-              {(afterDisplay || afterAutofill) && (
-                <div className="my-1 h-px bg-gray-100 dark:bg-[#2f2f2f] mx-1" />
+            <Button
+              key={row.id}
+              variant="ghost"
+              size="sm"
+              onMouseEnter={() => setFlyout(row.flyout ?? null)}
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                if (row.stub && !row.flyout) return // Visible stub — no mutation
+                if (row.flyout) {
+                  setFlyout((s) => (s === row.flyout ? null : row.flyout!))
+                  return
+                }
+                run(row.id)
+              }}
+              className={cn(
+                'h-8 shrink-0 justify-start px-2 text-sm font-normal',
+                subOpen && 'bg-gray-100 dark:bg-[#2a2a2a]',
+                row.danger && 'text-red-600 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950'
               )}
-              <Button
-                variant="ghost"
-                size="sm"
-                onMouseEnter={() => setFlyout(row.flyout ?? null)}
-                onClick={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  if (row.stub && !row.flyout) return // Visible stub — no mutation
-                  if (row.flyout) {
-                    setFlyout((s) => (s === row.flyout ? null : row.flyout!))
-                    return
-                  }
-                  run(row.id)
-                }}
-                className={cn(
-                  'h-8 w-full shrink-0 justify-start px-2 text-sm font-normal',
-                  subOpen && 'bg-gray-100 dark:bg-[#2a2a2a]',
-                  row.muted && 'text-gray-400'
-                )}
-              >
-                <span className={cn('mr-2 text-gray-500 dark:text-gray-400', row.muted && 'text-gray-400')}>
-                  {row.icon}
+            >
+              <span className={cn('mr-2 text-gray-500 dark:text-gray-400', row.danger && 'text-red-600')}>
+                {row.icon}
+              </span>
+              <span className="flex-1 text-left">{row.label}</span>
+              {row.badge && (
+                <span className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500 dark:bg-[#2a2a2a]">
+                  {row.badge}
                 </span>
-                <span className="flex-1 text-left">{row.label}</span>
-                {row.badge && (
-                  <span
-                    className={cn(
-                      'ml-1 rounded-full px-1.5 py-px text-[10px] leading-4',
-                      row.id === 'autofill'
-                        ? 'bg-[#dbeafe] text-[#2563eb] dark:bg-[#1e3a5f] dark:text-[#93c5fd]'
-                        : 'bg-gray-100 text-gray-500 dark:bg-[#2a2a2a]'
-                    )}
-                  >
-                    {row.badge}
-                  </span>
-                )}
-                {row.trailing && (
-                  <span className="ml-2 text-[11px] text-gray-400">{row.trailing}</span>
-                )}
-                {row.flyout && <ChevronRight className="h-3.5 w-3.5 ml-1 text-gray-400" />}
-              </Button>
-            </div>
+              )}
+              {row.trailing && <span className="ml-3 text-[11px] text-gray-400">{row.trailing}</span>}
+              {row.flyout && <ChevronRight className="ml-1 h-3.5 w-3.5 text-gray-400" />}
+            </Button>
           )
         })}
       </div>
@@ -315,7 +326,7 @@ export function PropertyMenu({
         <div
           data-tt-menu-flyout="main"
           data-tt-property-menu
-          className="absolute z-[1003] w-[220px] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1"
+          className="absolute z-[1001] w-[220px] rounded-lg border border-gray-200 p-1 shadow-lg tt-menu-surface dark:border-[#2f2f2f]"
         >
           <input
             ref={nameRef}
@@ -330,7 +341,7 @@ export function PropertyMenu({
               }
             }}
             placeholder={propertyTypeLabel(type)}
-            className="mb-1 h-8 w-full rounded-md border border-gray-200 bg-gray-50 px-2 text-sm outline-none dark:border-[#3a3a3a] dark:bg-[#2a2a2a] dark:text-gray-100"
+            className="mb-1 h-8 w-full rounded-md border border-gray-200 bg-gray-50 px-2 text-sm text-gray-900 outline-none dark:border-[#3a3a3a] dark:bg-[#2a2a2a] dark:text-gray-100"
             aria-label="Property name"
           />
           <div data-tt-menu-body className="flex max-h-[240px] flex-col gap-0.5 overflow-y-auto">
@@ -363,7 +374,7 @@ export function PropertyMenu({
         <div
           data-tt-menu-flyout="main"
           data-tt-property-menu
-          className="absolute z-[1003] min-w-[160px] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1"
+          className="absolute z-[1001] min-w-[160px] rounded-lg border border-gray-200 p-1 shadow-lg tt-menu-surface dark:border-[#2f2f2f]"
         >
           {(
             [
@@ -396,7 +407,7 @@ export function PropertyMenu({
         <div
           data-tt-menu-flyout="main"
           data-tt-property-menu
-          className="absolute z-[1003] min-w-[160px] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-2 text-xs text-gray-500"
+          className="absolute z-[1001] min-w-[160px] rounded-lg border border-gray-200 p-2 text-xs text-gray-500 shadow-lg tt-menu-surface dark:border-[#2f2f2f]"
         >
           Coming soon
         </div>

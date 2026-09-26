@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react' // Seam drag + hover tip + menu dismiss
 import { useParams } from 'next/navigation' // Board id for Capture / Templates panels
-import { ChevronDown, ChevronsRight, History, Layers, LayoutTemplate, MessageSquare, Scan, SquareStack, type LucideIcon } from 'lucide-react' // Mode icons + dropdown + header close
+import { ChevronDown, ChevronsRight, Circle, History, Layers, LayoutTemplate, MessageSquare, Scan, SquareStack, type LucideIcon } from 'lucide-react' // Mode icons + dropdown + header close + radio dot
 import { cn } from '@/lib/utils' // Class merge
 import { useSidebarContext, UTILITY_RIGHT_GAP_PX, UTILITY_SIDEBAR_WIDTH, type UtilitySidebarMode } from './sidebar-context' // Open state + live width + right air gap + min chrome
 import {
@@ -245,20 +245,22 @@ export function UtilitySidebar() {
               <ChevronDown className="h-3.5 w-3.5 flex-shrink-0" />
             </button>
             {modeOpen ? (
-              <div className="absolute left-0 top-[calc(100%+5px)] z-50 flex min-w-full flex-col gap-0.5 rounded-xl border border-black/10 bg-[var(--nod-chat-prompt)] p-1 shadow-md dark:border-white/10"> {/* At least as wide as the chip; p-1 matches the bar inset */}
+              <div className="absolute left-0 top-[calc(100%+9px)] z-50 flex min-w-full flex-col gap-0.5 rounded-xl border border-black/10 bg-[var(--nod-chat-prompt)] p-1 shadow-md dark:border-white/10"> {/* left-0 / min-w-full = menu left = chip left; 9px = bar chrome + 4px air */}
                 {MODE_TABS.map(({ id, label, icon: Icon }) => (
                   <button
                     key={id}
                     type="button"
                     className={cn(
-                      'inline-flex h-7 w-full min-w-0 items-center gap-1 rounded-lg px-2.5 text-sm font-medium text-gray-700 hover:bg-[var(--nod-on-chrome)] dark:text-gray-300', // Same rounded chip as the selected toggle button
-                      id === utilitySidebarMode && 'bg-[var(--nod-on-chrome)]' // Current menu
+                      'inline-flex h-7 w-full min-w-0 items-center gap-1 rounded-lg px-2.5 text-sm font-medium text-gray-700 hover:bg-[var(--nod-on-chrome)] dark:text-gray-300' // Same rounded chip as the bar button; selected is the radio dot only
                     )}
                     onClick={() => {
                       setUtilitySidebarMode(id) // Switch the utility body
                       setModeOpen(false) // Close after pick
                     }}
                   >
+                    <span className="flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center"> {/* Same slot as phone toolbar DropdownMenuRadioItem */}
+                      {id === utilitySidebarMode ? <Circle className="h-2 w-2 fill-current" /> : null} {/* Filled radio dot on the current menu */}
+                    </span>
                     <Icon className="h-3.5 w-3.5 flex-shrink-0" />
                     <span className="truncate">{label}</span>
                   </button>
@@ -266,21 +268,15 @@ export function UtilitySidebar() {
               </div>
             ) : null}
           </div>
-          <div className="flex items-center gap-0.5">
-            <div
-              className="mx-0.5 h-5 w-px flex-shrink-0 bg-black/10 dark:bg-white/10"
-              aria-hidden
-            />
-            <button
-              type="button"
-              onClick={() => setUtilitySidebarOpen(false)}
-              className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-[var(--nod-on-chrome)] hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
-              title="Hide sidebar"
-              aria-label="Hide utility sidebar"
-            >
-              <ChevronsRight className="h-4 w-4" />
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setUtilitySidebarOpen(false)}
+            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-[var(--nod-on-chrome)] hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
+            title="Hide sidebar"
+            aria-label="Hide utility sidebar"
+          >
+            <ChevronsRight className="h-4 w-4" />
+          </button>
         </div>
       </header>
 

@@ -1,0 +1,2 @@
+-- Property menu + phone mode match utility chrome; board preview keeps the 6px fill.
+-- App/docs marker only; no DDL. Remote DDL top: 20260924223511_board_changes_autosave.

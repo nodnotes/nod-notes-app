@@ -33,6 +33,7 @@ type NestedBoardPreviewProps = {
   visible?: boolean
   fill?: boolean
   hostNodeId?: string // Host map item — chrome drag moves this node
+  cornerRadius?: number // Host fill radius (6px × chromeScale) — portal cannot inherit --tt-frame-radius
 }
 
 type FrameBox = {
@@ -69,6 +70,7 @@ export function NestedBoardPreview({
   visible = true,
   fill = false,
   hostNodeId,
+  cornerRadius = 6, // Default frame radius — same as FRAME_CORNER_RADIUS when host does not pass one
 }: NestedBoardPreviewProps) {
   const previewFocus = usePreviewFocus()
   const { getSetNodes, reactFlowInstance } = useReactFlowContext()
@@ -349,7 +351,7 @@ export function NestedBoardPreview({
       <div
         data-page-preview={conversationId}
         className={cn(
-          'flex flex-col overflow-hidden rounded-xl border bg-gray-50 dark:bg-[#0f0f0f]',
+          'flex flex-col overflow-hidden border bg-gray-50 dark:bg-[#0f0f0f]', // Clip to host 6px — rounded-xl would stack a second curve
           isFocused
             ? 'border-blue-500 dark:border-blue-400 ring-2 ring-blue-400/40'
             : 'border-gray-200 dark:border-[#2f2f2f]'
@@ -360,6 +362,7 @@ export function NestedBoardPreview({
           left: frameBox.left,
           width: frameBox.width,
           height: frameBox.height,
+          borderRadius: cornerRadius, // Same as host fill; CSS scale() below keeps it matched under zoom
           // Scale with host zoom; origin top-left so top/left stay glued to the spacer
           transform: frameBox.scale !== 1 ? `scale(${frameBox.scale})` : undefined,
           transformOrigin: 'top left',
