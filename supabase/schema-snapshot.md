@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-27T02:42:04Z`
+- Snapped at: `2026-09-27T19:41:44Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`/`migration list`; versions from `.temp` + Management API list; cli-latest reports `v2.118.0`)
@@ -9,6 +9,14 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260927194144_wrap_plus_max_live_lines.sql`.
+- **Wrap**: no toggle — lines always armed; far edge = unapplied (light blue); lines follow the text live on drag and after zoom.
+- **Content-fit +'s**: four corner pluses set `metadata.contentFitBox` (JSONB); wrap max = the +'s, and reaching them unapplies wrap.
+- Height-lock toggle removed; free wrap shrinks to 0.5 before growing the box.
+- Schema unchanged; remote DDL top remains `20260924223511_board_changes_autosave`.
+
+## Prior: Wrap dashes, glyph alignment
 
 - DDL: none. Marker `20260927024204_wrap_dash_count_glyph_align.sql`.
 - **Wrap dashes**: 12 capsules on every frame height (dash/gap scale to the bar).

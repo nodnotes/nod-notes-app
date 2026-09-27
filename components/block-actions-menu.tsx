@@ -1592,7 +1592,7 @@ export function BlockActionsMenu({
         </div>
       )}
 
-      {/* Alignment — glyph text-align; free-resize box stays centered with both wrap lines */}
+      {/* Alignment — glyph text-align; free left hugs the widest block and centers that column */}
       {openSubmenu === 'frameAlign' && (
         <div
           data-tt-menu-flyout="main"

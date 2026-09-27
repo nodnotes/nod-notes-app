@@ -280,6 +280,7 @@ import {
   FrameViewportMountProvider,
   FRAME_VIEWPORT_DEFER_MIN,
 } from '@/components/frame-viewport-mount-context' // Defer TipTap until frames are near the pane
+import { isPhoneLikeBoard, isHeavyFrame } from '@/lib/phone-frame-budget' // Phone: defer TipTap + skip huge load shells
 import {
   BOARD_ZOOM_DEFAULT,
   expandSoftBounds,
@@ -1211,7 +1212,8 @@ function BoardFlowInner({
     chatPanelCountRef.current = nodes.filter((n) => n.type === 'chatPanel').length
     return chatPanelCountRef.current
   }, [nodes])
-  const deferFrameContent = !embedded && chatPanelCount >= FRAME_VIEWPORT_DEFER_MIN
+  // Desktop waits for 10 frames; phone must defer even one board-body or Safari OOMs on load
+  const deferFrameContent = !embedded && (isPhoneLikeBoard() || chatPanelCount >= FRAME_VIEWPORT_DEFER_MIN)
 
   const getFlowViewport = useCallback(
     () => reactFlowInstance?.getViewport() ?? { x: 0, y: 0, zoom: 1 },
@@ -2847,7 +2849,12 @@ function BoardFlowInner({
     const entries = Object.entries(layout)
     if (entries.length === 0) return // First visit — nothing to place until messages arrive
     setNodes(
-      entries.map(([id, entry]) => ({
+      entries
+        .filter(
+          ([, entry]) =>
+            !isPhoneLikeBoard() || !isHeavyFrame({ width: entry.width, height: entry.height })
+        ) // Phone: cached 7k shells blow fitView to 16%
+        .map(([id, entry]) => ({
         id: frameShimmerNodeId(id), // Distinct from chatPanel id so both can overlap during the fade
         type: 'frameShimmer' as const,
         className: 'tt-frame-shimmer-node', // CSS targets this wrapper for fade-out

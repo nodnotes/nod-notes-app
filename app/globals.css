@@ -2211,6 +2211,65 @@ span[data-added="true"] {
   [data-tt-align-box="true"] .ProseMirror:not([data-single-line="true"]) blockquote {
     width: 100% !important;
     text-align: inherit;
+    overflow-wrap: anywhere; /* Wrap lines are a hard column — break tehhh… runs with no spaces */
+    word-break: break-word; /* Older engines — same hard column */
+    min-width: 0; /* Defeat min-content of an unbreakable word */
+  }
+  /* Applied wrap (any align): glyphs must stay inside the wrap column */
+  [data-block-resized="wrap"] .ProseMirror:not([data-single-line="true"]),
+  [data-block-resized="wrap"] .ProseMirror:not([data-single-line="true"]) p,
+  [data-block-resized="wrap"] .ProseMirror:not([data-single-line="true"]) h1,
+  [data-block-resized="wrap"] .ProseMirror:not([data-single-line="true"]) h2,
+  [data-block-resized="wrap"] .ProseMirror:not([data-single-line="true"]) h3,
+  [data-block-resized="wrap"] .ProseMirror:not([data-single-line="true"]) h4,
+  [data-block-resized="wrap"] .ProseMirror:not([data-single-line="true"]) li,
+  [data-block-resized="wrap"] .ProseMirror:not([data-single-line="true"]) blockquote {
+    overflow-wrap: anywhere; /* Soft-wrap at spaces AND mid-token when the column is tighter */
+    word-break: break-word; /* Same column on engines without overflow-wrap:anywhere */
+    min-width: 0; /* Allow the wrap box to shrink below the longest token */
+  }
+  /* Free left: hug the widest block, center that column, left-align shorter blocks to it */
+  [data-tt-free-left="true"] .ProseMirror,
+  [data-tt-align-box="true"][data-tt-free-left="true"] .ProseMirror,
+  [data-tt-align-box="true"][data-tt-free-left="true"] .ProseMirror[data-single-line="true"],
+  [data-tt-align-box="true"][data-tt-free-left="true"] .ProseMirror:not([data-single-line="true"]) {
+    width: fit-content !important; /* Widest block owns the stack — not the frame / wrap column */
+    max-width: 100% !important; /* Wrap still breaks at the wrap-line column */
+    min-width: 0 !important; /* Don't force max-content past the wrap line */
+    margin-left: auto; /* Center the hug column in the frame / wrap box */
+    margin-right: auto;
+  }
+  [data-tt-free-left="true"] .ProseMirror p,
+  [data-tt-free-left="true"] .ProseMirror h1,
+  [data-tt-free-left="true"] .ProseMirror h2,
+  [data-tt-free-left="true"] .ProseMirror h3,
+  [data-tt-free-left="true"] .ProseMirror h4,
+  [data-tt-free-left="true"] .ProseMirror li,
+  [data-tt-free-left="true"] .ProseMirror blockquote,
+  [data-tt-align-box="true"][data-tt-free-left="true"] .ProseMirror p,
+  [data-tt-align-box="true"][data-tt-free-left="true"] .ProseMirror h1,
+  [data-tt-align-box="true"][data-tt-free-left="true"] .ProseMirror h2,
+  [data-tt-align-box="true"][data-tt-free-left="true"] .ProseMirror h3,
+  [data-tt-align-box="true"][data-tt-free-left="true"] .ProseMirror h4,
+  [data-tt-align-box="true"][data-tt-free-left="true"] .ProseMirror li,
+  [data-tt-align-box="true"][data-tt-free-left="true"] .ProseMirror blockquote {
+    width: fit-content !important; /* Each block hugs glyphs so the stack width is the widest */
+    max-width: 100% !important; /* Soft-wrap at the parent column */
+    overflow-wrap: anywhere; /* fit-content min-content was the full token — it painted past the wrap lines */
+    word-break: break-word; /* Same hard column as align-box wrap */
+    min-width: 0 !important; /* auto min-width kept the unbreakable word wider than the column */
+  }
+  /* Board preview is a block atom — width:100% on .tt-board-link-previewing spanned the free frame */
+  [data-tt-free-left="true"] .ProseMirror .react-renderer.node-boardLink,
+  [data-tt-free-left="true"] .ProseMirror .react-renderer.node-pageLink,
+  [data-tt-free-left="true"] .ProseMirror .react-renderer.node-boardLink:has(.tt-board-link-previewing),
+  [data-tt-free-left="true"] .ProseMirror .react-renderer.node-pageLink:has(.tt-board-link-previewing),
+  [data-tt-free-left="true"] .ProseMirror .tt-board-link,
+  [data-tt-free-left="true"] .ProseMirror .tt-page-link,
+  [data-tt-free-left="true"] .ProseMirror .tt-board-link.tt-board-link-previewing,
+  [data-tt-free-left="true"] .ProseMirror .tt-page-link.tt-board-link-previewing {
+    width: fit-content !important; /* Hug title / 296px card — same stack as text */
+    max-width: 100% !important; /* Still break at the wrap-line column */
   }
   /* Frame Alignment wins over TipTap’s inline text-align so wrap leftovers sit on the free edge */
   [data-tt-content-fit][data-tt-frame-align="right"] .ProseMirror,
@@ -2252,6 +2311,27 @@ span[data-added="true"] {
   [data-tt-content-fit][data-tt-frame-align="center"] .ProseMirror[data-single-line="true"] > blockquote {
     margin-left: auto;
     margin-right: auto;
+  }
+  /* Board preview / boardLink NodeViews are block boxes — text-align cannot park them */
+  [data-tt-content-fit][data-tt-frame-align="center"] .ProseMirror > .react-renderer.node-boardLink,
+  [data-tt-content-fit][data-tt-frame-align="center"] .ProseMirror > .react-renderer.node-pageLink {
+    width: fit-content !important; /* Hug the card — do not span the free / wrap box */
+    max-width: 100% !important; /* Soft-wrap a long title at the column */
+    margin-left: auto; /* Same park as a short centered line */
+    margin-right: auto;
+  }
+  [data-tt-content-fit][data-tt-frame-align="right"] .ProseMirror > .react-renderer.node-boardLink,
+  [data-tt-content-fit][data-tt-frame-align="right"] .ProseMirror > .react-renderer.node-pageLink {
+    width: fit-content !important; /* Hug so margin can push the card */
+    max-width: 100% !important;
+    margin-left: auto; /* Park on the right like a short right-aligned line */
+  }
+  [data-tt-content-fit][data-tt-frame-align="center"] .ProseMirror .tt-board-link.tt-board-link-previewing,
+  [data-tt-content-fit][data-tt-frame-align="center"] .ProseMirror .tt-page-link.tt-board-link-previewing,
+  [data-tt-content-fit][data-tt-frame-align="right"] .ProseMirror .tt-board-link.tt-board-link-previewing,
+  [data-tt-content-fit][data-tt-frame-align="right"] .ProseMirror .tt-page-link.tt-board-link-previewing {
+    width: fit-content !important; /* Beat previewing width:100% so the 280 card stays a hug */
+    max-width: 100% !important;
   }
   /* databaseBlock atoms span the row so the grip/I-bar band matches the frame.
      Images fill the sticky frame (contain-fit); boardLink stays shrink-wrapped. */

@@ -31,6 +31,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260927194144_wrap_plus_max_live_lines` — No wrap toggle; wrap lines follow text live; content-fit + box caps wrap
 - `20260927024204_wrap_dash_count_glyph_align` — 12 wrap dashes at any frame height; glyph-only Alignment; ⋮⋮ on the fill
 - `20260927003245_frame_align_preview_hug_notion_restore` — Frame alignment; board-link preview hug; fail-closed Notion restore
 - `20260926023539_property_phone_menu_preview_fill` — Property/phone menus match utility chrome; board preview keeps the 6px fill

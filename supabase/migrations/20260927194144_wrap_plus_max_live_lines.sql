@@ -1,0 +1,2 @@
+-- Always-armed wrap lines + content-fit pluses (metadata.contentFitBox) + wrap max at the pluses.
+-- App/docs marker only; no DDL (frame metadata is JSONB). Remote DDL top: 20260924223511_board_changes_autosave.

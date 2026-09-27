@@ -276,6 +276,29 @@ export function inflateBoxForShapeContent(
   }
 }
 
+/**
+ * Free-resize contain: largest scale (≤ 1) at which centered content fits inside the
+ * silhouette of a fixed boxW×boxH frame. Rect-only contain let glyphs spill past slanted edges.
+ */
+export function shapeContentFitScale(
+  shape: FrameShapeType, // Active silhouette
+  boxW: number, // Frame inner width
+  boxH: number, // Frame inner height
+  contentW: number, // Natural visual content width
+  contentH: number // Natural visual content height
+): number {
+  if (contentW < 1 || contentH < 1) return 1 // Nothing to fit
+  if (contentFitsInShapeBox(boxW, boxH, contentW, contentH, shape)) return 1 // Already inside — never grow
+  let lo = 0 // Scale that fits (centered rect of zero size is always inside)
+  let hi = 1 // Scale that doesn't fit (checked above)
+  while (hi - lo > 0.002) {
+    const mid = (lo + hi) / 2 // Bisect — shrinking a centered rect keeps it inside star-shaped silhouettes
+    if (contentFitsInShapeBox(boxW, boxH, contentW * mid, contentH * mid, shape)) lo = mid
+    else hi = mid
+  }
+  return lo / 1.04 // Same clearance as inflateBoxForShapeContent so glyphs don't touch the stroke
+}
+
 /** Apply silhouette inflation when the frame is locked (fit to text). */
 export function shapeFitContentBox(
   intrinsic: { width: number; height: number },
