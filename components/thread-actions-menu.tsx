@@ -20,6 +20,7 @@ import {
 import { Button } from '@/components/ui/button' // Ghost row buttons
 import { cn } from '@/lib/utils' // Class merge
 import { applyMenuPlacement, getThreadCoverRects, watchMenuSafeRect } from '@/lib/menu-placement' // Stay in-window, miss top bar / chat / thread curve
+import { watchBoardViewportNav } from '@/lib/board-nav-menu' // Hide while the board pans; reveal when it stops
 
 /** Actions the thread menu can emit (wired + stubs). */
 export type ThreadActionId =
@@ -88,9 +89,18 @@ export function ThreadActionsMenu({
 }: ThreadActionsMenuProps) {
   const [openSubmenu, setOpenSubmenu] = useState<'arrange' | 'info' | 'thickness' | null>(null) // Flyout
   const rootRef = useRef<HTMLDivElement>(null) // Root for Escape focus
+  const [hideForBoardNav, setHideForBoardNav] = useState(false) // Same as the frame menu: gone while panning
 
   useEffect(() => {
     rootRef.current?.focus() // Keyboard Escape works immediately
+  }, [])
+
+  // Stay mounted (parent re-anchors on the same settle) but disappear until the viewport is still
+  useEffect(() => {
+    return watchBoardViewportNav({
+      onStart: () => setHideForBoardNav(true), // Pan/zoom frame → hide
+      onSettle: () => setHideForBoardNav(false), // ~150ms after the last transform → show again
+    })
   }, [])
 
   useLayoutEffect(() => {
@@ -215,7 +225,7 @@ export function ThreadActionsMenu({
       tabIndex={-1}
       className={cn(
         'thread-actions-menu edge-popup node-popup z-[1000] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1 outline-none',
-        'absolute',
+        'fixed', // Window coords — parent re-anchors after board nav (same as the frame menu)
         className
       )}
       style={{
@@ -223,6 +233,8 @@ export function ThreadActionsMenu({
         top: `${y}px`,
         transform: 'translate(8px, -50%)', // First paint: right of click, not on the arch
         transformOrigin: 'left center',
+        visibility: hideForBoardNav ? 'hidden' : 'visible', // Hidden during nav, back when it stops
+        pointerEvents: hideForBoardNav ? 'none' : 'auto',
       }}
       onClick={(e) => {
         e.stopPropagation()

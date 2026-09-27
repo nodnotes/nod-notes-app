@@ -230,8 +230,18 @@ function positionedAncestor(el: HTMLElement): HTMLElement {
 
 /** Layout root for ⋮⋮ Y — not PM’s parent (that sits below the property-icon row). */
 function gripLayoutRoot(editor: Editor): HTMLElement | null {
+  const shapeFill = editor.view.dom.closest('[data-tt-shape-fill]') as HTMLElement | null
+  if (shapeFill) return shapeFill // Shaped clip is on an inner layer — ⋮⋮ live on the fill
   const flow = editor.view.dom.parentElement
   return flow ? positionedAncestor(flow) : null
+}
+
+/** Host fill — ⋮⋮ X parks on this left edge, not the wrap column (right/center align). */
+function frameFillForEditor(editor: Editor): HTMLElement | null {
+  return (
+    (editor.view.dom.closest('[data-tt-frame-fill]') as HTMLElement | null) ||
+    (editor.view.dom.closest('[data-tt-shape-fill]') as HTMLElement | null)
+  )
 }
 
 /** True when a TipTap block range contains an aiPending or notionSyncPending mark. */
@@ -485,6 +495,8 @@ export function TipTapBlockHandles({
     y: number
     openLeft: boolean
   } | null>(null)
+  const connectionsMenuRef = useRef(connectionsMenu) // Settle callback reads the open menu without re-subscribing
+  connectionsMenuRef.current = connectionsMenu
   const [dropLine, setDropLine] = useState<DropLine | null>(null) // Dashed insert line while dragging a content block
   const [ghost, setGhost] = useState<{ x: number; y: number; text: string; width: number } | null>(null) // Floating preview of the dragged line
   // In-frame multi-block selection (Shift = range, Cmd/Ctrl = toggle). Empty = no multi-selection.
@@ -870,6 +882,28 @@ export function TipTapBlockHandles({
       },
     })
   }, [menuOpen, editor, menuPlacement])
+
+  // Connections ⋮⋮ menu is fixed at open. After pan/zoom, park it on the strip again.
+  const connectionsMenuOpen = connectionsMenu != null
+  useEffect(() => {
+    if (!connectionsMenuOpen || !editor) return
+    return watchBoardViewportNav({
+      onSettle: () => {
+        if (!connectionsMenuRef.current || editor.isDestroyed) return
+        const header = frameForEditor(editor.view.dom).querySelector(
+          '[data-tt-connections-header]'
+        ) as HTMLElement | null
+        if (!header) return
+        const rect = header.getBoundingClientRect() // Strip has already followed the settled viewport
+        const next = menuPlacement(rect.left, rect.top + rect.height / 2) // Same left/right slot as open
+        setConnectionsMenu((prev) => {
+          if (!prev) return prev
+          if (prev.x === next.x && prev.y === next.y && prev.openLeft === next.openLeft) return prev
+          return next
+        })
+      },
+    })
+  }, [connectionsMenuOpen, editor, menuPlacement])
 
   /** Arm the connections strip + open Live Sync / Manual / Remove (same as the Notion mark). */
   const openForConnections = useCallback(
@@ -1591,8 +1625,13 @@ export function TipTapBlockHandles({
   const contentCssScale = Math.max(0.15, frameScale || 1)
   const localGutter =
     handleGutterFlow > 0 ? handleGutterFlow / contentCssScale : HANDLE_GUTTER
+  const fill = frameFillForEditor(editor) // Fill left — wrap column may sit inset (right/center)
+  const fillLeftLocal =
+    container && fill && fill !== container
+      ? screenToLocal(container, fill.getBoundingClientRect().left, fill.getBoundingClientRect().top).x
+      : 0 // Same box as the grips — no extra shift
   const gutterCenterLeft =
-    -contentPadLeft - localGutter + (localGutter / 2 - GRIP_W / 2)
+    fillLeftLocal - contentPadLeft - localGutter + (localGutter / 2 - GRIP_W / 2)
   // Same √ curve as host gutter — grips stay centered in the blue strip
   const gripChromeScale = blockGripChromeScale(rfZoom || 1, contentCssScale)
   const gripLayouts = new Map<string | number, HandleLayout>() // keyed by block.from (headers = named keys)
@@ -1659,7 +1698,7 @@ export function TipTapBlockHandles({
       ? selection.length
       : 1
 
-  return (
+  const grips = (
     <>
       {Array.from(gripLayouts.entries()).map(([gripKey, gl]) => {
         // Skip grips whose range no longer exists in the doc (e.g. after Turn into Board)
@@ -1950,4 +1989,6 @@ export function TipTapBlockHandles({
         )}
     </>
   )
+  const shapeFill = editor.view.dom.closest('[data-tt-shape-fill]') as HTMLElement | null
+  return shapeFill ? createPortal(grips, shapeFill) : grips // Escape the silhouette clip so ⋮⋮ stay in the gutter
 }

@@ -68,7 +68,10 @@ export const DatabaseBlock = Node.create<DatabaseBlockOptions>({
   },
 
   parseHTML() {
-    return [{ tag: 'div[data-type="databaseBlock"]' }] // Round-trips through message HTML
+    return [
+      { tag: 'div[data-type="databaseBlock"]' }, // Normal round-trip
+      { tag: 'div[data-notion-database-id]' }, // Saved tags sometimes put data-type last
+    ]
   },
 
   renderHTML({ HTMLAttributes }) {

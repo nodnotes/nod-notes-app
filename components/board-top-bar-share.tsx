@@ -2,17 +2,15 @@
 
 // Top-bar cluster right of Share: favorite, More (shareCompact: star + AI sparkles live in More; Copy link is Share-only)
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react' // Favorite + More search
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react' // Favorite + More search; present flag
 import {
   AppWindow,
   Bell,
   Clipboard,
-  Clock,
   Copy,
   Download,
   FolderInput,
   Grid3x3,
-  History,
   Languages,
   Link2,
   Lock,
@@ -22,13 +20,10 @@ import {
   Play,
   Pin,
   PinOff,
-  RefreshCw,
   Search,
-  SlidersHorizontal,
   Sparkles,
   Star,
   Trash2,
-  Type,
   Upload,
 } from 'lucide-react' // Share cluster + More-menu row icons
 import { Button } from '@/components/ui/button' // Ghost icon buttons
@@ -58,6 +53,7 @@ import { useAiEditSession } from '@/lib/ai/edit-session' // AI highlight toggle 
 import { type BoardFontId } from '@/lib/board-font'
 import { DesktopUpdateMenuItem } from './desktop-update-menu-item' // Electron: Check for updates / Restart
 import { UtilityOpenIcon } from './utility-open-icon' // Layers stack + tilted Scan on the top sheet
+import { getPresenting, startPresenting, stopPresenting, subscribePresenting } from '@/lib/presentation-present' // Full width reuses present chrome-hide
 import Link from 'next/link' // Download desktop app when not in Electron
 
 type BoardTopBarShareProps = {
@@ -159,8 +155,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
   const [menuOpen, setMenuOpen] = useState(false) // Load footer stats when More opens
   const [query, setQuery] = useState('') // Search actions…
   const searchRef = useRef<HTMLInputElement>(null) // Focus search on open
-  const [smallText, setSmallText] = useState(false) // Layout toggle (UI only)
-  const [fullWidth, setFullWidth] = useState(false) // Layout toggle (UI only)
+  const fullWidth = useSyncExternalStore(subscribePresenting, getPresenting, () => false) // Same hide as Present (SSR off)
   const [lockBoard, setLockBoard] = useState(false) // Lock board toggle (UI only)
   const [wordCount, setWordCount] = useState<number | null>(null) // Footer word count
   const [editedBy, setEditedBy] = useState<string | null>(null) // Footer first name
@@ -301,10 +296,13 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
         .update({ metadata: updated })
         .eq('id', conversationId)
       if (error) throw error
-      queryClient.setQueryData(['conversations'], (old: Array<{ id: string; metadata?: Record<string, unknown> }> | undefined) => {
-        if (!old) return old
-        return old.map((c) => (c.id === conversationId ? { ...c, metadata: updated } : c))
-      })
+      queryClient.setQueriesData(
+        { queryKey: ['conversations'] }, // Boards nav is ['conversations', userId]
+        (old: Array<{ id: string; metadata?: Record<string, unknown> }> | undefined) => {
+          if (!Array.isArray(old)) return old // Skip non-list conversation queries
+          return old.map((c) => (c.id === conversationId ? { ...c, metadata: updated } : c))
+        }
+      )
       queryClient.invalidateQueries({ queryKey: ['conversations'] })
     } catch (err) {
       setFavorited(!next) // Revert star if persist failed
@@ -319,32 +317,28 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
   const showConnections = !q || matchesQuery('connections notion', q) // Same hay as Connections row
   const showAiHighlightMenu =
     !q || matchesQuery('show ai content highlight sparkles pin unpin', q)
+  const showFavoriteMenu =
+    collapseShare &&
+    (matchesQuery('Add to favorites', q) || matchesQuery('Remove from favorites', q)) // Menu row only when the star is folded into More
   const hasSearchHit =
     !q ||
     showFont ||
     showBoardStyle ||
     showConnections ||
     showAiHighlightMenu ||
+    showFavoriteMenu ||
     [
       'Copy link',
-      'Add to favorites',
-      'Remove from favorites',
       'Copy board contents',
       'Duplicate',
       'Move to',
       'Move to Trash',
       'Present',
-      'Small text',
       'Full width',
-      'Customize board',
       'Lock board',
-      'Use with AI',
       'Translate',
       'Import',
       'Export',
-      'Turn into wiki',
-      'Updates & analytics',
-      'Version history',
       'Notify me',
       'Open in Mac app',
     ].some((label) => matchesQuery(label, q))
@@ -498,7 +492,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
                   <DropdownMenuShortcut>⌘⌥L</DropdownMenuShortcut>
                 </DropdownMenuItem>
               )}
-              {(matchesQuery('Add to favorites', q) || matchesQuery('Remove from favorites', q)) && (
+              {showFavoriteMenu && (
                 <DropdownMenuItem
                   disabled={!conversationId} // Unsaved board has no conversations.metadata.favorite
                   onClick={() => void toggleFavorite()} // Same persist path as the star button
@@ -601,34 +595,16 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
 
               {!q && <DropdownMenuSeparator />}
 
-              {matchesQuery('Small text', q) && (
-                <DropdownMenuItem
-                  onSelect={(e) => {
-                    e.preventDefault() // Keep More open while toggling
-                    setSmallText((v) => !v)
-                  }}
-                >
-                  <Type className="h-4 w-4 mr-2" />
-                  Small text
-                  <MenuToggle on={smallText} />
-                </DropdownMenuItem>
-              )}
               {matchesQuery('Full width', q) && (
                 <DropdownMenuItem
-                  onSelect={(e) => {
-                    e.preventDefault()
-                    setFullWidth((v) => !v)
+                  onSelect={() => {
+                    if (fullWidth) stopPresenting() // Toggle off restores chat / top bar / minimap
+                    else startPresenting() // Hide all menus — board only; Escape exits
                   }}
                 >
                   <Maximize2 className="h-4 w-4 mr-2" />
                   Full width
                   <MenuToggle on={fullWidth} />
-                </DropdownMenuItem>
-              )}
-              {matchesQuery('Customize board', q) && (
-                <DropdownMenuItem>
-                  <SlidersHorizontal className="h-4 w-4 mr-2" />
-                  Customize board
                 </DropdownMenuItem>
               )}
 
@@ -645,19 +621,6 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
                   Lock board
                   <MenuToggle on={lockBoard} />
                 </DropdownMenuItem>
-              )}
-              {matchesQuery('Use with AI', q) && (
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>
-                    <Sparkles className="h-4 w-4 mr-2" />
-                    Use with AI
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="w-48">
-                    <DropdownMenuItem>Summarize</DropdownMenuItem>
-                    <DropdownMenuItem>Search board</DropdownMenuItem>
-                    <DropdownMenuItem>Help me write</DropdownMenuItem>
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
               )}
 
               {!q && <DropdownMenuSeparator />}
@@ -691,30 +654,6 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
                 <DropdownMenuItem>
                   <Upload className="h-4 w-4 mr-2" />
                   Export
-                </DropdownMenuItem>
-              )}
-
-              {!q && <DropdownMenuSeparator />}
-
-              {matchesQuery('Turn into wiki', q) && (
-                <DropdownMenuItem>
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Turn into wiki
-                </DropdownMenuItem>
-              )}
-
-              {!q && <DropdownMenuSeparator />}
-
-              {matchesQuery('Updates & analytics', q) && (
-                <DropdownMenuItem>
-                  <Clock className="h-4 w-4 mr-2" />
-                  Updates & analytics
-                </DropdownMenuItem>
-              )}
-              {matchesQuery('Version history', q) && (
-                <DropdownMenuItem>
-                  <History className="h-4 w-4 mr-2" />
-                  Version history
                 </DropdownMenuItem>
               )}
 

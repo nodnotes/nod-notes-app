@@ -1,0 +1,2 @@
+-- Frame alignment + board-link preview hug + fail-closed Notion restore.
+-- App/docs marker only; no DDL. Remote DDL top: 20260924223511_board_changes_autosave.

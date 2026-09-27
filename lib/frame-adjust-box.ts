@@ -12,8 +12,10 @@ export const BLOCK_HANDLE_GUTTER_W = 20
 export const GRIP_SIDE_PAD_SCREEN = 3
 /** Nominal blue↔gutter air at 100% zoom. */
 export const ADJUST_CONTENT_GAP_X = 3
-export const ADJUST_CONTENT_GAP_Y = 6 // T/B band air
+export const ADJUST_CONTENT_GAP_Y = 6 // T/B band air when no property / connections strip
 export const CONNECTIONS_GROUP_H = 28 // Connections strip height
+/** `+# rows — show more / show less` under a Notion DB table (py-1 + 11px). */
+export const DB_ROWS_REVEAL_FOOTER_H = 24
 
 /**
  * Child `transform: scale` for TipTap ⋮⋮ / add lines (same curve as `tiptap-block-handles`).
@@ -54,6 +56,11 @@ export function adjustGapFlowPx(zoom: number, frameScale = 1): number {
   return gripComfortFlow(zoom, frameScale, ADJUST_CONTENT_GAP_X)
 }
 
+/** Blue↔fill air on T/B when the property / connections strip is absent. */
+export function adjustGapYFlow(zoom: number, frameScale = 1): number {
+  return gripComfortFlow(zoom, frameScale, ADJUST_CONTENT_GAP_Y)
+}
+
 /** Full L/R pad: [blue][air][pad][grip][pad][fill] — small gaps on both sides of the handle. */
 export function adjustChromeXFlow(zoom: number, frameScale = 1): number {
   return handleGutterFlowPx(zoom, frameScale) + adjustGapFlowPx(zoom, frameScale)
@@ -66,6 +73,17 @@ function nodeMeta(n: Node): Record<string, unknown> {
   return (n.data?.promptMessage?.metadata || {}) as Record<string, unknown>
 }
 
+/** TipTap HTML on the frame — used to reserve DB footer air in the adjust box. */
+function nodeContent(n: Node): string {
+  const raw = n.data?.promptMessage?.content
+  return typeof raw === 'string' ? raw : ''
+}
+
+/** True when this frame embeds a Notion databaseBlock table. */
+function nodeHasDatabaseBlock(n: Node): boolean {
+  return /data-type=["']databaseBlock["']/i.test(nodeContent(n))
+}
+
 function metaFrameScale(meta: Record<string, unknown>): number {
   const fs = meta.frameScale
   return typeof fs === 'number' && Number.isFinite(fs) ? Math.max(0.15, fs) : 1
@@ -74,13 +92,19 @@ function metaFrameScale(meta: Record<string, unknown>): number {
 /** Nominal adjust-box chrome (flow px) — gutter tracks grip size at this zoom/frameScale. */
 export function nominalAdjustChromeInsets(
   meta: Record<string, unknown>,
-  zoom: number
+  zoom: number,
+  isDatabase = false // Notion DB frames reserve footer air under the fill
 ): AdjustChromeInsets {
   const fs = metaFrameScale(meta)
   const x = Math.round(adjustChromeXFlow(zoom, fs))
   const band = Math.round(CONNECTIONS_GROUP_H * fs)
-  const yTop = typeof meta.propertyType === 'string' && meta.propertyType ? band : 0
-  const yBottom = meta.notionConnected === true ? band : 0
+  const gapY = Math.round(adjustGapYFlow(zoom, fs)) // Blue↔fill air when no strip
+  const footer = isDatabase ? Math.round(DB_ROWS_REVEAL_FOOTER_H * fs) : 0
+  const namedProp = typeof meta.propertyType === 'string' && !!meta.propertyType
+  // DB frames keep a top band even without property icons so the blue box isn't flush
+  const yTop = namedProp ? band : isDatabase ? Math.max(gapY, band) : 0
+  // Bottom adjust band (footer + connections) — snap/stack must clear it
+  const yBottom = (meta.notionConnected === true ? band : 0) + footer
   return { x, yTop, yBottom }
 }
 
@@ -91,7 +115,7 @@ export function frameAdjustFlowSize(
 ): { width: number; height: number } {
   const size = nodeFlowSize(node)
   if (node.selected) return size
-  const chrome = nominalAdjustChromeInsets(nodeMeta(node), zoom)
+  const chrome = nominalAdjustChromeInsets(nodeMeta(node), zoom, nodeHasDatabaseBlock(node))
   return {
     width: size.width + chrome.x * 2,
     height: size.height + chrome.yTop + chrome.yBottom,
@@ -105,7 +129,7 @@ export function frameAdjustFlowBox(node: Node, live: Node[], zoom: number): Flow
   if (node.selected) {
     return { x: abs.x, y: abs.y, width: size.width, height: size.height }
   }
-  const chrome = nominalAdjustChromeInsets(nodeMeta(node), zoom)
+  const chrome = nominalAdjustChromeInsets(nodeMeta(node), zoom, nodeHasDatabaseBlock(node))
   return {
     x: abs.x - chrome.x,
     y: abs.y - chrome.yTop,
@@ -121,7 +145,7 @@ export function rfAbsFromAdjustOrigin(
   zoom: number
 ): { x: number; y: number } {
   if (node.selected) return adjustOrigin
-  const chrome = nominalAdjustChromeInsets(nodeMeta(node), zoom)
+  const chrome = nominalAdjustChromeInsets(nodeMeta(node), zoom, nodeHasDatabaseBlock(node))
   return { x: adjustOrigin.x + chrome.x, y: adjustOrigin.y + chrome.yTop }
 }
 
@@ -135,7 +159,7 @@ export function frameAdjustFlowBoxAt(
   if (node.selected) {
     return { x: abs.x, y: abs.y, width: size.width, height: size.height }
   }
-  const chrome = nominalAdjustChromeInsets(nodeMeta(node), zoom)
+  const chrome = nominalAdjustChromeInsets(nodeMeta(node), zoom, nodeHasDatabaseBlock(node))
   return {
     x: abs.x - chrome.x,
     y: abs.y - chrome.yTop,
@@ -156,7 +180,7 @@ export function frameAdjustScreenRect(
   if (!el) return null
   const rect = el.getBoundingClientRect()
   if (!node || node.selected) return rect
-  const chrome = nominalAdjustChromeInsets(nodeMeta(node), zoom)
+  const chrome = nominalAdjustChromeInsets(nodeMeta(node), zoom, nodeHasDatabaseBlock(node))
   const expandX = chrome.x * zoom
   const expandYTop = chrome.yTop * zoom
   const expandYBottom = chrome.yBottom * zoom

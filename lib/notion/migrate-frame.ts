@@ -101,6 +101,14 @@ export function isSoleBoardLinkContent(content: string): boolean {
   return leftover === ''
 }
 
+/** Drop leftover `<p>[Database: Name]</p>` when a live table atom is already in the frame. */
+export function stripSyntheticDatabaseLabels(content: string): string | null {
+  if (!content || !/data-notion-database-id=/i.test(content)) return null
+  if (!/\[Database:/i.test(content)) return null
+  const next = content.replace(/<p>\s*\[Database:[^\]]*\]\s*<\/p>/gi, '')
+  return next === content ? null : next
+}
+
 /** True when the frame body is only a databaseBlock (optional empty trailing paragraphs). */
 export function isSoleDatabaseBlockContent(content: string): boolean {
   if (!content || /data-type="(?:boardLink|pageLink)"/.test(content)) return false
@@ -108,6 +116,7 @@ export function isSoleDatabaseBlockContent(content: string): boolean {
   // Remove the DB atom + empty paragraphs; anything left means mixed content
   const stripped = content
     .replace(/<div\b[^>]*data-type="databaseBlock"[^>]*(?:\/>|>[\s\S]*?<\/div>)/gi, '')
+    .replace(/<p>\s*\[Database:[^\]]*\]\s*<\/p>/gi, '')
     .replace(/<p>(?:\s|&nbsp;|<br\s*\/?>)*<\/p>/gi, '')
     .replace(/\s+/g, '')
   return stripped === ''

@@ -1001,12 +1001,92 @@ function BoardsSectionHeader({
   )
 }
 
+// Favorites header — same chrome as Boards; only mounted when a board is starred
+function FavoritesSectionHeader({
+  isExpanded, // Whether the starred list is open
+  onToggleExpand, // Click the header to collapse / expand
+}: {
+  isExpanded: boolean // True while starred boards are visible
+  onToggleExpand: () => void // Flip isFavoritesExpanded
+}) {
+  return (
+    <div
+      className="flex items-center gap-1 pl-1 py-2 text-xs font-medium text-gray-500 hover:text-gray-700 cursor-pointer group transition-colors rounded-lg min-h-[32px]"
+      onClick={onToggleExpand} // Collapse without unstarring
+    >
+      <span>Favorites</span>
+      <ChevronDown
+        className={cn(
+          'h-3 w-3 opacity-0 group-hover:opacity-100 transition-all duration-200',
+          !isExpanded && 'group-hover:-rotate-90' // Point right when collapsed, like Boards
+        )}
+      />
+    </div>
+  )
+}
+
 // Boards List wrapper - NOT droppable, just a container
 function BoardsListWrapper({ children }: { children: React.ReactNode }) {
   return (
     <div>
       {children}
     </div>
+  )
+}
+
+// Starred board row in Favorites — not sortable so ids don't collide with Boards/Projects
+function FavoriteBoardItem({
+  conversation, // Board that has metadata.favorite
+  isActive, // True when this is the open board
+  supabase, // Icon picker persist
+  queryClient, // Cache after icon change
+  userId, // Owner id for icon writes
+}: {
+  conversation: Conversation // Starred conversations row
+  isActive: boolean // Highlight the current board
+  supabase: ReturnType<typeof createClient> // Shared browser client
+  queryClient: ReturnType<typeof useQueryClient> // Conversations cache
+  userId: string // Signed-in user
+}) {
+  const router = useRouter() // Open the starred board
+  const { closeSidebar } = useSidebarContext() // Dismiss the board menu after navigate
+  const openBoard = () => {
+    router.push(`/board/${conversation.id}`) // Same path as a Boards-list row
+    closeSidebar() // Star pick dismisses the nav
+  }
+  return (
+    <li>
+      <div
+        className={cn(
+          'flex items-center gap-1 pr-4 h-8 rounded-lg border border-transparent transition-colors text-sm group relative select-none',
+          isActive
+            ? 'bg-[var(--nod-on-chrome)]' // Open board wash
+            : '[@media(hover:hover)]:hover:bg-[var(--nod-on-chrome)]' // Hover only on real hover
+        )}
+        style={{ paddingLeft: '16px' }} // Align with root Boards rows
+      >
+        <span className="h-5 w-5 flex-shrink-0" aria-hidden />
+        <span className="flex-shrink-0 inline-flex">
+          <PageIconButton
+            conversation={conversation}
+            supabase={supabase}
+            queryClient={queryClient}
+            userId={userId}
+            readOnly={!!conversation.isShared} // Invitees can't change the owner's icon
+          />
+        </span>
+        <Link
+          href={`/board/${conversation.id}`}
+          className="flex items-center gap-2 flex-1 min-w-0 text-gray-700 dark:text-gray-300"
+          onClick={(e) => {
+            e.preventDefault() // router.push survives popup unmount
+            openBoard()
+          }}
+        >
+          <span className="truncate">{conversation.title}</span>
+        </Link>
+      </div>
+    </li>
   )
 }
 
@@ -1025,6 +1105,7 @@ interface Conversation {
     icon?: PageIconMeta // Emoji / image / default blank|filled
     hasContent?: boolean // True → filled page glyph when no custom icon
     notionPageId?: string // Linked Notion page when imported
+    favorite?: boolean // Top-bar star — lists this board under Favorites
     [key: string]: any
   }
 }
@@ -1297,6 +1378,7 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
   const [isRenaming, setIsRenaming] = useState(false)
   const [isBoardsExpanded, setIsBoardsExpanded] = useState(true) // Boards section expanded/collapsed state
   const [isProjectsExpanded, setIsProjectsExpanded] = useState(true) // Projects section expanded/collapsed state
+  const [isFavoritesExpanded, setIsFavoritesExpanded] = useState(true) // Favorites open by default when a star exists
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set()) // Track which individual projects are expanded
   const [activeId, setActiveId] = useState<string | null>(null) // Currently dragging board ID
   const [dragOverId, setDragOverId] = useState<string | null>(null) // Board being dragged over
@@ -2296,6 +2378,14 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
     return !isArchived && matchesSearch
   })
 
+  // Starred boards for the Favorites header (still also listed under Boards / Projects)
+  const favoriteBoards = conversations.filter((conversation) => {
+    const isArchived = conversation.metadata?.archived === true // Hidden archives stay out of Favorites
+    const isFavorite = conversation.metadata?.favorite === true // Top-bar star writes this flag
+    const matchesSearch = conversation.title.toLowerCase().includes(searchQuery.toLowerCase()) // Same search as Boards
+    return !isArchived && isFavorite && matchesSearch
+  })
+
   // Depth-aware flat list for nested sub-page rendering in the Boards menu
   // When searching, expand all so nested matches remain visible
   const nestedBoardRows = useMemo(() => {
@@ -2970,6 +3060,28 @@ export default function AppSidebar({ user: initialUser }: AppSidebarProps) {
         {/* Boards/Conversations List - hidden when collapsed */}
         {!isCollapsed && (
           <nav className="flex-1 min-h-0 px-4 pb-4 overflow-y-auto [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-gray-400/50 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:hover:bg-gray-400/70 dark:[&::-webkit-scrollbar-thumb]:bg-gray-500/50 dark:[&::-webkit-scrollbar-thumb]:hover:bg-gray-500/70 [&::-webkit-scrollbar]:bg-transparent">
+            {favoriteBoards.length > 0 && (
+              <>
+                <FavoritesSectionHeader
+                  isExpanded={isFavoritesExpanded} // Hide the list without clearing stars
+                  onToggleExpand={() => setIsFavoritesExpanded(!isFavoritesExpanded)}
+                />
+                {isFavoritesExpanded && (
+                  <ul className="space-y-1">
+                    {favoriteBoards.map((conversation) => (
+                      <FavoriteBoardItem
+                        key={`favorite-${conversation.id}`} // Prefix so React keys stay unique vs Boards
+                        conversation={conversation}
+                        isActive={pathname === `/board/${conversation.id}`}
+                        supabase={supabase}
+                        queryClient={queryClient}
+                        userId={user.id}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
             <DndContext
               sensors={sensors}
               collisionDetection={(args) => {

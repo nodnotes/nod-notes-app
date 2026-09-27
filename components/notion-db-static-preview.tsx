@@ -49,6 +49,58 @@ export function remainingRowsCount(hiddenLoaded: number, rowsHasMore: boolean): 
   return Math.max(0, hiddenLoaded) // Loaded but still capped on this frame
 }
 
+/** Hangs under a DB frame (outside the box). Same react-query cache as the table. */
+export function DbFrameRevealChrome({
+  notionDatabaseId,
+  rowCap,
+  onShowMore,
+  onShowLess,
+  className,
+}: {
+  notionDatabaseId: string
+  rowCap: number
+  onShowMore?: () => void
+  onShowLess?: () => void
+  className?: string
+}) {
+  const { data } = useQuery({
+    queryKey: ['notion-database', notionDatabaseId] as const,
+    queryFn: async (): Promise<NotionDatabaseTable> => {
+      const url = new URL(
+        `/api/notion/database/${encodeURIComponent(notionDatabaseId)}`,
+        typeof window !== 'undefined' ? window.location.origin : 'http://localhost'
+      )
+      url.searchParams.set('limit', String(NOTION_DB_CLIENT_ROW_PAGE))
+      const res = await fetch(url.toString())
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error((json as { error?: string }).error || 'Failed to load database')
+      return json as NotionDatabaseTable
+    },
+    staleTime: 5 * 60 * 1000,
+    enabled: !!notionDatabaseId,
+    retry: 1,
+    refetchOnWindowFocus: false,
+  })
+  if (!data) return null
+  const shown = Math.min(rowCap, data.rows.length)
+  const hiddenLoaded = Math.max(0, data.rows.length - shown)
+  const canShowMore =
+    hiddenLoaded > 0 || (!!data.rowsHasMore && shown < NOTION_DB_CLIENT_ROW_CAP)
+  const canShowLess = rowCap > COMPACT_PREVIEW_ROWS
+  if (!canShowMore && !canShowLess) return null
+  return (
+    <DbRowsRevealFooter
+      className={className}
+      hiddenLoaded={hiddenLoaded}
+      rowsHasMore={!!data.rowsHasMore}
+      canShowMore={canShowMore}
+      canShowLess={canShowLess}
+      onShowMore={onShowMore}
+      onShowLess={onShowLess}
+    />
+  )
+}
+
 /** Dual-action footer: `+# rows — show more / show less`. */
 export function DbRowsRevealFooter({
   hiddenLoaded,
@@ -130,10 +182,6 @@ export function NotionDbStaticPreview({
   completePaint = false,
   /** How many rows to paint (Preview pages this; Expanded uses the full cap). */
   rowCap,
-  /** Reveal the next page of rows — parent owns the cap. */
-  onShowMore,
-  /** Collapse one page toward the compact preview — parent owns the cap. */
-  onShowLess,
   /** Frame already selected: row click warms that row (and can switch to another while warm). */
   onRowEngage,
   warmRowId = null,
@@ -180,7 +228,7 @@ export function NotionDbStaticPreview({
     [notionDatabaseId]
   )
   const queryClient = useQueryClient()
-  const { data, isPending } = useQuery({
+  const { data, error: queryError, isPending } = useQuery({
     queryKey: tableQueryKey,
     queryFn: async (): Promise<NotionDatabaseTable> => {
       const url = new URL(
@@ -195,6 +243,7 @@ export function NotionDbStaticPreview({
     },
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
+    retry: 1, // A hung Notion dump used to retry into a forever shimmer
     refetchOnWindowFocus: false, // Idle preview — live table owns refocus refresh
   })
 
@@ -328,16 +377,21 @@ export function NotionDbStaticPreview({
     )
   }
 
-  if (!data) {
+  if (queryError || !data) {
+    const message =
+      queryError instanceof Error ? queryError.message : 'Database unavailable'
+    const linked =
+      /linked notion view/i.test(message) ||
+      /no data sources accessible/i.test(message) ||
+      /share the original database/i.test(message)
+    if (linked) return null // Title + Notion chrome already sit above
     return (
       <div
-        className={cn(
-          'tt-notion-db tt-notion-db-static nokey min-w-[420px] min-h-[120px] tt-frame-shimmer rounded-sm',
-          className
-        )}
+        className={cn('tt-notion-db tt-notion-db-static nokey py-2 text-sm text-red-600', className)}
         style={{ minWidth, minHeight }}
-        aria-hidden
-      />
+      >
+        {message}
+      </div>
     )
   }
 
@@ -347,12 +401,6 @@ export function NotionDbStaticPreview({
   const rows = viewedRows.slice(0, effectiveCap)
   const tablePixelWidth = visibleCols.reduce((sum, prop) => sum + columnWidthPx(prop, settings), 0)
   const vLines = settings.layoutOptions.showVerticalLines
-  const hiddenLoaded = Math.max(0, viewedRows.length - rows.length)
-  // Show-more while under the client cap; show-less once past the compact preview.
-  const canShowMore =
-    hiddenLoaded > 0 || (!!data.rowsHasMore && rows.length < NOTION_DB_CLIENT_ROW_CAP)
-  const canShowLess = effectiveCap > COMPACT_PREVIEW_ROWS
-  const showRevealFooter = canShowMore || canShowLess
   // Still window when painting a large expanded slice; small caps paint in one tbody.
   const useChunkedRows = !completePaint && effectiveCap > COMPACT_PREVIEW_ROWS
 
@@ -582,16 +630,7 @@ export function NotionDbStaticPreview({
           }}
         />
       ) : null}
-      {showRevealFooter ? (
-        <DbRowsRevealFooter
-          hiddenLoaded={hiddenLoaded}
-          rowsHasMore={!!data.rowsHasMore}
-          canShowMore={canShowMore}
-          canShowLess={canShowLess}
-          onShowMore={onShowMore}
-          onShowLess={onShowLess}
-        />
-      ) : null}
+      {/* Show-more lives on the RF frame, under the box — not in this fill */}
     </div>
   )
 }

@@ -252,7 +252,7 @@ export async function queryNotionViewPageIds(
   const queryId = createPayload.id as string
   let cursor: string | undefined = createPayload.has_more ? createPayload.next_cursor : undefined
   let pages = 0
-  while (cursor && pages < 100) {
+  while (cursor && pages < 2 && pageIds.length < 200) { // Cap — linked views only need the visible set
     const params = new URLSearchParams({
       start_cursor: cursor,
       page_size: '100',

@@ -17,6 +17,7 @@ import {
 import { NodeViewWrapper, type NodeViewProps } from '@tiptap/react'
 import { Table2 } from 'lucide-react'
 import { BoardOpenMenu } from '@/components/board-open-menu'
+import { NestedBoardPreview } from '@/components/nested-board-preview' // In-block iframe under this title
 import { NotionMarkIcon } from '@/components/notion-mark-icon'
 import {
   COMPACT_PREVIEW_ROWS,
@@ -47,6 +48,14 @@ import {
 } from '@/lib/notion/database-view'
 import { cn } from '@/lib/utils'
 
+/** Drop a synthetic `[Database: Name]` wrapper unless Notion’s own title uses those brackets. */
+function notionDbDisplayTitle(raw: string, liveNotionTitle?: string): string {
+  const m = raw.match(/^\[Database:\s*(.*)\]$/i)
+  if (!m) return raw
+  if (liveNotionTitle && liveNotionTitle === raw) return raw
+  return m[1].trim() || raw
+}
+
 export function DatabaseBlockView({ node, updateAttributes, editor }: NodeViewProps) {
   const notionDatabaseId = (node.attrs.notionDatabaseId as string | null) || null
   const icon = (node.attrs.icon as string | null) || null
@@ -54,6 +63,7 @@ export function DatabaseBlockView({ node, updateAttributes, editor }: NodeViewPr
   const viewSettingsJson = (node.attrs.viewSettings as string | null) || null
   const actions = useBoardLinkActions()
   const hostPageId = actions.hostLinkedBoardId || null
+  const previewOpen = !!(hostPageId && actions.previewBoardId === hostPageId) // This title owns the open preview
   const notionUrl = url || actions.notionUrl || null
   const frameHost = (
     editor?.storage as
@@ -73,7 +83,9 @@ export function DatabaseBlockView({ node, updateAttributes, editor }: NodeViewPr
   // RF `selected` from the host frame — not DOM attrs (those stayed true after deselect)
   const frameSelected = useFramePanelSelected([hostMessageId, hostNodeId])
 
-  const [title, setTitle] = useState<string>((node.attrs.title as string) || 'Untitled database')
+  const [title, setTitle] = useState<string>(
+    notionDbDisplayTitle((node.attrs.title as string) || 'Untitled database')
+  )
   const [editing, setEditing] = useState(false)
   const titleRef = useRef<HTMLSpanElement>(null)
   const boxRef = useRef<HTMLDivElement>(null)
@@ -100,7 +112,7 @@ export function DatabaseBlockView({ node, updateAttributes, editor }: NodeViewPr
         return next
       })
     }
-    apply(queryClient.getQueryData<NotionDatabaseTable>(key)?.title)
+    apply(queryClient.getQueryData<NotionDatabaseTable>(key)?.title) // Live Notion name wins over `[Database: …]` junk
     return queryClient.getQueryCache().subscribe((event) => {
       if (event.type !== 'updated' && event.type !== 'added') return
       const qk = event.query.queryKey
@@ -410,7 +422,7 @@ export function DatabaseBlockView({ node, updateAttributes, editor }: NodeViewPr
   }, [effectiveRowCap])
 
   useEffect(() => {
-    const attrTitle = (node.attrs.title as string) || 'Untitled database'
+    const attrTitle = notionDbDisplayTitle((node.attrs.title as string) || 'Untitled database')
     setTitle(attrTitle)
     if (!editing && titleRef.current && titleRef.current.textContent !== attrTitle) {
       titleRef.current.textContent = attrTitle
@@ -507,6 +519,26 @@ export function DatabaseBlockView({ node, updateAttributes, editor }: NodeViewPr
           </span>
         ) : null}
       </div>
+      {previewOpen && hostPageId && (
+        <div
+          className="tt-board-link-embed w-full pt-2 pb-2 box-border" // CSS 8px L/R — peach on both frame edges
+          contentEditable={false}
+          onPointerDown={(e) => {
+            const frame = (e.currentTarget as HTMLElement).closest('.react-flow__node')
+            if (frame?.classList.contains('selected')) e.stopPropagation() // Unselected: RF selects the frame first
+          }}
+        >
+          <NestedBoardPreview
+            conversationId={hostPageId}
+            title={title || 'Board'}
+            visible
+            fill={false}
+            hostNodeId={actions.hostNodeId ?? undefined}
+            cornerRadius={6}
+            onClose={() => actions.closePreview()}
+          />
+        </div>
+      )}
 
       {notionDatabaseId ? (
         <div ref={boxRef} className="min-w-0">

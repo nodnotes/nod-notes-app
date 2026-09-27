@@ -1,16 +1,12 @@
 'use client'
 
-// Board preview via iframe. Nested RF inside a host node cannot pan/zoom (host `nopan`).
-// Iframes inside a CSS-transformed RF node also get broken hit-testing — so the whole
-// preview shell (chrome + iframe) is portaled to document.body and screen-synced to
-// an in-item spacer. Keeping chrome+iframe in one fixed box stops the map from
-// painting over the title bar.
+// Board preview via iframe, in-flow as a block in the host frame (not a portal).
+// Nested RF inside a host node cannot pan/zoom (host `nopan`) — the iframe is a
+// separate document so preview pan/zoom still works. Host zoom scales the frame.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { useReactFlow } from 'reactflow'
-import { Expand, Loader2, X } from 'lucide-react'
-import { useRouter } from 'next/navigation'
+import { Loader2 } from 'lucide-react'
 import { useReactFlowContext } from '@/components/react-flow-context'
 import {
   PREVIEW_READY_MESSAGE,
@@ -22,8 +18,7 @@ import { forwardWheelToHostBoard } from '@/lib/preview-host-input'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
 
-const PREVIEW_HEIGHT = 360
-const CHROME_HEIGHT = 32
+export const PREVIEW_HEIGHT = 360 // Hug / shaped-frame inflate uses this card height
 const WARM_WIDTH = 480
 
 type NestedBoardPreviewProps = {
@@ -33,15 +28,20 @@ type NestedBoardPreviewProps = {
   visible?: boolean
   fill?: boolean
   hostNodeId?: string // Host map item — chrome drag moves this node
-  cornerRadius?: number // Host fill radius (6px × chromeScale) — portal cannot inherit --tt-frame-radius
+  cornerRadius?: number // Inset preview card radius (6px × chromeScale)
 }
 
-type FrameBox = {
-  top: number
-  left: number
-  width: number // Layout width (unscaled) — iframe resolution stays stable during host zoom
-  height: number
-  scale: number // Host zoom factor: visual size = layout × scale
+/** Host RF frame is selected — preview style-select is only allowed after that. */
+function hostFrameIsSelected(
+  from: HTMLElement | null,
+  hostNodeId?: string,
+  getNode?: (id: string) => { selected?: boolean } | undefined
+): boolean {
+  if (hostNodeId && getNode) {
+    const n = getNode(hostNodeId) // RF store — classList can lag a tick behind
+    if (n) return !!n.selected
+  }
+  return !!from?.closest('.react-flow__node')?.classList.contains('selected')
 }
 
 function isPreviewFocusChrome(target: EventTarget | null): boolean {
@@ -66,7 +66,7 @@ function isPreviewFocusChrome(target: EventTarget | null): boolean {
 export function NestedBoardPreview({
   conversationId,
   title,
-  onClose,
+  onClose: _onClose, // Close lives on the boardLink open menu — no top bar X
   visible = true,
   fill = false,
   hostNodeId,
@@ -74,12 +74,10 @@ export function NestedBoardPreview({
 }: NestedBoardPreviewProps) {
   const previewFocus = usePreviewFocus()
   const { getSetNodes, reactFlowInstance } = useReactFlowContext()
-  const { getNode } = useReactFlow() // Host node position for chrome-drag
-  const router = useRouter()
+  const { getNode } = useReactFlow() // Host node position for unfocused-body drag
   const iframeRef = useRef<HTMLIFrameElement>(null)
-  const chromeRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
-  const spacerRef = useRef<HTMLDivElement>(null) // In-item box the portaled shell mirrors
+  const shellRef = useRef<HTMLDivElement>(null) // In-flow card — ResizeObserver reads layout size
   const wasVisibleRef = useRef(false)
   const dragRef = useRef<{
     startX: number
@@ -87,90 +85,55 @@ export function NestedBoardPreview({
     origX: number
     origY: number
   } | null>(null)
-  const [frameBox, setFrameBox] = useState<FrameBox | null>(null)
+  const [layoutSize, setLayoutSize] = useState({ w: WARM_WIDTH, h: PREVIEW_HEIGHT }) // Iframe resize only
   const [loadedRule, setLoadedRule] = useState<'wide' | 'college' | 'narrow'>('college')
   const [loadedStyle, setLoadedStyle] = useState<'none' | 'dotted' | 'lined' | 'grid'>('dotted')
   const [navReady, setNavReady] = useState(false)
-  const [mounted, setMounted] = useState(false)
   const isFocused = previewFocus?.focusedBoardId === conversationId
   const embedSrc = `/embed/${conversationId}`
 
-  // Select on open only — clicking away deselects until the user clicks the preview again
+  // Select on open only when the host frame is already selected — unselected host: frame first
   useEffect(() => {
     if (!previewFocus) return
     const justOpened = visible && !wasVisibleRef.current
     wasVisibleRef.current = visible
     if (!justOpened) return
+    if (!hostFrameIsSelected(shellRef.current, hostNodeId, getNode)) return // Don’t style-select over an unselected frame
     previewFocus.selectPreview({
       pageId: conversationId,
       title,
       boardRule: loadedRule,
       boardStyle: loadedStyle,
     })
-  }, [visible, conversationId, title, loadedRule, loadedStyle, previewFocus])
-
-  useEffect(() => {
-    setMounted(true)
-  }, [])
+  }, [visible, conversationId, title, loadedRule, loadedStyle, previewFocus, hostNodeId, getNode])
 
   useEffect(() => {
     setNavReady(false)
   }, [conversationId])
 
-  // Sync portaled shell to spacer. Use layout size + CSS scale so host zoom doesn’t
-  // change the iframe’s internal resolution (that was re-fitViewing nested items every frame).
+  // Layout size only — host zoom is CSS on the frame; do not re-fitView the embed every tick
   useEffect(() => {
-    if (!mounted) return
-    let raf = 0
-    const tick = () => {
-      if (visible && spacerRef.current) {
-        const el = spacerRef.current
-        const rect = el.getBoundingClientRect()
-        const layoutW = Math.max(el.offsetWidth, 1)
-        const layoutH = Math.max(el.offsetHeight, 1)
-        // Screen size / layout size ≈ host viewport zoom (uniform under RF transform)
-        const scale = rect.width / layoutW
-        const next = {
-          top: rect.top,
-          left: rect.left,
-          width: layoutW,
-          height: layoutH,
-          scale: Number.isFinite(scale) && scale > 0 ? scale : 1,
-        }
-        setFrameBox((prev) => {
-          if (
-            prev &&
-            Math.abs(prev.top - next.top) < 0.5 &&
-            Math.abs(prev.left - next.left) < 0.5 &&
-            Math.abs(prev.width - next.width) < 0.5 &&
-            Math.abs(prev.height - next.height) < 0.5 &&
-            Math.abs(prev.scale - next.scale) < 0.001
-          ) {
-            return prev
-          }
-          return next
-        })
-      } else if (!visible) {
-        setFrameBox({
-          top: -10000,
-          left: -10000,
-          width: WARM_WIDTH,
-          height: PREVIEW_HEIGHT,
-          scale: 1,
-        })
-      }
-      raf = window.requestAnimationFrame(tick)
+    const el = shellRef.current
+    if (!el || !visible) return
+    const measure = () => {
+      const w = Math.max(el.offsetWidth, 1) // Unscaled iframe resolution
+      const h = Math.max(el.offsetHeight, 1)
+      setLayoutSize((prev) =>
+        Math.abs(prev.w - w) < 0.5 && Math.abs(prev.h - h) < 0.5 ? prev : { w, h }
+      )
     }
-    raf = window.requestAnimationFrame(tick)
-    return () => window.cancelAnimationFrame(raf)
-  }, [mounted, visible])
+    measure()
+    const ro = new ResizeObserver(measure) // Frame resize, not board pan/zoom
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [visible])
 
-  // Only remasure embed when layout box changes — not when host zoom (scale) changes
-  const layoutW = frameBox?.width
-  const layoutH = frameBox?.height
+  // Only remasure embed when layout box changes — not when host zoom changes
+  const layoutW = layoutSize.w
+  const layoutH = layoutSize.h
   useEffect(() => {
     if (!visible || !layoutW || !layoutH || !iframeRef.current?.contentWindow) return
-    if (layoutW < 16 || layoutH < CHROME_HEIGHT + 16) return
+    if (layoutW < 16 || layoutH < 16) return
     iframeRef.current.contentWindow.postMessage(
       { type: PREVIEW_RESIZE_MESSAGE, pageId: conversationId, fit: true },
       window.location.origin
@@ -251,17 +214,6 @@ export function NestedBoardPreview({
     }
   }, [conversationId, previewFocus])
 
-  // Chrome wheel always hits the host map; deselected body wheel does too (embed is static)
-  useEffect(() => {
-    const chrome = chromeRef.current
-    if (!chrome || !visible) return
-    const onWheel = (e: WheelEvent) => {
-      forwardWheelToHostBoard(e)
-    }
-    chrome.addEventListener('wheel', onWheel, { passive: false, capture: true })
-    return () => chrome.removeEventListener('wheel', onWheel, { capture: true })
-  }, [visible])
-
   useEffect(() => {
     const body = bodyRef.current
     if (!body || !visible || isFocused) return
@@ -274,6 +226,7 @@ export function NestedBoardPreview({
 
   const handleSelectChrome = useCallback(() => {
     if (!previewFocus) return
+    if (!hostFrameIsSelected(shellRef.current, hostNodeId, getNode)) return // Frame select first
     previewFocus.selectPreview({
       pageId: conversationId,
       title,
@@ -286,15 +239,21 @@ export function NestedBoardPreview({
     loadedRule,
     loadedStyle,
     previewFocus,
+    hostNodeId,
+    getNode,
   ])
 
-  // Portaled preview sits outside RF — drag moves the host frame like an unselected frame (no select on drag)
+  // Chrome drag moves the host frame like an unselected frame (no select on drag)
   const onHostDragPointerDown = useCallback(
     (e: React.PointerEvent) => {
       if ((e.target as HTMLElement).closest('button')) return
       if (!hostNodeId) return
       const node = getNode(hostNodeId)
       if (!node) return
+      if (!node.selected) {
+        previewFocus?.clearPreviewFocus() // Drop any other preview focus
+        return // Bubble — RF selects/drags the host frame first
+      }
       e.preventDefault()
       e.stopPropagation()
       previewFocus?.clearPreviewFocus()
@@ -344,86 +303,34 @@ export function NestedBoardPreview({
     dragRef.current = null
   }, [])
 
-  const shell =
-    mounted &&
-    frameBox &&
-    createPortal(
+  return (
       <div
+        ref={shellRef}
         data-page-preview={conversationId}
         className={cn(
-          'flex flex-col overflow-hidden border bg-gray-50 dark:bg-[#0f0f0f]', // Clip to host 6px — rounded-xl would stack a second curve
+          'flex flex-col overflow-hidden border bg-gray-50 dark:bg-[#0f0f0f]', // In-flow block — fill shows around the inset
+          fill ? 'h-full min-h-0 min-w-0 w-full flex-1' : 'w-full min-w-[280px] shrink-0',
           isFocused
             ? 'border-blue-500 dark:border-blue-400 ring-2 ring-blue-400/40'
-            : 'border-gray-200 dark:border-[#2f2f2f]'
+            : 'border-gray-200 dark:border-[#2f2f2f]',
+          !visible && 'hidden'
         )}
         style={{
-          position: 'fixed',
-          top: frameBox.top,
-          left: frameBox.left,
-          width: frameBox.width,
-          height: frameBox.height,
-          borderRadius: cornerRadius, // Same as host fill; CSS scale() below keeps it matched under zoom
-          // Scale with host zoom; origin top-left so top/left stay glued to the spacer
-          transform: frameBox.scale !== 1 ? `scale(${frameBox.scale})` : undefined,
-          transformOrigin: 'top left',
-          // Above map content; below page chrome (top bar / minimap / nav / brand = z-10+)
-          zIndex: visible ? 4 : -1,
-          opacity: visible ? 1 : 0,
-          pointerEvents: visible ? 'auto' : 'none',
+          height: fill ? '100%' : PREVIEW_HEIGHT, // Hug the content column; fixed height when not filling
+          borderRadius: cornerRadius, // Inner card — not flush to the fill
         }}
-        onClick={(e) => e.stopPropagation()}
-        onDoubleClick={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          const frame = (e.currentTarget as HTMLElement).closest('.react-flow__node')
+          if (frame?.classList.contains('selected')) e.stopPropagation() // Selected: keep caret/atom quiet
+        }}
+        onDoubleClick={(e) => {
+          const frame = (e.currentTarget as HTMLElement).closest('.react-flow__node')
+          if (frame?.classList.contains('selected')) e.stopPropagation()
+        }}
       >
         <div
-          ref={chromeRef}
-          data-preview-style-chrome
-          className={cn(
-            'flex items-center justify-between px-2 border-b shrink-0 cursor-grab active:cursor-grabbing',
-            isFocused
-              ? 'border-blue-400 bg-blue-50/90 dark:bg-blue-950/50'
-              : 'border-gray-200 dark:border-[#2f2f2f] bg-white/80 dark:bg-[#1f1f1f]/80'
-          )}
-          style={{ height: CHROME_HEIGHT }}
-          onPointerDown={onHostDragPointerDown}
-          onPointerMove={onHostDragPointerMove}
-          onPointerUp={onHostDragPointerEnd}
-          onPointerCancel={cancelHostDrag}
-          title="Drag to move item · click to select preview"
-        >
-          <span className="text-xs font-medium text-gray-700 dark:text-gray-200 truncate">
-            {title || 'Board'}
-          </span>
-          <div className="flex items-center gap-0.5 shrink-0">
-            <button
-              type="button"
-              className="h-6 w-6 flex items-center justify-center rounded text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]"
-              title="Open full board"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation()
-                router.push(`/board/${conversationId}`)
-              }}
-            >
-              <Expand className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              className="h-6 w-6 flex items-center justify-center rounded text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]"
-              title="Close preview"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation()
-                previewFocus?.clearPreviewFocus()
-                onClose()
-              }}
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </div>
-
-        <div
           ref={bodyRef}
+          data-preview-style-chrome // Click the board (no top bar) to style-select
           className={cn('relative flex-1 min-h-0', !isFocused && 'cursor-grab active:cursor-grabbing')}
           onPointerDown={!isFocused ? onHostDragPointerDown : undefined}
           onPointerMove={!isFocused ? onHostDragPointerMove : undefined}
@@ -463,25 +370,7 @@ export function NestedBoardPreview({
             </div>
           )}
         </div>
-      </div>,
-      document.body
-    )
-
-  return (
-    <>
-      {/* In-item spacer only — portaled shell paints here in screen space */}
-      <div
-        ref={spacerRef}
-        className={cn(
-          'w-full min-w-[280px]',
-          fill ? 'flex-1 min-h-0 h-full' : 'shrink-0',
-          !visible && 'hidden'
-        )}
-        style={{ height: fill ? '100%' : PREVIEW_HEIGHT }}
-        aria-hidden
-      />
-      {shell}
-    </>
+      </div>
   )
 }
 

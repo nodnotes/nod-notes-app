@@ -36,33 +36,41 @@ export async function fetchNotionPageLastEdited(
 }
 
 /**
- * Block types we must NEVER DELETE on push.
- * Notion DELETE on child_page / child_database moves the entire page/DB to Trash
- * (not just the embed block) — that is what made “authorize / import” look like
- * it trashed authorized pages.
+ * Leaf text types we may DELETE on push. Everything else stays.
+ * Fail-closed: a toggle / column that wraps child_page or child_database must
+ * never be deleted — Notion DELETE on that wrapper moves the nested pages/DBs
+ * to Trash (that is what emptied the Tasks tree).
  */
-const PROTECTED_BLOCK_TYPES = new Set([
-  'child_page', // Nested page — DELETE trashes the page itself
-  'child_database', // Nested DB — DELETE trashes the database itself
-  'link_to_page', // Reference to another page; do not remove
+const REPLACEABLE_LEAF_TYPES = new Set([
+  'paragraph',
+  'heading_1',
+  'heading_2',
+  'heading_3',
+  'bulleted_list_item',
+  'numbered_list_item',
+  'to_do',
+  'quote',
+  'divider',
+  'code',
 ])
 
-/** True when this top-level block is safe to remove before re-appending TipTap content. */
-function isReplaceableBodyBlock(type: string): boolean {
-  return !PROTECTED_BLOCK_TYPES.has(type) // Keep nested pages/DBs and page links intact
+/** True when this top-level block is a leaf we can replace with TipTap text. */
+function isReplaceableBodyBlock(block: NotionBlock): boolean {
+  if (block.has_children) return false // Nested pages/DBs/toggles — DELETE would trash them
+  return REPLACEABLE_LEAF_TYPES.has(block.type)
 }
 
-/** Archive replaceable top-level body blocks only (never child_page / child_database). */
+/** Archive replaceable top-level body blocks only (never wrappers or nested pages/DBs). */
 async function archiveReplaceablePageChildren(
   accessToken: string,
   pageId: string
 ): Promise<void> {
   const children = await fetchBlockChildren(accessToken, pageId) // Current Notion body
-  const toRemove = children.filter((block) => isReplaceableBodyBlock(block.type)) // Skip protected
+  const toRemove = children.filter((block) => isReplaceableBodyBlock(block))
   await Promise.all(
     toRemove.map(async (block) => {
       const res = await fetch(`${NOTION_API}/blocks/${block.id}`, {
-        method: 'DELETE', // Soft-trash this content block only
+        method: 'DELETE', // Soft-trash this leaf text block only
         headers: notionHeaders(accessToken),
       })
       if (!res.ok) {

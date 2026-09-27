@@ -62,11 +62,9 @@ import {
   ArrowUpDown,
   Zap,
   Search,
-  RefreshCw, // Actions-bar Turn into (same glyph as ⋮⋮ block menu)
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
-import { useQueryClient } from '@tanstack/react-query'
 import { useTheme } from './theme-provider'
 import { TidyUpIcon } from './tidy-up-icon' // Layout bar — 2×2 rounded squares
 import { ShareBoardMenu } from './share-board-menu' // Share dropdown: Notion people + role links
@@ -98,19 +96,8 @@ import { UTILITY_TOGGLE_TOP_BAR_INSET_PX } from '@/lib/top-bar-chrome-fit' // Sh
 import { usePhoneModeMenu } from './phone-mode-menu-context' // Phone pill drill-in portal host
 import { AiOriginTopBarToggle } from './ai-origin-top-bar-toggle' // Sparkles pin left of Share
 import { useAiEditSession } from '@/lib/ai/edit-session' // AI sparkles width in shareCompact measure
-import {
-  getAiBlockSelection,
-  subscribeAiSelection,
-} from '@/lib/ai/selection-bridge' // Armed ⋮⋮ block → enable Turn into
 import { LegoBrickIcon } from './lego-brick-icon' // Frame-group lock: two bricks, top one stud back
 import { TOOLBAR_MENU_PLACEMENT } from '@/lib/menu-placement' // Actions-style: under the trigger, never over the board path
-import { boardTitleOrDefault } from '@/lib/board-title' // Empty conversation names show New board
-import {
-  TurnIntoMenuItems,
-  applyToolbarTurnInto,
-  readToolbarBlockType,
-} from '@/components/turn-into-menu' // Actions-bar Turn into (Format / Property)
-import type { BlockTypeId, BoardInTarget } from '@/components/block-actions-menu'
 import {
   DEFAULT_STROKE_SIZE,
   MIN_TIP_DIAMETER_PX,
@@ -325,7 +312,6 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
   const { toolsHost, phoneTools, setPhoneTools, setShareCompact } = usePhoneModeMenu() // Pill + share/AI→More before tools leave
   const { hasAiContent, aiTopBarPinned } = useAiEditSession() // Pinned sparkles fold with shareCompact
   const { reactFlowInstance, isLocked, lineStyle: verticalLineStyle, setLineStyle: setVerticalLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, isDrawing, setIsDrawing, drawTool: contextDrawTool, setDrawTool: setContextDrawTool, smartDraw, setSmartDraw, eraserMode, setEraserMode, drawTipSize, setDrawTipSize, drawTipZoomLocked, setDrawTipZoomLocked, eraserTipSize, setEraserTipSize, eraserTipZoomLocked, setEraserTipZoomLocked, pencilPalette, pencilColorIndex, setPencilColorIndex, setPencilColorAt, addPencilColor, removePencilColor, mapUndo, mapRedo, canMapUndo, canMapRedo, getMapTakeSnapshot, getSetNodes } = useReactFlowContext()
-  const queryClientForAi = useQueryClient() // Turn into board list + conversations invalidate
   // Board rule/style live in top-bar More (BoardTopBarShare), not the View toolbar
   const { resolvedTheme } = useTheme() // Get theme for panel-matching opacity values
   const borderStyleButtonRef = useRef<HTMLButtonElement>(null)
@@ -696,8 +682,6 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     hasMulti: false,
     locked: false,
   })
-  const [hasArmedBlock, setHasArmedBlock] = useState(false) // ⋮⋮ blue-wash block — gates Turn into
-  const canTurnInto = hasArmedBlock // Turn into needs an armed TipTap block (not frame-only)
   const preferencesLoadedRef = useRef(false) // Track if preferences have been loaded
   const toolbarRef = useRef<HTMLDivElement>(null)
   const leftSectionRef = useRef<HTMLDivElement>(null)
@@ -901,29 +885,6 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     })
   }
 
-  // Checkmark for Actions-bar Turn into Format pane
-  const [turnIntoBlockType, setTurnIntoBlockType] = useState<BlockTypeId>('text')
-
-  // Re-read caret block type when opening Turn into
-  const syncTurnIntoFromEditor = () => {
-    setTurnIntoBlockType(readToolbarBlockType(editor))
-  }
-
-  // Boards available for Turn into → Board in (same list as ⋮⋮ menu)
-  const boardInTargetsForToolbar = (): BoardInTarget[] => {
-    const convs =
-      (queryClientForAi.getQueryData(['conversations']) as
-        | Array<{ id: string; title?: string | null }>
-        | undefined) || []
-    return [
-      { id: conversationId || '', title: 'Current board' },
-      ...convs
-        .filter((c) => c.id !== conversationId)
-        .slice(0, 40)
-        .map((c) => ({ id: c.id, title: boardTitleOrDefault(c.title) })),
-    ]
-  }
-
   // Persist metadata patches for selected frames (board pin / frame-group lock)
   const persistFrameMetaPatches = async (
     nodes: ReturnType<typeof getSelectedFrames>,
@@ -995,21 +956,6 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh closes over reactFlowInstance + clickedEdge
   }, [reactFlowInstance, clickedEdge])
-
-  // Armed ⋮⋮ block selection (AI bridge) — Turn into stays grey until a block is armed
-  useEffect(() => {
-    const sync = () => {
-      const sel = getAiBlockSelection()
-      setHasArmedBlock(Boolean(sel && sel.count > 0))
-    }
-    sync()
-    return subscribeAiSelection(sync)
-  }, [])
-
-  // Close gated menus if their selection disappears while open
-  useEffect(() => {
-    if (!canTurnInto && openDropdown === 'turnInto') setOpenDropdown(null)
-  }, [canTurnInto, openDropdown])
 
   // Lock selected frames to the board (pin: not draggable)
   const handleToggleBoardLock = () => {
@@ -1455,7 +1401,6 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
           : [
             { id: 'search', width: boardSearchOpen ? 180 : 40 }, // Icon + field when open; icon when early-collapsed
             { id: 'actions', width: 120 }, // Filter / Sort / Automations icons
-            { id: 'turnInto', width: 40 }, // Turn into — own section left of Filter
             { id: 'undoRedo', width: 70 },
           ]
 
@@ -1477,7 +1422,6 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
           : [
             { id: 'search', width: boardSearchOpen ? 180 : 40 }, // Search title already collapsed
             { id: 'actions', width: 120 }, // Filter cluster already collapsed
-            { id: 'turnInto', width: titledToolWidth('Turn into') }, // Title stays until rest-collapse
             { id: 'undoRedo', width: 70 },
           ]
 
@@ -1494,7 +1438,6 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
           : [
             { id: 'search', width: boardSearchOpen ? 180 : titledToolWidth('Search') }, // Title hides when the field slides out
             { id: 'actions', width: titledToolWidth('Filter') + 2 + titledToolWidth('Sort') + 2 + titledToolWidth('Automations') },
-            { id: 'turnInto', width: titledToolWidth('Turn into') }, // Own section left of Filter
             { id: 'undoRedo', width: 70 },
           ]
 
@@ -1707,74 +1650,6 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
             {!hideUndoMoreSlash && (
               <span className="flex h-7 items-center text-2xl font-thin text-gray-300 dark:text-gray-500 mx-1 flex-shrink-0 select-none leading-none" aria-hidden>/</span>
             )}
-
-        {/* Turn into — Actions bar, own section left of Filter (same Format/Property as ⋮⋮) */}
-        {editMenuPillMode === 'home' && !isItemHidden('turnInto') && (
-          <>
-            <div className="flex items-center gap-0.5 flex-shrink-0">
-              <DropdownMenu
-                open={openDropdown === 'turnInto'}
-                onOpenChange={(open) => {
-                  if (open && !canTurnInto) return // Greyed: no armed block
-                  handleDropdownOpenChange('turnInto', open)
-                  if (open) syncTurnIntoFromEditor()
-                }}
-              >
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className={cn(
-                      // Transparent border reserves space so open wash doesn’t jump (same as Draw tools)
-                      'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center border border-transparent',
-                      'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5',
-                      openDropdown === 'turnInto'
-                        ? 'bg-gray-100 dark:bg-gray-800 shadow-sm border-black/10 dark:border-white/10' // Open: match Draw wash + shadow + hairline
-                        : 'hover:bg-gray-100 dark:hover:bg-gray-800'
-                    )}
-                    disabled={!canTurnInto}
-                    title={!canTurnInto ? 'Select a block to turn into' : 'Turn into'}
-                    aria-label="Turn into"
-                  >
-                    <RefreshCw className="h-4 w-4 flex-shrink-0" />
-                    <ToolbarTitle show={!compactLabels}>Turn into</ToolbarTitle>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  {...TOOLBAR_MENU_PLACEMENT}
-                  className="p-0 overflow-visible"
-                  onCloseAutoFocus={(e) => e.preventDefault()}
-                >
-                  <TurnIntoMenuItems
-                    editor={editor}
-                    currentBlockType={turnIntoBlockType}
-                    boardInTargets={boardInTargetsForToolbar()}
-                    onPick={(pick) => {
-                      void applyToolbarTurnInto({
-                        editor,
-                        conversationId,
-                        pick,
-                        getSetNodes,
-                        reactFlowInstance,
-                        onDone: () => {
-                          handleDropdownOpenChange('turnInto', false)
-                          syncTurnIntoFromEditor()
-                          if (pick.kind === 'format' && (pick.blockType === 'board' || pick.blockType === 'boardIn')) {
-                            void queryClientForAi.invalidateQueries({ queryKey: ['conversations'] })
-                          }
-                        },
-                      })
-                    }}
-                  />
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-            {/* Slash before Filter / Sort / Automations */}
-            {!isItemHidden('actions') && (
-              <span className="flex h-7 items-center text-2xl font-thin text-gray-300 dark:text-gray-500 mx-1 flex-shrink-0 select-none leading-none" aria-hidden>/</span>
-            )}
-          </>
-        )}
 
         {/* Filter / Sort / Automations — Actions bar (Notion-style view chrome) */}
         {editMenuPillMode === 'home' && (
@@ -3055,7 +2930,6 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       {!phoneTools && hiddenItems.size > 0 && (
         <DropdownMenu open={openDropdown === 'moreMenu'} onOpenChange={(open) => {
           handleDropdownOpenChange('moreMenu', open)
-          if (open) syncTurnIntoFromEditor() // Overflow Turn into needs the caret type
         }}>
           <DropdownMenuTrigger asChild>
             <Button
@@ -3305,37 +3179,6 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
             ) : (
               <>
                 {/* Actions mode overflow */}
-                {isItemHidden('turnInto') && (
-                  <>
-                    <DropdownMenuLabel className="text-xs font-normal text-gray-500">Turn into</DropdownMenuLabel>
-                    {canTurnInto ? (
-                    <TurnIntoMenuItems
-                      editor={editor}
-                      currentBlockType={turnIntoBlockType}
-                      boardInTargets={boardInTargetsForToolbar()}
-                      onPick={(pick) => {
-                        void applyToolbarTurnInto({
-                          editor,
-                          conversationId,
-                          pick,
-                          getSetNodes,
-                          reactFlowInstance,
-                          onDone: () => {
-                            handleDropdownOpenChange('moreMenu', false)
-                            syncTurnIntoFromEditor()
-                            if (pick.kind === 'format' && (pick.blockType === 'board' || pick.blockType === 'boardIn')) {
-                              void queryClientForAi.invalidateQueries({ queryKey: ['conversations'] })
-                            }
-                          },
-                        })
-                      }}
-                    />
-                    ) : (
-                      <DropdownMenuItem disabled>Select a block to turn into</DropdownMenuItem>
-                    )}
-                    <DropdownMenuSeparator />
-                  </>
-                )}
                 {isItemHidden('actions') && (
                   <>
                     <DropdownMenuItem onClick={() => toggleBoardFilterSort('filter')}>

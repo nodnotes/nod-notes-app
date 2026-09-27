@@ -2369,7 +2369,7 @@ span[data-added="true"] {
     position: absolute;
     right: 0; /* Fallback before first measure / frame-level pin */
     top: 50%;
-    transform: translateY(-50%);
+    transform: translateY(-50%); /* Board-relative — viewport zoom scales the pill with the title */
     display: inline-flex;
     align-items: center;
     gap: 0.125rem;
@@ -2502,6 +2502,32 @@ span[data-added="true"] {
     width: max-content;
     max-width: 100%;
   }
+  /* Preview open: this boardLink is a column — iframe under the title, not a sibling of the frame */
+  .ProseMirror .tt-board-link.tt-board-link-inline.tt-board-link-previewing,
+  .ProseMirror .tt-board-link.tt-board-link-title.tt-board-link-previewing,
+  .ProseMirror .tt-page-link.tt-board-link-previewing {
+    display: flex; /* Beat inline-flex row on .tt-board-link-inline / _title */
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%; /* Span the fill so the peach gap is on BOTH frame edges */
+    max-width: 100%;
+    min-width: 296px; /* 280 preview + 8px peach gap each side */
+    box-sizing: border-box;
+  }
+  .ProseMirror .react-renderer.node-boardLink:has(.tt-board-link-previewing),
+  .ProseMirror .react-renderer.node-pageLink:has(.tt-board-link-previewing) {
+    width: 100%; /* Same: full content column, not a left-aligned max-content stub */
+    min-width: 296px; /* 280 preview + 8px peach gap each side */
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+  .ProseMirror .tt-board-link-embed {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 296px; /* Card 280 + 8px left + 8px right — padding must not eat the card */
+    padding-left: 8px; /* Peach gap to the left frame edge */
+    padding-right: 8px; /* Peach gap to the right frame edge */
+  }
   .ProseMirror .tt-board-link-inline,
   .ProseMirror .tt-page-link-inline {
     display: inline-flex;
@@ -2517,13 +2543,19 @@ span[data-added="true"] {
     margin-bottom: 0.4rem;
     max-width: 100%;
   }
+  .ProseMirror .tt-board-link-icon-wrap {
+    /* Shift only — no counter-scale; icon rides the board with the title */
+    transform: translateY(var(--tt-board-link-icon-shift, 0px));
+    transform-origin: left center;
+  }
   .ProseMirror .tt-board-link-icon {
     display: inline-flex;
     align-items: center;
   }
-  .ProseMirror .tt-board-link-emoji { font-size: 1.05em; line-height: 1; }
-  .ProseMirror .tt-board-link-title .tt-board-link-emoji { font-size: 1.6em; }
-  .ProseMirror .tt-board-link-title .tt-board-link-fallback { width: 1.4rem; height: 1.4rem; }
+  .ProseMirror .tt-board-link-emoji { font-size: 1em; line-height: 1; } /* Same as a typed text emoji */
+  .ProseMirror .tt-board-link-title .tt-board-link-emoji { font-size: 1.4em; } /* Match the title label face */
+  .ProseMirror .tt-board-link-fallback { width: 1em; height: 1em; } /* File icon = 1em like a glyph */
+  .ProseMirror .tt-board-link-title .tt-board-link-fallback { width: 1.4em; height: 1.4em; }
   .ProseMirror .tt-board-link-label {
     outline: none;
     text-decoration: underline;
@@ -2585,15 +2617,19 @@ span[data-added="true"] {
     flex-shrink: 0;
   }
   .tt-board-link-deferred-emoji {
-    font-size: 1.05em;
+    font-size: 1em; /* Same as a typed text emoji */
     line-height: 1;
   }
   .tt-board-link-deferred-title .tt-board-link-deferred-emoji {
-    font-size: 1.6em;
+    font-size: 1.4em; /* Match the title label face */
+  }
+  .tt-board-link-deferred-fallback {
+    width: 1em;
+    height: 1em;
   }
   .tt-board-link-deferred-title .tt-board-link-deferred-fallback {
-    width: 1.4rem;
-    height: 1.4rem;
+    width: 1.4em;
+    height: 1.4em;
   }
   .tt-board-link-deferred-label {
     text-decoration: underline;

@@ -49,10 +49,7 @@ import {
   visibleProperties,
   type DatabaseViewSettings,
 } from '@/lib/notion/database-view'
-import {
-  COMPACT_PREVIEW_ROWS,
-  DbRowsRevealFooter,
-} from '@/components/notion-db-static-preview'
+import { COMPACT_PREVIEW_ROWS } from '@/components/notion-db-static-preview'
 import {
   buildFlatTableItems,
   CellDisplay,
@@ -137,8 +134,6 @@ export function NotionDatabaseTableView({
   frameClipPreview = false,
   interactive = true,
   rowCap,
-  onShowMore,
-  onShowLess,
   initialActiveRowId = null,
   initialArmColumnIndex = null,
 }: NotionDatabaseTableViewProps) {
@@ -178,6 +173,7 @@ export function NotionDatabaseTableView({
     },
     staleTime: 5 * 60 * 1000, // Fresh enough for edits; drag remounts reuse cache instantly
     gcTime: 30 * 60 * 1000,
+    retry: 1, // Don't stack full-DB retries into a forever spinner
     refetchOnWindowFocus: interactive, // Idle/static embeds skip refocus churn
   })
 
@@ -649,14 +645,6 @@ export function NotionDatabaseTableView({
     })
   }, [])
 
-  const handleShowMore = useCallback(() => {
-    onShowMore?.()
-  }, [onShowMore])
-
-  const handleShowLess = useCallback(() => {
-    onShowLess?.()
-  }, [onShowLess])
-
   if (loading) {
     return (
       <div
@@ -962,22 +950,7 @@ export function NotionDatabaseTableView({
           {body}
         </div>
       </div>
-      {filteredRows.length > displayRows.length ||
-      (!!data.rowsHasMore && displayRows.length < NOTION_DB_CLIENT_ROW_CAP) ||
-      effectiveRowCap > COMPACT_PREVIEW_ROWS ? (
-        <DbRowsRevealFooter
-          className="shrink-0 py-1.5 border-t border-gray-100"
-          hiddenLoaded={Math.max(0, filteredRows.length - displayRows.length)}
-          rowsHasMore={!!data.rowsHasMore}
-          canShowMore={
-            filteredRows.length > displayRows.length ||
-            (!!data.rowsHasMore && displayRows.length < NOTION_DB_CLIENT_ROW_CAP)
-          }
-          canShowLess={effectiveRowCap > COMPACT_PREVIEW_ROWS}
-          onShowMore={handleShowMore}
-          onShowLess={handleShowLess}
-        />
-      ) : null}
+      {/* Show-more hangs under the RF frame — not inside this table */}
       <CardConvertBringDialog
         open={!!bringDialogRowId}
         onOpenChange={(open) => {

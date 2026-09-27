@@ -23,15 +23,12 @@ import {
   List,
   ListChecks,
   ListOrdered,
-  MessageSquare,
-  MonitorPlay,
   PaintRoller,
   Plus,
   Quote,
   RefreshCw,
   Shapes,
   Sigma,
-  Sparkles,
   SquareCode,
   TextCursorInput,
   Trash2,
@@ -60,6 +57,11 @@ import {
   HelpCircle,
   Languages,
   AlignLeft,
+  AlignCenter,
+  AlignRight,
+  AlignVerticalJustifyStart,
+  AlignVerticalJustifyCenter,
+  AlignVerticalJustifyEnd,
   Cable,
   Hand,
   Unplug,
@@ -247,10 +249,9 @@ export type BlockActionId =
   | 'color'
   | 'listFormat'
   | 'comment'
-  | 'presentFromHere'
-  | 'askAI'
   | 'skills'
   | 'setFrameShape' // Apply / clear a silhouette on the host frame
+  | 'setFrameAlign' // Frame content left/center/right + top/center/bottom
   | 'setFillColor' // Frame background (transparent when empty)
   | 'setBorderColor' // Frame border stroke
   | 'lockToBoard' // Pin selected frames so they cannot drag
@@ -266,6 +267,9 @@ export type BlockActionId =
   | 'regenerateResponse' // Chat response frame — re-run from the preceding prompt
   | 'addToSet' // Opens the sets picker (not the utility sidebar)
 
+export type FrameAlignX = 'left' | 'center' | 'right' // Frame content horizontal
+export type FrameAlignY = 'top' | 'center' | 'bottom' // Frame content vertical (free extra height)
+
 export type DbConvertLayoutId = 'card' | 'table' // Convert layout flyout picks
 /** Row-setter commit: exact count, all loaded (or client cap), or compact default. */
 export type DbRowsSetterValue = number | 'all' | 'reset'
@@ -276,6 +280,8 @@ export type BlockActionPayload = {
   aiAutofill?: AiAutofillId // Present when Turn into → AI Autofill pick
   boardInParentId?: string | null // Nest target for Page in
   frameShape?: FrameShapeChoice // Present when action === 'setFrameShape'
+  alignX?: FrameAlignX // Present when action === 'setFrameAlign'
+  alignY?: FrameAlignY // Present when action === 'setFrameAlign'
   fillColor?: string // Empty string = transparent fill
   borderColor?: string // Empty string = transparent border
   notionSync?: NotionSyncMode // Present when action === 'setNotionSync'
@@ -308,6 +314,10 @@ export type BlockActionsMenuProps = {
   currentFrameShape?: FrameShapeChoice
   /** Show Shape submenu — frame-level menu only (not TipTap ⋮⋮ block menu). */
   showFrameShape?: boolean
+  /** Current frame content align X (frame menu). */
+  currentFrameAlignX?: FrameAlignX
+  /** Current frame content align Y (frame menu). */
+  currentFrameAlignY?: FrameAlignY
   /** Current frame fill (frame menu). Empty = transparent. */
   currentFillColor?: string
   /** Current frame border (frame menu). Empty = transparent. */
@@ -424,9 +434,8 @@ type RowDef =
       icon: React.ReactNode
       danger?: boolean
       disabled?: boolean // Grey out + skip onAction (e.g. Revert with no edits)
-      submenu?: 'turnInto' | 'color' | 'listFormat' | 'skills' | 'boardIn' | 'frameShape' | 'frameColor' | 'connections' | 'convertLayout' | 'dbRows' | 'sets'
+      submenu?: 'turnInto' | 'color' | 'listFormat' | 'skills' | 'boardIn' | 'frameShape' | 'frameAlign' | 'frameColor' | 'connections' | 'convertLayout' | 'dbRows' | 'sets'
       hidden?: boolean
-      beta?: boolean
     }
   | { kind: 'separator'; hidden?: boolean }
 
@@ -560,6 +569,8 @@ export function BlockActionsMenu({
   boardInTargets = [],
   currentFrameShape = FRAME_SHAPE_NONE,
   showFrameShape = false,
+  currentFrameAlignX = 'left',
+  currentFrameAlignY = 'top',
   currentFillColor = '',
   currentBorderColor = '',
   boardLocked = false,
@@ -593,6 +604,7 @@ export function BlockActionsMenu({
     | 'turnInto'
     | 'boardIn'
     | 'frameShape'
+    | 'frameAlign'
     | 'frameColor'
     | 'connections'
     | 'convertLayout'
@@ -765,13 +777,6 @@ export function BlockActionsMenu({
       { kind: 'separator' },
       {
         kind: 'action',
-        id: 'copyLink',
-        label: 'Copy link to block',
-        shortcut: '⌘⌃L',
-        icon: <Link2 className="h-4 w-4" />,
-      },
-      {
-        kind: 'action',
         id: 'duplicate',
         label: 'Duplicate',
         shortcut: '⌘D',
@@ -827,6 +832,14 @@ export function BlockActionsMenu({
       },
       {
         kind: 'action',
+        id: 'setFrameAlign',
+        label: 'Alignment',
+        icon: <AlignLeft className="h-4 w-4" />,
+        submenu: 'frameAlign', // Left/center/right + top/center/bottom
+        hidden: !showFrameShape, // Frame menu only
+      },
+      {
+        kind: 'action',
         id: 'convertLayout',
         label: 'Convert layout',
         icon: <LayoutGrid className="h-4 w-4" />,
@@ -876,39 +889,6 @@ export function BlockActionsMenu({
         label: 'Ungroup', // Legacy wrapper around frames — not a product “block group”
         icon: <Ungroup className="h-4 w-4" />,
         hidden: !canUngroup || (notionConnected && !showFrameShape),
-      },
-      { kind: 'separator' },
-      {
-        kind: 'action',
-        id: 'comment',
-        label: 'Comment',
-        shortcut: '⌘⇧M',
-        icon: <MessageSquare className="h-4 w-4" />,
-      },
-      { kind: 'separator', hidden: !showFrameShape }, // Only when Present is shown (frame menu)
-      {
-        kind: 'action',
-        id: 'presentFromHere',
-        label: 'Present from here',
-        shortcut: '⌘⇧P',
-        icon: <MonitorPlay className="h-4 w-4" />,
-        beta: true,
-        hidden: !showFrameShape, // Frame menu only — not TipTap block ⋮⋮
-      },
-      { kind: 'separator' },
-      {
-        kind: 'action',
-        id: 'askAI',
-        label: 'Ask AI',
-        shortcut: '⌘J',
-        icon: <Sparkles className="h-4 w-4" />,
-      },
-      {
-        kind: 'action',
-        id: 'skills',
-        label: 'Skills',
-        icon: <Sparkles className="h-4 w-4" />,
-        submenu: 'skills',
       },
     ]
     const q = query.trim().toLowerCase()
@@ -1157,6 +1137,7 @@ export function BlockActionsMenu({
           const hasSub = Boolean(row.submenu)
           const isTurnIntoOpen = row.submenu === 'turnInto' && openSubmenu === 'turnInto'
           const isShapeOpen = row.submenu === 'frameShape' && openSubmenu === 'frameShape'
+          const isAlignOpen = row.submenu === 'frameAlign' && openSubmenu === 'frameAlign'
           const isFrameColorOpen = row.submenu === 'frameColor' && openSubmenu === 'frameColor'
           const isConnectionsOpen = row.submenu === 'connections' && openSubmenu === 'connections'
           const isConvertLayoutOpen =
@@ -1177,6 +1158,7 @@ export function BlockActionsMenu({
               onMouseEnter={() => {
                 if (row.submenu === 'turnInto') setOpenSubmenu('turnInto')
                 else if (row.submenu === 'frameShape') setOpenSubmenu('frameShape')
+                else if (row.submenu === 'frameAlign') setOpenSubmenu('frameAlign')
                 else if (row.submenu === 'frameColor') setOpenSubmenu('frameColor')
                 else if (row.submenu === 'convertLayout') setOpenSubmenu('convertLayout')
                 else if (row.submenu === 'dbRows') setOpenSubmenu('dbRows')
@@ -1209,6 +1191,10 @@ export function BlockActionsMenu({
                 }
                 if (row.submenu === 'frameShape') {
                   setOpenSubmenu((s) => (s === 'frameShape' ? null : 'frameShape'))
+                  return
+                }
+                if (row.submenu === 'frameAlign') {
+                  setOpenSubmenu((s) => (s === 'frameAlign' ? null : 'frameAlign'))
                   return
                 }
                 if (row.submenu === 'frameColor') {
@@ -1245,6 +1231,7 @@ export function BlockActionsMenu({
                 row.disabled && 'pointer-events-none opacity-40',
                 (isTurnIntoOpen ||
                   isShapeOpen ||
+                  isAlignOpen ||
                   isFrameColorOpen ||
                   isConnectionsOpen ||
                   isConvertLayoutOpen ||
@@ -1254,11 +1241,6 @@ export function BlockActionsMenu({
             >
               <span className="mr-2 text-gray-500 dark:text-gray-400">{row.icon}</span>
               <span className="flex-1 text-left">{row.label}</span>
-              {row.beta && (
-                <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-[#2a2a2a] text-gray-500">
-                  Beta
-                </span>
-              )}
               {row.shortcut && !hasSub && (
                 <span className="ml-3 text-[11px] text-gray-400 tabular-nums">{row.shortcut}</span>
               )}
@@ -1610,6 +1592,70 @@ export function BlockActionsMenu({
                 </button>
               )
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Alignment — frame content left/center/right + top/center/bottom */}
+      {openSubmenu === 'frameAlign' && (
+        <div
+          data-tt-menu-flyout="main"
+          className="absolute z-[1001] w-[168px] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-2"
+          onMouseEnter={() => setOpenSubmenu('frameAlign')}
+        >
+          <div className="px-1 pb-1.5 text-[11px] text-gray-400">Horizontal</div>
+          <div className="mb-2 grid grid-cols-3 gap-1">
+            {(
+              [
+                ['left', AlignLeft, 'Left'],
+                ['center', AlignCenter, 'Center'],
+                ['right', AlignRight, 'Right'],
+              ] as const
+            ).map(([id, Icon, title]) => (
+              <button
+                key={id}
+                type="button"
+                title={title}
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onAction('setFrameAlign', { alignX: id }) // Keep menu open — set Y next
+                }}
+                className={cn(
+                  'flex h-9 items-center justify-center rounded-md hover:bg-gray-100 dark:hover:bg-[#2a2a2a]',
+                  currentFrameAlignX === id && 'tt-selected'
+                )}
+              >
+                <Icon className="h-4 w-4" />
+              </button>
+            ))}
+          </div>
+          <div className="px-1 pb-1.5 text-[11px] text-gray-400">Vertical</div>
+          <div className="grid grid-cols-3 gap-1">
+            {(
+              [
+                ['top', AlignVerticalJustifyStart, 'Top'],
+                ['center', AlignVerticalJustifyCenter, 'Center'],
+                ['bottom', AlignVerticalJustifyEnd, 'Bottom'],
+              ] as const
+            ).map(([id, Icon, title]) => (
+              <button
+                key={id}
+                type="button"
+                title={title}
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onAction('setFrameAlign', { alignY: id }) // Free extra height only
+                }}
+                className={cn(
+                  'flex h-9 items-center justify-center rounded-md hover:bg-gray-100 dark:hover:bg-[#2a2a2a]',
+                  currentFrameAlignY === id && 'tt-selected'
+                )}
+              >
+                <Icon className="h-4 w-4" />
+              </button>
+            ))}
           </div>
         </div>
       )}

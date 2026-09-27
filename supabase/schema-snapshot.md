@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-26T02:35:39Z`
+- Snapped at: `2026-09-27T00:32:45Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`/`migration list`; versions from `.temp` + Management API list; cli-latest reports `v2.118.0`)
@@ -9,6 +9,15 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260927003245_frame_align_preview_hug_notion_restore.sql`.
+- **Frame alignment**: frame menu Alignment sets left/center/right and top/center/bottom; contain-fit origin follows.
+- **Board-link preview**: hug includes the in-block preview card; shaped frames still reserve the open pill.
+- **Notion restore**: page-sync DELETE is fail-closed (leaf text only); `POST /api/notion/restore` un-trashes pages/DBs.
+- **Chrome**: top-bar clip border over non-board fills; Favorites in boards nav; Turn into stays on ⋮⋮ only.
+- Schema unchanged; remote DDL top remains `20260924223511_board_changes_autosave`.
+
+## Prior: Property and phone menus, preview fill
 
 - DDL: none. Marker `20260926023539_property_phone_menu_preview_fill.sql`.
 - **Property menu**: same Search / context label / ghost-row chrome as the frame menu (Delete is red).

@@ -50,6 +50,8 @@ import {
   type BlockActionPayload,
   type BlockTypeId,
   type DbConvertLayoutId,
+  type FrameAlignX,
+  type FrameAlignY,
 } from './block-actions-menu' // Notion-style block actions + Turn into baseline
 import { addMember, labelForFlowNode } from '@/lib/sets-list' // Frame menu → a named set
 import {
@@ -2525,8 +2527,7 @@ function BoardFlowInner({
   const nodeHeightsRef = useRef<Map<string, number>>(new Map()) // Store measured node heights
   const savePositionsTimeoutRef = useRef<NodeJS.Timeout | null>(null) // Debounce position saves
   const minimapDragStartRef = useRef<{ x: number; y: number; isDragging?: boolean; pointerId?: number } | null>(null) // Track minimap drag start position and drag state
-  const edgePopupZoomRef = useRef<number | null>(null) // Track zoom when popup was opened
-  const edgeClickPositionRef = useRef<{ x: number; y: number } | null>(null) // Store click position in flow coordinates
+  const edgeClickPositionRef = useRef<{ x: number; y: number } | null>(null) // Click on the thread, in flow coords (re-anchor after nav)
   const threadStyleClipboardRef = useRef<{
     algorithm: ThreadAlgorithm
     dotted: boolean
@@ -8470,6 +8471,45 @@ function BoardFlowInner({
     [rightClickedNode, nodes, setNodes, takeSnapshot]
   )
 
+  // Frame menu Alignment — persist left/center/right + top/center/bottom
+  const handleSetFrameAlign = useCallback(
+    async (alignX?: FrameAlignX, alignY?: FrameAlignY) => {
+      const target = rightClickedNode
+      if (!target || target.type !== 'chatPanel') return
+      const msgId = target.data?.promptMessage?.id as string | undefined
+      if (!msgId) return
+      takeSnapshot?.()
+      const live = nodes.find((n) => n.id === target.id) || target
+      const meta = {
+        ...((live.data?.promptMessage?.metadata as Record<string, unknown>) || {}),
+      }
+      if (alignX) meta.frameAlignX = alignX // Horizontal wrap-line side
+      if (alignY) meta.frameAlignY = alignY // Vertical — free extra height only
+      const supabase = createClient()
+      try {
+        await supabase.from('messages').update({ metadata: meta }).eq('id', msgId)
+      } catch (err) {
+        console.error('Failed to save frame alignment:', err)
+        return
+      }
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== target.id) return n
+          const pm = n.data?.promptMessage
+          if (!pm) return n
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              promptMessage: { ...pm, metadata: { ...pm.metadata, ...meta } },
+            },
+          }
+        })
+      )
+    },
+    [rightClickedNode, nodes, setNodes, takeSnapshot]
+  )
+
   // Frames the style/lock actions should hit: multi-select when the menu target is selected
   const frameActionTargets = useCallback(() => {
     const target = rightClickedNode
@@ -8894,6 +8934,9 @@ function BoardFlowInner({
             void handleSetFrameShape(payload.frameShape)
           }
           break
+        case 'setFrameAlign':
+          void handleSetFrameAlign(payload?.alignX, payload?.alignY)
+          break
         case 'setFillColor':
           void handleSetFrameColor('fillColor', payload?.fillColor ?? '')
           break
@@ -8965,8 +9008,6 @@ function BoardFlowInner({
         case 'color':
         case 'listFormat':
         case 'comment':
-        case 'presentFromHere':
-        case 'askAI':
         case 'skills':
           setRightClickedNode(null)
           break
@@ -8982,6 +9023,7 @@ function BoardFlowInner({
       handleSelectionToBoard,
       handleTurnIntoProperty,
       handleSetFrameShape,
+      handleSetFrameAlign,
       handleSetFrameColor,
       handleToggleBoardLock,
       handleToggleFrameLock,
@@ -9135,7 +9177,6 @@ function BoardFlowInner({
     if (clickedEdgeRef.current?.id === edge.id) {
       setClickedEdge(null)
       edgeClickPositionRef.current = null
-      edgePopupZoomRef.current = null
       return
     }
 
@@ -9146,31 +9187,22 @@ function BoardFlowInner({
       if (!wasSelected) {
         setClickedEdge(null) // Select without menu (RF selects the thread)
         edgeClickPositionRef.current = null
-        edgePopupZoomRef.current = null
         return
       }
     }
 
-    // Get click position and convert to flow coordinates
+    // Same flow math as the frame menu so settle can map the click back to the window
     const reactFlowElement = document.querySelector('.react-flow') as HTMLElement
     if (reactFlowInstance && reactFlowElement) {
       const rect = reactFlowElement.getBoundingClientRect()
-      const screenX = event.clientX - rect.left
+      const screenX = event.clientX - rect.left // Pane-relative
       const screenY = event.clientY - rect.top
-
-      // Convert screen coordinates to flow coordinates
       const viewport = reactFlowInstance.getViewport()
-      const flowX = screenX / viewport.zoom - viewport.x
-      const flowY = screenY / viewport.zoom - viewport.y
-
-      // Store click position in flow coordinates
-      edgeClickPositionRef.current = { x: flowX, y: flowY }
-
-      // Set initial screen position
-      setEdgePopupPosition({ x: screenX, y: screenY })
-
-      // Store zoom when popup opens
-      edgePopupZoomRef.current = viewport.zoom
+      edgeClickPositionRef.current = {
+        x: (screenX - viewport.x) / viewport.zoom,
+        y: (screenY - viewport.y) / viewport.zoom,
+      }
+      setEdgePopupPosition({ x: event.clientX, y: event.clientY }) // Window coords — menu is position:fixed
     }
 
     setClickedEdge(edge)
@@ -9485,63 +9517,27 @@ function BoardFlowInner({
     [conversationId, isLocked, nodes, setEdges, takeSnapshot]
   )
 
-  // Update edge popup position when edge, nodes, or viewport changes
-  // Position follows the click position on the edge as viewport changes
+  // Re-anchor the thread menu when pan/zoom stops (same as the frame menu).
+  // Registered before ThreadActionsMenu, so this settle runs first (menu still hidden).
   useEffect(() => {
     if (!clickedEdge || !reactFlowInstance || !edgeClickPositionRef.current) return
 
     const updatePosition = () => {
-      // Check if edgeClickPositionRef is still valid (could become null during animation)
-      if (!edgeClickPositionRef.current) return
-      
-      // Convert stored flow coordinates to screen coordinates using current viewport
+      const flow = edgeClickPositionRef.current
+      if (!flow) return
       const viewport = reactFlowInstance.getViewport()
-      const screenX = (edgeClickPositionRef.current.x + viewport.x) * viewport.zoom
-      const screenY = (edgeClickPositionRef.current.y + viewport.y) * viewport.zoom
-
-      setEdgePopupPosition({ x: screenX, y: screenY })
+      const pane = (document.querySelector('.react-flow') as HTMLElement | null)?.getBoundingClientRect()
+      if (!pane) return
+      // Inverse of open: window = flow * zoom + viewport offset + board origin
+      const screenX = Math.round(flow.x * viewport.zoom + viewport.x + pane.left)
+      const screenY = Math.round(flow.y * viewport.zoom + viewport.y + pane.top)
+      setEdgePopupPosition((prev) =>
+        prev.x === screenX && prev.y === screenY ? prev : { x: screenX, y: screenY }
+      )
     }
 
-    // Initial position update
-    updatePosition()
-
-    // Update position continuously using requestAnimationFrame to catch viewport changes
-    let animationFrameId: number
-    const animate = () => {
-      // Stop animation if ref becomes null (edge popup was closed)
-      if (!edgeClickPositionRef.current || !clickedEdge) {
-        return
-      }
-      updatePosition()
-      animationFrameId = requestAnimationFrame(animate)
-    }
-    animationFrameId = requestAnimationFrame(animate)
-
-    return () => {
-      cancelAnimationFrame(animationFrameId)
-    }
-  }, [clickedEdge, reactFlowInstance])
-
-  // Close popup on zoom (viewport change)
-  useEffect(() => {
-    if (!clickedEdge || !reactFlowInstance) return
-
-    const checkZoomChange = () => {
-      const currentViewport = reactFlowInstance.getViewport()
-      if (edgePopupZoomRef.current !== null && Math.abs(currentViewport.zoom - edgePopupZoomRef.current) > 0.01) {
-        // Zoom changed - close popup
-        setClickedEdge(null)
-        edgeClickPositionRef.current = null
-        edgePopupZoomRef.current = null
-      }
-    }
-
-    // Check for zoom changes periodically
-    const intervalId = setInterval(checkZoomChange, 100)
-
-    return () => {
-      clearInterval(intervalId)
-    }
+    updatePosition() // Correct the open point once, then only again when nav settles
+    return watchBoardViewportNav({ onSettle: updatePosition })
   }, [clickedEdge, reactFlowInstance])
 
   // Close popup when clicking outside
@@ -9562,7 +9558,10 @@ function BoardFlowInner({
       if (isOnEdge && isThreadDragAreaTarget(event.target)) return
 
       if (!isOnPopup && !isOnButton) {
-        setClickedEdge(null)
+        dismissMenuUnlessBoardNav(() => {
+          setClickedEdge(null)
+          edgeClickPositionRef.current = null
+        })
       }
     }
 
@@ -11779,6 +11778,18 @@ function BoardFlowInner({
             FRAME_SHAPE_NONE
           }
           showFrameShape={rightClickedNode.type === 'chatPanel'}
+          currentFrameAlignX={
+            rightClickedNode.data?.promptMessage?.metadata?.frameAlignX === 'center' ||
+            rightClickedNode.data?.promptMessage?.metadata?.frameAlignX === 'right'
+              ? rightClickedNode.data.promptMessage.metadata.frameAlignX
+              : 'left'
+          }
+          currentFrameAlignY={
+            rightClickedNode.data?.promptMessage?.metadata?.frameAlignY === 'center' ||
+            rightClickedNode.data?.promptMessage?.metadata?.frameAlignY === 'bottom'
+              ? rightClickedNode.data.promptMessage.metadata.frameAlignY
+              : 'top'
+          }
           onAddToSet={(setId) =>
             addMember(setId, {
               kind: 'frame',
@@ -11930,8 +11941,9 @@ function BoardFlowInner({
         }}
       />
 
-      {/* Thread click menu — same chrome as ⋮⋮ handle / text-select menus */}
-      {clickedEdge && reactFlowInstance && (
+      {/* Thread click menu — body portal + fixed coords so board nav can re-anchor (same as frame menu) */}
+      {clickedEdge && reactFlowInstance && typeof document !== 'undefined' &&
+        createPortal(
         <ThreadActionsMenu
           x={edgePopupPosition.x}
           y={edgePopupPosition.y}
@@ -11954,9 +11966,9 @@ function BoardFlowInner({
           onClose={() => {
             setClickedEdge(null)
             edgeClickPositionRef.current = null
-            edgePopupZoomRef.current = null
           }}
-        />
+        />,
+        document.body
       )}
 
       {/* Map menu — right-click Free nav / minimap (Shown / Hidden / Hover) */}

@@ -21,8 +21,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { BoardOpenMenu } from '@/components/board-open-menu' // Shared preview/open chrome
+import { NestedBoardPreview } from '@/components/nested-board-preview' // In-block iframe under this title
 import { useBoardLinkActions } from '@/lib/board-link-context'
-import { elementUniformScale, localToScreen, screenToLocal } from '@/lib/dom-transform' // Rotation-safe zoom×frameScale + local↔screen
+import { localToScreen, screenToLocal } from '@/lib/dom-transform' // Rotation-safe local↔screen for icon/menu Y
 import { cn } from '@/lib/utils'
 
 const BOARD_OPEN_MENU_FALLBACK_W = 52 // Approx pill width before first layout (preview + open)
@@ -50,11 +51,12 @@ export function BoardLinkView({ node, updateAttributes }: NodeViewProps) {
   const icon = (node.attrs.icon as string | null) || null // Emoji, else default icon
   const variant = (node.attrs.variant as string) === 'title' ? 'title' : 'inline' // Layout mode
   const actions = useBoardLinkActions() // Host frame preview / open / rename / setIcon bridge
+  const previewOpen = !!(boardId && actions.previewBoardId === boardId) // This block owns the open preview
   const { resolvedTheme } = useTheme() // Emoji picker theme
   const zoom = useStore((s) =>
     navigationZoom(Math.round((s.transform[2] || 1) * 8) / 8)
   ) // Freeze mid-pinch — avoid remounting chrome every tick
-  const [chromeScale, setChromeScale] = useState(1) // Comfort counter-scale for icon + open menu (transform-only)
+  // Icon/menu scale is CSS `--tt-board-zoom` × `--tt-frame-scale` (live mid-pinch — not React)
 
   const [title, setTitle] = useState<string>((node.attrs.title as string) || '') // Local editable label
   const [editing, setEditing] = useState(false) // True while the title span holds focus (caret editing)
@@ -86,17 +88,12 @@ export function BoardLinkView({ node, updateAttributes }: NodeViewProps) {
     if (!wrapper) return
     const panel = wrapper.closest('[data-panel-container="true"]') as HTMLElement | null // Frame box
     if (!panel) return
+    const shapeFill = wrapper.closest('[data-tt-shape-fill]') as HTMLElement | null // Silhouette box — not the blue AABB
 
     const measure = () => {
       // Scale is rotation-safe (matrix hypot). Line Y + menu clamp use screenToLocal / localToScreen
       // so glyph alignment works unrotated AND the open menu stays inside the frame when rotated.
-      const scale = elementUniformScale(wrapper) // RF zoom × frameScale
-      // Comfort counter-scale (same curve as the ⋮⋮ grips): 1 when zoomed out (rides with content),
-      // shrinks ∝ 1/√scale when zoomed in so the icon + menu don't balloon with huge text.
-      // TRANSFORM ONLY — never marginRight/width compensation: that shrunk the boardLink flow box,
-      // which fed locked hug → setResizeDimensions → setNodes (nodes(ref) storm / max update depth).
-      const factor = 1 / Math.max(1, Math.sqrt(scale))
-      setChromeScale((p) => (Math.abs(p - factor) < 0.01 ? p : factor)) // Avoid setState storms on subpixel drift
+      const factor = 1 // Pill is board-relative (no counter-scale) — layout px = visual px in the frame
 
       // Vertical: center icon/menu on the TITLE's FIRST glyph line (Range), not lh/2 of the tall
       // line-box — lh/2 sat below the glyphs with block line-height 1.7 and left the icon high.
@@ -141,10 +138,20 @@ export function BoardLinkView({ node, updateAttributes }: NodeViewProps) {
       // `closest('.overflow-hidden')` walked up to the React Flow pane (canvas-wide) → the clamp
       // never fired and the menu escaped past the frame's right edge.
       const clipCandidate = wrapper.closest('.overflow-hidden') as HTMLElement | null
-      const clipEl = clipCandidate && panel.contains(clipCandidate) ? clipCandidate : panel
+      const clipEl =
+        shapeFill && panel.contains(shapeFill)
+          ? shapeFill
+          : clipCandidate && panel.contains(clipCandidate)
+            ? clipCandidate
+            : panel
+      const shapePad = shapeFill ? 10 : 0 // Extra inset so the pill clears the cylinder/ellipse curve
       // Clip/panel right edge → wrapper-local X (rotation-safe). Gutter subtraction was an
       // underestimate and let the pill sit past the blue frame edge when rotated.
-      const clipRightScreen = localToScreen(clipEl, clipEl.clientWidth - pad, clipEl.clientHeight / 2)
+      const clipRightScreen = localToScreen(
+        clipEl,
+        clipEl.clientWidth - pad - shapePad,
+        clipEl.clientHeight / 2
+      )
       const frameRightInWrap = screenToLocal(wrapper, clipRightScreen.x, clipRightScreen.y).x
 
       // Title right edge in wrapper-local px
@@ -174,6 +181,7 @@ export function BoardLinkView({ node, updateAttributes }: NodeViewProps) {
     const ro = new ResizeObserver(() => requestAnimationFrame(measure))
     ro.observe(panel)
     ro.observe(wrapper)
+    if (shapeFill) ro.observe(shapeFill) // Shape hug width changes — reclamp the pill
     if (chromeRef.current) ro.observe(chromeRef.current)
     if (titleRef.current) ro.observe(titleRef.current)
     if (iconRef.current) ro.observe(iconRef.current)
@@ -199,7 +207,7 @@ export function BoardLinkView({ node, updateAttributes }: NodeViewProps) {
   const IconEl = icon ? (
     <span className="tt-board-link-emoji leading-none">{icon}</span>
   ) : (
-    <FileText className="tt-board-link-fallback h-4 w-4 text-gray-500 dark:text-gray-400" />
+    <FileText className="tt-board-link-fallback text-gray-500 dark:text-gray-400" /> /* Size is 1em CSS — match text glyphs */
   )
 
   return (
@@ -207,8 +215,9 @@ export function BoardLinkView({ node, updateAttributes }: NodeViewProps) {
       as="div"
       ref={wrapRef as React.Ref<HTMLDivElement>} // Measure icon/menu from the boardLink root (not the open-menu)
       className={cn(
-        'tt-board-link group relative nokey flex flex-col items-stretch', // nokey: RF must not steal Backspace while editing the title
+        'tt-board-link group relative nokey flex flex-col items-stretch', // Column so the iframe sits under the title
         variant === 'title' ? 'tt-board-link-title' : 'tt-board-link-inline',
+        previewOpen && 'tt-board-link-previewing', // CSS: column + min width — beat inline-flex row
         editing && 'tt-board-link-editing' // While editing the title, CSS hides the preview chrome
       )}
       contentEditable={false} // Atom node — PM ignores inner DOM; we manage the title span
@@ -220,9 +229,8 @@ export function BoardLinkView({ node, updateAttributes }: NodeViewProps) {
         ref={iconRef}
         className="tt-board-link-icon-wrap inline-flex flex-shrink-0"
         style={{
-          // Transform-only chrome: layout box stays natural so hug / RF node size stay stable.
-          transform: `translateY(${iconShiftY}px) scale(${chromeScale})`, // Pin to first text line + comfort scale
-          transformOrigin: 'left center', // Keep left edge + vertical center; shrink toward the title
+          // Shift only — icon is 1em of the title (board-relative, no zoom counter-scale)
+          ['--tt-board-link-icon-shift' as string]: `${iconShiftY}px`,
         }}
       >
       <DropdownMenu open={iconOpen} onOpenChange={setIconOpen}>
@@ -339,12 +347,31 @@ export function BoardLinkView({ node, updateAttributes }: NodeViewProps) {
           style={{
             ...(menuLeft != null ? { left: menuLeft, right: 'auto' } : {}), // Measured local px; overrides CSS right:0
             ...(menuTop != null ? { top: menuTop } : {}), // Align to the TITLE's first-line center (overrides top:50%)
-            transform: `translateY(-50%) scale(${chromeScale})`, // Center the box on that point + comfort scale
-            transformOrigin: 'left center', // Anchor the left edge (matches the placement math)
+            // Scale is CSS 1/(zoom×frameScale) — do not set transform here (that froze mid-zoom)
           }}
         />
       )}
       </div>
+      {previewOpen && boardId && (
+        <div
+          className="tt-board-link-embed w-full pt-2 pb-2 box-border" // CSS 8px L/R — peach on both frame edges
+          contentEditable={false}
+          onPointerDown={(e) => {
+            const frame = (e.currentTarget as HTMLElement).closest('.react-flow__node')
+            if (frame?.classList.contains('selected')) e.stopPropagation() // Unselected: RF selects the frame first
+          }}
+        >
+          <NestedBoardPreview
+            conversationId={boardId}
+            title={title || 'Board'}
+            visible
+            fill={false} // Fixed card under the title — not a frame-filling overlay
+            hostNodeId={actions.hostNodeId ?? undefined} // Chrome drag moves the host frame
+            cornerRadius={6} // Same default as the frame fill
+            onClose={() => actions.closePreview()}
+          />
+        </div>
+      )}
     </NodeViewWrapper>
   )
 }

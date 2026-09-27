@@ -157,6 +157,16 @@ function stampResizeHandles(node: HTMLElement, ui: number): void {
   })
 }
 
+/** Wrap-column dashes — scale from slot center so thickness holds without crawling. */
+function stampWrapDashes(node: HTMLElement, zoom: number): void {
+  const inv = 1 / Math.max(0.01, zoom) // Same 1/zoom as --tt-thread-inv-zoom
+  node.querySelectorAll('[data-tt-wrap-dash]').forEach((el) => {
+    const dash = el as HTMLElement
+    dash.style.setProperty('transform', `scale(${inv})`) // Screen size; slot top/left stay in flow
+    dash.style.setProperty('transform-origin', 'center center')
+  })
+}
+
 /** Blue adjust ring stroke width — screen-constant via --tt-frame-line-w. */
 function stampAdjustRing(node: HTMLElement, ui: number): void {
   const linePx = `${ui}px`
@@ -179,9 +189,10 @@ function stampFreehandChrome(node: HTMLElement, ui: number): void {
 }
 
 /** Direct paint for resize dots / ring / indicators / rotate·fit·wrap. */
-function stampChromeElements(node: HTMLElement, ui: number, _zoom: number): void {
+function stampChromeElements(node: HTMLElement, ui: number, zoom: number): void {
   const out = 14 * ui // INDICATOR_OUTSET in flow space
   stampResizeHandles(node, ui)
+  stampWrapDashes(node, zoom) // Wrap dashes: 1/zoom from slot center (React zoom can lag)
   stampAdjustRing(node, ui)
 
   const panel = node.querySelector('[data-panel-container="true"]') as HTMLElement | null

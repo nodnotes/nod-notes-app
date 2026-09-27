@@ -608,7 +608,9 @@ export async function fetchNotionDatabaseTable(
     let cursor: string | undefined = pageOpts?.startCursor || undefined
     const limit = pageOpts?.limit
 
-    while (true) {
+    let hops = 0 // Hard cap — unbounded has_more used to hang linked-view loads
+    while (hops < 20) {
+      hops += 1
       const pageSize = limit ? Math.min(100, Math.max(1, limit - out.length)) : 100
       const body: Record<string, unknown> = { page_size: pageSize }
       if (cursor) body.start_cursor = cursor
@@ -640,23 +642,29 @@ export async function fetchNotionDatabaseTable(
       }
       cursor = qPayload.next_cursor as string | undefined
     }
+    return { rows: out, hasMore: true, nextCursor: cursor || null }
   }
 
-  const sliceRows = (
-    ordered: NotionDbRow[],
-    limit?: number,
-    offsetCursor?: string
-  ): { rows: NotionDbRow[]; hasMore: boolean; nextCursor: string | null } => {
-    if (limit == null) return { rows: ordered, hasMore: false, nextCursor: null }
-    const offset = offsetCursor ? parseInt(offsetCursor, 10) : 0
-    const safeOffset = Number.isFinite(offset) && offset >= 0 ? offset : 0
-    const page = ordered.slice(safeOffset, safeOffset + limit)
-    const hasMore = safeOffset + limit < ordered.length
-    return {
-      rows: page,
-      hasMore,
-      nextCursor: hasMore ? String(safeOffset + limit) : null,
+  /** Load only the pages this view asked for — never scan the whole All-tasks source. */
+  const hydratePageRows = async (ids: string[]): Promise<NotionDbRow[]> => {
+    const out: NotionDbRow[] = []
+    const BATCH = 8 // Stay under Notion rate limits
+    for (let i = 0; i < ids.length; i += BATCH) {
+      const chunk = ids.slice(i, i + BATCH)
+      const got = await Promise.all(
+        chunk.map(async (id) => {
+          const res = await fetch(`https://api.notion.com/v1/pages/${id}`, {
+            method: 'GET',
+            headers,
+          })
+          const payload = await res.json().catch(() => ({}))
+          if (!res.ok) return null
+          return rowFromPage(payload as Record<string, unknown>)
+        })
+      )
+      for (const row of got) if (row) out.push(row)
     }
+    return out
   }
 
   let rows: NotionDbRow[]
@@ -666,16 +674,15 @@ export async function fetchNotionDatabaseTable(
   const rowCursor = options?.rowCursor
 
   if (viewPageIds) {
-    // Hydrate properties from data_source, then keep/order only view-query page ids
-    const all = (await queryRowsPaged(false)).rows
-    const byId = new Map(all.map((r) => [r.id.replace(/-/g, '').toLowerCase(), r]))
-    const ordered = viewPageIds
-      .map((id) => byId.get(id.replace(/-/g, '').toLowerCase()))
-      .filter((r): r is NotionDbRow => !!r)
-    const sliced = sliceRows(ordered, rowLimit, rowCursor)
-    rows = sliced.rows
-    rowsHasMore = sliced.hasMore
-    rowsNextCursor = sliced.nextCursor
+    const offset = rowCursor ? parseInt(rowCursor, 10) : 0
+    const safeOffset = Number.isFinite(offset) && offset >= 0 ? offset : 0
+    const pageIds =
+      rowLimit == null
+        ? viewPageIds.slice(safeOffset)
+        : viewPageIds.slice(safeOffset, safeOffset + rowLimit)
+    rows = await hydratePageRows(pageIds) // Same view order; only this page
+    rowsHasMore = rowLimit != null && safeOffset + pageIds.length < viewPageIds.length
+    rowsNextCursor = rowsHasMore ? String(safeOffset + pageIds.length) : null
   } else if (viewFilter || viewSorts) {
     try {
       const paged = await queryRowsPaged(true, { limit: rowLimit, startCursor: rowCursor })
@@ -940,6 +947,31 @@ export async function archiveNotionPage(
   if (!res.ok) {
     throw new Error(payload?.message || `Failed to archive Notion page ${pageId}`)
   }
+}
+
+/** Restore a trashed Notion page, block, or database (`in_trash: false`). */
+export async function restoreNotionPage(
+  accessToken: string,
+  pageId: string
+): Promise<void> {
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    'Notion-Version': NOTION_VERSION,
+    'Content-Type': 'application/json',
+  }
+  const body = JSON.stringify({ in_trash: false }) // 2025-09-03 restore field
+  const urls = [
+    `https://api.notion.com/v1/pages/${pageId}`, // Regular pages / folders
+    `https://api.notion.com/v1/blocks/${pageId}`, // Toggles / inline DBs
+  ]
+  let lastError = `Failed to restore Notion page ${pageId}`
+  for (const url of urls) {
+    const res = await fetch(url, { method: 'PATCH', headers, body })
+    if (res.ok) return
+    const payload = await res.json().catch(() => ({}))
+    lastError = payload?.message || lastError
+  }
+  throw new Error(lastError)
 }
 
 /** Property types we can recreate when spinning a one-row DB from a drag. */
