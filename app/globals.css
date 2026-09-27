@@ -2179,6 +2179,80 @@ span[data-added="true"] {
     width: max-content; /* Intrinsic line width — not 100% (cyclic with frame hug) */
     box-sizing: border-box;
   }
+  /* Free-resize + Alignment (wrap off): fill the frame so text-align can park short lines */
+  [data-tt-align-box="true"] .ProseMirror[data-single-line="true"] {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+  [data-tt-align-box="true"] .ProseMirror[data-single-line="true"] p,
+  [data-tt-align-box="true"] .ProseMirror[data-single-line="true"] h1,
+  [data-tt-align-box="true"] .ProseMirror[data-single-line="true"] h2,
+  [data-tt-align-box="true"] .ProseMirror[data-single-line="true"] h3,
+  [data-tt-align-box="true"] .ProseMirror[data-single-line="true"] h4,
+  [data-tt-align-box="true"] .ProseMirror[data-single-line="true"] li,
+  [data-tt-align-box="true"] .ProseMirror[data-single-line="true"] blockquote {
+    width: 100% !important;
+    text-align: inherit; /* Frame Alignment — not per-block left */
+  }
+  /* Wrap column is an explicit box — fill it so fit-to-content right/center can land on the peach */
+  [data-tt-align-box="true"] .ProseMirror:not([data-single-line="true"]) {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    text-align: inherit;
+  }
+  [data-tt-align-box="true"] .ProseMirror:not([data-single-line="true"]) p,
+  [data-tt-align-box="true"] .ProseMirror:not([data-single-line="true"]) h1,
+  [data-tt-align-box="true"] .ProseMirror:not([data-single-line="true"]) h2,
+  [data-tt-align-box="true"] .ProseMirror:not([data-single-line="true"]) h3,
+  [data-tt-align-box="true"] .ProseMirror:not([data-single-line="true"]) h4,
+  [data-tt-align-box="true"] .ProseMirror:not([data-single-line="true"]) li,
+  [data-tt-align-box="true"] .ProseMirror:not([data-single-line="true"]) blockquote {
+    width: 100% !important;
+    text-align: inherit;
+  }
+  /* Frame Alignment wins over TipTap’s inline text-align so wrap leftovers sit on the free edge */
+  [data-tt-content-fit][data-tt-frame-align="right"] .ProseMirror,
+  [data-tt-content-fit][data-tt-frame-align="right"] .ProseMirror p,
+  [data-tt-content-fit][data-tt-frame-align="right"] .ProseMirror h1,
+  [data-tt-content-fit][data-tt-frame-align="right"] .ProseMirror h2,
+  [data-tt-content-fit][data-tt-frame-align="right"] .ProseMirror h3,
+  [data-tt-content-fit][data-tt-frame-align="right"] .ProseMirror h4,
+  [data-tt-content-fit][data-tt-frame-align="right"] .ProseMirror li,
+  [data-tt-content-fit][data-tt-frame-align="right"] .ProseMirror blockquote {
+    text-align: right !important;
+  }
+  [data-tt-content-fit][data-tt-frame-align="center"] .ProseMirror,
+  [data-tt-content-fit][data-tt-frame-align="center"] .ProseMirror p,
+  [data-tt-content-fit][data-tt-frame-align="center"] .ProseMirror h1,
+  [data-tt-content-fit][data-tt-frame-align="center"] .ProseMirror h2,
+  [data-tt-content-fit][data-tt-frame-align="center"] .ProseMirror h3,
+  [data-tt-content-fit][data-tt-frame-align="center"] .ProseMirror h4,
+  [data-tt-content-fit][data-tt-frame-align="center"] .ProseMirror li,
+  [data-tt-content-fit][data-tt-frame-align="center"] .ProseMirror blockquote {
+    text-align: center !important;
+  }
+  /* Nowrap hug: longest line sizes the box; shorter blocks park on the aligned edge */
+  [data-tt-content-fit][data-tt-frame-align="right"] .ProseMirror[data-single-line="true"] > p,
+  [data-tt-content-fit][data-tt-frame-align="right"] .ProseMirror[data-single-line="true"] > h1,
+  [data-tt-content-fit][data-tt-frame-align="right"] .ProseMirror[data-single-line="true"] > h2,
+  [data-tt-content-fit][data-tt-frame-align="right"] .ProseMirror[data-single-line="true"] > h3,
+  [data-tt-content-fit][data-tt-frame-align="right"] .ProseMirror[data-single-line="true"] > h4,
+  [data-tt-content-fit][data-tt-frame-align="right"] .ProseMirror[data-single-line="true"] > li,
+  [data-tt-content-fit][data-tt-frame-align="right"] .ProseMirror[data-single-line="true"] > blockquote {
+    margin-left: auto; /* max-content blocks ignore text-align — push to the peach’s right */
+  }
+  [data-tt-content-fit][data-tt-frame-align="center"] .ProseMirror[data-single-line="true"] > p,
+  [data-tt-content-fit][data-tt-frame-align="center"] .ProseMirror[data-single-line="true"] > h1,
+  [data-tt-content-fit][data-tt-frame-align="center"] .ProseMirror[data-single-line="true"] > h2,
+  [data-tt-content-fit][data-tt-frame-align="center"] .ProseMirror[data-single-line="true"] > h3,
+  [data-tt-content-fit][data-tt-frame-align="center"] .ProseMirror[data-single-line="true"] > h4,
+  [data-tt-content-fit][data-tt-frame-align="center"] .ProseMirror[data-single-line="true"] > li,
+  [data-tt-content-fit][data-tt-frame-align="center"] .ProseMirror[data-single-line="true"] > blockquote {
+    margin-left: auto;
+    margin-right: auto;
+  }
   /* databaseBlock atoms span the row so the grip/I-bar band matches the frame.
      Images fill the sticky frame (contain-fit); boardLink stays shrink-wrapped. */
   .ProseMirror[data-single-line="true"] .tt-database-block {

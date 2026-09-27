@@ -143,7 +143,7 @@ import {
 } from '@/components/frame-viewport-mount-context' // Defer TipTap until the frame is interacted with
 import { pruneEmptyTextblocks, isEmptyTextblock } from '@/lib/tiptap/empty-block-backspace' // Strip blank lines on frame deselect
 import { setAiTextSelection } from '@/lib/ai/selection-bridge' // Live highlighted-text pills in AI composer
-import { BlockActionsMenu, type BoardInTarget, type FrameAlignX, type FrameAlignY } from '@/components/block-actions-menu'
+import { BlockActionsMenu, type BoardInTarget, type FrameAlignX } from '@/components/block-actions-menu'
 import { watchBoardViewportNav, dismissMenuUnlessBoardNav } from '@/lib/board-nav-menu' // Connection menu stays on the mark through pan/zoom
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, Fragment, memo } from 'react'
 import { MoreHorizontal, Trash2, Loader2, X, ChevronRight, ChevronLeft, ChevronsRight, ChevronsLeft, Plus, RotateCw, ScanText, WrapText, FileText } from 'lucide-react' // Rotate + fit / wrap; FileText = deferred boardLink fallback icon
@@ -170,15 +170,6 @@ const BLOCK_FRAME_PAD = BLOCK_FRAME_PAD_X // Default / band inset = horizontal p
 /** Frame menu Alignment — default left / top. */
 function parseFrameAlignX(v: unknown): FrameAlignX {
   return v === 'center' || v === 'right' ? v : 'left'
-}
-function parseFrameAlignY(v: unknown): FrameAlignY {
-  return v === 'center' || v === 'bottom' ? v : 'top'
-}
-/** CSS scale origin matches flex alignment so contain-fit stays on the aligned edge. */
-function frameAlignOrigin(x: FrameAlignX, y: FrameAlignY): string {
-  const ox = x === 'right' ? 'right' : x === 'center' ? 'center' : 'left'
-  const oy = y === 'bottom' ? 'bottom' : y === 'center' ? 'center' : 'top'
-  return `${oy} ${ox}`
 }
 /** Property cell radius at scale 1 — fill lives outside CSS scale so multiply by frameScale; adjust ring stays square */
 const FRAME_CORNER_RADIUS = 6
@@ -706,6 +697,24 @@ function hugLockedFrameSize(
 ) {
   // Height/width floors stay at 1 — intrinsic already includes one-line pads
   return scaledFrameSize(shapeFitContentBox(intrinsic, shape, true), scale, minWidth, 1)
+}
+
+/** Painted contentFit box in fill-local px (includes CSS scale — the on-screen text). */
+function visualContentInFill(
+  cf: HTMLElement,
+  fill: HTMLElement
+): { left: number; top: number; width: number; height: number } | null {
+  const fillRect = fill.getBoundingClientRect() // Screen AABB of the peach
+  const cfRect = cf.getBoundingClientRect() // Screen AABB of the scaled glyphs
+  if (fillRect.width < 1 || fillRect.height < 1) return null
+  const sx = fill.offsetWidth / fillRect.width // Screen → fill CSS px (board zoom)
+  const sy = fill.offsetHeight / fillRect.height
+  return {
+    left: (cfRect.left - fillRect.left) * sx, // Where the text sits in the free fill
+    top: (cfRect.top - fillRect.top) * sy,
+    width: Math.max(1, cfRect.width * sx),
+    height: Math.max(1, cfRect.height * sy),
+  }
 }
 
 import { Button } from '@/components/ui/button'
@@ -1377,6 +1386,8 @@ function TipTapContentLive({
   enableBlockHandles = false, // Keep ⋮⋮ gutter (`pl-6`) for **blocks** — must not flip mid-drag
   showBlockHandles = true, // Paint/arm ⋮⋮ grips; false while RF frame-dragging (gutter stays)
   singleLineUntilEnter = false, // Unresized blocks: one visual line per TipTap block
+  alignInFrame = false, // Wrap column / free nowrap: fill the box so text-align can land
+  frameAlignX = 'left', // Frame Alignment — stamp on PM so wrap leftovers sit on the free edge
   hostNodeId,
   conversationId,
   hostMessageId,
@@ -1429,6 +1440,8 @@ function TipTapContentLive({
   enableBlockHandles?: boolean // Gutter + property/Notion chrome for frames that own TipTap blocks
   showBlockHandles?: boolean // False mid-drag so ⋮⋮ unmount without collapsing `pl-6`
   singleLineUntilEnter?: boolean // Unresized map blocks: grow width; Enter starts a new line
+  alignInFrame?: boolean // Wrap / free nowrap: PM fills the box so Alignment text-align can land
+  frameAlignX?: FrameAlignX // Stamp text-align on the editor — inherit loses to TipTap’s inline left
   hostNodeId?: string
   conversationId?: string // Page id — ⋮⋮ extract a block onto the page
   hostMessageId?: string // Frame message id — Convert layout API source
@@ -1921,16 +1934,22 @@ function TipTapContentLive({
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
     const editorDOM = editor.view.dom as HTMLElement
+    editorDOM.style.setProperty('text-align', frameAlignX, 'important') // Beat TipTap inline text-align:left
     if (singleLineUntilEnter) {
       editorDOM.setAttribute('data-single-line', 'true') // nowrap; CSS fills frame width
       editorDOM.style.width = '100%' // Stretch to content box — empty/short lines stay full-row
-      editorDOM.style.minWidth = 'max-content' // Still hug longest line for unresized frames
+      editorDOM.style.minWidth = alignInFrame ? '0' : 'max-content' // Align box: don't hug past the frame
     } else {
       editorDOM.removeAttribute('data-single-line')
-      editorDOM.style.width = ''
-      editorDOM.style.minWidth = ''
+      if (alignInFrame) {
+        editorDOM.style.setProperty('width', '100%', 'important') // Fill the wrap column — shrink-to-fit left leftovers on the right
+        editorDOM.style.minWidth = '0'
+      } else {
+        editorDOM.style.width = ''
+        editorDOM.style.minWidth = ''
+      }
     }
-  }, [editor, singleLineUntilEnter])
+  }, [editor, singleLineUntilEnter, alignInFrame, frameAlignX])
 
   // Snapshot this frame's rendered subtree so the cold frame can replay it inert instead of
   // re-deriving an approximation. Idle-scheduled and debounced: the capture is only needed the
@@ -3194,10 +3213,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const [wrapColWidth, setWrapColWidth] = useState<number | null>(null) // Unscaled wrap column width — fixed on locked resize, restored on rewrap
   const [frameAlignX, setFrameAlignX] = useState<FrameAlignX>(() =>
     parseFrameAlignX((promptMessage?.metadata as { frameAlignX?: unknown } | undefined)?.frameAlignX)
-  ) // Frame content horizontal — wrap line side
-  const [frameAlignY, setFrameAlignY] = useState<FrameAlignY>(() =>
-    parseFrameAlignY((promptMessage?.metadata as { frameAlignY?: unknown } | undefined)?.frameAlignY)
-  ) // Frame content vertical — free extra height only
+  ) // Glyph text-align — wrap column stays mid-frame
   const [dbAlwaysExpanded, setDbAlwaysExpanded] = useState(false) // Notion DB frames: Expanded vs Preview (frame menu)
   // Per-frame row unlock for Notion DB show-more (12 → 50 → +50). Not shared across duplicate frames.
   const [dbVisibleRowCap, setDbVisibleRowCap] = useState(12)
@@ -3236,10 +3252,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const wrapLineDraggingRef = useRef(false) // True while dragging the wrap column line
   const nowrapCapRef = useRef<number | null>(null) // Nowrap width at wrap-on — line cannot drag past it
   const paintScaleRef = useRef(1) // Live CSS scale so wrap-line drag converts fill X → unscaled col
-  const frameAlignXRef = useRef(frameAlignX) // Wrap-line drag reads align without rebinding
+  const frameAlignXRef = useRef(frameAlignX) // Wrap-line drag — fit-to-content shows one bar
   frameAlignXRef.current = frameAlignX
-  const frameAlignYRef = useRef(frameAlignY)
-  frameAlignYRef.current = frameAlignY
   const wrapContainHRef = useRef<number | null>(null) // Wrap-stack height at the natural column (box ÷ frameScale)
   const wrapContainBoxWRef = useRef<number | null>(null) // Free box width that wrapContainHRef was measured at
   const rotationRef = useRef(rotation) // Live frame rotation for AABB → content size
@@ -3503,8 +3517,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           setFrameTextWrap(metadata.frameTextWrap) // Restore wrap-in-frame preference (unlocked chrome)
         }
         if (isBlockPanel) {
-          setFrameAlignX(parseFrameAlignX(metadata.frameAlignX)) // Restore wrap-line side
-          setFrameAlignY(parseFrameAlignY(metadata.frameAlignY)) // Restore vertical align
+          setFrameAlignX(parseFrameAlignX(metadata.frameAlignX)) // Restore glyph text-align
         }
         if (isBlockPanel && typeof metadata.dbAlwaysExpanded === 'boolean') {
           setDbAlwaysExpanded(metadata.dbAlwaysExpanded) // Restore Always expanded vs Expand when selected
@@ -3993,8 +4006,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   useEffect(() => {
     if (!isBlock) return
     setFrameAlignX(parseFrameAlignX(promptMessage?.metadata?.frameAlignX))
-    setFrameAlignY(parseFrameAlignY(promptMessage?.metadata?.frameAlignY))
-  }, [isBlock, promptMessage?.metadata?.frameAlignX, promptMessage?.metadata?.frameAlignY])
+  }, [isBlock, promptMessage?.metadata?.frameAlignX])
 
   // When Shape menu patches metadata, adopt unlock + box without waiting for remount
   useEffect(() => {
@@ -5518,7 +5530,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     } else if (!unlocked && wrapping) {
       // Locked wrap: hug WIDTH to the scaled FIXED columns (no reflow) + HEIGHT to wrapped content.
       // No +2 border — selected adjust chrome uses borderWidth 0 (same as scaledFrameSize).
-      if (colW != null) width = Math.round(colW * safeScale)
+      if (colW != null) width = Math.round(intrinsic.width * safeScale) // Widest wrapped line — peach hugs text, column parks by align
       height = Math.max(1, Math.ceil(intrinsic.height * safeScale))
     } else if (!unlocked) {
       const hugged = hugLockedFrameSize(intrinsic, finalScale, 1, frameShapeRef.current) // Nowrap: snap to scaled text — no 40px empty pad
@@ -5602,7 +5614,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       if (frameTextWrapRef.current && colW != null) {
         // Locked WRAP: derive the box from the FIXED column width × scale so NO character reflows —
         // the wrapped text just scales up/down (columns stay constant; no phantom border).
-        width = Math.round(colW * nextScale)
+        width = Math.round(intrinsicSizeRef.current.width * nextScale) // Peach hugs the widest line — column parks by align inside
         height = Math.max(1, Math.round(intrinsicSizeRef.current.height * nextScale))
       } else {
         // Locked nowrap: hug the blue box to scaled content during the gesture (same as resize-end).
@@ -5625,6 +5637,19 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     if (nextScale != null) frameScaleRef.current = nextScale // Keep ratio math + CSS on this sample
     resizeDimensionsRef.current = { width: contentW, height: contentH } // Other live readers (pushAabb) see this tick
     applyLiveAdjustBoxRef.current(unlockedUpright ? width : contentW, unlockedUpright ? height : contentH, unlockedUpright)
+    const spacer = contentFitRef.current?.parentElement // Flex box that parks the wrap column
+    const fill = wrapLineFillRef.current // Fill shell — spacer sits in here, not the chrome
+    if (spacer && spacer !== fill) {
+      const lockedWrapSpacer =
+        !frameUnlockedRef.current && frameTextWrapRef.current && wrapColWidthRef.current != null // Fit wrap: spacer = text hug, not the column
+      const spacerW = lockedWrapSpacer
+        ? Math.ceil(intrinsicSizeRef.current.width * (nextScale ?? frameScaleRef.current)) // Same as render scaledLayoutW — React won’t rewrite an equal value on release
+        : contentW
+      spacer.style.width = `${spacerW}px` // Same-tick as the panel — do not wait for rAF
+      spacer.style.height = `${contentH}px` // Center/right flex must see the new box this pointer
+      spacer.style.minWidth = `${spacerW}px` // Defeat a stale min from the last React commit
+      spacer.style.minHeight = `${contentH}px` // Same for height so top/bottom align cannot lag
+    }
     if (contentFitRef.current) {
       const baseScale = nextScale ?? frameScaleRef.current // Lock uses the new ratio; free keeps place-scale
       const wrapping = frameUnlockedRef.current && frameTextWrapRef.current // Free wrap — reflow down, never past fit-to-text
@@ -5643,11 +5668,23 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       const paint = baseScale * contain // Same formula as render paintScale
       contentFitRef.current.style.transform =
         Math.abs(paint - 1) > FRAME_SCALE_EPSILON ? `scale(${paint})` : '' // Drop scale when at natural
-      contentFitRef.current.style.transformOrigin = 'top left' // Same origin as applyPaintScale
+      const freeNowrap = frameUnlockedRef.current && !frameTextWrapRef.current // Align box = fill, not a wrap column
+      const lockedWrap = !frameUnlockedRef.current && frameTextWrapRef.current && wrapColWidthRef.current != null // Fit wrap parks the column by align
+      contentFitRef.current.style.transformOrigin = wrapping
+        ? 'center center' // Free wrap — column mid-fill
+        : lockedWrap && frameAlignXRef.current === 'right'
+          ? 'top right' // Pairs with the flex-end spacer
+          : lockedWrap && frameAlignXRef.current === 'center'
+            ? 'top center'
+            : 'top left' // Lock / free nowrap scale from the fill origin
       if (wrapping) {
         const col = Math.max(1, wrapColWidthRef.current ?? fitCol) // Line-owned column — resize must not reflow wrap
         contentFitRef.current.style.width = `${col}px` // Live wrap column
         contentFitRef.current.style.maxWidth = `${col}px` // Match render wrapContentWidth
+      } else if (freeNowrap) {
+        const col = Math.max(1, contentW / paint) // Unscaled fill — scale(paint) lands on the peach
+        contentFitRef.current.style.width = `${col}px`
+        contentFitRef.current.style.maxWidth = `${col}px`
       }
     }
     if (resizeRafRef.current == null) {
@@ -5820,6 +5857,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     }
 
     let metaPatch: Record<string, unknown> = { frameUnlocked: nextUnlocked }
+    let fitShift = { x: 0, y: 0 } // Relock: hug around the mid-frame free content, not the top-left
+    let fitOuter: { width: number; height: number } | null = null // RF box in the same commit as the XY shift
 
     // Sole image: same round-trip as text, but fit size is the last sticky box (not a bitmap hug).
     const soleImage = isSoleImageBlockHtml(promptContent)
@@ -5963,12 +6002,23 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         naturalH * baseScale
       )
       // If free-resize shrunk the blocks, bake that contain into frameScale so fit hugs that size.
-      const nextScale = Math.max(FRAME_SCALE_EPSILON, baseScale * contain)
+      // From free: bake the painted scale — wrap contain-fits the column, not the narrower glyph run
+      const nextScale = Math.max(
+        FRAME_SCALE_EPSILON,
+        wasUnlocked ? paintScaleRef.current : baseScale * contain
+      )
       setFrameScale(nextScale) // Persist the on-screen text size
       if (frameTextWrap && resizeDimensionsRef.current) {
         const keepW = resizeDimensionsRef.current.width // Wrap column stays the free width
         const wrapH = Math.max(1, Math.ceil(naturalH * nextScale)) // Hug height to the (maybe shrunk) wrap
         const nextDims = { width: keepW, height: wrapH }
+        if (!dbBox) {
+          setIntrinsicSize((prev) =>
+            Math.abs(prev.width - naturalW) <= 1 && Math.abs(prev.height - naturalH) <= 1
+              ? prev
+              : { width: naturalW, height: naturalH }
+          ) // Peach hugs this widest wrapped line on the first locked paint
+        }
         setResizeDimensions(nextDims)
         setIsUserResized(true)
         metaPatch = {
@@ -6004,6 +6054,38 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           unlockedFrameScale: freeSnapshot.scale,
         }
       }
+      const fillEl = wrapLineFillRef.current // Peach — contentFit origin is fill-local
+      const painted = fitEl && fillEl ? visualContentInFill(fitEl, fillEl) : null // On-screen glyphs
+      if (wasUnlocked && painted) {
+        const glyphW = dbBox || isRowCardAtomHtml(promptContent) ? painted.width : naturalW * nextScale // Text hug at the baked scale
+        const extra = Math.max(0, painted.width - glyphW) // Column / align-box air beside the glyphs
+        const alignShift =
+          frameAlignXRef.current === 'right' ? extra : frameAlignXRef.current === 'center' ? extra / 2 : 0 // Glyphs sit on the aligned edge of that box
+        const nextDims = { width: painted.width - extra, height: painted.height } // Hug the painted glyphs, not the wider box
+        setResizeDimensions(nextDims)
+        resizeDimensionsRef.current = nextDims
+        metaPatch = { ...metaPatch, resizeDimensions: nextDims }
+        fitShift = { x: painted.left + alignShift, y: painted.top } // Fill origin → the glyphs’ left (mid-frame in free)
+        const storePos = rfStoreApi.getState().nodeInternals.get(id)?.position
+        if (storePos) {
+          metaPatch = {
+            ...metaPatch,
+            position: { x: storePos.x + fitShift.x, y: storePos.y + fitShift.y },
+          }
+        }
+        // Size + XY in the same setNodes — shrinking the peach first left text mid-node
+        const chromeX = adjustChromeXRef.current
+        const rot = rotationRef.current
+        const aabb =
+          Math.abs(rot) > 0.5
+            ? rotatedFrameAabbSize(nextDims.width + chromeX * 2, nextDims.height, rot, frameShapeRef.current)
+            : {
+                width: nextDims.width + chromeX * 2,
+                height: nextDims.height + adjustChromeYTopRef.current + adjustChromeYBottomRef.current,
+              }
+        fitOuter = { width: Math.round(aabb.width), height: Math.round(aabb.height) }
+        lastPushedBoxRef.current = { w: fitOuter.width, h: fitOuter.height, rot }
+      }
     }
 
     setFrameUnlocked(nextUnlocked)
@@ -6014,8 +6096,20 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           if (n.id !== id) return n
           const pm = n.data?.promptMessage
           if (!pm) return n
+          const pos =
+            fitShift.x || fitShift.y
+              ? { x: n.position.x + fitShift.x, y: n.position.y + fitShift.y }
+              : n.position
           return {
             ...n,
+            position: pos, // Same commit as the hug size
+            ...(fitOuter
+              ? {
+                  width: fitOuter.width,
+                  height: fitOuter.height,
+                  style: { ...n.style, width: fitOuter.width, height: fitOuter.height },
+                }
+              : {}),
             data: {
               ...n.data,
               promptMessage: {
@@ -6029,7 +6123,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     }
     window.dispatchEvent(new Event('tt-frame-lock-changed'))
     void persistFrameMeta({ ...metaPatch, frameTextWrap: metaPatch.frameTextWrap ?? frameTextWrap })
-  }, [frameUnlocked, frameScale, frameTextWrap, intrinsicSize, persistFrameMeta, promptContent, promptMessage?.metadata, getSetNodes, id])
+  }, [frameUnlocked, frameScale, frameTextWrap, intrinsicSize, persistFrameMeta, promptContent, promptMessage?.metadata, getSetNodes, id, rfStoreApi])
 
   const handleToggleFrameLock = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
@@ -6161,7 +6255,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     }
   }, [frameUnlocked, frameTextWrap, frameScale, wrapColWidth, resizeDimensions, persistFrameMeta, promptContent, intrinsicSize])
 
-  // Drag a wrap line — left/right/center (center: both lines move opposite)
+  // Drag a wrap line — free/center: both edges; fit-to-content left/right: the free edge only
   const handleWrapLinePointerDown = useCallback((side: 'left' | 'right') => (e: React.PointerEvent<HTMLDivElement>) => {
     e.stopPropagation() // Do not start frame drag or text select
     e.preventDefault() // Keep the pointer on the line hit slop
@@ -6177,10 +6271,13 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     const fillW0 = fill?.offsetWidth ?? 0
     const visual0 = startW * paint
     const padX0 = BLOCK_FRAME_PAD_X * paint
-    const alignX0 = frameAlignXRef.current
-    const colLeft0 =
-      alignX0 === 'right' ? fillW0 - padX0 - visual0 : alignX0 === 'center' ? (fillW0 - visual0) / 2 : padX0
-    const center0 = colLeft0 + visual0 / 2 // Center pair — keep this, move both edges
+    const pair = frameUnlockedRef.current || frameAlignXRef.current === 'center' // Two bars — keep mid
+    const colLeft0 = pair
+      ? (fillW0 - visual0) / 2
+      : frameAlignXRef.current === 'right'
+        ? fillW0 - padX0 - visual0
+        : padX0
+    const center0 = colLeft0 + visual0 / 2 // Pair drag keeps this
     if (cf) {
       nowrapCapRef.current = Math.max(
         nowrapCapRef.current ?? 0,
@@ -6201,12 +6298,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         wrapColWidthRef.current ?? 0,
         locked ? 0 : boxCol // Locked: never cap at the hugged wrap box
       )
-      const raw =
-        alignX0 === 'center'
-          ? (2 * Math.abs(localX - center0)) / paint // Opposite edges — keep center
-          : side === 'left'
-            ? startW + (startLocalX - localX) / paint // Left line: drag in → narrower
-            : startW + (localX - startLocalX) / paint // Right line: drag out → wider
+      const raw = pair
+        ? (2 * Math.abs(localX - center0)) / paint // Both lines — keep the column centered
+        : side === 'left'
+          ? startW + (startLocalX - localX) / paint // Fit-to-content right-align: left bar
+          : startW + (localX - startLocalX) / paint // Fit-to-content left-align: right bar
       const col = Math.max(minCol, Math.min(maxCol, Math.round(raw))) // Unscaled wrap column
       wrapColWidthRef.current = col // Live readers (resize) see this tick
       setWrapColWidth(col) // Reflow text at the line
@@ -7089,12 +7185,17 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const liveAdjust =
     isResizingRef.current && liveResizeBoxRef.current ? liveResizeBoxRef.current : null // Mid-adjust sample
   const renderFrameScale = liveAdjust?.scale ?? frameScale // Live scale so hug/spacer match the drag
-  const huggedSize = scaledFrameSize(
+  const glyphHugSize = scaledFrameSize(
     shapeFitContentBox(intrinsicSize, frameShape, !frameUnlocked || pagePreviewOpen), // Preview: inflate silhouette even if unlocked
     renderFrameScale,
     1, // Fit-to-text: hug glyphs — FRAME_RESIZE_MIN (40) left empty pad with text stuck top-left
     1
   ) // Scaled content (no phantom border)
+  const lockedWrapCol = wrapActive && !frameUnlocked && wrapColWidth != null && !frameShape // Fit-to-content wrap
+  const huggedSize =
+    lockedWrapCol && wrapLineDraggingRef.current
+      ? { ...glyphHugSize, width: wrapColWidth! * renderFrameScale } // Mid wrap-line drag: glyph measure lags — hug the live column
+      : glyphHugSize // Otherwise hug the widest wrapped line; the column parks on the aligned edge
   // Stamp before effects: RF push reads this so blue selection matches peach (not stale tall dims)
   // Sole image: sticky resizeDimensions owns the box — never stamp text hug over it
   if (
@@ -7214,11 +7315,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         1
       )
     : null
-  const contentVisualW =
-    scaledDbSize?.width ??
-    (wrapActive && !frameUnlocked && wrapColWidth != null
-      ? wrapColWidth * renderFrameScale // Locked wrap: hug = live column × scale — measured intrinsic lags a frame and right/center align spills left
-      : huggedSize.width)
+  const contentVisualW = scaledDbSize?.width ?? huggedSize.width // Locked wrap: widest line (column while dragging)
   const contentVisualH = scaledDbSize?.height ?? huggedSize.height
   // Fit-to-text radius is 6 × (box / natural). Use the live fill box so free-resize
   // corners scale the same way (at the hug size this equals 6 × frameScale).
@@ -7307,6 +7404,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const wrapContentWidth =
     wrapActive && wrapColWidth != null // Locked + free: same column; free resize must not steal wrap
       ? wrapColWidth
+      : null
+  // Free nowrap: unscaled fill width so text-align has a box (wrap off used to hug the line)
+  const freeAlignCol =
+    clipUnlocked && !soleImageContent && unlockedInnerW != null
+      ? Math.max(1, unlockedInnerW / Math.max(FRAME_SCALE_EPSILON, paintScale))
       : null
   // Stamp wrap height only while laid out at the fit column
   if (wrapUnlocked && wrapContentWidth != null && fitWrapCol != null && Math.abs(wrapContentWidth - fitWrapCol) <= 2) {
@@ -9406,12 +9508,12 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           shapeCenterContent && 'flex items-center justify-center',
           !isFillTransparent && !frameShape && 'backdrop-blur-sm',
           !isBlock && 'p-1',
-          // Clip content inside the fill; ⋮⋮ paints in the panel’s left chrome (overflow visible on panel).
+          // Clip content inside the fill; ⋮⋮ portal onto this fill in the panel’s left chrome.
           // Sole image: clip via ProseMirror/CSS only — this shell must stay visible when selected
           // so negative-left ⋮⋮ can reach the blue gutter (same as text frames).
           // Shaped: overflow visible here — the inner layer clips to the silhouette.
-          unlockedResized && !isContentRotated && !frameShape && !(selected && wrapActive && !frameResizing) // Clip again while resizing (bars hidden)
-            ? 'overflow-hidden' // Keep the free box — unscaled content must not grow the RF node
+          unlockedResized && !selected && !isContentRotated && !frameShape
+            ? 'overflow-hidden' // Unselected free: keep the box — unscaled content must not grow the RF node
             // Wrap bars stay overflow-visible so corner radius does not clip their ends
             : soleImageContent && !selected
             ? 'overflow-hidden'
@@ -9509,10 +9611,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                     ...(isBlock
                       ? {
                           display: 'flex',
-                          justifyContent:
-                            frameAlignX === 'right' ? 'flex-end' : frameAlignX === 'center' ? 'center' : 'flex-start',
-                          alignItems:
-                            frameAlignY === 'bottom' ? 'flex-end' : frameAlignY === 'center' ? 'center' : 'flex-start',
+                          justifyContent: 'center', // Free extra space — wrap column stays mid-frame
+                          alignItems: 'center', // Same for height; Alignment is text-align only
                         }
                       : {}),
                   }
@@ -9522,20 +9622,35 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                     // Locked scale: hug spacer. paintScale contain-fits the blocks inside.
                     width: unlockedResized && unlockedInnerW != null ? unlockedInnerW : scaledLayoutW,
                     height: unlockedResized && unlockedInnerH != null ? unlockedInnerH : scaledLayoutH,
+                    minWidth: unlockedResized && unlockedInnerW != null ? unlockedInnerW : scaledLayoutW, // React owns the min — handleResize writes one imperatively and relock left the free-box min (text shoved off the peach)
+                    minHeight: unlockedResized && unlockedInnerH != null ? unlockedInnerH : scaledLayoutH,
                     overflow: unlockedResized ? 'hidden' : 'visible', // Hidden = box stays where resized
                     display: 'flex',
                     justifyContent:
-                      frameAlignX === 'right' ? 'flex-end' : frameAlignX === 'center' ? 'center' : 'flex-start',
-                    alignItems:
-                      frameAlignY === 'bottom' ? 'flex-end' : frameAlignY === 'center' ? 'center' : 'flex-start',
+                      unlockedResized && wrapContentWidth != null
+                        ? 'center' // Free wrap — column mid-frame
+                        : lockedWrapCol && frameAlignX === 'right'
+                          ? 'flex-end' // Fit wrap: peach hugs the widest line — park the wider column’s right edge on it
+                          : lockedWrapCol && frameAlignX === 'center'
+                            ? 'center'
+                            : 'flex-start',
+                    alignItems: unlockedResized ? 'center' : 'flex-start', // Extra height: keep the block mid-frame
                   } // CSS scale doesn’t affect layout — spacer holds the free / hug box
                 : isBlock
                 ? {
                     display: 'flex',
+                    ...(lockedWrapCol
+                      ? { width: scaledLayoutW } // Pin to the text hug — auto width grew to the column and flex-end had nothing to park against
+                      : {}),
+                    minWidth: lockedWrapCol ? scaledLayoutW : 0, // React owns this — handleResize’s free-box min survived relock
+                    minHeight: 0, // Same: clear the free-resize min-height
                     justifyContent:
-                      frameAlignX === 'right' ? 'flex-end' : frameAlignX === 'center' ? 'center' : 'flex-start',
-                    alignItems:
-                      frameAlignY === 'bottom' ? 'flex-end' : frameAlignY === 'center' ? 'center' : 'flex-start',
+                      lockedWrapCol && frameAlignX === 'right'
+                        ? 'flex-end' // Fit wrap at scale 1 — same edge park as the scaled spacer
+                        : lockedWrapCol && frameAlignX === 'center'
+                          ? 'center'
+                          : 'flex-start', // Locked hug — origin top-left, no leftover
+                    alignItems: 'flex-start',
                   }
                 : undefined
             }
@@ -9545,6 +9660,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             data-tt-content-fit="true" // ImageBlockView contain-fit measures this box
             data-tt-sole-image={soleImageContent ? 'true' : undefined} // Absolute-fill image to sticky frame
             data-tt-shape-center={shapeCenterContent ? 'true' : undefined}
+            data-tt-align-box={freeAlignCol != null || wrapContentWidth != null ? 'true' : undefined} // Wrap column + free nowrap: text-align uses the box
+            data-tt-frame-align={isBlock ? frameAlignX : undefined} // Nowrap short lines park via margin on this edge
             // Sync during render (not TipTap useEffect) so image freezes before free-layout remeasure
             data-frame-free-resize={undefined} // Free mode contain-fits the full blocks — no inner clip/scroll
             className={cn(
@@ -9554,7 +9671,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               // Sole image: fill the sticky frame box so height can limit contain-fit.
               soleImageContent
                 ? 'h-full min-h-0 w-full'
-                : wrapContentWidth != null
+                : wrapContentWidth != null || freeAlignCol != null
                 ? undefined
                 : shapeCenterContent
                   ? 'w-max max-w-full'
@@ -9601,16 +9718,23 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                   } as React.CSSProperties)
                 : {}),
               lineHeight: isBlock ? '1.25' : '1.7', // Blocks hug glyphs; chat panels keep looser rhythm
-              textAlign: isBlock ? frameAlignX : undefined, // Frame Alignment — wrap column + glyphs
+              textAlign: isBlock ? frameAlignX : undefined, // Glyph align inside the wrap / hug box (PM inherits)
               ...(wrapContentWidth != null && !soleImageContent
                 ? { width: wrapContentWidth, maxWidth: wrapContentWidth }
+                : freeAlignCol != null
+                  ? { width: freeAlignCol, maxWidth: freeAlignCol } // Frame-wide align box; still nowrap
                 : {}), // Soft-wrap inside frame
               ...(applyPaintScale
                 ? {
                     transform: `scale(${paintScale})`, // Place/lock scale × free contain (capped at natural)
-                    transformOrigin: shapeCenterContent
-                      ? 'center center'
-                      : frameAlignOrigin(frameAlignX, frameAlignY), // Stay on the aligned edge
+                    transformOrigin:
+                      (unlockedResized && wrapContentWidth != null) || shapeCenterContent
+                        ? 'center center' // Free wrap — column mid-fill
+                        : lockedWrapCol && frameAlignX === 'right'
+                          ? 'top right' // Pairs with flex-end — scale keeps the column’s right on the peach
+                          : lockedWrapCol && frameAlignX === 'center'
+                            ? 'top center'
+                            : 'top left', // Lock / free nowrap — scale from the fill origin
                   }
                 : {}),
             }}
@@ -9687,6 +9811,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               enableBlockHandles={isBlock && !isFlashcard} // TipTap blocks; ⋮⋮ gutter only while selected
               showBlockHandles={!!selected && !isFlashcard} // Keep grips mounted while selected — dragging used to unmount them mid-gesture
               singleLineUntilEnter={isBlock && !isFlashcard && !wrapActive} // nowrap until Enter; wrap mode (locked/unlocked) soft-wraps
+              alignInFrame={freeAlignCol != null || wrapContentWidth != null} // Fill wrap column / free box so text-align reaches the frame
+              frameAlignX={isBlock ? frameAlignX : 'left'} // Fit-to-content wrap leftovers park on the aligned edge
               hostNodeId={id}
               conversationId={conversationId}
               hostMessageId={promptMessage?.id}
@@ -9791,25 +9917,27 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           const wrapBarChrome = blockGripChromeScale(1, renderFrameScale) // √ curve on frame scale only — zoom-free so shape never changes
           const barW = 2 * wrapBarChrome * renderFrameScale // Flow thickness — scales with zoom like board content (no screen floor)
           const hitPad = Math.max(4 * wrapBarChrome * renderFrameScale, screenPadFlow(wrapZ, 4)) // Invisible grab pad — floor keeps it grabbable
-          const dash = 12 // Flow px — fixed so dashes never move or reshape on zoom
-          const gap = 14 // Flow px — fixed with dash
-          const dashLen = dash // Drawn length — pure flow px, same as the slot
           const fillW = Math.max(1, unlockedInnerW ?? contentVisualW) // Frame fill — never paint past this
           const fillH = Math.max(1, unlockedInnerH ?? contentVisualH) // Fill height for T/B clamp
           const barH = Math.max(2, fillH - padY * 2) // Line length inside T/B pad
-          const dashN = Math.max(1, Math.floor((barH + gap) / (dash + gap))) // Whole dashes only
-          const dashUsed = dashN * dash + (dashN - 1) * gap // Ends on a full dash, no half
-          const dashStart = (barH - dashUsed) / 2 // Center the leftover so both ends are complete
+          const dashN = 12 // Fixed count — short and tall frames show the same dashes
+          const gapPerDash = 14 / 12 // Keep the 12:14 dash:gap ratio at every height
+          const dash = barH / (dashN + (dashN - 1) * gapPerDash) // Fit exactly so both ends are a full dash
+          const gap = dash * gapPerDash // Scale the gap with the dash
+          const dashLen = dash // Drawn length matches the slot
+          const dashStart = 0 // Exact fit — no leftover to center
           const visualW = Math.min(wrapColWidth * paintScale, fillW - padX * 2) // Wrap column, inside pads
-          const colLeft =
-            frameAlignX === 'right'
-              ? fillW - padX - visualW
+          const colLeft = frameUnlocked
+            ? (fillW - visualW) / 2 // Free — column mid-frame
+            : frameAlignX === 'right'
+              ? fillW - padX - visualW // Fit-to-content right — line + column on the right
               : frameAlignX === 'center'
                 ? (fillW - visualW) / 2
-                : padX // Left align — column (and line) on the left
+                : padX // Fit-to-content left — line on the right of a left-parked column
           const colRight = colLeft + visualW
-          const showLeft = frameAlignX === 'right' || frameAlignX === 'center' // Right-align: wrap edge is the left bar
-          const showRight = frameAlignX === 'left' || frameAlignX === 'center' // Left-align: wrap edge is the right bar
+          const fitToContent = !frameUnlocked // Locked hug — only the free wrap edge
+          const showLeft = !fitToContent || frameAlignX === 'right' || frameAlignX === 'center'
+          const showRight = !fitToContent || frameAlignX === 'left' || frameAlignX === 'center'
           const vBar = (side: 'left' | 'right', x: number) => (
             <div
               key={`h-${side}`}

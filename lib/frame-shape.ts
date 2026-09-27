@@ -206,44 +206,6 @@ function pointInPolygon(x: number, y: number, polygon: Array<{ x: number; y: num
   return inside
 }
 
-/**
- * Unit-x spans where a horizontal scanline at unit `y` crosses the silhouette.
- * Used to border only the painted cutoff (circle chord, not the AABB).
- */
-export function frameShapeScanlineXRanges(
-  shape: FrameShapeType | null,
-  y: number
-): Array<[number, number]> {
-  if (y < 0 || y > 1) return [] // Scanline misses the box
-  if (shape == null || shape === 'rectangle') return [[0, 1]] // Full width of the box
-  if (shape === 'circle') {
-    const dy = y - 0.5 // Distance from ellipse center
-    const dx2 = 0.25 - dy * dy // x² leftover in (x-0.5)²+(y-0.5)² ≤ 0.25
-    if (dx2 < 0) return [] // Horizontal miss (outside the ellipse)
-    const dx = Math.sqrt(dx2) // Half-chord in unit x
-    return [[0.5 - dx, 0.5 + dx]] // One chord
-  }
-  const step = 0.01 // 100 samples — cheap vs elementsFromPoint
-  const hits: number[] = [] // Unit x samples that sit in the fill
-  for (let x = 0; x <= 1 + 1e-9; x += step) {
-    if (pointInShapeUnit(x, y, shape)) hits.push(x) // Keep interior samples
-  }
-  if (hits.length === 0) return [] // Scanline misses the silhouette
-  const ranges: Array<[number, number]> = [] // Merge consecutive hits
-  let start = hits[0] // Current run start
-  let prev = hits[0] // Last accepted sample
-  for (let i = 1; i < hits.length; i++) {
-    const x = hits[i] // Next hit
-    if (x - prev > step + 1e-9) {
-      ranges.push([start, prev]) // Close the run before the gap
-      start = x // New run
-    }
-    prev = x // Advance
-  }
-  ranges.push([start, prev]) // Close the last run
-  return ranges
-}
-
 /** True when (x,y) in 0..1 lies inside the silhouette clip (matches frameShapeClipCss). */
 function pointInShapeUnit(x: number, y: number, shape: FrameShapeType): boolean {
   switch (shape) {

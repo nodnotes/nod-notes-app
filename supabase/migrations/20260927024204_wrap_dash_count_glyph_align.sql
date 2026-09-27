@@ -1,0 +1,2 @@
+-- Wrap-line dash count + glyph-only Alignment + fill-portal ⋮⋮.
+-- App/docs marker only; no DDL. Remote DDL top: 20260924223511_board_changes_autosave.

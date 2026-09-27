@@ -59,9 +59,6 @@ import {
   AlignLeft,
   AlignCenter,
   AlignRight,
-  AlignVerticalJustifyStart,
-  AlignVerticalJustifyCenter,
-  AlignVerticalJustifyEnd,
   Cable,
   Hand,
   Unplug,
@@ -251,7 +248,7 @@ export type BlockActionId =
   | 'comment'
   | 'skills'
   | 'setFrameShape' // Apply / clear a silhouette on the host frame
-  | 'setFrameAlign' // Frame content left/center/right + top/center/bottom
+  | 'setFrameAlign' // Frame text-align left/center/right (glyphs; free box stays centered)
   | 'setFillColor' // Frame background (transparent when empty)
   | 'setBorderColor' // Frame border stroke
   | 'lockToBoard' // Pin selected frames so they cannot drag
@@ -569,8 +566,7 @@ export function BlockActionsMenu({
   boardInTargets = [],
   currentFrameShape = FRAME_SHAPE_NONE,
   showFrameShape = false,
-  currentFrameAlignX = 'left',
-  currentFrameAlignY = 'top',
+  currentFrameAlignX = 'left', // Glyph text-align — free box is always centered
   currentFillColor = '',
   currentBorderColor = '',
   boardLocked = false,
@@ -834,8 +830,8 @@ export function BlockActionsMenu({
         kind: 'action',
         id: 'setFrameAlign',
         label: 'Alignment',
-        icon: <AlignLeft className="h-4 w-4" />,
-        submenu: 'frameAlign', // Left/center/right + top/center/bottom
+        icon: <AlignCenter className="h-4 w-4" />,
+        submenu: 'frameAlign', // Left/center/right text-align — not wrap-column park
         hidden: !showFrameShape, // Frame menu only
       },
       {
@@ -1596,15 +1592,14 @@ export function BlockActionsMenu({
         </div>
       )}
 
-      {/* Alignment — frame content left/center/right + top/center/bottom */}
+      {/* Alignment — glyph text-align; free-resize box stays centered with both wrap lines */}
       {openSubmenu === 'frameAlign' && (
         <div
           data-tt-menu-flyout="main"
           className="absolute z-[1001] w-[168px] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-2"
           onMouseEnter={() => setOpenSubmenu('frameAlign')}
         >
-          <div className="px-1 pb-1.5 text-[11px] text-gray-400">Horizontal</div>
-          <div className="mb-2 grid grid-cols-3 gap-1">
+          <div className="grid grid-cols-3 gap-1">
             {(
               [
                 ['left', AlignLeft, 'Left'],
@@ -1619,38 +1614,11 @@ export function BlockActionsMenu({
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
-                  onAction('setFrameAlign', { alignX: id }) // Keep menu open — set Y next
+                  onAction('setFrameAlign', { alignX: id }) // text-align only — do not park the wrap column
                 }}
                 className={cn(
                   'flex h-9 items-center justify-center rounded-md hover:bg-gray-100 dark:hover:bg-[#2a2a2a]',
                   currentFrameAlignX === id && 'tt-selected'
-                )}
-              >
-                <Icon className="h-4 w-4" />
-              </button>
-            ))}
-          </div>
-          <div className="px-1 pb-1.5 text-[11px] text-gray-400">Vertical</div>
-          <div className="grid grid-cols-3 gap-1">
-            {(
-              [
-                ['top', AlignVerticalJustifyStart, 'Top'],
-                ['center', AlignVerticalJustifyCenter, 'Center'],
-                ['bottom', AlignVerticalJustifyEnd, 'Bottom'],
-              ] as const
-            ).map(([id, Icon, title]) => (
-              <button
-                key={id}
-                type="button"
-                title={title}
-                onClick={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  onAction('setFrameAlign', { alignY: id }) // Free extra height only
-                }}
-                className={cn(
-                  'flex h-9 items-center justify-center rounded-md hover:bg-gray-100 dark:hover:bg-[#2a2a2a]',
-                  currentFrameAlignY === id && 'tt-selected'
                 )}
               >
                 <Icon className="h-4 w-4" />

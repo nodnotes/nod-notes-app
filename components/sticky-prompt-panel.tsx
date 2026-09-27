@@ -14,7 +14,6 @@ import { useRouter } from 'next/navigation'
 import { replaceBoardUrl } from '@/lib/replace-board-url' // Empty `/board` rename mints a row without remounting
 import { syncBoardRenameToBlock } from '@/lib/blocks' // Keep the parent-map boardLink title in sync
 import { DEFAULT_BOARD_TITLE, boardTitleOrDefault } from '@/lib/board-title' // Same default as nav + / nested mint
-import { attachTopBarClipBorder } from '@/lib/top-bar-clip-border' // Border the bar slice that covers a colored object
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -808,15 +807,6 @@ export function EditPanel({ conversationId, projectId }: EditPanelProps) {
   const pathBoxRef = useRef<HTMLDivElement>(null) // Capped path box (--tt-path-max)
   const pathFullRef = useRef<HTMLSpanElement>(null) // Hidden full-label row for compact measure
   const pathMinRef = useRef<HTMLSpanElement>(null) // Hidden icon-minimum row — current icon stays whole
-  const topBarRef = useRef<HTMLDivElement>(null) // Bar box — clip ranges are local to this
-  const clipBorderRef = useRef<HTMLDivElement>(null) // Imperative section host (no React state on pan)
-
-  useEffect(() => {
-    const bar = topBarRef.current // Live top bar
-    const paint = clipBorderRef.current // Section overlay
-    if (!bar || !paint) return // Not mounted
-    return attachTopBarClipBorder(bar, paint) // Border only where a colored object is cut off
-  }, [conversationId]) // Rebind when the board (and RF nodes) swap
 
   useLayoutEffect(() => {
     const box = pathBoxRef.current
@@ -867,16 +857,15 @@ export function EditPanel({ conversationId, projectId }: EditPanelProps) {
       >
         {/* Top bar — always shown (no hide-pill) */}
         <div
-          ref={topBarRef} // Measure clip ranges in this bar’s local X
           data-edit-top-bar // Full map-column bar; toolbar tools center against this, not leftover flex space
           className={cn(
-            // Match React Flow board/main area background — no full-width border; clip sections paint their own
+            // Match React Flow board/main area background
             'relative bg-gray-50 dark:bg-[#0f0f0f] flex items-center gap-1 w-full overflow-visible'
           )}
           style={{
             // No rounded corners - fills map column width (chat sidebar is a sibling column)
             borderRadius: '0px',
-            border: 'none', // Full bar stays borderless; only cutoff sections get a hairline
+            border: 'none',
             boxShadow: 'none',
             height: `${panelHeight}px`, // Same height as input box (52px)
             paddingLeft: '0.5rem', // 8px left padding
@@ -884,13 +873,6 @@ export function EditPanel({ conversationId, projectId }: EditPanelProps) {
             boxSizing: 'border-box', // Ensure padding is included in height
           }}
         >
-          {/* First child so icons paint above; pointer-events none so tools stay clickable */}
-          <div
-            ref={clipBorderRef}
-            data-top-bar-clip-border
-            aria-hidden
-            className="pointer-events-none absolute inset-0 overflow-visible"
-          />
           {/* Left chrome — menu + board path; no z-boost so absolute tools stay above if the path cap races */}
           <div data-top-bar-left data-path-ready={pathReady || !pathKey ? 'true' : undefined} className="relative flex items-center flex-shrink-0">
           {/* Menu icon — hover opens; click pins; above mobile scrim so close works on first tap */}

@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-27T00:32:45Z`
+- Snapped at: `2026-09-27T02:42:04Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`/`migration list`; versions from `.temp` + Management API list; cli-latest reports `v2.118.0`)
@@ -9,6 +9,14 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260927024204_wrap_dash_count_glyph_align.sql`.
+- **Wrap dashes**: 12 capsules on every frame height (dash/gap scale to the bar).
+- **Alignment**: glyph `text-align` only — no vertical row; wrap column stays mid-frame on free resize.
+- **Chrome**: ⋮⋮ portal to the frame fill; drop the top-bar clip-border overlay.
+- Schema unchanged; remote DDL top remains `20260924223511_board_changes_autosave`.
+
+## Prior: Frame alignment, preview hug, Notion restore
 
 - DDL: none. Marker `20260927003245_frame_align_preview_hug_notion_restore.sql`.
 - **Frame alignment**: frame menu Alignment sets left/center/right and top/center/bottom; contain-fit origin follows.

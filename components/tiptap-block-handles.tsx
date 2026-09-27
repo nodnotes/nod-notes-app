@@ -228,20 +228,20 @@ function positionedAncestor(el: HTMLElement): HTMLElement {
   return el
 }
 
-/** Layout root for ⋮⋮ Y — not PM’s parent (that sits below the property-icon row). */
-function gripLayoutRoot(editor: Editor): HTMLElement | null {
-  const shapeFill = editor.view.dom.closest('[data-tt-shape-fill]') as HTMLElement | null
-  if (shapeFill) return shapeFill // Shaped clip is on an inner layer — ⋮⋮ live on the fill
-  const flow = editor.view.dom.parentElement
-  return flow ? positionedAncestor(flow) : null
-}
-
 /** Host fill — ⋮⋮ X parks on this left edge, not the wrap column (right/center align). */
 function frameFillForEditor(editor: Editor): HTMLElement | null {
   return (
     (editor.view.dom.closest('[data-tt-frame-fill]') as HTMLElement | null) ||
     (editor.view.dom.closest('[data-tt-shape-fill]') as HTMLElement | null)
   )
+}
+
+/** Layout root for ⋮⋮ Y — not PM’s parent (that sits below the property-icon row). */
+function gripLayoutRoot(editor: Editor): HTMLElement | null {
+  const fill = frameFillForEditor(editor) // Same host as the portal — gutter ⋮⋮ sit on the fill
+  if (fill) return fill // Escape the free spacer / silhouette clip
+  const flow = editor.view.dom.parentElement // Chat / unframed editor
+  return flow ? positionedAncestor(flow) : null
 }
 
 /** True when a TipTap block range contains an aiPending or notionSyncPending mark. */
@@ -1989,6 +1989,6 @@ export function TipTapBlockHandles({
         )}
     </>
   )
-  const shapeFill = editor.view.dom.closest('[data-tt-shape-fill]') as HTMLElement | null
-  return shapeFill ? createPortal(grips, shapeFill) : grips // Escape the silhouette clip so ⋮⋮ stay in the gutter
+  const fillHost = frameFillForEditor(editor) // Same node as gripLayoutRoot
+  return fillHost ? createPortal(grips, fillHost) : grips // Gutter sits outside the free overflow clip
 }
