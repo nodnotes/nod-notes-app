@@ -31,6 +31,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20260927203015_wrap_lines_stay_on_space` — Wrap lines stay on fill / + space when content is shorter
 - `20260927201449_free_plus_grips_add_block` — Fit→free maxes +'s; free ⋮⋮ at paintScale; empty-block caret; add-block keeps the line
 - `20260927194144_wrap_plus_max_live_lines` — No wrap toggle; wrap lines follow text live; content-fit + box caps wrap
 - `20260927024204_wrap_dash_count_glyph_align` — 12 wrap dashes at any frame height; glyph-only Alignment; ⋮⋮ on the fill

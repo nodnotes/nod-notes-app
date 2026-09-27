@@ -1,0 +1,2 @@
+-- Wrap lines stay on wrap-line space (fill / +'s), not nowrap glyphs, when content is shorter.
+-- App/docs marker only; no DDL (frame metadata is JSONB). Remote DDL top: 20260924223511_board_changes_autosave.

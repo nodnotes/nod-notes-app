@@ -535,20 +535,6 @@ function wrapColumnInFill(fill: HTMLElement, contentFit: HTMLElement): { left: n
   return { left: (r.left - fillRect.left) * sx, width: r.width * sx }
 }
 
-/** Unapplied wrap: nowrap glyph extent (+ side pad) in fill-local px — contentFit can be fill-wide (center/right). */
-function nowrapTextInFill(fill: HTMLElement, contentFit: HTMLElement, padFill: number): { left: number; width: number } | null {
-  const pm = contentFit.querySelector('.ProseMirror') // Editor root — glyphs live here
-  if (!pm) return null // Not mounted yet
-  const fillRect = fill.getBoundingClientRect()
-  const range = document.createRange() // Union of painted glyph rects — ignores 100%-wide blocks
-  range.selectNodeContents(pm)
-  const r = range.getBoundingClientRect()
-  range.detach() // Release the range
-  if (fillRect.width < 1 || r.width < 0.5) return null // Empty / collapsed
-  const sx = fill.offsetWidth / fillRect.width // Screen → fill (board zoom)
-  return { left: (r.left - fillRect.left) * sx - padFill, width: r.width * sx + padFill * 2 } // Same pad as the applied contentFit box
-}
-
 /** True when TipTap HTML is only an imageBlock (optional empty <p> wrappers). */
 function isSoleImageBlockHtml(html: string): boolean {
   if (!/data-type=["']imageBlock["']/i.test(html || '')) return false
@@ -3309,7 +3295,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const wrapShiftPosRef = useRef<{ x: number; y: number } | null>(null) // Fit left/center wrap drag: moved RF XY to persist on release
   const wrapDragPaintRef = useRef<number | null>(null) // Paint scale frozen at wrap-line press — contain-fit must not remap the bar
   const freeFitScaleRef = useRef(1) // Last settled contain-fit — reused for the whole wrap-line drag
-  const nowrapCapRef = useRef<number | null>(null) // Nowrap width at drag start — the far edge (wrap unapplied)
+  const nowrapCapRef = useRef<number | null>(null) // Wrap-line space at drag start — fill / + far edge (not nowrap content)
   const paintScaleRef = useRef(1) // Live CSS scale so wrap-line drag converts fill X → unscaled col
   const frameAlignXRef = useRef(frameAlignX) // Wrap-line drag — fit-to-content shows one bar
   frameAlignXRef.current = frameAlignX
@@ -6290,11 +6276,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     const fill = wrapLineFillRef.current // Fill-local X from this box
     const paint0 = Math.max(FRAME_SCALE_EPSILON, paintScaleRef.current) // Freeze — live contain-fit remapped the bar onto the fill edge
     wrapDragPaintRef.current = paint0 // Render uses this until pointerup
-    const cf = contentFitRef.current // Probe nowrap + live wrap width
-    nowrapCapRef.current = Math.max(
+    const cf = contentFitRef.current // Probe nowrap (fit unapply) + live wrap width
+    const nowrapW = Math.max(
       BLOCK_THREE_CHARS_W, // Never below the ~3ch column floor
-      (cf ? measureNowrapContentWidth(cf) : 0) || intrinsicSizeRef.current.width // Fresh far edge — stale caps left the edge past deleted text
-    )
+      (cf ? measureNowrapContentWidth(cf) : 0) || intrinsicSizeRef.current.width // Text run — fit unwraps here, not the wrap-line space
+    ) // Content can be narrower than the wrap space — do not use this as the far edge
     const locked0 = !frameUnlockedRef.current // Fit-to-text: the wrap bar is the fill edge
     const s0 = Math.max(FRAME_SCALE_EPSILON, frameScaleRef.current) // Locked hug = col × place-scale
     const fillW0 = fill?.offsetWidth ?? 0 // Fill width at press (flow px)
@@ -6302,15 +6288,15 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     const fillInnerW = locked0 ? Math.max(0, fillW0 - padX0 * 2) : fillW0 // Free: contentFit (with its pad) may fill the fill
     const plusBox = contentFitBoxRef.current // Stored +'s — default +'s ride the column, so the fill is the max
     const plusInnerW = plusBox ? Math.min(plusBox.width, fillInnerW) : fillInnerW // Far-edge visual: +'s, else the frame
-    if (!locked0 && plusBox) {
-      nowrapCapRef.current = Math.min(nowrapCapRef.current, Math.max(BLOCK_THREE_CHARS_W, plusInnerW / paint0)) // Free: wrap column cannot exceed the + box
-    } else if (!frameUnlockedRef.current && !frameTextWrapRef.current && fill) {
-      nowrapCapRef.current = Math.max(BLOCK_THREE_CHARS_W, fill.offsetWidth / Math.max(FRAME_SCALE_EPSILON, frameScaleRef.current)) // Unapplied fit: far edge = painted hug, so press doesn't jump
-    }
-    const edgeCol = locked0
-      ? nowrapCapRef.current // Fit grows up to the full nowrap run
-      : Math.min(nowrapCapRef.current, Math.max(BLOCK_THREE_CHARS_W, plusInnerW / paint0)) // Free: +'s (or fill) using the same scale as the bar
-    nowrapCapRef.current = edgeCol // Render reads this for the at-edge (light blue) colour
+    const spaceCol = Math.max(
+      BLOCK_THREE_CHARS_W, // Same ~3ch floor as fit-to-text
+      locked0
+        ? Math.max(nowrapW, fillInnerW / s0) // Fit: grow to the text run; keep the fill when content is shorter
+        : plusInnerW / paint0 // Free: wrap-line space is the + box or fill — settable past the glyphs
+    ) // Far edge of wrap-line space — never nowrap alone (that jumped the bars onto short content)
+    const unapplyCol = locked0 ? nowrapW : spaceCol // Fit unwraps at the text run; free only at the fill / + edge
+    nowrapCapRef.current = spaceCol // Light-blue at the wrap-space edge, not the content edge
+    const edgeCol = spaceCol // Drag max = wrap-line space
     if (!frameTextWrapRef.current) {
       // Wrap unapplied: the line sits at the far edge — arm wrap there (no reflow until dragged inward)
       if (!resizeDimensionsRef.current) {
@@ -6327,7 +6313,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       frameTextWrapRef.current = true // Live flag for onUp
       setFrameTextWrap(true) // Wrap layout (no visible change at the edge column)
     } else if (wrapColWidthRef.current != null && wrapColWidthRef.current > edgeCol) {
-      wrapColWidthRef.current = edgeCol // Already wrapped past the +'s — clamp so the drag cannot sit outside
+      wrapColWidthRef.current = edgeCol // Past the wrap-line space only — do not clamp inward to shorter content
       setWrapColWidth(edgeCol)
     }
     const startW = wrapColWidthRef.current ?? edgeCol // Column at press (already armed at the edge when wrap was off)
@@ -6403,7 +6389,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       window.removeEventListener('pointermove', onMove) // Drop live drag
       window.removeEventListener('pointerup', onUp) // Drop end
       const col = wrapColWidthRef.current // Final column
-      const atEdge = col == null || col >= edgeCol - 0.02 // Released at the far edge (drag clamps there; 2dp round) — no snap zone
+      const startAtUnapply = startW <= unapplyCol + 0.02 // Only unwrap from the park edge — a wider wrap (content shorter than wrap space) must stay
+      const atEdge = col == null || (startAtUnapply && col >= unapplyCol - 0.02) // Free: fill / +; fit: text run — never snap inward to content
       const shiftedPos = wrapShiftPosRef.current // Fit left/center drag moved the frame
       wrapShiftPosRef.current = null // One-shot
       if (shiftedPos) void persistFrameMetaRef.current({ position: shiftedPos }) // Keep the moved XY
@@ -7373,7 +7360,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const frameUiScale = screenChromeScale
   const frameLineW = Math.max(0.25, frameUiScale) // Shape select stroke (square ring uses CSS var)
   const wrapActive =
-    isBlock && frameTextWrap && isUserResized && !!resizeDimensions && !pagePreviewOpen // Soft-wrap in a fixed width (locked or unlocked)
+    isBlock && frameTextWrap && isUserResized && !!resizeDimensions // Soft-wrap in a fixed width — stays on while board preview is open so wrap +'s still work
   const wrapUnlocked = wrapActive && frameUnlocked // Unlocked wrap: fixed width + free/clip height
   const wrapApplied =
     wrapActive &&
@@ -7384,19 +7371,20 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     frameUnlocked &&
     !frameTextWrap &&
     isUserResized &&
-    !!resizeDimensions &&
-    !pagePreviewOpen // Free nowrap — contain-fit when the box is smaller than content
+    !!resizeDimensions // Free nowrap contain-fit — stays on while board preview is open so resize +'s still work
   const freePreviewCenter = Boolean(
     isBlock && // Frames only — chat panels keep their flow
       frameUnlocked && // Free mode (unlocked) — locked hugs, nothing to center
       isUserResized && // User-sized box can be larger than the title + preview
       !!resizeDimensions && // Needs a saved box to center within
-      pagePreviewOpen && // clipUnlocked/wrapActive drop out while the preview is open
+      pagePreviewOpen && // Only when the in-frame board preview is showing
+      !wrapActive && // Wrap owns the column — do not also flex-center
+      !clipUnlocked && // Resize +'s own contain-fit — do not also flex-center
       !frameShape && // Silhouettes already center via shapeCenterContent
       !soleImageContent && // Images contain-fit on their own
       !isDbFrame && // DB tables hug their columns
       !isRowCardAtomHtml(promptContent) // Row cards hug their icon row
-  ) // Free + open preview: park title + preview mid-frame like free text
+  ) // Free + open preview without wrap/clip: park title + preview mid-frame like free text
   // Silhouettes clip to a center cross / diamond — hugged text must sit in the middle, not top-left
   const shapeCenterContent = Boolean(
     frameShape &&
@@ -7650,19 +7638,20 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   paintScaleRef.current = paintScale // Wrap-line drag reads this — fill-local X / paint = wrapColWidth
   // After wrap / zoom / scale: park bars on the painted PM, not wrapCol×paint (that drifted after zoom).
   useLayoutEffect(() => {
-    if (!wrapActive && !frameUnlocked) return // Locked unapplied = fill edges; drag still measures so bars ride the text
+    if (!wrapActive && !frameUnlocked) return // Locked unapplied = fill edges; free still measures so bars stay on wrap-line space
     const measure = () => {
       const fill = wrapLineFillRef.current
       const cf = contentFitRef.current
       if (!fill || !cf || !selected) return // Unmounted
+      const fillW = fill.offsetWidth // Wrap-line space when unapplied — content can be narrower
       const next = wrapActive
-        ? wrapColumnInFill(fill, cf) // Applied: the constraint column
+        ? wrapColumnInFill(fill, cf) // Applied: the constraint column (stays even when glyphs are shorter)
         : contentFitBox
           ? {
-              left: (fill.offsetWidth - Math.min(contentFitBox.width, fill.offsetWidth)) / 2, // Unapplied at the +'s — same as frame-edge park
-              width: Math.min(contentFitBox.width, fill.offsetWidth),
+              left: (fillW - Math.min(contentFitBox.width, fillW)) / 2, // Unapplied at the +'s — same as frame-edge park
+              width: Math.min(contentFitBox.width, fillW),
             }
-          : nowrapTextInFill(fill, cf, BLOCK_FRAME_PAD_X * paintScaleRef.current) // Unapplied, no + box: hug the nowrap glyphs
+          : { left: 0, width: fillW } // Unapplied, no + box: fill edges — wrap is settable between content and here
       if (!next) return
       setWrapPaintBox((prev) =>
         prev && Math.abs(prev.left - next.left) < 0.25 && Math.abs(prev.width - next.width) < 0.25
@@ -7688,6 +7677,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     promptContent,
     wrapMeasureTick, // Post-drag settle
     frameAlignX, // Nowrap glyphs park on the aligned edge
+    pagePreviewOpen, // Preview card changes the painted column the +'s park on
   ])
   const applyPaintScale =
     isBlock && !soleImageContent && Math.abs(paintScale - 1) > FRAME_SCALE_EPSILON // Free contain or place/lock scale
@@ -10222,9 +10212,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             />
           </div>
         )}
-        {selected && hasBlockContent && !pagePreviewOpen && !soleImageContent && !isDbFrame && !isRowCardAtomHtml(promptContent) && !frameResizing && (() => {
+        {selected && hasBlockContent && !soleImageContent && !isDbFrame && !isRowCardAtomHtml(promptContent) && !frameResizing && (() => { // Wrap + resize +'s stay up while board preview is open
           const lineScale = wrapDragPaintRef.current ?? paintScale // Frozen while dragging — live contain-fit parked the bar on the fill edge
-          const lineCol = wrapActive && wrapColWidth != null ? wrapColWidth : intrinsicSize.width // Unapplied: line parks on the nowrap edge
           const padX = BLOCK_FRAME_PAD_X * lineScale // Same side gap as the block to the fill
           const padY = BLOCK_FRAME_PAD_Y * lineScale // Same T/B gap as the block
           const wrapZ = rfZoom || 1
@@ -10241,12 +10230,12 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           const dashLen = dash // Drawn length matches the slot
           const dashStart = 0 // Exact fit — no leftover to center
           // Painted content box (zoom-safe) — also while dragging so bars ride the live wrap, not a frozen formula
-          const paintedWrap = wrapActive || frameUnlocked ? wrapPaintBox : null // Free unapplied: measured nowrap glyphs
+          const paintedWrap = wrapActive || frameUnlocked ? wrapPaintBox : null // Free unapplied: wrap-line space (fill / +), not glyphs
           const visualW = paintedWrap
             ? paintedWrap.width
             : !frameUnlocked
               ? Math.max(1, fillW - padX * 2)
-              : Math.min(lineCol * lineScale, fillW - padX * 2)
+              : fillW // Free unapplied fallback: fill edges so wrap stays settable past short content
           const colLeft = paintedWrap
             ? paintedWrap.left
             : frameUnlocked

@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-27T20:14:49Z`
+- Snapped at: `2026-09-27T20:30:15Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`/`migration list`; versions from `.temp` + Management API list; cli-latest reports `v2.118.0`)
@@ -9,6 +9,13 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260927203015_wrap_lines_stay_on_space.sql`.
+- **Wrap lines**: far edge is wrap-line space (fill / + box), not nowrap content. Short text no longer jumps the bars inward; wrap stays settable between glyphs and the edge.
+- **Unapplied**: free bars park on the fill (or inset +'s). Fit still unwraps at the text run only when the drag started there.
+- Schema unchanged; remote DDL top remains `20260924223511_board_changes_autosave`.
+
+## Prior: Free pluses, grips, add-block
 
 - DDL: none. Marker `20260927201449_free_plus_grips_add_block.sql`.
 - **+'s**: fit → free clears `contentFitBox` so pluses start at the fill; a + drag stores `col` and keeps the box on release (no snap-back).
