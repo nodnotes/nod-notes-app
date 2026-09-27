@@ -2259,6 +2259,12 @@ span[data-added="true"] {
     word-break: break-word; /* Same hard column as align-box wrap */
     min-width: 0 !important; /* auto min-width kept the unbreakable word wider than the column */
   }
+  /* Empty block (new add-block / Enter line): fit-content + min-width 0 was 0px wide — no caret paints */
+  :is([data-tt-free-left="true"], [data-tt-align-box="true"][data-tt-free-left="true"])
+    .ProseMirror
+    :is(p, h1, h2, h3, h4, li, blockquote):has(> br.ProseMirror-trailingBreak:only-child) {
+    min-width: 1ch !important; /* Same clickable band as single-line empty blocks */
+  }
   /* Board preview is a block atom — width:100% on .tt-board-link-previewing spanned the free frame */
   [data-tt-free-left="true"] .ProseMirror .react-renderer.node-boardLink,
   [data-tt-free-left="true"] .ProseMirror .react-renderer.node-pageLink,

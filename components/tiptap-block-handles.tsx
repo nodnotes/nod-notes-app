@@ -749,6 +749,9 @@ export function TipTapBlockHandles({
       !!prev &&
       !!next &&
       prev.block.from === next.block.from &&
+      prev.block.to === next.block.to && // Typing grows `to` without moving the line — stale `to` split the text on add-below
+      prev.insertFrom === next.insertFrom && // Property-group edges shift the same way
+      prev.insertTo === next.insertTo &&
       Math.abs(prev.top - next.top) < 0.5 &&
       Math.abs(prev.height - next.height) < 0.5 &&
       Math.abs(prev.lineCenter - next.lineCenter) < 0.5 &&
@@ -793,7 +796,13 @@ export function TipTapBlockHandles({
       }
       const h = hoverRef.current
       if (h) {
-        const next = layoutForBlock(editor, container, h.block)
+        const hb =
+          h.propertyHeader || h.connectionsHeader
+            ? h.block // Header layouts carry group edges — not a single PM node
+            : ([h.block.from + 1, h.block.from] // Inside the textblock first; `from` alone resolves above it (atoms match there)
+                .map((p) => findEditorBlockAtPos(editor, p))
+                .find((b) => b?.from === h.block.from) ?? h.block) // Re-read `to` after typing in the hovered line
+        const next = layoutForBlock(editor, container, hb)
         if (next) setHover((prev) => (sameLayout(prev, next) ? prev : next))
         else setHover(null)
       }
@@ -1622,18 +1631,21 @@ export function TipTapBlockHandles({
   // toward the fill and they look off-center in the blue gutter (worse after resize scale).
   // handleGutterFlow = painted grip width in flow (√ × frameScale); ÷ frameScale so after
   // contentFit CSS scale the center still sits in that strip.
-  const contentCssScale = Math.max(0.15, frameScale || 1)
-  const localGutter =
-    handleGutterFlow > 0 ? handleGutterFlow / contentCssScale : HANDLE_GUTTER
+  const contentCssScale = Math.max(0.01, frameScale || 1) // Painted text scale (free contain can go far below 0.15)
   const fill = frameFillForEditor(editor) // Fill left — wrap column may sit inset (right/center)
+  const hostScale = fill ? 1 : contentCssScale // Grips portal into the unscaled fill — only in-content hosts inverse-scale
+  const localGutter =
+    handleGutterFlow > 0 ? handleGutterFlow / hostScale : HANDLE_GUTTER
   const fillLeftLocal =
     container && fill && fill !== container
       ? screenToLocal(container, fill.getBoundingClientRect().left, fill.getBoundingClientRect().top).x
       : 0 // Same box as the grips — no extra shift
+  const padLocal = fill ? contentPadLeft * (contentCssScale / hostScale) : contentPadLeft // Pad paints at text scale inside the fill
   const gutterCenterLeft =
-    fillLeftLocal - contentPadLeft - localGutter + (localGutter / 2 - GRIP_W / 2)
+    fillLeftLocal - padLocal - localGutter + (localGutter / 2 - GRIP_W / 2)
   // Same √ curve as host gutter — grips stay centered in the blue strip
-  const gripChromeScale = blockGripChromeScale(rfZoom || 1, contentCssScale)
+  const gripChromeScale =
+    blockGripChromeScale(rfZoom || 1, contentCssScale) * (fill ? contentCssScale / hostScale : 1) // Fill host: bake the text scale in — the fill does not CSS-scale the ⋮⋮
   const gripLayouts = new Map<string | number, HandleLayout>() // keyed by block.from (headers = named keys)
   if (container) {
     for (const b of selection) {

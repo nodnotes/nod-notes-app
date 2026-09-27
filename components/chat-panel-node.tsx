@@ -535,33 +535,6 @@ function wrapColumnInFill(fill: HTMLElement, contentFit: HTMLElement): { left: n
   return { left: (r.left - fillRect.left) * sx, width: r.width * sx }
 }
 
-/** Painted grey + box in fill-local px — wrap's far edge is this, not the frame. */
-function plusBoxInFill(fill: HTMLElement): { width: number; height: number } | null {
-  const pluses = fill.querySelectorAll('[data-tt-fit-plus]') // Four corner hits — centres are the + marks
-  if (pluses.length < 2) return null // Locked / hidden — no + max
-  const fillRect = fill.getBoundingClientRect()
-  if (fillRect.width < 1) return null // Unmounted
-  const sx = fill.offsetWidth / fillRect.width // Screen → fill (board zoom)
-  const sy = fill.offsetHeight / Math.max(1, fillRect.height)
-  let minX = Infinity // Leftmost + centre
-  let maxX = -Infinity // Rightmost + centre
-  let minY = Infinity
-  let maxY = -Infinity
-  pluses.forEach((el) => {
-    const r = el.getBoundingClientRect() // Hit box is larger than the mark
-    const cx = r.left + r.width / 2 // The + sits in the middle of the hit
-    const cy = r.top + r.height / 2
-    minX = Math.min(minX, cx)
-    maxX = Math.max(maxX, cx)
-    minY = Math.min(minY, cy)
-    maxY = Math.max(maxY, cy)
-  })
-  const width = (maxX - minX) * sx // Fill-local box the +'s enclose
-  const height = (maxY - minY) * sy
-  if (width < 1 || height < 1) return null // Degenerate
-  return { width, height }
-}
-
 /** Unapplied wrap: nowrap glyph extent (+ side pad) in fill-local px — contentFit can be fill-wide (center/right). */
 function nowrapTextInFill(fill: HTMLElement, contentFit: HTMLElement, padFill: number): { left: number; width: number } | null {
   const pm = contentFit.querySelector('.ProseMirror') // Editor root — glyphs live here
@@ -3287,7 +3260,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   ) // Unlocked: free resize; locked: content scales with frame. Seed so a shaped create doesn't hug first.
   const [frameTextWrap, setFrameTextWrap] = useState(false) // Wrap lines in the frame width; free mode contain-fits if the box is shorter
   const [wrapColWidth, setWrapColWidth] = useState<number | null>(null) // Unscaled wrap column width — fixed on locked resize, restored on rewrap
-  const [contentFitBox, setContentFitBox] = useState<{ width: number; height: number } | null>(null) // Free: centred fill-px box content contain-fits into; null = fill edges
+  const [contentFitBox, setContentFitBox] = useState<{ width: number; height: number; col?: number } | null>(null) // Free: centred fill-px box content contain-fits into; col = wrap width the +'s were set at (scale basis); null = fill edges
   const [frameAlignX, setFrameAlignX] = useState<FrameAlignX>(() =>
     parseFrameAlignX((promptMessage?.metadata as { frameAlignX?: unknown } | undefined)?.frameAlignX)
   ) // Glyph text-align — wrap column stays mid-frame
@@ -3619,10 +3592,14 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           setWrapColWidth(metadata.wrapColWidth) // Restore the fixed wrap column width (unwrap/rewrap point)
         }
         if (isBlockPanel) {
-          const fb = metadata.contentFitBox as { width?: unknown; height?: unknown } | null | undefined // Grey fit-line box
+          const fb = metadata.contentFitBox as { width?: unknown; height?: unknown; col?: unknown } | null | undefined // Grey fit-line box
           setContentFitBox(
             fb && typeof fb.width === 'number' && typeof fb.height === 'number' && fb.width > 0 && fb.height > 0
-              ? { width: fb.width, height: fb.height } // Restore the centred contain-fit box
+              ? {
+                  width: fb.width,
+                  height: fb.height,
+                  ...(typeof fb.col === 'number' && fb.col > 0 ? { col: fb.col } : {}), // Scale basis at + set
+                } // Restore the centred contain-fit box
               : null // Missing — lines sit on the fill edges
           )
         }        if (
@@ -6192,6 +6169,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       }
     }
 
+    if (nextUnlocked) {
+      contentFitBoxRef.current = null // Fit → free: +'s start maxed on the fill edges
+      setContentFitBox(null)
+      metaPatch = { ...metaPatch, contentFitBox: null } // Drop a stale inset box from the last free pass
+    }
     setFrameUnlocked(nextUnlocked)
     const setNodes = getSetNodes()
     if (setNodes) {
@@ -6317,9 +6299,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     const s0 = Math.max(FRAME_SCALE_EPSILON, frameScaleRef.current) // Locked hug = col × place-scale
     const fillW0 = fill?.offsetWidth ?? 0 // Fill width at press (flow px)
     const padX0 = BLOCK_FRAME_PAD_X * paint0 // Same pad the line render insets by
-    const fillInnerW = Math.max(0, fillW0 - padX0 * 2) // Frame inner — only when +'s sit on the fill
-    const paintedPlus = fill ? plusBoxInFill(fill) : null // Live + marks — wrap max follows these, not the frame
-    const plusBox = contentFitBoxRef.current ?? paintedPlus // Stored box, else where the +'s are painted now
+    const fillInnerW = locked0 ? Math.max(0, fillW0 - padX0 * 2) : fillW0 // Free: contentFit (with its pad) may fill the fill
+    const plusBox = contentFitBoxRef.current // Stored +'s — default +'s ride the column, so the fill is the max
     const plusInnerW = plusBox ? Math.min(plusBox.width, fillInnerW) : fillInnerW // Far-edge visual: +'s, else the frame
     if (!locked0 && plusBox) {
       nowrapCapRef.current = Math.min(nowrapCapRef.current, Math.max(BLOCK_THREE_CHARS_W, plusInnerW / paint0)) // Free: wrap column cannot exceed the + box
@@ -6478,11 +6459,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     const fill = wrapLineFillRef.current
     if (!fill) return
     fitLineDraggingRef.current = true // Grow / hug must not fight the live box
-    const paint = Math.max(FRAME_SCALE_EPSILON, paintScaleRef.current)
-    const padX = BLOCK_FRAME_PAD_X * paint // Same inset as wrap bars
-    const padY = BLOCK_FRAME_PAD_Y * paint
-    const maxW = Math.max(BLOCK_THREE_CHARS_W, fill.offsetWidth - padX * 2) // Far edge = fill
-    const maxH = Math.max(BLOCK_MIN_FRAME_H, fill.offsetHeight - padY * 2)
+    const maxW = Math.max(BLOCK_THREE_CHARS_W, fill.offsetWidth) // Far edge = fill — contentFit already holds the text pad
+    const maxH = Math.max(BLOCK_MIN_FRAME_H, fill.offsetHeight)
+    const prevCol = contentFitBoxRef.current?.col // Keep the basis set on an earlier + drag
+    const liveCol = frameTextWrapRef.current ? wrapColWidthRef.current : null // Wrapped: basis = current column
+    const col = prevCol ?? liveCol ?? undefined // Scale by this so the first move does not jump the lines
     const onMove = (ev: PointerEvent) => {
       const rect = fill.getBoundingClientRect() // Fill is stable — plus follows the pointer
       const sx = fill.offsetWidth / Math.max(1, rect.width)
@@ -6491,7 +6472,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       const localY = (ev.clientY - rect.top) * sy
       const w = Math.max(BLOCK_THREE_CHARS_W, Math.min(maxW, 2 * Math.abs(localX - fill.offsetWidth / 2))) // Pair — keep centred
       const h = Math.max(BLOCK_MIN_FRAME_H, Math.min(maxH, 2 * Math.abs(localY - fill.offsetHeight / 2)))
-      const box = { width: Math.round(w * 100) / 100, height: Math.round(h * 100) / 100 } // 2dp — no pixel step
+      const box = {
+        width: Math.round(w * 100) / 100, // 2dp — no pixel step
+        height: Math.round(h * 100) / 100,
+        ...(col != null ? { col } : {}), // Same scale basis all gesture
+      }
       contentFitBoxRef.current = box
       setContentFitBox(box) // Live contain-fit
     }
@@ -6500,14 +6485,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       const box = contentFitBoxRef.current
-      const atEdge = !box || (box.width >= maxW - 0.5 && box.height >= maxH - 0.5) // Both axes back at the fill
-      if (atEdge) {
-        contentFitBoxRef.current = null
-        setContentFitBox(null) // Unapply — contain-fit uses the fill again
-        void persistFrameMetaRef.current({ contentFitBox: null, frameUnlocked: true })
-        return
-      }
-      void persistFrameMetaRef.current({ contentFitBox: box, frameUnlocked: true })
+      if (!box) return // Press without a move — nothing to keep
+      void persistFrameMetaRef.current({ contentFitBox: box, frameUnlocked: true }) // Keep it even at the fill edge — clearing snapped scale + +'s back
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
@@ -6636,6 +6615,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     const fit = contentFitBoxRef.current // Last plus-box size must not cap added / wrapped content
     const nextFit = fit
       ? {
+          ...fit, // Keep the scale-basis col
           width: Math.max(fit.width, Math.min(needW, nextW)),
           height: Math.max(fit.height, Math.min(needH, nextH)),
         }
@@ -7650,8 +7630,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       ? freeContentFitScale(
           fitBoxW,
           fitBoxH,
-          (contentFitBox && plusNowrapW != null ? Math.max(fitWrapCol, plusNowrapW) : fitWrapCol) *
-            renderFrameScale, // + box: nowrap run fills the +'s so an inner col paints inside them; else fit wrap visual
+          (contentFitBox
+            ? Math.max(fitWrapCol, contentFitBox.col ?? plusNowrapW ?? fitWrapCol) // + box: column the +'s were set at (else nowrap) fills them
+            : fitWrapCol) * renderFrameScale, // Inner wrap cols then paint inside the +'s; else fit wrap visual
           Math.max(1, wrapStackH * renderFrameScale), // Wrapped visual height
           frameShape, // Contain inside the silhouette, not the rect
           contentFitBox != null // Plus box — scale past fit-to-text
@@ -7715,9 +7696,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const wrapPlusMaxCol =
     wrapActive && frameUnlocked && wrapColWidth != null
       ? (() => {
-          const fill = wrapLineFillRef.current
-          const box = contentFitBox ?? (fill ? plusBoxInFill(fill) : null) // Live +'s if the stored box is unset
-          if (!box) return wrapColWidth // No +'s — keep the stored column
+          const box = contentFitBox // Stored +'s only — painted default sits on the column (capping on it reflowed the text)
+          if (!box) return wrapColWidth // +'s on the fill — keep the stored column
           return Math.min(
             wrapColWidth,
             Math.max(BLOCK_THREE_CHARS_W, box.width / Math.max(FRAME_SCALE_EPSILON, paintScale)) // Unscaled col that paints to the + width
@@ -10159,7 +10139,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               coldReady={coldReady} // Snapshot exists → proximity alone must not mount a live editor
               deferredBox={deferredBox}
               contentPadLeft={isBlock ? BLOCK_FRAME_PAD_X : 0}
-              frameScale={frameScale}
+              frameScale={isBlock && applyPaintScale ? paintScale : frameScale} // ⋮⋮ size/pad track the painted text scale — free contain-fit is not frameScale
               handleGutterFlow={handleGutterFlow}
               centerInShape={shapeCenterContent}
               enableCollab={
@@ -10315,11 +10295,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           // so they can sit past the wrap lines — wrap is reflow, fit is scale.
           const paintedW = Math.min(
             (wrapActive && wrapColWidth != null ? wrapColWidth : intrinsicSize.width) * paintScale,
-            fillW - padX * 2
+            fillW // contentFit holds the text pad — clamp to the fill, not fill − pad (that sat +'s inside the lines)
           )
-          const paintedH = Math.min(intrinsicSize.height * paintScale, fillH - padY * 2)
-          const plusW = Math.min(contentFitBox?.width ?? paintedW, fillW - padX * 2)
-          const plusH = Math.min(contentFitBox?.height ?? paintedH, fillH - padY * 2)
+          const paintedH = Math.min(intrinsicSize.height * paintScale, fillH)
+          const plusW = Math.min(contentFitBox?.width ?? paintedW, fillW) // Same max as the + drag
+          const plusH = Math.min(contentFitBox?.height ?? paintedH, fillH)
           const plusLeft = (fillW - plusW) / 2
           const plusTop = (fillH - plusH) / 2
           const plusArm = Math.max(barW * 12, 22 * wrapBarChrome * renderFrameScale) // Big + — crosses the wrap dash at the content corner
