@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-27T20:30:15Z`
+- Snapped at: `2026-09-29T01:20:15Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`/`migration list`; versions from `.temp` + Management API list; cli-latest reports `v2.118.0`)
@@ -9,6 +9,15 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260929012015_fit_plus_frame_relative_phone_chrome.sql`.
+- **Fit-plus**: grey +'s are frame-relative (`wrapBarChrome × renderFrameScale`) — same size on every corner / frame height; thinner stroke near wrap-bar weight.
+- **Phone wrap / +**: `setPointerCapture` + `pointercancel`; larger hit pads; free-resize spacer `pointer-events: none` while selected so Safari hits the chrome.
+- **Frame colors**: sticky-note pastels; dark-mode remap at paint; Preferences Color mode dropdown portals above settings.
+- **More menu**: Present / Capture decks live in Views; Export → Copy board contents; word count prefers selection.
+- Schema unchanged; remote DDL top remains `20260924223511_board_changes_autosave`.
+
+## Prior: Wrap lines stay on space
 
 - DDL: none. Marker `20260927203015_wrap_lines_stay_on_space.sql`.
 - **Wrap lines**: far edge is wrap-line space (fill / + box), not nowrap content. Short text no longer jumps the bars inward; wrap stays settable between glyphs and the edge.

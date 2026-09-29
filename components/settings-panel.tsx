@@ -412,10 +412,10 @@ export function SettingsPanel({
               <div className="space-y-6">
                 <h3 className="text-lg font-semibold dark:text-white">Preferences</h3>
                 
-                {/* Theme Option */}
+                {/* Color mode — portal above this window (z-56); modal=false so the overlay does not steal clicks */}
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Theme</label>
-                  <DropdownMenu>
+                  <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Color mode</label>
+                  <DropdownMenu modal={false}>
                     <DropdownMenuTrigger asChild>
                       <Button
                         variant="outline"
@@ -425,29 +425,29 @@ export function SettingsPanel({
                         <ChevronDown className="h-4 w-4 opacity-50" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-full">
+                    <DropdownMenuContent align="start" className="z-[70] w-[var(--radix-dropdown-menu-trigger-width)]">
                       <DropdownMenuItem
                         onClick={() => setTheme('light')}
-                        className={theme === 'light' ? 'bg-gray-100' : ''}
+                        className={theme === 'light' ? 'bg-gray-100 dark:bg-gray-800' : ''}
                       >
                         Light
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         onClick={() => setTheme('dark')}
-                        className={theme === 'dark' ? 'bg-gray-100' : ''}
+                        className={theme === 'dark' ? 'bg-gray-100 dark:bg-gray-800' : ''}
                       >
                         Dark
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         onClick={() => setTheme('system')}
-                        className={theme === 'system' ? 'bg-gray-100' : ''}
+                        className={theme === 'system' ? 'bg-gray-100 dark:bg-gray-800' : ''}
                       >
                         System
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Choose your preferred theme. System will match your device settings.
+                    Choose your preferred color mode. System will match your device settings.
                   </p>
                 </div>
               </div>

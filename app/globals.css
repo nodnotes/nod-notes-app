@@ -1640,6 +1640,11 @@ span[data-added="true"] {
     touch-action: none; /* Phone: don't let Safari steal corner-drag for pan/pinch */
   }
 
+  [data-tt-wrap-line],
+  [data-tt-fit-plus] {
+    touch-action: none; /* Phone: don't let Safari steal wrap / + drag for pan/pinch */
+  }
+
   /* Shape node label styling - matches shapes-pro-example */
   .node-label {
     position: absolute;

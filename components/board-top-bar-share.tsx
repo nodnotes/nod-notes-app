@@ -2,7 +2,7 @@
 
 // Top-bar cluster right of Share: favorite, More (shareCompact: star + AI sparkles live in More; Copy link is Share-only)
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react' // Favorite + More search; present flag
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react' // Favorite + More search; full-width flag
 import {
   AppWindow,
   Bell,
@@ -12,12 +12,10 @@ import {
   FolderInput,
   Grid3x3,
   Languages,
-  Link2,
   Lock,
   Maximize2,
   MessageSquarePlus,
   MoreHorizontal,
-  Play,
   Pin,
   PinOff,
   Search,
@@ -54,6 +52,7 @@ import { type BoardFontId } from '@/lib/board-font'
 import { DesktopUpdateMenuItem } from './desktop-update-menu-item' // Electron: Check for updates / Restart
 import { UtilityOpenIcon } from './utility-open-icon' // Layers stack + tilted Scan on the top sheet
 import { getPresenting, startPresenting, stopPresenting, subscribePresenting } from '@/lib/presentation-present' // Full width reuses present chrome-hide
+import { editorForHostNode } from '@/lib/tiptap/block-selection' // Live TipTap text for selected-frame word count
 import Link from 'next/link' // Download desktop app when not in Electron
 
 type BoardTopBarShareProps = {
@@ -117,13 +116,14 @@ function MenuToggle({ on, className }: { on: boolean; className?: string }) {
 export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
   const queryClient = useQueryClient() // Patch conversations cache after favorite
   const {
+    reactFlowInstance,
     boardFont,
     setBoardFont,
     boardRule: hostBoardRule,
     setBoardRule: setHostBoardRule,
     boardStyle: hostBoardStyle,
     setBoardStyle: setHostBoardStyle,
-  } = useReactFlowContext() // Font + board background (More menu)
+  } = useReactFlowContext() // Font + board background; selection for footer word count
   const previewFocus = usePreviewFocus() // When nested preview chrome is selected, style that page
   const boardRule = previewFocus?.focusedBoardId ? previewFocus.boardRule : hostBoardRule
   const setBoardRule = previewFocus?.focusedBoardId ? previewFocus.setBoardRule : setHostBoardRule
@@ -133,9 +133,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
     isMobileMode,
     isUtilitySidebarOpen,
     toggleUtilitySidebar,
-    setUtilitySidebarOpen,
-    setUtilitySidebarMode,
-  } = useSidebarContext() // Phone layout; open utility right of More (close lives in column)
+  } = useSidebarContext() // Phone layout; utility open icon right of More
   const { shareCompact } = usePhoneModeMenu() // Toolbar collapses star before tools leave for the pill
   const collapseShare = isMobileMode || shareCompact // Hide star into More ahead of phoneTools
   const hideMore = isMobileMode && isUtilitySidebarOpen // Phone: More yields the right edge to the overlay
@@ -155,7 +153,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
   const [menuOpen, setMenuOpen] = useState(false) // Load footer stats when More opens
   const [query, setQuery] = useState('') // Search actions…
   const searchRef = useRef<HTMLInputElement>(null) // Focus search on open
-  const fullWidth = useSyncExternalStore(subscribePresenting, getPresenting, () => false) // Same hide as Present (SSR off)
+  const fullWidth = useSyncExternalStore(subscribePresenting, getPresenting, () => false) // Full width chrome-hide (SSR off)
   const [lockBoard, setLockBoard] = useState(false) // Lock board toggle (UI only)
   const [wordCount, setWordCount] = useState<number | null>(null) // Footer word count
   const [editedBy, setEditedBy] = useState<string | null>(null) // Footer first name
@@ -204,21 +202,37 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
     if (!menuOpen || !conversationId) return // Footer only when More is open on a saved board
     let cancelled = false
     const loadFooter = async () => {
-      const cached =
-        queryClient.getQueryData<CachedMessage[]>(['messages-for-panels', conversationId, 'full']) ||
-        queryClient.getQueryData<CachedMessage[]>(['messages-for-panels', conversationId])
-      let contents = cached?.map((m) => htmlToPlain(m.content || '')).filter(Boolean) ?? []
-      const supabase = createClient()
-      if (!cached) {
-        const { data } = await supabase
-          .from('messages')
-          .select('content')
-          .eq('conversation_id', conversationId)
-        if (cancelled) return
-        contents = (data ?? []).map((m) => htmlToPlain((m.content as string) || '')).filter(Boolean)
+      // Prefer selected frames; fall back to whole-board count when nothing is selected
+      const selectedFrames = (reactFlowInstance?.getNodes() ?? []).filter(
+        (n) => n.selected && n.data?.promptMessage // Frames carry TipTap HTML on promptMessage
+      )
+      let contents: string[]
+      if (selectedFrames.length > 0) {
+        contents = selectedFrames
+          .map((n) => {
+            const live = editorForHostNode(n.id)?.getText()?.trim() // Prefer mounted editor (unsaved edits)
+            if (live) return live
+            return htmlToPlain(String(n.data?.promptMessage?.content || ''))
+          })
+          .filter(Boolean)
+      } else {
+        const cached =
+          queryClient.getQueryData<CachedMessage[]>(['messages-for-panels', conversationId, 'full']) ||
+          queryClient.getQueryData<CachedMessage[]>(['messages-for-panels', conversationId])
+        contents = cached?.map((m) => htmlToPlain(m.content || '')).filter(Boolean) ?? []
+        if (!cached) {
+          const supabase = createClient()
+          const { data } = await supabase
+            .from('messages')
+            .select('content')
+            .eq('conversation_id', conversationId)
+          if (cancelled) return
+          contents = (data ?? []).map((m) => htmlToPlain((m.content as string) || '')).filter(Boolean)
+        }
       }
       const words = contents.join(' ').split(/\s+/).filter(Boolean).length // Plain-text word count
       if (!cancelled) setWordCount(words)
+      const supabase = createClient()
       const { data: conv } = await supabase
         .from('conversations')
         .select('updated_at, user_id')
@@ -237,17 +251,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
     return () => {
       cancelled = true
     }
-  }, [menuOpen, conversationId, queryClient])
-
-  const copyLink = useCallback(async () => {
-    if (!conversationId || typeof window === 'undefined') return
-    const url = `${window.location.origin}/board/${conversationId}` // Same URL as board right-click Copy link
-    try {
-      await navigator.clipboard.writeText(url)
-    } catch {
-      // Clipboard denied — Share menu still owns the primary copy-link path
-    }
-  }, [conversationId])
+  }, [menuOpen, conversationId, queryClient, reactFlowInstance])
 
   const copyBoardContents = useCallback(async () => {
     if (!conversationId) return
@@ -271,11 +275,6 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
       setCopiedContents(false)
     }
   }, [conversationId, queryClient])
-
-  const presentBoard = useCallback(() => {
-    setUtilitySidebarMode('capture') // Decks / captures live in utility Capture
-    setUtilitySidebarOpen(true) // Open the column if it was closed
-  }, [setUtilitySidebarMode, setUtilitySidebarOpen])
 
   const toggleFavorite = useCallback(async () => {
     if (!conversationId) return
@@ -328,18 +327,15 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
     showAiHighlightMenu ||
     showFavoriteMenu ||
     [
-      'Copy link',
-      'Copy board contents',
       'Duplicate',
       'Move to',
       'Move to Trash',
-      'Present',
       'Full width',
       'Lock board',
       'Translate',
       'Import',
-      'Export',
-      'Notify me',
+      'Export copy board contents',
+      'Notification',
       'Open in Mac app',
     ].some((label) => matchesQuery(label, q))
 
@@ -485,13 +481,6 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
                 </DropdownMenuSub>
               )}
 
-              {matchesQuery('Copy link', q) && (
-                <DropdownMenuItem disabled={!conversationId} onClick={() => void copyLink()}>
-                  <Link2 className="h-4 w-4 mr-2" />
-                  Copy link
-                  <DropdownMenuShortcut>⌘⌥L</DropdownMenuShortcut>
-                </DropdownMenuItem>
-              )}
               {showFavoriteMenu && (
                 <DropdownMenuItem
                   disabled={!conversationId} // Unsaved board has no conversations.metadata.favorite
@@ -499,12 +488,6 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
                 >
                   <Star className={cn('h-4 w-4 mr-2', favorited && 'fill-current')} />
                   {favorited ? 'Remove from favorites' : 'Add to favorites'}
-                </DropdownMenuItem>
-              )}
-              {matchesQuery('Copy board contents', q) && (
-                <DropdownMenuItem disabled={!conversationId} onClick={() => void copyBoardContents()}>
-                  <Clipboard className="h-4 w-4 mr-2" />
-                  {copiedContents ? 'Copied contents' : 'Copy board contents'}
                 </DropdownMenuItem>
               )}
               {matchesQuery('Duplicate', q) && (
@@ -529,17 +512,6 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
               )}
 
               {!q && <DropdownMenuSeparator />}
-
-              {matchesQuery('Present', q) && (
-                <DropdownMenuItem onClick={presentBoard}>
-                  <Play className="h-4 w-4 mr-2" />
-                  Present
-                  <span className="ml-1 rounded px-1 py-px text-[10px] leading-none text-gray-400 bg-gray-100">
-                    Beta
-                  </span>
-                  <DropdownMenuShortcut>⌘⌥P</DropdownMenuShortcut>
-                </DropdownMenuItem>
-              )}
 
               {showAiHighlightMenu && (
                 <>
@@ -650,20 +622,31 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
                   Import
                 </DropdownMenuItem>
               )}
-              {matchesQuery('Export', q) && (
-                <DropdownMenuItem>
-                  <Upload className="h-4 w-4 mr-2" />
-                  Export
-                </DropdownMenuItem>
+              {matchesQuery('Export copy board contents', q) && (
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <Upload className="h-4 w-4 mr-2" />
+                    Export
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="w-52">
+                    <DropdownMenuItem
+                      disabled={!conversationId}
+                      onClick={() => void copyBoardContents()}
+                    >
+                      <Clipboard className="h-4 w-4 mr-2" />
+                      {copiedContents ? 'Copied contents' : 'Copy board contents'}
+                    </DropdownMenuItem>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
               )}
 
               {!q && <DropdownMenuSeparator />}
 
-              {matchesQuery('Notify me', q) && (
+              {matchesQuery('Notification', q) && (
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger>
                     <Bell className="h-4 w-4 mr-2" />
-                    Notify me
+                    Notification
                     <span className="ml-auto mr-1 text-xs text-gray-400">Comments</span>
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent className="w-48">

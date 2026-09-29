@@ -77,7 +77,13 @@ import { applyMenuPlacement, watchMenuSafeRect } from '@/lib/menu-placement' // 
 import { COMPACT_PREVIEW_ROWS, NOTION_DB_CLIENT_ROW_CAP } from '@/lib/notion/database' // Table rows floor + show-all ceiling
 import { LegoBrickIcon } from './lego-brick-icon' // Frame-group lock: two bricks, top one stud back
 import Shape from '@/components/shapes/Shape' // Mini silhouette previews in the Shape flyout
-import { FRAME_COLOR_SWATCHES, resolveFrameBorderColor, resolveFrameFillColor } from '@/lib/frame-colors' // Pastel fills + subtle borders + legacy remap
+import {
+  FRAME_COLOR_SWATCHES,
+  frameColorSwatchesForTheme,
+  resolveFrameBorderColor,
+  resolveFrameFillColor,
+} from '@/lib/frame-colors' // Pastel fills + subtle borders + legacy / dark remap
+import { useTheme } from '@/components/theme-provider' // Dark palette previews in the Color flyout
 import {
   FRAME_SHAPE_NONE,
   FRAME_SHAPE_TYPES,
@@ -592,6 +598,11 @@ export function BlockActionsMenu({
   openLeft = false,
   onAddToSet,
 }: BlockActionsMenuProps) {
+  const { resolvedTheme } = useTheme() // Paint swatch chips with dark siblings when needed
+  const themeSwatches = useMemo(
+    () => frameColorSwatchesForTheme(resolvedTheme), // Preview hexes; store still light-canonical
+    [resolvedTheme]
+  )
   const [query, setQuery] = useState('') // Filter actions + turn-into
   const [propertyQuery, setPropertyQuery] = useState('') // Filter inside the Property pane
   const [showPropertySearch, setShowPropertySearch] = useState(false) // Magnifier next to Property
@@ -1797,7 +1808,10 @@ export function BlockActionsMenu({
               <span
                 className="h-5 w-5 shrink-0 rounded-[4px] border border-gray-200 dark:border-gray-600"
                 style={{
-                  backgroundColor: lastFrameColor.value || '#ffffff', // Swatch preview (default = white)
+                  // Theme-aware preview; Default empty → board-like chip
+                  backgroundColor:
+                    resolveFrameFillColor(lastFrameColor.value, resolvedTheme) ||
+                    (resolvedTheme === 'dark' ? '#1a1a1a' : '#ffffff'),
                 }}
                 aria-hidden
               />
@@ -1814,8 +1828,8 @@ export function BlockActionsMenu({
           <div className="px-3 pt-0.5 pb-1 text-[11px] font-medium text-gray-400">
             Background color
           </div>
-          {FRAME_COLOR_SWATCHES.map((swatch) => {
-            const selected = colorsMatch(currentFillColor, swatch.fill)
+          {themeSwatches.map((swatch) => {
+            const selected = colorsMatch(currentFillColor, swatch.fill) // Match on light-canonical store
             return (
               <button
                 key={`fill-${swatch.id}`}
@@ -1827,12 +1841,15 @@ export function BlockActionsMenu({
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
-                  applyFrameColor('fill', swatch)
+                  applyFrameColor('fill', swatch) // Persists light-canonical .fill
                 }}
               >
                 <span
                   className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] border border-gray-200 dark:border-gray-600"
-                  style={{ backgroundColor: swatch.fill || '#ffffff' }}
+                  style={{
+                    backgroundColor:
+                      swatch.displayFill || (resolvedTheme === 'dark' ? '#1a1a1a' : '#ffffff'),
+                  }}
                   aria-hidden
                 />
                 <span className="flex-1 truncate">{swatch.name} background</span>
@@ -1840,8 +1857,9 @@ export function BlockActionsMenu({
             )
           })}
           {(() => {
-            const fillResolved = resolveFrameFillColor(currentFillColor) || currentFillColor
-            const customSelected = Boolean(fillResolved) && !isPresetFrameFill(fillResolved)
+            const fillResolved =
+              resolveFrameFillColor(currentFillColor, resolvedTheme) || currentFillColor
+            const customSelected = Boolean(fillResolved) && !isPresetFrameFill(currentFillColor)
             const pickerValue = normalizePickerHex(fillResolved || '#ffffff')
             return (
               <FrameCustomColorRow
@@ -1857,7 +1875,7 @@ export function BlockActionsMenu({
 
           {/* Border color */}
           <div className="px-3 pt-0.5 pb-1 text-[11px] font-medium text-gray-400">Border color</div>
-          {FRAME_COLOR_SWATCHES.map((swatch) => {
+          {themeSwatches.map((swatch) => {
             const selected = colorsMatch(currentBorderColor, swatch.border)
             return (
               <button
@@ -1876,9 +1894,12 @@ export function BlockActionsMenu({
                 <span
                   className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] border bg-white dark:bg-[#1f1f1f]"
                   style={{
-                    borderColor: swatch.border || '#d1d5db',
-                    borderWidth: swatch.border ? 2 : 1,
-                    boxShadow: swatch.border ? `inset 0 0 0 1px ${swatch.border}` : undefined,
+                    borderColor:
+                      swatch.displayBorder || (resolvedTheme === 'dark' ? '#4b5563' : '#d1d5db'),
+                    borderWidth: swatch.displayBorder ? 2 : 1,
+                    boxShadow: swatch.displayBorder
+                      ? `inset 0 0 0 1px ${swatch.displayBorder}`
+                      : undefined,
                   }}
                   aria-hidden
                 />
@@ -1887,8 +1908,10 @@ export function BlockActionsMenu({
             )
           })}
           {(() => {
-            const borderResolved = resolveFrameBorderColor(currentBorderColor) || currentBorderColor
-            const customSelected = Boolean(borderResolved) && !isPresetFrameBorder(borderResolved)
+            const borderResolved =
+              resolveFrameBorderColor(currentBorderColor, resolvedTheme) || currentBorderColor
+            const customSelected =
+              Boolean(borderResolved) && !isPresetFrameBorder(currentBorderColor)
             const pickerValue = normalizePickerHex(borderResolved || '#000000')
             return (
               <FrameCustomColorRow

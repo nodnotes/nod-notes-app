@@ -7,7 +7,7 @@
 import { PANE_TAP_SLOP_PX } from '@/lib/pane-click-slop'
 
 const SKIP =
-  '[data-minimap-context], [data-minimap-toggle-context], [data-minimap-pill-context], [data-chat-map-dock], [data-edit-top-bar]' // Chrome outside the map gesture
+  '[data-minimap-context], [data-minimap-toggle-context], [data-minimap-pill-context], [data-chat-map-dock], [data-edit-top-bar], [data-tt-wrap-line], [data-tt-fit-plus]' // Overlay chrome + wrap / + — not a pane tap
 
 /** Slightly fatter than select marquee — fat-finger pan jitter is larger than mouse. */
 export const PHONE_PAN_TAP_SLOP_PX = Math.max(PANE_TAP_SLOP_PX, 14)

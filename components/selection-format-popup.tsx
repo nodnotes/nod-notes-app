@@ -22,8 +22,7 @@ import {
   Type, // "Normal Text" style glyph
   SquareRadical, // Equation / math icon
   Highlighter, // Yellow highlight mark (same as top-bar Highlight)
-  PencilLine, // Suggest edits skill icon
-  SlidersHorizontal, // Skills section settings icon
+  PencilLine, // Suggest edits shortcut icon
   Baseline, // Text-color / A glyph stand-in
   EyeOff, // Hide text action icon
   AlignLeft, // Text align left
@@ -34,17 +33,13 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils' // Conditional classes for active Hide text row
 import { getMenuSafeRect } from '@/lib/menu-placement' // Same chrome-free lane as action menus
-import { getSkill } from '@/lib/ai/skills'
-import { requestAiSkill } from '@/lib/ai/attach-skill'
+import { requestAiSkill } from '@/lib/ai/attach-skill' // Suggest-edits shortcut on the comment row
 
 /** Default yellow highlight — matches editor-toolbar Highlight button. */
 const HIGHLIGHT_COLOR = '#fef08a'
 
 const EDGE_GAP = 8 // Gap between highlight edge and popup
 const VIEWPORT_PAD = 8 // Minimum inset from the visible viewport edges
-
-// Skills surfaced in the selection popup (opens AI chat with the pill attached)
-const POPUP_SKILL_IDS = ['suggest-edits'] as const
 
 // Shared class for each icon cell in the 5-column format grids
 const ICON_CELL =
@@ -111,13 +106,6 @@ export function SelectionFormatPopup({
 
   const handleHideText = () => {
     run(() => editor!.chain().focus().toggleHaze().run()) // Toggle frost on the current selection
-  }
-
-  const attachPopupSkill = (skillId: string) => {
-    requestAiSkill({
-      skillId,
-      mode: skillId === 'suggest-edits' ? 'edit' : undefined,
-    })
   }
 
   const currentAlign = ALIGN_OPTIONS.find((o) => editor?.isActive({ textAlign: o.value })) ?? ALIGN_OPTIONS[0] // Icon for current align
@@ -324,7 +312,9 @@ export function SelectionFormatPopup({
           className={ICON_CELL}
           tabIndex={-1}
           title="Suggest edits"
-          onClick={() => attachPopupSkill('suggest-edits')}
+          onClick={() =>
+            requestAiSkill({ skillId: 'suggest-edits', mode: 'edit' }) // Opens AI chat with the skill pill
+          }
         >
           <PencilLine className="h-4 w-4" />
         </button>
@@ -368,52 +358,6 @@ export function SelectionFormatPopup({
           </button>
         ) : null}
       </div>
-
-      {/* Divider before Skills */}
-      <div className="mx-2 border-t border-gray-100 dark:border-[#2f2f2f]" />
-
-      {/* Skills header */}
-      <div className="flex items-center justify-between px-3 pb-1 pt-2">
-        <span className="text-xs font-medium text-gray-400">Skills</span>
-        <button type="button" className="rounded p-0.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800" tabIndex={-1}>
-          <SlidersHorizontal className="h-3.5 w-3.5" />
-        </button>
-      </div>
-
-      {/* Skills list */}
-      <div className="px-1 pb-1">
-        {POPUP_SKILL_IDS.map((skillId) => {
-          const skill = getSkill(skillId)
-          if (!skill?.enabled) return null
-          return (
-            <button
-              key={skillId}
-              type="button"
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-gray-50 dark:hover:bg-gray-800"
-              tabIndex={-1}
-              onClick={() => attachPopupSkill(skillId)}
-            >
-              {skillId === 'suggest-edits' && (
-                <PencilLine className="h-4 w-4 shrink-0 text-gray-600 dark:text-gray-300" />
-              )}
-              <span>{skill.name}</span>
-            </button>
-          )
-        })}
-      </div>
-
-      {/* Divider before Edit with AI */}
-      <div className="mx-2 border-t border-gray-100 dark:border-[#2f2f2f]" />
-
-      {/* Edit with AI footer */}
-      <button
-        type="button"
-        className="flex w-full items-center justify-between px-3 py-2.5 text-left hover:bg-gray-50 dark:hover:bg-gray-800"
-        tabIndex={-1}
-      >
-        <span className="font-medium">Edit with AI</span>
-        <span className="text-xs tracking-wide text-gray-400">⌘⌃E</span>
-      </button>
     </div>
   )
 }

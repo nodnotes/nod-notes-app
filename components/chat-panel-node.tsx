@@ -3353,24 +3353,24 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   }, [])
 
   // Calculate panel background color
-  // Pastels are stored as-is; empty = transparent; legacy pale fills remap to clearer tints
+  // Pastels stored light-canonical; empty = transparent; legacy + dark theme remap at paint
   const panelBackgroundColor = useMemo(() => {
-    return resolveFrameFillColor(data.fillColor) ?? 'transparent'
-  }, [data.fillColor])
+    return resolveFrameFillColor(data.fillColor, resolvedTheme) ?? 'transparent'
+  }, [data.fillColor, resolvedTheme])
 
   // Calculate prompt/grey area background color — inherit frame fill when set
   const promptAreaBackgroundColor = useMemo(() => {
-    return resolveFrameFillColor(data.fillColor) ?? 'transparent'
-  }, [data.fillColor])
+    return resolveFrameFillColor(data.fillColor, resolvedTheme) ?? 'transparent'
+  }, [data.fillColor, resolvedTheme])
 
   // Calculate response/white area background color — inherit frame fill when set
   const responseAreaBackgroundColor = useMemo(() => {
-    return resolveFrameFillColor(data.fillColor) ?? 'transparent'
-  }, [data.fillColor])
+    return resolveFrameFillColor(data.fillColor, resolvedTheme) ?? 'transparent'
+  }, [data.fillColor, resolvedTheme])
 
   const resolvedBorderColor = useMemo(
-    () => resolveFrameBorderColor(data.borderColor),
-    [data.borderColor]
+    () => resolveFrameBorderColor(data.borderColor, resolvedTheme),
+    [data.borderColor, resolvedTheme]
   )
 
   // Connection points: blue fill + white border (matches selection chrome blue-500)
@@ -6272,6 +6272,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const handleWrapLinePointerDown = useCallback((side: 'left' | 'right') => (e: React.PointerEvent<HTMLDivElement>) => {
     e.stopPropagation() // Do not start frame drag or text select
     e.preventDefault() // Keep the pointer on the line hit slop
+    const lineEl = e.currentTarget // Same node we capture — release on up/cancel
+    try { lineEl.setPointerCapture(e.pointerId) } catch { /* already captured / detached */ } // Phone: window pointermove dies once the finger leaves the thin bar
+    const pointerId = e.pointerId // Release this id even if React reuses the handler
     wrapLineDraggingRef.current = true // Hug effect must not fight the live column
     const fill = wrapLineFillRef.current // Fill-local X from this box
     const paint0 = Math.max(FRAME_SCALE_EPSILON, paintScaleRef.current) // Freeze — live contain-fit remapped the bar onto the fill edge
@@ -6388,6 +6391,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       setWrapMeasureTick((t) => t + 1) // Re-measure the settled column — else bars keep the pre-drag box
       window.removeEventListener('pointermove', onMove) // Drop live drag
       window.removeEventListener('pointerup', onUp) // Drop end
+      window.removeEventListener('pointercancel', onUp) // Phone: Safari cancel is not an up
+      try { lineEl.releasePointerCapture(pointerId) } catch { /* already released */ } // Drop capture so later taps work
       const col = wrapColWidthRef.current // Final column
       const startAtUnapply = startW <= unapplyCol + 0.02 // Only unwrap from the park edge — a wider wrap (content shorter than wrap space) must stay
       const atEdge = col == null || (startAtUnapply && col >= unapplyCol - 0.02) // Free: fill / +; fit: text run — never snap inward to content
@@ -6436,6 +6441,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     }
     window.addEventListener('pointermove', onMove) // Track past the 1px line
     window.addEventListener('pointerup', onUp) // Persist + locked re-hug
+    window.addEventListener('pointercancel', onUp) // Phone: iOS cancel must not leave wrapLineDraggingRef stuck
   }, [id, getSetNodes, rfStoreApi])
 
   // Grey content-fit pluses — free resize only; drag a corner to resize the contain-fit box (centred)
@@ -6445,6 +6451,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     if (!frameUnlockedRef.current) return // Pluses exist only in free resize
     const fill = wrapLineFillRef.current
     if (!fill) return
+    const plusEl = e.currentTarget // Same node we capture — release on up/cancel
+    try { plusEl.setPointerCapture(e.pointerId) } catch { /* already captured / detached */ } // Phone: keep + drag once the finger leaves the mark
+    const pointerId = e.pointerId // Release this id on end
     fitLineDraggingRef.current = true // Grow / hug must not fight the live box
     const maxW = Math.max(BLOCK_THREE_CHARS_W, fill.offsetWidth) // Far edge = fill — contentFit already holds the text pad
     const maxH = Math.max(BLOCK_MIN_FRAME_H, fill.offsetHeight)
@@ -6471,12 +6480,15 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       fitLineDraggingRef.current = false
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp) // Phone: Safari cancel is not an up
+      try { plusEl.releasePointerCapture(pointerId) } catch { /* already released */ } // Drop capture so later taps work
       const box = contentFitBoxRef.current
       if (!box) return // Press without a move — nothing to keep
       void persistFrameMetaRef.current({ contentFitBox: box, frameUnlocked: true }) // Keep it even at the fill edge — clearing snapped scale + +'s back
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp) // Phone: iOS cancel must not leave fitLineDraggingRef stuck
   }, [])
 
   // (Overflow caret removed — lock = fit-to-content; unlock keeps current visual size + free resize/clip.)
@@ -8936,7 +8948,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       : resolvedTheme === 'dark'
         ? '#9ca3af'
         : '#6b7280'
-  const shapeFill = isFillTransparent ? 'transparent' : (resolveFrameFillColor(data.fillColor) ?? data.fillColor!)
+  const shapeFill = isFillTransparent ? 'transparent' : (resolveFrameFillColor(data.fillColor, resolvedTheme) ?? data.fillColor!)
   const shapeStrokeW = shapeBorderHidden ? 0 : FRAME_BORDER_WEIGHT
   // Silhouette paints on the content box — not the blue L/R gutters when selected
   const shapeAreaStyle: React.CSSProperties = {
@@ -9925,6 +9937,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                     minWidth: unlockedResized && unlockedInnerW != null ? unlockedInnerW : scaledLayoutW, // React owns the min — handleResize writes one imperatively and relock left the free-box min (text shoved off the peach)
                     minHeight: unlockedResized && unlockedInnerH != null ? unlockedInnerH : scaledLayoutH,
                     overflow: unlockedResized ? 'hidden' : 'visible', // Hidden = box stays where resized
+                    // Phone: overflow:hidden spacer sits under wrap / + chrome but still wins the touch
+                    // (Safari hit-tests the clip layer). Pass through; contentFit + bars take hits.
+                    pointerEvents: unlockedResized && selected ? 'none' : undefined,
                     display: 'flex',
                     justifyContent:
                       unlockedResized
@@ -9989,6 +10004,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               isBlock ? undefined : 'px-3 py-3'
             )}
             style={{
+              ...(unlockedResized && selected
+                ? { pointerEvents: 'auto' } // Spacer is none — keep text / I-bar hittable
+                : {}),
               ...(isBlock
                 ? shapeCenterContent
                   ? {
@@ -10219,7 +10237,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           const wrapZ = rfZoom || 1
           const wrapBarChrome = blockGripChromeScale(1, renderFrameScale) // √ curve on frame scale only — zoom-free so shape never changes
           const barW = 2 * wrapBarChrome * renderFrameScale // Flow thickness — scales with zoom like board content (no screen floor)
-          const hitPad = Math.max(4 * wrapBarChrome * renderFrameScale, screenPadFlow(wrapZ, 4)) // Invisible grab pad — floor keeps it grabbable
+          const hitPad = Math.max(4 * wrapBarChrome * renderFrameScale, screenPadFlow(wrapZ, isMobileMode ? 22 : 4)) // Phone finger ~22px; desktop 4px slop
           const fillW = Math.max(1, unlockedInnerW ?? contentVisualW) // Frame fill — never paint past this
           const fillH = Math.max(1, unlockedInnerH ?? contentVisualH) // Fill height for T/B clamp
           const barH = Math.max(2, fillH - padY * 2) // Line length inside T/B pad
@@ -10253,13 +10271,14 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             <div
               key={`wrap-${side}`}
               data-tt-wrap-line="true"
-              className="nodrag nopan absolute z-[20] cursor-ew-resize"
+              className="nodrag nopan absolute z-[40] cursor-ew-resize pointer-events-auto"
               style={{
                 left: Math.max(0, x - (side === 'left' ? 0 : barW)),
                 top: padY,
                 height: barH,
                 width: hitPad + barW,
                 marginLeft: side === 'left' ? 0 : -hitPad,
+                touchAction: 'none', // Phone: Safari must not steal the drag as pan/pinch
               }}
               onPointerDown={handleWrapLinePointerDown(side)}
             >
@@ -10291,22 +10310,24 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           const plusH = Math.min(contentFitBox?.height ?? paintedH, fillH)
           const plusLeft = (fillW - plusW) / 2
           const plusTop = (fillH - plusH) / 2
-          const plusArm = Math.max(barW * 12, 22 * wrapBarChrome * renderFrameScale) // Big + — crosses the wrap dash at the content corner
-          const plusThick = Math.max(barW * 2, 3 * wrapBarChrome * renderFrameScale) // Thicker than the wrap bar so the + reads on top
-          const plusHit = Math.max(plusArm + hitPad, 28) // Grab box around the +
+          // Frame-relative glyph — tracks renderFrameScale like wrap bars; never wrap `dash` (height)
+          const plusArm = 10 * wrapBarChrome * renderFrameScale // Same flow px at every corner / frame height
+          const plusThick = Math.max(barW, 1.5 * wrapBarChrome * renderFrameScale) // Near wrap-bar weight — reads as a + without a heavy cross
+          const plusHit = Math.max(plusArm + hitPad, hitPad * 2, screenPadFlow(wrapZ, isMobileMode ? 28 : 16)) // Grab stays finger/mouse-friendly
           const plusCursor = (c: 'nw' | 'ne' | 'sw' | 'se') =>
             c === 'nw' || c === 'se' ? 'nwse-resize' : 'nesw-resize'
           const plus = (c: 'nw' | 'ne' | 'sw' | 'se', x: number, y: number) => (
             <div
               key={`fit-${c}`}
               data-tt-fit-plus={c}
-              className="nodrag nopan absolute z-[30]"
+              className="nodrag nopan absolute z-[50] pointer-events-auto"
               style={{
                 left: x - plusHit / 2,
                 top: y - plusHit / 2,
                 width: plusHit,
                 height: plusHit,
                 cursor: plusCursor(c),
+                touchAction: 'none', // Phone: Safari must not steal the + drag as pan/pinch
               }}
               onPointerDown={handleFitCornerPointerDown}
             >

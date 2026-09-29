@@ -403,7 +403,7 @@ function isFrameDragAreaTarget(target: EventTarget | null): boolean {
 
 /** Chrome that owns the click — ⋮⋮, corner knobs, connections — not the selected frame / adjust box. */
 const FRAME_MENU_CHROME_SEL =
-  '.react-flow__resize-control.handle, [data-frame-chrome], [data-tt-block-handle], [data-tt-insert-line], .block-actions-menu, [data-tt-connection-indicator], [data-tt-property-header] span, [data-tt-connections-header] button, input, textarea, a, button, [data-page-link-preview], [data-tt-ibar-grip], .tt-database-block, .tt-notion-db'
+  '.react-flow__resize-control.handle, [data-frame-chrome], [data-tt-block-handle], [data-tt-insert-line], .block-actions-menu, [data-tt-connection-indicator], [data-tt-property-header] span, [data-tt-connections-header] button, input, textarea, a, button, [data-page-link-preview], [data-tt-ibar-grip], .tt-database-block, .tt-notion-db, [data-tt-wrap-line], [data-tt-fit-plus]'
 
 /** True when the click hit the blue adjust box (line hit target), not a corner knob. */
 function isFrameAdjustBoxTarget(target: EventTarget | null): boolean {
@@ -7018,6 +7018,7 @@ function BoardFlowInner({
         // Ignore other overlay chrome
         if (
           el.closest('.react-flow__resize-control') || // Live corner/edge drag
+          el.closest('[data-tt-wrap-line], [data-tt-fit-plus]') || // Wrap / + drag — not a frame menu
           el.closest('.node-popup') ||
           el.closest('[data-chat-sidebar-toggle]') ||
           el.closest('[data-map-menu]')
@@ -7147,6 +7148,7 @@ function BoardFlowInner({
       }
       if (el?.closest('input, textarea')) return
       if (el?.closest('.react-flow__resize-control')) return // Corner/edge drag — don't arm the 450ms menu
+      if (el?.closest('[data-tt-wrap-line], [data-tt-fit-plus]')) return // Wrap / + drag — don't arm the 450ms menu
 
       controller.pointerDown(e)
       if (controller.isArmed()) {

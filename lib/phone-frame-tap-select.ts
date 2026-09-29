@@ -6,7 +6,7 @@
 import { PANE_TAP_SLOP_PX } from '@/lib/pane-click-slop'
 
 const SKIP =
-  '.react-flow__edge, .react-flow__handle, .react-flow__resize-control, [data-frame-chrome], [data-tt-block-handle], [data-tt-insert-line], .block-actions-menu, [data-minimap-context], [data-minimap-toggle-context], [data-minimap-pill-context], [data-chat-map-dock], [data-edit-top-bar], [data-page-link-preview]' // Chrome / threads — not frame/pane tap
+  '.react-flow__edge, .react-flow__handle, .react-flow__resize-control, [data-frame-chrome], [data-tt-block-handle], [data-tt-insert-line], [data-tt-wrap-line], [data-tt-fit-plus], .block-actions-menu, [data-minimap-context], [data-minimap-toggle-context], [data-minimap-pill-context], [data-chat-map-dock], [data-edit-top-bar], [data-page-link-preview]' // Chrome / threads — not frame/pane tap
 
 const SKIP_PANE_ONLY =
   '.react-flow__node, .react-flow__edge, .react-flow__handle, .react-flow__resize-control, [data-minimap-context], [data-minimap-toggle-context], [data-minimap-pill-context], [data-chat-map-dock], [data-edit-top-bar]' // Empty board only

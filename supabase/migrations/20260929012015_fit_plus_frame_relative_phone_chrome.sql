@@ -1,0 +1,3 @@
+-- Fit-plus glyphs stay frame-relative (wrapBarChrome × renderFrameScale); phone wrap/+ drag capture.
+-- Sticky-note frame fills + dark-mode remap; Preferences Color mode portal; More menu Present→Views.
+-- App/docs marker only; no DDL (frame metadata is JSONB). Remote DDL top: 20260924223511_board_changes_autosave.
