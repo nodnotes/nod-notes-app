@@ -1,0 +1,2 @@
+-- Wrap lines center on fit-pluses; leave-slop + frozen contain-fit for live wrap drag; +'s stay on fill.
+-- App/docs marker only; no DDL (frame metadata is JSONB). Remote DDL top: 20260924223511_board_changes_autosave.

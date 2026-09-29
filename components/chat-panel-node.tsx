@@ -6345,6 +6345,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       }
       const minCol = BLOCK_THREE_CHARS_W // Same ~3ch floor as fit-to-text
       visualW = Math.max(minCol * paint0, Math.min(plusInnerW, edgeCol * paint0, visualW)) // Hard max = painted +'s, not the frame
+      const leaveSlop = 8 * flowPerScreen // ~8 screen px extra inward before bars leave the +'s (grab jitter)
+      if (visualW > plusInnerW - leaveSlop) visualW = plusInnerW // Stay on the + until that slop is spent
       const col = Math.max(minCol, Math.min(edgeCol, Math.round((visualW / paint0) * 100) / 100)) // Unscaled column — same + cap
       if (shiftNode && startPos) {
         const shiftX = (-(col - startW) * s0) / growth // Keep the opposite edge (left bar) or the center (pair) fixed
@@ -6379,9 +6381,13 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         cf.style.width = `${col}px` // Free: same-tick column so measure sees this move
         cf.style.maxWidth = `${col}px` // Match wrapContentWidth
       }
-      const liveBox = fill && cf ? wrapColumnInFill(fill, cf) : null // Painted content after this col
+      // Park bars on the painted wrap column (pads + frozen contain) — not raw pointer visualW
+      const liveBox = fill && cf ? wrapColumnInFill(fill, cf) : null
       if (liveBox) {
-        const w = Math.min(liveBox.width, plusInnerW) // Never draw or persist wrap past the +'s
+        const w = Math.min(liveBox.width, plusInnerW) // Never draw past the +'s
+        setWrapPaintBox({ left: (fill.offsetWidth - w) / 2, width: w })
+      } else {
+        const w = Math.min(visualW, plusInnerW) // Fallback before contentFit lays out
         setWrapPaintBox({ left: (fill.offsetWidth - w) / 2, width: w })
       }
     }
@@ -7644,14 +7650,17 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // Inset fit lines own the scale (may go below the min) so content stays inside the grey box.
   const liveFreeFitScale =
     wrapUnlocked && contentFitBox == null ? Math.max(FREE_WRAP_MIN_RATIO, rawFreeFitScale) : rawFreeFitScale
-  const freeFitScale = liveFreeFitScale
+  // Freeze contain-fit for the whole wrap-line drag — live scale grew as the column shrank and kept
+  // the painted wrap on the +'s (bars stuck / pointer bars misaligned until release measure).
   if (!wrapLineDraggingRef.current) freeFitScaleRef.current = liveFreeFitScale
+  const freeFitScale = wrapLineDraggingRef.current ? freeFitScaleRef.current : liveFreeFitScale
   const paintScale = renderFrameScale * freeFitScale // Place/lock × free contain (phone shrink is on the outer wrapper)
   paintScaleRef.current = paintScale // Wrap-line drag reads this — fill-local X / paint = wrapColWidth
   // After wrap / zoom / scale: park bars on the painted PM, not wrapCol×paint (that drifted after zoom).
   useLayoutEffect(() => {
     if (!wrapActive && !frameUnlocked) return // Locked unapplied = fill edges; free still measures so bars stay on wrap-line space
     const measure = () => {
+      if (wrapLineDraggingRef.current) return // onMove owns bar XY with frozen contain — layout effect must not fight it
       const fill = wrapLineFillRef.current
       const cf = contentFitRef.current
       if (!fill || !cf || !selected) return // Unmounted
@@ -10273,11 +10282,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               data-tt-wrap-line="true"
               className="nodrag nopan absolute z-[40] cursor-ew-resize pointer-events-auto"
               style={{
-                left: Math.max(0, x - (side === 'left' ? 0 : barW)),
+                // Center the dash on the column edge (same X as the fit-plus) — outer-edge park sat the stroke barW/2 inward of the +
+                left: side === 'left' ? x - barW / 2 : x - barW / 2 - hitPad,
                 top: padY,
                 height: barH,
                 width: hitPad + barW,
-                marginLeft: side === 'left' ? 0 : -hitPad,
                 touchAction: 'none', // Phone: Safari must not steal the drag as pan/pinch
               }}
               onPointerDown={handleWrapLinePointerDown(side)}
@@ -10285,11 +10294,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               {Array.from({ length: dashN }, (_, i) => (
                 <div
                   key={i}
-                  className={cn(
-                    'pointer-events-none absolute rounded-full',
-                    side === 'left' ? 'left-0' : 'right-0'
-                  )}
+                  className="pointer-events-none absolute rounded-full"
                   style={{
+                    left: side === 'left' ? 0 : hitPad, // Dash on the column X; hit pad stays inward
                     top: dashStart + i * (dash + gap) + (dash - dashLen) / 2,
                     width: barW,
                     height: dashLen,
@@ -10299,15 +10306,10 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               ))}
             </div>
           )
-          // Default: pluses on painted content (wrap edges). Once dragged, they follow contentFitBox
-          // so they can sit past the wrap lines — wrap is reflow, fit is scale.
-          const paintedW = Math.min(
-            (wrapActive && wrapColWidth != null ? wrapColWidth : intrinsicSize.width) * paintScale,
-            fillW // contentFit holds the text pad — clamp to the fill, not fill − pad (that sat +'s inside the lines)
-          )
-          const paintedH = Math.min(intrinsicSize.height * paintScale, fillH)
-          const plusW = Math.min(contentFitBox?.width ?? paintedW, fillW) // Same max as the + drag
-          const plusH = Math.min(contentFitBox?.height ?? paintedH, fillH)
+          // +'s = contain-fit box (fill max, or stored contentFitBox) — never ride wrapColWidth
+          // (that moved the +'s with wrap-line drag; wrap is reflow, fit is scale).
+          const plusW = Math.min(contentFitBox?.width ?? fillW, fillW)
+          const plusH = Math.min(contentFitBox?.height ?? fillH, fillH)
           const plusLeft = (fillW - plusW) / 2
           const plusTop = (fillH - plusH) / 2
           // Frame-relative glyph — tracks renderFrameScale like wrap bars; never wrap `dash` (height)

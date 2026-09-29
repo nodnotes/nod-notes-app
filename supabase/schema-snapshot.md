@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-29T01:20:15Z`
+- Snapped at: `2026-09-29T01:45:06Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`/`migration list`; versions from `.temp` + Management API list; cli-latest reports `v2.118.0`)
@@ -9,6 +9,14 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20260929014506_wrap_line_plus_align_live_drag.sql`.
+- **Wrap / + align**: wrap dashes centered on the column X (same as fit-plus); ~8px leave-slop before bars leave the +'s.
+- **Live wrap drag**: freeze `freeFitScale` at press so painted wrap follows the column; bars park on `wrapColumnInFill` same-tick (no post-drag snap).
+- **Fit-plus park**: +'s stay on the fill / stored `contentFitBox` — wrap-line drag must not move them.
+- Schema unchanged; remote DDL top remains `20260924223511_board_changes_autosave`.
+
+## Prior: Fit-plus frame-relative phone chrome
 
 - DDL: none. Marker `20260929012015_fit_plus_frame_relative_phone_chrome.sql`.
 - **Fit-plus**: grey +'s are frame-relative (`wrapBarChrome × renderFrameScale`) — same size on every corner / frame height; thinner stroke near wrap-bar weight.
