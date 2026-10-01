@@ -15,6 +15,14 @@ import {
 import { ChatLinkConnectionCue } from '@/components/threads/ChatLinkConnectionCue'
 import { LiveFrameChromeZoom } from '@/components/live-frame-chrome-zoom' // Live zoom → chrome CSS vars
 import {
+  GROUP_COMMENTS_EVENT, // Group box reactions button
+  GROUP_TRANSFORM_EVENT, // Group resize / rotate
+  clearLiveGroupGeom, // Drop published geometry on unmount
+  publishLiveGroupGeom, // Painted scale / angle for the group box
+  useGroupMultiSelect, // Hide handles when 2+ objects are selected
+  type GroupTransformDetail,
+} from '@/lib/group-selection'
+import {
   BLOCK_HANDLE_GUTTER_W,
   CONNECTIONS_GROUP_H,
   DB_ROWS_REVEAL_FOOTER_H,
@@ -85,6 +93,7 @@ import {
   setFrameTextEditActive,
   isFrameTextEditActive,
   isEditorAutoSelectSuppressed,
+  subscribeFrameTextEdit,
 } from '@/lib/frame-text-edit' // Select-before-caret: Delete removes frame until caret is placed
 import {
   fillOriginFromFlowPosition,
@@ -176,8 +185,8 @@ const BLOCK_FRAME_PAD = BLOCK_FRAME_PAD_X // Default / band inset = horizontal p
 function parseFrameAlignX(v: unknown): FrameAlignX {
   return v === 'center' || v === 'right' ? v : 'left'
 }
-/** Property cell radius at scale 1 — fill lives outside CSS scale so multiply by frameScale; adjust ring stays square */
-const FRAME_CORNER_RADIUS = 6
+/** Frame fill corner radius at scale 1 — square (0); adjust ring stays square too */
+const FRAME_CORNER_RADIUS = 0
 /** Peach air between fill edge and the in-flow board preview block */
 const PREVIEW_INSET_PX = 8
 /** Title row + 360 card + bottom inset — floor so a clipped parent cannot hug short */
@@ -1437,6 +1446,7 @@ function TipTapContentLive({
   handleGutterFlow = 0, // Blue L/R gutter width (flow px) — ⋮⋮ local left compensates contentFit scale
   centerInShape = false, // Silhouette frames: center TipTap in the visible cross / diamond
   enableCollab = true, // False for Notion page bodies (Notion remains content SoT)
+  fitToText = false, // Locked hug — selected body press moves the frame until a caret
 }: {
   content: string
   className?: string
@@ -1492,6 +1502,7 @@ function TipTapContentLive({
   handleGutterFlow?: number // Adjust-box L gutter (flow px); grips inverse-scale into it
   centerInShape?: boolean // Shaped frame: center text in silhouette
   enableCollab?: boolean // Local frames join board Yjs; Notion bodies stay HTML/LWW
+  fitToText?: boolean // Locked hug — no empty peach, so the text itself must drag
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const { setActiveEditor } = useEditorContext()
@@ -1500,6 +1511,15 @@ function TipTapContentLive({
   // Live frame-selected flag for TipTap DOM handlers (useEditor config is not recreated each render)
   const isPanelSelectedRef = useRef(!!isPanelSelected)
   isPanelSelectedRef.current = !!isPanelSelected
+  const fitToTextRef = useRef(!!fitToText) // Live lock — editorProps handlers stay identity-stable
+  fitToTextRef.current = !!fitToText
+  const textEditing = useSyncExternalStore(
+    subscribeFrameTextEdit, // Caret on/off
+    () => isFrameTextEditActive(hostNodeId), // This frame only
+    () => false
+  )
+  // Hug covers the peach — drag the text until a caret; then TipTap owns the press
+  const fitBodyDrag = !!fitToText && !!isPanelSelected && !textEditing
   const hostNodeIdRef = useRef(hostNodeId) // Stable for editorProps memo (avoid setOptions every render)
   hostNodeIdRef.current = hostNodeId
   // Same gesture that selects an unselected frame must not place the I-bar
@@ -1597,6 +1617,14 @@ function TipTapContentLive({
           ) {
             return false
           }
+          // Fit-to hug has no empty peach. Until a caret (or the open menu's next click), let RF drag.
+          if (
+            fitToTextRef.current &&
+            !isFrameTextEditActive(hostNodeIdRef.current) &&
+            !document.querySelector('.node-popup')
+          ) {
+            return false
+          }
           // stopPropagation alone keeps RF/d3 from starting a frame drag; preventDefault here
           // would kill the native selection gesture, so press+drag could never select text.
           pe.stopPropagation()
@@ -1635,6 +1663,14 @@ function TipTapContentLive({
           }
           // DB table / title chrome owns clicks (cells, toolbar) — table nodrag stops RF drag
           if (mouseTarget?.closest?.('.tt-database-block, .tt-notion-db')) {
+            return false
+          }
+          // Same as pointerdown — fit-to body press moves the frame until text-edit
+          if (
+            fitToTextRef.current &&
+            !isFrameTextEditActive(hostNodeIdRef.current) &&
+            !document.querySelector('.node-popup')
+          ) {
             return false
           }
           selectOnlyClickRef.current = false
@@ -1707,7 +1743,8 @@ function TipTapContentLive({
       // When CRDT is active, Y.XmlFragment is SoT — omit HTML content (seed empty fragments below)
       content: collabActive ? undefined : content,
       // Unselected frames are not contenteditable — iOS long-press opens the frame menu, not text select
-      editable: canEdit && !!isPanelSelected,
+      // Fit-to stays non-editable until a caret so ProseMirror does not swallow the drag
+      editable: canEdit && !!isPanelSelected && !(fitToText && !isFrameTextEditActive(hostNodeId)),
       immediatelyRender: false, // Prevent SSR hydration mismatches
       shouldRerenderOnTransaction: false, // Avoid parent re-render storms; NodeViews update themselves
       editorProps,
@@ -1864,12 +1901,17 @@ function TipTapContentLive({
   }, [propertyHeaders, onPropertyHeadersChange])
 
   // Editable only when this frame is selected (and share role allows). Unselected = no iOS text loupe.
+  // Fit-to: also wait for a caret — otherwise the hug's text cannot start an RF drag.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
-    const next = canEdit && !!isPanelSelected
+    const editing = isFrameTextEditActive(hostNodeId)
+    const next = canEdit && !!isPanelSelected && !(fitToText && !editing)
     if (editor.isEditable !== next) editor.setEditable(next)
-    // Drop any caret / native selection when the frame becomes unselected
-    if (!next && editor.view?.dom) {
+    const dom = editor.view?.dom as HTMLElement | undefined
+    if (dom) dom.style.cursor = fitToText && isPanelSelected && !editing ? 'grab' : '' // I-beam only once the caret owns the text
+    // Drop any caret / native selection when the frame becomes unselected.
+    // Fit-to selected-but-not-editing is also non-editable — that is not a deselect.
+    if (!(canEdit && isPanelSelected) && editor.view?.dom) {
       clearFrameTextEditActive() // Deselect → Delete no longer targets this frame's text
       try {
         editor.commands.blur()
@@ -1878,7 +1920,7 @@ function TipTapContentLive({
         // ignore
       }
     }
-  }, [editor, canEdit, isPanelSelected])
+  }, [editor, canEdit, isPanelSelected, fitToText, textEditing, hostNodeId])
 
   // Phone: PM registers touchstart as {passive:true}, so handleDOMEvents cannot preventDefault.
   // Non-passive capture listener claims the tap → I-bar on first finger press (not second).
@@ -1897,6 +1939,15 @@ function TipTapContentLive({
       ) {
         return // ⋮⋮ / insert / board open / DB / sync highlight own the gesture
       }
+      // Fit-to: first finger moves the frame. Caret waits for text-edit or the open menu.
+      if (
+        fitToTextRef.current &&
+        !isFrameTextEditActive(hostNodeId) &&
+        !document.querySelector('.node-popup')
+      ) {
+        return
+      }
+      if (!editor.isEditable) editor.setEditable(true) // This touch places the caret
       e.preventDefault() // Requires non-passive — stops iOS focus-only first tap
       e.stopPropagation() // RF d3-drag listens for touchstart on the node
       selectOnlyClickRef.current = false
@@ -2334,6 +2385,7 @@ function TipTapContentLive({
     }
     e.stopPropagation()
     if (editor.isDestroyed) return
+    if (!editor.isEditable) editor.setEditable(true) // Fit-to was non-editable so the previous press could drag
     if (hostNodeId) setFrameTextEditActive(hostNodeId) // Later text click → caret; Backspace edits text
     // Sync in this tap — setTimeout(0) broke iOS: first tap focused nothing, second placed I-bar
     try {
@@ -2398,13 +2450,19 @@ function TipTapContentLive({
       className={cn(
         'relative overflow-visible', // Grips sit in the panel’s left chrome (negative left)
         centerInShape ? 'w-fit max-w-full mx-auto' : 'w-full',
-        isFlashcard ? 'cursor-pointer' : isPanelSelected ? 'cursor-text' : 'cursor-grab',
+        isFlashcard ? 'cursor-pointer' : fitBodyDrag || !isPanelSelected ? 'cursor-grab' : 'cursor-text',
         !isPanelSelected && 'tt-frame-unselected', // CSS: no text select / callout until selected
-        // Selected: nodrag on the whole editor chrome so padding taps don't start RF drag either
-        isPanelSelected && !isFlashcard && 'nodrag nopan',
+        fitBodyDrag && 'tt-fit-body-drag', // Beat .ProseMirror user-select/cursor !important so a real drag isn't a text selection
+        // Selected: nodrag so padding taps don't start RF drag. Fit-to skips it until a caret —
+        // the hug is the whole hit target, so the body has to move the frame.
+        isPanelSelected && !isFlashcard && !fitBodyDrag && 'nodrag nopan',
         isInline && 'inline-block',
         otherClasses
       )}
+      onDragStart={(e) => {
+        if (!fitBodyDrag) return
+        e.preventDefault() // A native text drag replaces mousemove, so the frame never follows the pointer
+      }}
       onClick={(e) => {
         // Unselected: let the click bubble so RF selects the frame (no caret)
         if (!isPanelSelected) return
@@ -2456,7 +2514,7 @@ function TipTapContentLive({
               className={cn(
                 'block',
                 centerInShape ? 'w-fit max-w-full' : 'w-full',
-                isPanelSelected && 'nodrag nopan'
+                isPanelSelected && !fitBodyDrag && 'nodrag nopan'
               )}
             />
           </div>
@@ -4112,6 +4170,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // • Connection **indicator** = plain DOM dot outside — starts drag on the edge point (not an RF Handle)
   const isThreadConnecting = useIsThreadConnecting() // Hide adjust chrome while dragging a thread
   const isNearThreadSnap = useIsNearThreadConnection(id) // Pointer near this frame → show connection simulators
+  const groupMulti = useGroupMultiSelect() // Shared box owns handles, dots, and the rotate/reactions row
   // Mid-press on the body — hide connection indicators only (resize / ⋮⋮ / rotate stay mounted)
   const [pressing, setPressing] = useState(false)
   // Full adjust chrome when selected + idle (not mid-drag / thread connect)
@@ -4343,7 +4402,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     !isFlashcard &&
     !dragging &&
     !pressing && // Body mid-press hides simulators; resize corners stay (onFrameChrome exclusion)
-    ((selected && !isThreadConnecting) || (isThreadConnecting && isNearThreadSnap))
+    // Group selection keeps the blue box but not the simulated connection dots
+    ((selected && !isThreadConnecting && !groupMulti) || (isThreadConnecting && isNearThreadSnap))
 
   // Invisible edge connection point — size from live CSS --tt-frame-ui-scale; paint stays transparent
   const connectionPointStyle = (): React.CSSProperties => ({
@@ -5359,6 +5419,84 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   }, [isProjectBoard, promptMessage, supabase])
   const persistFrameMetaRef = useRef(persistFrameMeta) // Stable resize-end persist — don't rebind d3-drag
   persistFrameMetaRef.current = persistFrameMeta // Always the latest saver
+  const selectedRef = useRef(selected) // Group reactions toggle reads selection without resubscribing
+  selectedRef.current = selected
+
+  // Publish painted geometry and apply group resize / rotate / reactions from the shared box.
+  useEffect(() => {
+    publishLiveGroupGeom(id, {
+      frameScale, // Locked scale the group multiplies
+      rotation, // Content angle the group adds to
+      unlocked: frameUnlocked, // Explicit box vs fit-to-text
+      contentW: resizeDimensions?.width ?? 0, // Fill width, 0 until measured
+      contentH: resizeDimensions?.height ?? 0,
+    })
+    return () => clearLiveGroupGeom(id) // Unmount must not leave a stale box
+  }, [id, frameScale, rotation, frameUnlocked, resizeDimensions])
+
+  useEffect(() => {
+    const onTransform = (event: Event) => {
+      const detail = (event as CustomEvent<GroupTransformDetail>).detail // Group box gesture
+      if (!detail?.patches) return
+      const patch = detail.patches.find((item) => item.id === id)
+      if (!patch) return // Another frame
+      if (detail.phase === 'start') {
+        if (detail.kind === 'resize') isResizingRef.current = true // Hug must not fight the scale
+        if (detail.kind === 'rotate') isRotatingRef.current = true // AABB push waits until release
+        return
+      }
+      if (patch.rotation != null) setRotation(patch.rotation) // Paint the new angle
+      if (patch.frameScale != null) {
+        frameScaleRef.current = patch.frameScale // Resize-end reads the ref, not the previous render
+        setFrameScale(patch.frameScale)
+      }
+      if (patch.unlocked && patch.content) {
+        setIsUserResized(true) // Explicit box wins over fit-to-text hug
+        setResizeDimensions(patch.content) // Fill size
+        const panel = panelRef.current
+        if (panel) {
+          panel.style.width = `${patch.width}px` // Outer box tracks the group scale immediately
+          panel.style.height = `${patch.height}px`
+          panel.style.minWidth = `${patch.width}px`
+          panel.style.minHeight = `${patch.height}px`
+          panel.style.maxWidth = `${patch.width}px`
+          panel.style.maxHeight = `${patch.height}px`
+        }
+      }
+      if (detail.phase === 'end') {
+        isResizingRef.current = false // Allow hug / AABB sync again
+        isRotatingRef.current = false
+        const scale = frameScaleRef.current
+        const rot = patch.rotation ?? rotationRef.current
+        const dims = resizeDimensionsRef.current
+        void persistFrameMetaRef.current({
+          frameScale: scale,
+          rotation: rot,
+          ...(frameUnlockedRef.current && dims ? { resizeDimensions: dims, frameUnlocked: true } : {}),
+        })
+        if (detail.kind === 'rotate') pushAabbAndSnapMates(rot, { forceMates: true }) // Grow the upright box around the new angle
+      }
+    }
+    const onComments = () => {
+      if (!selectedRef.current) return // Only frames in the selection
+      setShowComments((prev) => {
+        if (prev) {
+          queueMicrotask(() => {
+            setSelectedCommentId(null) // Close highlight with the panel
+            setNewCommentData(null)
+            setNewCommentText('')
+          })
+        }
+        return !prev
+      })
+    }
+    window.addEventListener(GROUP_TRANSFORM_EVENT, onTransform)
+    window.addEventListener(GROUP_COMMENTS_EVENT, onComments)
+    return () => {
+      window.removeEventListener(GROUP_TRANSFORM_EVENT, onTransform)
+      window.removeEventListener(GROUP_COMMENTS_EVENT, onComments)
+    }
+  }, [id, pushAabbAndSnapMates])
 
   const notionPageSyncTarget = notionPageBodySyncTarget(
     promptMessage?.metadata as Record<string, unknown> | undefined
@@ -7545,8 +7683,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     : null
   const contentVisualW = scaledDbSize?.width ?? huggedSize.width // Locked wrap: widest line (column while dragging)
   const contentVisualH = scaledDbSize?.height ?? huggedSize.height
-  // Fit-to-text radius is 6 × (box / natural). Use the live fill box so free-resize
-  // corners scale the same way (at the hug size this equals 6 × frameScale).
+  // Fit-to-text radius scales with (box / natural); stays 0 while FRAME_CORNER_RADIUS is 0.
   const radiusFillW = Math.max(1, liveAdjust?.width ?? resizeDimensions?.width ?? contentVisualW)
   const radiusFillH = Math.max(1, liveAdjust?.height ?? resizeDimensions?.height ?? contentVisualH)
   const radiusScale =
@@ -8999,14 +9136,14 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const shapeSelectChrome = Boolean(
     frameShape && (showAdjustFrame || showDragBorderOnly) && !pagePreviewOpen && !isContentRotated
   )
-  // Same 6px as idle — preview must not square the fill (adjust ring stays square)
+  // Same radius as idle (0 = square) — preview must not change the fill (adjust ring stays square)
   const paintedFrameRadius = frameShape ? 0 : frameCornerRadius
   const fillShellBorderShadow = (() => {
     if (frameShape || isContentRotated) return undefined
     // Blue adjust / drag ring already outlines the frame — skip empty grey so it doesn’t read as an inner border
     if (showAdjustFrame || showDragBorderOnly) {
       if (!paintBorderOnFillShell) return undefined
-      return `inset 0 0 0 ${FRAME_BORDER_WEIGHT}px ${resolvedBorderColor}` // Keep user-set stroke on the rounded fill
+      return `inset 0 0 0 ${FRAME_BORDER_WEIGHT}px ${resolvedBorderColor}` // Keep user-set stroke on the fill shell
     }
     if (showEmptyFrameBorder) return `inset 0 0 0 1px ${emptyFrameBorderColor}`
     if (paintBorderOnFillShell) {
@@ -9051,8 +9188,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         className={cn(
           'group nopan border relative cursor-grab active:cursor-grabbing overflow-visible transition-[opacity,box-shadow,background-color,border-color] duration-300', // overflow-visible: ⋮⋮ in left chrome; nopan: right-click opens frame menu
           isMobileMode && isBlock && !selected && 'nodrag', // Phone: RF drag only after hold (manual controller)
-          // When rotated, fill lives on the inner shell only (avoids upright+rotated double shape)
-          !frameShape && !isContentRotated && !isBlock && 'rounded-2xl',
+          // Frames are square — no outer rounded-2xl; rotated fill lives on the inner shell only
           !isFillTransparent && !frameShape && !isContentRotated && !isBlock && !phoneBigFrame && 'backdrop-blur-sm', // Safari gives backdrop-filter its own layer at *layout* size — 7k frame = ~1.4GB
           // Selection uses the connected resize rectangle — panel border must be 0 so handles
           // sit on the outer edge (a 1px empty/custom border inset the padding box and floated chrome).
@@ -9168,7 +9304,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         backgroundColor:
           frameShape || isContentRotated || isBlock ? 'transparent' : panelBackgroundColor,
         borderColor:
-          // Blue adjust / drag rect owns the outline — custom borders paint on the rounded fill shell
+          // Blue adjust / drag rect owns the outline — custom borders paint on the fill shell
           showAdjustFrame ||
           showDragBorderOnly ||
           frameShape ||
@@ -9199,7 +9335,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           paintBorderOnFillShell
             ? 0
             : FRAME_BORDER_WEIGHT,
-        ['--tt-frame-radius' as string]: `${paintedFrameRadius}px`, // Fill radius only — adjust ring is square; keep 6px while previewing
+        ['--tt-frame-radius' as string]: `${paintedFrameRadius}px`, // Fill radius only (0 = square); adjust ring is always square
         ['--tt-adjust-pad-y-top' as string]: `${adjustChromeYTop || 0}px`, // Property band
         ['--tt-adjust-pad-y-bottom' as string]: `${adjustChromeYBottom || 0}px`, // Connections band — L/R dots stay on the fill mid
         // Handle / line / ui-scale sizes come from live `--tt-board-zoom` CSS (not React)
@@ -9353,8 +9489,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             />
           ))}
 
-      {/* Selected frames: circular corner handles (hidden while moving / thread drag) */}
-      {showAdjustFrame && (
+      {/* Selected frames: circular corner handles (hidden while moving / thread drag / group select) */}
+      {showAdjustFrame && !groupMulti && (
         <>
           {(['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const).map((position) => (
             <NodeResizeControl
@@ -9423,7 +9559,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       {/* Frame chrome — rotate · fit · wrap · reactions (selected + idle only; hidden while dragging).
           Stay under the adjust box while board preview is open — preview grows the fill, not this row.
           Scale + margin-left from live `--tt-frame-ui-scale` CSS; marginTop keeps clear of indicators. */}
-      {isBlock && !isThreadConnecting && selected && !dragging && (
+      {isBlock && !isThreadConnecting && selected && !dragging && !groupMulti && (
           <div
             data-frame-chrome
             className="nodrag nopan absolute z-[25] flex items-center gap-0.5" // Below connection indicators (z-30)
@@ -9838,8 +9974,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         style={{
           // Shaped frames: SVG silhouette paints fill + stroke; shell stays transparent
           backgroundColor: frameShape ? 'transparent' : responseAreaBackgroundColor || panelBackgroundColor,
-          // Live radius: property cells sit inside CSS scale (6px grows); fill must match
-          borderRadius: paintedFrameRadius || undefined, // Default 6px — same while board preview is open
+          // Live radius: always explicit so 0 stays square (|| undefined would drop the rule)
+          borderRadius: paintedFrameRadius, // 0 = square fill — same while board preview is open
           // Empty / selected custom borders paint here — panel border is off while adjust chrome is on
           boxShadow: fillShellBorderShadow,
           // Polygon clips work in CSS; cylinder/ellipse use SVG fill instead (path clip is unreliable).
@@ -9875,7 +10011,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             aria-hidden
             className="pointer-events-none absolute left-0 top-0 -z-[1]"
             style={{
-              borderRadius: paintedFrameRadius || undefined, // Same as fill so hover-unclip corners don’t snap square
+              borderRadius: paintedFrameRadius, // Same as fill so hover-unclip corners stay square
               width: Math.max(resizeDimensions.width, contentVisualW),
               height: Math.max(resizeDimensions.height, contentVisualH),
               backgroundColor: responseAreaBackgroundColor || panelBackgroundColor,
@@ -10123,6 +10259,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               placeholder=""
               isFlashcard={isFlashcard}
               isPanelSelected={!!selected} // Keep editable on tap — !dragging was flipping off mid-gesture (I-bar needed 2 taps)
+              fitToText={!frameUnlocked} // Locked hug — selected body drag until a caret
               suspendContentSync={!!dragging || dragAtomGuard} // Freeze TipTap before RF sets dragging (first-drag race)
               frameDragging={!!dragging || dragAtomGuard}
               frameFreeResize={false} // Full table/blocks layout; parent contain-fits the box
@@ -10234,12 +10371,12 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               visible={pagePreviewOpen}
               fill={false} // Fixed preview height — sit as a block under the other content
               hostNodeId={id} // Chrome drag moves this host item
-              cornerRadius={frameCornerRadius || FRAME_CORNER_RADIUS} // Same 6 × (box/natural) as the fill
+              cornerRadius={frameCornerRadius} // Match fill (0 = square)
               onClose={() => setPagePreviewOpen(false)}
             />
           </div>
         )}
-        {selected && hasBlockContent && !soleImageContent && !isDbFrame && !isRowCardAtomHtml(promptContent) && !frameResizing && (() => { // Wrap + resize +'s stay up while board preview is open
+        {selected && !groupMulti && hasBlockContent && !soleImageContent && !isDbFrame && !isRowCardAtomHtml(promptContent) && !frameResizing && (() => { // Wrap lines + resize +'s: one frame only; the group box owns resize
           const lineScale = wrapDragPaintRef.current ?? paintScale // Frozen while dragging — live contain-fit parked the bar on the fill edge
           const padX = BLOCK_FRAME_PAD_X * lineScale // Same side gap as the block to the fill
           const padY = BLOCK_FRAME_PAD_Y * lineScale // Same T/B gap as the block

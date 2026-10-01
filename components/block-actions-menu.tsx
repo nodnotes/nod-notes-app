@@ -88,6 +88,9 @@ import {
   FRAME_SHAPE_NONE,
   FRAME_SHAPE_TYPES,
   frameShapeLabel,
+  parseFrameShapeChoice,
+  readDefaultFrameShape,
+  writeDefaultFrameShape,
   type FrameShapeChoice,
 } from '@/lib/frame-shape' // Frame-as-shape picker values
 import { SetsPickerMenu } from '@/components/sets-picker-menu' // Add to set flyout — list + New set
@@ -627,6 +630,7 @@ export function BlockActionsMenu({
   const connectionsRowRef = useRef<HTMLButtonElement>(null) // Align Connections picker to that row
   const colorRowRef = useRef<HTMLButtonElement>(null) // Align frame Color flyout to Color row
   const [lastFrameColor, setLastFrameColor] = useState<FrameLastColor | null>(null) // Last used fill/border
+  const [spawnDefaultShape, setSpawnDefaultShape] = useState<FrameShapeChoice>(FRAME_SHAPE_NONE) // Shape → Set default
   const [hideForBoardNav, setHideForBoardNav] = useState(false) // Same as the text-select menu: gone while panning
   // Phone / touch: Add to set cannot open a side flyout (clamps on top of Search) — drill in instead
   const [stackSetsInline, setStackSetsInline] = useState(false)
@@ -677,6 +681,7 @@ export function BlockActionsMenu({
 
   useEffect(() => {
     setLastFrameColor(readFrameLastColor()) // Hydrate Last used after mount
+    setSpawnDefaultShape(readDefaultFrameShape()) // Hydrate Shape → Set default
   }, [])
 
   useEffect(() => {
@@ -1546,36 +1551,67 @@ export function BlockActionsMenu({
           onMouseEnter={() => setOpenSubmenu('frameShape')}
         >
           <div className="px-1 pb-1.5 text-[11px] text-gray-400">Frame shape</div>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              onAction('setFrameShape', { frameShape: FRAME_SHAPE_NONE })
-              onClose()
-            }}
-            className={cn(
-              'mb-1.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-[#2a2a2a]',
-              (currentFrameShape === FRAME_SHAPE_NONE || !currentFrameShape) &&
-                'tt-selected'
-            )}
-          >
-            <span className="flex h-7 w-7 items-center justify-center rounded border border-dashed border-gray-300 dark:border-gray-600 text-[10px] text-gray-400">
-              —
-            </span>
-            <span className="flex-1 text-left">Default</span>
-            {(currentFrameShape === FRAME_SHAPE_NONE || !currentFrameShape) && (
-              <Check className="h-3.5 w-3.5 text-gray-500" />
-            )}
-          </button>
+          <div className="mb-1.5 flex items-stretch gap-1">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onAction('setFrameShape', { frameShape: FRAME_SHAPE_NONE })
+                onClose()
+              }}
+              className={cn(
+                'flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-[#2a2a2a]',
+                (currentFrameShape === FRAME_SHAPE_NONE || !currentFrameShape) && 'tt-selected'
+              )}
+            >
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-dashed border-gray-300 dark:border-gray-600 text-[10px] text-gray-400">
+                —
+              </span>
+              <span className="min-w-0 flex-1 text-left">Default</span>
+              {spawnDefaultShape === FRAME_SHAPE_NONE && (
+                <span
+                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500"
+                  title="Default for new frames"
+                  aria-hidden
+                />
+              )}
+              {(currentFrameShape === FRAME_SHAPE_NONE || !currentFrameShape) && (
+                <Check className="h-3.5 w-3.5 shrink-0 text-gray-500" />
+              )}
+            </button>
+            <button
+              type="button"
+              title="Use this frame’s shape for new frames"
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                const choice = parseFrameShapeChoice(currentFrameShape) // Current frame → spawn default
+                writeDefaultFrameShape(choice)
+                setSpawnDefaultShape(choice)
+              }}
+              className={cn(
+                'shrink-0 rounded-md px-2 text-[11px] text-gray-500 hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-[#2a2a2a] dark:hover:text-gray-200',
+                spawnDefaultShape === parseFrameShapeChoice(currentFrameShape) &&
+                  'text-blue-600 dark:text-blue-400'
+              )}
+            >
+              Set default
+            </button>
+          </div>
           <div className="grid grid-cols-5 gap-1">
             {FRAME_SHAPE_TYPES.map((shapeType) => {
               const selected = currentFrameShape === shapeType
+              const isSpawnDefault = spawnDefaultShape === shapeType
               return (
                 <button
                   key={shapeType}
                   type="button"
-                  title={frameShapeLabel(shapeType)}
+                  title={
+                    isSpawnDefault
+                      ? `${frameShapeLabel(shapeType)} (default for new frames)`
+                      : frameShapeLabel(shapeType)
+                  }
                   onClick={(e) => {
                     e.preventDefault()
                     e.stopPropagation()
@@ -1583,7 +1619,7 @@ export function BlockActionsMenu({
                     onClose()
                   }}
                   className={cn(
-                    'flex h-9 w-full items-center justify-center rounded-md p-1.5 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]',
+                    'relative flex h-9 w-full items-center justify-center rounded-md p-1.5 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]',
                     selected && 'tt-selected'
                   )}
                 >
@@ -1596,6 +1632,12 @@ export function BlockActionsMenu({
                     stroke="#222"
                     className="dark:[&_*]:stroke-gray-300"
                   />
+                  {isSpawnDefault && (
+                    <span
+                      className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-blue-500"
+                      aria-hidden
+                    />
+                  )}
                 </button>
               )
             })}

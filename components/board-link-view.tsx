@@ -367,7 +367,7 @@ export function BoardLinkView({ node, updateAttributes }: NodeViewProps) {
             visible
             fill={false} // Fixed card under the title — not a frame-filling overlay
             hostNodeId={actions.hostNodeId ?? undefined} // Chrome drag moves the host frame
-            cornerRadius={6} // Same default as the frame fill
+            cornerRadius={0} // Square — same as the frame fill
             onClose={() => actions.closePreview()}
           />
         </div>

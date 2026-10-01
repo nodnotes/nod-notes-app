@@ -23,6 +23,11 @@ import {
   useIsNearThreadConnection,
 } from '@/components/threads'
 import { cn } from '@/lib/utils' // Indicator class merge (pointer-events while connecting)
+import {
+  clearLiveGroupGeom, // Drop published geometry on unmount
+  publishLiveGroupGeom, // Painted angle + ink box for the group resize box
+  useGroupMultiSelect, // Hide handles when 2+ objects are selected
+} from '@/lib/group-selection'
 
 import { DEFAULT_STROKE_SIZE, pointsToPath } from './path' // Stroke → SVG path
 import {
@@ -132,10 +137,12 @@ export function FreehandNode({
   const updateNodeInternals = useUpdateNodeInternals() // Remeasure after size change
   const isThreadConnecting = useIsThreadConnecting() // Hide simulators while connecting unless this drawing is the snap target
   const isNearThreadSnap = useIsNearThreadConnection(id) // Show simulators when the free end is near this drawing
+  const groupMulti = useGroupMultiSelect() // Shared box owns dots, indicators, and rotate
   // Same gate as frames: selected idle, or nearby while a thread end is dragged
   const showIndicators =
     !dragging &&
-    ((Boolean(selected) && !isThreadConnecting) || (isThreadConnecting && isNearThreadSnap))
+    ((Boolean(selected) && !isThreadConnecting && !groupMulti) ||
+      (isThreadConnecting && isNearThreadSnap))
   // Blue adjust ring + circular corner dots (hidden while dragging / connecting)
   const showAdjustFrame = Boolean(selected && !isThreadConnecting && !dragging)
   // Invisible edge connection points — paint stays transparent (threads meet the ink box)
@@ -188,6 +195,18 @@ export function FreehandNode({
     content: { width: number; height: number }
     aabb: { width: number; height: number }
   } | null>(null)
+
+  // Group box reads this drawing's painted angle and ink box.
+  useEffect(() => {
+    publishLiveGroupGeom(id, {
+      frameScale: 1, // Drawings scale by content size, not frameScale
+      rotation, // Current angle
+      unlocked: true, // Explicit ink box
+      contentW: contentSize.width,
+      contentH: contentSize.height,
+    })
+    return () => clearLiveGroupGeom(id)
+  }, [id, rotation, contentSize.width, contentSize.height])
 
   // Sync angle from persisted / remote data when not mid-gesture
   useEffect(() => {
@@ -574,7 +593,7 @@ export function FreehandNode({
               boxShadow: 'inset 0 0 0 var(--tt-frame-line-w, 1.4px) #3b82f6', // Screen-constant stroke
             }}
           />
-          {RESIZE_EDGES.map((position) => (
+          {!groupMulti && RESIZE_EDGES.map((position) => (
             <NodeResizeControl
               key={`line-${position}`}
               position={position}
@@ -588,7 +607,7 @@ export function FreehandNode({
               onResizeEnd={handleResizeEnd}
             />
           ))}
-          {RESIZE_CORNERS.map((position) => (
+          {!groupMulti && RESIZE_CORNERS.map((position) => (
             <NodeResizeControl
               key={position}
               position={position}
@@ -697,7 +716,7 @@ export function FreehandNode({
       </div>
 
       {/* Rotate chrome — same [data-frame-chrome] + ui-scale as frames */}
-      {selected && !dragging && (
+      {selected && !dragging && !groupMulti && (
         <div
           data-frame-chrome
           className="nodrag nopan absolute z-[25] flex items-center gap-0.5"

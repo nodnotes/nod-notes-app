@@ -37,6 +37,7 @@ import {
 } from '@/lib/ai/agents' // Personalize → custom agent icon
 import { useAiEditSession, buildFramePendingEdit, buildCreateFramePendingEdit, buildCreateThreadPendingEdit } from '@/lib/ai/edit-session'
 import { htmlToPlain } from '@/lib/ai/context-pack' // Plain excerpts for snapshots
+import { AI_SKILLS } from '@/lib/ai/skills' // Empty-chat skill rows under the greeting
 import {
   clearAllChatFrameLinkCues,
   syncChatFrameLinkCuesFromMessages,
@@ -58,15 +59,31 @@ import {
 import {
   ArrowDown,
   ChevronsRight,
+  Layers,
+  ListTodo,
   MessageSquare,
+  PencilLine,
   Plus,
+  Search,
   Settings2,
+  Sparkles,
+  type LucideIcon,
 } from 'lucide-react' // Icons
 
 interface ChatSidebarProps {
   conversationId?: string // Current board id
   projectId?: string // Kept for call-site compat
 }
+
+/** Empty-chat skill rows — same ids as the + menu, shown under the greeting. */
+const EMPTY_CHAT_SKILLS: Array<{ id: string; icon: LucideIcon }> = [
+  { id: 'summarize', icon: Sparkles }, // Concise summary of this board
+  { id: 'tasks', icon: ListTodo }, // Task checklist from the board
+  { id: 'search-board', icon: Search }, // What stands out across frames
+  { id: 'flashcards', icon: Layers }, // Hideable Q/A cards
+  { id: 'learn', icon: MessageSquare }, // Quiz on page content
+  { id: 'suggest-edits', icon: PencilLine }, // Inline improvements
+]
 
 /** Chat mark with a corner plus — same badge as Add to chat, not Lucide’s centered plus. */
 function NewChatIcon() {
@@ -1222,8 +1239,8 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                   title="Customize Nod Notes AI"
                   aria-label="Customize Nod Notes AI"
                 >
-                  {/* Open chat: sparkles on (Nod blue, same as map toggle) */}
-                  <NodNotesBrandMark drawingUrl={logoDrawing} size={28} showAiStar />
+                  {/* Open chat: sparkles on (Nod blue, same as map toggle); discShadow lifts the logo off the dock card */}
+                  <NodNotesBrandMark drawingUrl={logoDrawing} size={28} showAiStar discShadow />
                 </button>
                 <div className="flex-1 min-w-0 overflow-hidden bg-transparent">
                   <AiThreadPicker
@@ -1330,8 +1347,8 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                 title="Customize Nod Notes AI"
                 aria-label="Customize Nod Notes AI"
               >
-                {/* Open chat: sparkles on (Nod blue, same as map toggle) */}
-                <NodNotesBrandMark drawingUrl={logoDrawing} size={28} showAiStar />
+                {/* Open chat: sparkles on (Nod blue, same as map toggle); discShadow lifts the header logo */}
+                <NodNotesBrandMark drawingUrl={logoDrawing} size={28} showAiStar discShadow />
               </button>
             )}
             <div className="min-w-0 flex-1 overflow-hidden">
@@ -1377,11 +1394,15 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
           <div
             ref={transcriptScrollRef}
             data-ai-transcript-scroll
-            className="relative flex-1 min-h-0 overflow-y-auto px-4 py-6" // Equal L/R — prompt ticks are absolute overlays; asymmetric pr shifted mx-auto turns
+            className="relative flex-1 min-h-0 overflow-y-auto px-4 pt-6 pb-2 flex flex-col" // Column so the empty cluster can sit on the composer
           >
-            <ChatLoadStage phase={loadPhase} placeholder={<AiTranscriptPlaceholder />}>
+            <ChatLoadStage
+              phase={loadPhase}
+              placeholder={<AiTranscriptPlaceholder />}
+              className="flex flex-col flex-1 min-h-full" // Fill the scroller so mt-auto pins the empty chat to the bottom
+            >
               {!hasTranscript ? (
-              <div className="flex flex-col items-start gap-5 w-full min-w-0 mt-6">
+              <div className="mt-auto flex flex-col items-start gap-4 w-full min-w-0"> {/* Greeting + skills sit just above the composer */}
                 <div
                   className="flex items-center gap-2.5"
                   onMouseEnter={() => setHoverBrand(true)}
@@ -1394,8 +1415,8 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                     title="Customize Nod Notes AI"
                     aria-label="Customize Nod Notes AI"
                   >
-                    {/* Open chat empty state: sparkles on (Nod blue, same as map toggle) */}
-                    <NodNotesBrandMark drawingUrl={logoDrawing} size={52} showAiStar />
+                    {/* Open chat empty state: sparkles on (Nod blue, same as map toggle); discShadow matches the map toggle */}
+                    <NodNotesBrandMark drawingUrl={logoDrawing} size={52} showAiStar discShadow />
                   </button>
                   <button
                     type="button"
@@ -1417,13 +1438,39 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                   </button>
                 </div>
 
-                <div>
+                <div className="w-full min-w-0">
                   <h2 className="text-xl font-semibold tracking-tight text-gray-900 dark:text-gray-50">
                     What&apos;s on your mind?
                   </h2>
-                  <p className="mt-1.5 text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
-                    Ask in the sidebar. Drag a reply onto the page as a frame, or onto the input as context.
-                  </p>
+                  {/* Skills under the greeting — attach a pill, or open Customize for a new agent */}
+                  <ul className="mt-3 flex flex-col">
+                    <li>
+                      <button
+                        type="button"
+                        onClick={openCustomize}
+                        className="w-full flex items-center gap-2.5 h-8 rounded-md text-sm text-gray-800 dark:text-gray-200 hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
+                      >
+                        <Settings2 className="h-4 w-4 flex-shrink-0 text-gray-500 dark:text-gray-400" />
+                        Create custom agent
+                      </button>
+                    </li>
+                    {EMPTY_CHAT_SKILLS.map(({ id, icon: Icon }) => {
+                      const skill = AI_SKILLS.find((s) => s.id === id && s.enabled) // Skip ids the registry turned off
+                      if (!skill) return null
+                      return (
+                        <li key={skill.id}>
+                          <button
+                            type="button"
+                            onClick={() => setSeedSkillIds([skill.id])} // Same pill path as the + menu
+                            className="w-full flex items-center gap-2.5 h-8 rounded-md text-sm text-gray-800 dark:text-gray-200 hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
+                          >
+                            <Icon className="h-4 w-4 flex-shrink-0 text-gray-500 dark:text-gray-400" />
+                            {skill.name}
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
                 </div>
 
                 {savedSnapshots.length > 0 && (

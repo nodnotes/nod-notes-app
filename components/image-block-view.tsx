@@ -87,6 +87,7 @@ export function ImageBlockView({
   } | null>(null)
   const [uploadAnchor, setUploadAnchor] = useState<{ left: number; top: number } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [editorEditable, setEditorEditable] = useState(() => editor?.isEditable !== false) // nodrag only while the editor owns the image
   const cropDragRef = useRef<CropDrag | null>(null)
   const sideDragRef = useRef<SideResizeDrag | null>(null)
   const [sideResizing, setSideResizing] = useState(false) // Keep hover chrome while dragging a side pill
@@ -111,6 +112,16 @@ export function ImageBlockView({
   ) // Remeasure portaled Upload menu when zoom settles / steps
   // Live zoom for screen-constant chrome — must track mid-pinch (navigationZoom freezes)
   const liveZoom = useStore((s) => Math.round((s.transform[2] || 1) * 64) / 64)
+
+  useEffect(() => {
+    if (!editor) return
+    const sync = () => setEditorEditable(editor.isEditable) // Fit-to clears editable so the bitmap can drag
+    sync()
+    editor.on('update', sync) // setEditable emits update
+    return () => {
+      editor.off('update', sync)
+    }
+  }, [editor])
 
   useEffect(() => {
     if (!hazed) setRevealed(false)
@@ -771,7 +782,8 @@ export function ImageBlockView({
     <NodeViewWrapper
       as="div"
       className={cn(
-        'tt-image-block group relative nodrag nokey',
+        'tt-image-block group relative nokey',
+        editorEditable && 'nodrag', // Caret / free image tools. Fit-to and unselected omit it so RF can drag.
         src && 'tt-image-block-has-src', // Centered contain-fit bitmap inside the frame
         showHighlight && 'tt-block-highlight', // Blue wash on hover / More / select
         showRing && 'tt-image-block-selected',

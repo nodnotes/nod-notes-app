@@ -90,6 +90,9 @@ import {
   type StackTogglePatch,
 } from '@/components/use-frame-nest-stack-drag' // Magnet pack + stack/unstack
 import { setSideStackEntry } from '@/lib/frame-side-stacks' // Stamp stack line link without lock
+import { absFlowPosition, nodeFlowSize } from '@/components/use-block-group-drag' // Absolute box for Tidy up
+import { tidyUpBoxes } from '@/lib/tidy-up' // Canva-style even gaps + row/column grid
+import { persistBlockPlacement } from '@/lib/blocks' // Save tidied flow position
 import { useBoardAccess } from '@/lib/share/board-access-context' // Owner-only share menu
 import { useSidebarContext, utilityOccupiedWidth } from './sidebar-context' // Wait for chat column restore before measuring titles
 import { UTILITY_TOGGLE_TOP_BAR_INSET_PX } from '@/lib/top-bar-chrome-fit' // Share clears the right-aligned mode pill, not the full body
@@ -682,6 +685,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     hasMulti: false,
     locked: false,
   })
+  const [canTidy, setCanTidy] = useState(false) // 2+ frames that aren’t anchored to the board
   const preferencesLoadedRef = useRef(false) // Track if preferences have been loaded
   const toolbarRef = useRef<HTMLDivElement>(null)
   const leftSectionRef = useRef<HTMLDivElement>(null)
@@ -911,6 +915,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       setBoardLockUi({ hasSelection: false, locked: false })
       setFrameLockUi({ hasMulti: false, locked: false })
       setLayoutLinkUi({ linked: false, stacked: false })
+      setCanTidy(false)
       return
     }
     const selected = getSelectedFrames()
@@ -918,6 +923,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       setBoardLockUi({ hasSelection: false, locked: false })
       setFrameLockUi({ hasMulti: false, locked: false })
       setLayoutLinkUi({ linked: false, stacked: false })
+      setCanTidy(false)
       return
     }
     const allBoardLocked = selected.every((n) => {
@@ -925,6 +931,11 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       return meta.boardLocked === true
     })
     setBoardLockUi({ hasSelection: true, locked: allBoardLocked })
+    const movable = selected.filter((n) => {
+      const meta = (n.data?.promptMessage?.metadata || {}) as Record<string, unknown>
+      return meta.boardLocked !== true // Anchored frames stay where they were pinned
+    })
+    setCanTidy(movable.length >= 2)
     const live = reactFlowInstance.getNodes()
     setLayoutLinkUi({
       linked: sharedStackGroupId(selected) != null, // Magnet stays on for a stacked host even if mates are hidden
@@ -1161,6 +1172,60 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       return
     }
     applyStackPatches(collapseSelectedStack(selected, live, arrowDirection, live)) // Collapse in place — magnet is the pack
+  }
+
+  // Tidy up: even the gaps and line the selection into a row, column, or grid
+  const handleTidyUp = () => {
+    if (!reactFlowInstance) return // Board isn’t mounted
+    const live = reactFlowInstance.getNodes() // Positions + parents for absolute flow
+    const selected = getSelectedFrames().filter((n) => {
+      const meta = (n.data?.promptMessage?.metadata || {}) as Record<string, unknown>
+      return meta.boardLocked !== true // Anchored frames stay pinned
+    })
+    if (selected.length < 2) return // Canva needs two or more
+    const placed = tidyUpBoxes(
+      selected.map((n) => {
+        const abs = absFlowPosition(n, live) // Page-absolute, even if parented
+        const size = nodeFlowSize(n) // The box the user sees
+        return { id: n.id, x: abs.x, y: abs.y, width: size.width, height: size.height }
+      })
+    )
+    const nextById = new Map(placed.map((p) => [p.id, p]))
+    const moves = selected.flatMap((n) => {
+      const next = nextById.get(n.id)
+      if (!next) return []
+      const abs = absFlowPosition(n, live)
+      if (Math.abs(next.x - abs.x) < 0.5 && Math.abs(next.y - abs.y) < 0.5) return [] // Already tidy
+      return [{ node: n, abs: { x: next.x, y: next.y } }]
+    })
+    if (moves.length === 0) return // Second click is a no-op — don’t push an undo step
+    getMapTakeSnapshot()?.() // One undo for the whole arrange
+    const moveById = new Map(moves.map((m) => [m.node.id, m.abs]))
+    reactFlowInstance.setNodes((nds) =>
+      nds.map((n) => {
+        const abs = moveById.get(n.id)
+        if (!abs) return n
+        const parent = n.parentId ? nds.find((p) => p.id === n.parentId) : undefined
+        const parentAbs = parent ? absFlowPosition(parent, nds) : { x: 0, y: 0 }
+        const position = n.parentId
+          ? { x: abs.x - parentAbs.x, y: abs.y - parentAbs.y } // RF position is parent-relative
+          : abs
+        const pm = n.data?.promptMessage
+        if (!pm) return { ...n, position }
+        const metadata = { ...(pm.metadata || {}), position: abs } // Reload reads absolute flow
+        return { ...n, position, data: { ...n.data, promptMessage: { ...pm, metadata } } }
+      })
+    )
+    void (async () => {
+      const supabaseClient = createClient()
+      for (const move of moves) {
+        const messageId = move.node.data?.promptMessage?.id as string | undefined
+        if (!messageId) continue
+        const meta = (move.node.data?.promptMessage?.metadata || {}) as Record<string, unknown>
+        const blockGroupId = typeof meta.blockGroupId === 'string' ? meta.blockGroupId : null // Don’t drop a group
+        await persistBlockPlacement(supabaseClient, { messageId, position: move.abs, blockGroupId })
+      }
+    })().catch((err) => console.error('Failed to persist tidy up:', err))
   }
 
   // Dim frames that do not match the Actions-bar search query
@@ -1817,13 +1882,15 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
               <Button
                 variant="ghost"
                 size="sm"
+                onClick={handleTidyUp}
+                disabled={!reactFlowInstance || !canTidy}
                 className={cn(
                   // Transparent border keeps Layout buttons aligned with Draw / Actions armed chrome
                   'h-7 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 flex-shrink-0 flex items-center border border-transparent',
                   'transition-[padding,gap] duration-200 ease-out', compactLabels ? 'px-1.5 gap-0' : 'px-2 gap-1.5', // Title condenses to icon on shrink
                   'hover:bg-gray-100 dark:hover:bg-gray-800'
                 )}
-                title="Tidy up"
+                title={canTidy ? 'Tidy up' : 'Select 2+ frames to tidy up'}
                 aria-label="Tidy up"
               >
                 <TidyUpIcon className="h-4 w-4 flex-shrink-0" /> {/* 2×2 rounded squares */}
@@ -2968,7 +3035,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
                 )}
                 {isItemHidden('smartAlign') && (
                   <>
-                    <DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleTidyUp} disabled={!canTidy}>
                       <TidyUpIcon className="h-4 w-4 mr-2" />
                       Tidy up
                     </DropdownMenuItem>

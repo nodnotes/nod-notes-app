@@ -14,6 +14,7 @@ import { useTheme } from '@/components/theme-provider';
 import Shape from './Shape';
 import { type ShapeNodeData } from './types';
 import { useIsThreadConnecting, useIsNearThreadConnection } from '@/components/threads'; // Reveal anchors while a thread end is dragged
+import { useGroupMultiSelect } from '@/lib/group-selection'; // Group box owns resize handles and connection dots
 
 const handlePositions = [
   Position.Top,
@@ -133,7 +134,9 @@ export function ShapeNode({
   const handleBorderColor = '#ffffff'
   const isThreadConnecting = useIsThreadConnecting() // Hide resize chrome while dragging a thread
   const isNearThreadSnap = useIsNearThreadConnection(id) // Show handles when the free end is near this shape
-  const showConnectionHandles = selected || (isThreadConnecting && isNearThreadSnap)
+  const groupMulti = useGroupMultiSelect(); // Shared box owns corners and connection dots
+  const showConnectionHandles =
+    (selected && !groupMulti) || (isThreadConnecting && isNearThreadSnap); // Nearby snap still shows while connecting
 
   return (
     <div ref={nodeRef} className="w-full h-full relative">
@@ -142,20 +145,25 @@ export function ShapeNode({
       <NodeResizer
         keepAspectRatio={shiftKeyPressed}
         isVisible={selected && !isThreadConnecting}
-        handleStyle={{
-          width: '12px',
-          height: '12px',
-          minWidth: '12px',
-          minHeight: '12px',
-          backgroundColor: resolvedTheme === 'dark' ? '#1a1a1a' : '#ffffff', // Same fill as drawing handles - white in light mode
-          border: '2px solid #3b82f6', // Blue border only (not fill)
-          borderRadius: '2px',
-          boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
-          boxSizing: 'border-box',
-        }}
+        handleStyle={
+          groupMulti
+            ? { opacity: 0, pointerEvents: 'none', width: 0, height: 0, minWidth: 0, minHeight: 0 } // Box stays; dots move to the group
+            : {
+                width: '12px',
+                height: '12px',
+                minWidth: '12px',
+                minHeight: '12px',
+                backgroundColor: resolvedTheme === 'dark' ? '#1a1a1a' : '#ffffff', // Same fill as drawing handles - white in light mode
+                border: '2px solid #3b82f6', // Blue border only (not fill)
+                borderRadius: '2px',
+                boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
+                boxSizing: 'border-box',
+              }
+        }
         lineStyle={{
           stroke: '#3b82f6',
           strokeWidth: 1,
+          ...(groupMulti ? { pointerEvents: 'none' as const } : {}), // Lines stay visible; only the group box resizes
         }}
       />
       <Shape

@@ -254,7 +254,7 @@ type NodNotesBrandMarkProps = {
   showAiStar?: boolean
   /** Default mark only: T hinges on the table-dot once (board open / load) */
   nod?: boolean
-  /** Soft elevation on the disc (map open-chat toggle) */
+  /** Soft elevation on the disc (map open-chat toggle + chat sidebar logos) */
   discShadow?: boolean
 }
 
@@ -328,7 +328,8 @@ export function NodNotesBrandMark({
       <div
         className={cn(
           'h-full w-full overflow-hidden rounded-full border-[1.5px] border-gray-500 dark:border-gray-400',
-          discShadow && 'shadow-md' // Map open-chat toggle elevation
+          discShadow &&
+            'shadow-md dark:shadow-[0_2px_10px_rgba(0,0,0,0.65)]' // Light: soft lift. Dark: heavier falloff so the disc reads on #222 chat chrome (map toggle sits on near-black, so this stays quiet there)
         )}
         style={{
           backgroundColor: onBoard ? 'var(--nod-chat-prompt)' : LOGO_CIRCLE_COLOR, // Match Ask / user prompt grey on board

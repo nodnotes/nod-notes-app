@@ -534,7 +534,7 @@ export function DatabaseBlockView({ node, updateAttributes, editor }: NodeViewPr
             visible
             fill={false}
             hostNodeId={actions.hostNodeId ?? undefined}
-            cornerRadius={6}
+            cornerRadius={0}
             onClose={() => actions.closePreview()}
           />
         </div>

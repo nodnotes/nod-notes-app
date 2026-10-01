@@ -28,7 +28,7 @@ type NestedBoardPreviewProps = {
   visible?: boolean
   fill?: boolean
   hostNodeId?: string // Host map item — chrome drag moves this node
-  cornerRadius?: number // Inset preview card radius (6px × chromeScale)
+  cornerRadius?: number // Inset preview card radius (0 = square, matches frame fill)
 }
 
 /** Host RF frame is selected — preview style-select is only allowed after that. */
@@ -70,7 +70,7 @@ export function NestedBoardPreview({
   visible = true,
   fill = false,
   hostNodeId,
-  cornerRadius = 6, // Default frame radius — same as FRAME_CORNER_RADIUS when host does not pass one
+  cornerRadius = 0, // Square — same as FRAME_CORNER_RADIUS when host does not pass one
 }: NestedBoardPreviewProps) {
   const previewFocus = usePreviewFocus()
   const { getSetNodes, reactFlowInstance } = useReactFlowContext()

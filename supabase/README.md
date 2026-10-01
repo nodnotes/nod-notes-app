@@ -31,6 +31,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20261001013226_group_select_box_tidy_up` — Group resize box on painted rings; drag-select drops the last moved frame; Tidy up; default frame shape
 - `20260929014506_wrap_line_plus_align_live_drag` — Wrap dashes on + center; leave-slop + frozen contain live wrap; +'s stay on fill
 - `20260929012015_fit_plus_frame_relative_phone_chrome` — Frame-relative fit-plus size; phone wrap/+ drag; sticky-note fills + dark remap; More Present→Views
 - `20260927203015_wrap_lines_stay_on_space` — Wrap lines stay on fill / + space when content is shorter

@@ -266,7 +266,7 @@
 .tt-frame-shimmer {
   width: 100%;
   height: 100%;
-  border-radius: 6px; /* Match property cell / frame fill (rounded-md) */
+  border-radius: 0; /* Square — match frame fill (FRAME_CORNER_RADIUS 0) */
   pointer-events: none; /* Loading only — never steal drag/select */
   background: linear-gradient(
     90deg,
@@ -1349,6 +1349,20 @@ span[data-added="true"] {
   .tt-frame-unselected .ProseMirror:active * {
     cursor: grabbing !important;
   }
+  /* Selected fit-to, no caret yet: same grab. `.ProseMirror { user-select: text !important }`
+     otherwise starts a native text drag and React Flow never sees mousemove. */
+  .tt-fit-body-drag .ProseMirror,
+  .tt-fit-body-drag .ProseMirror * {
+    -webkit-user-select: none !important;
+    user-select: none !important;
+    -webkit-user-drag: none !important;
+    -webkit-touch-callout: none !important;
+    cursor: grab !important;
+  }
+  .tt-fit-body-drag .ProseMirror:active,
+  .tt-fit-body-drag .ProseMirror:active * {
+    cursor: grabbing !important;
+  }
   /* Unselected DB table: cells/toolbar call stopPropagation — let pointers hit the frame so RF can drag */
   .tt-frame-unselected .tt-notion-db {
     pointer-events: none !important;
@@ -1365,6 +1379,34 @@ span[data-added="true"] {
   .tt-long-press-armed .react-flow__nodesselection-rect,
   .tt-long-press-armed .react-flow__selection {
     display: none !important;
+  }
+
+  /* Group resize box replaces the dotted multi-select rect; the rect still receives gap drags. */
+  .react-flow.tt-group-select .react-flow__nodesselection-rect {
+    background: transparent !important;
+    border: none !important;
+  }
+
+  /* Corner dots on the group box — same screen-constant discs as a frame. */
+  .tt-group-resize .react-flow__resize-control.handle {
+    border-radius: 50% !important;
+    width: var(--tt-frame-handle, 10px) !important;
+    height: var(--tt-frame-handle, 10px) !important;
+    min-width: var(--tt-frame-handle, 10px) !important;
+    min-height: var(--tt-frame-handle, 10px) !important;
+    max-width: var(--tt-frame-handle, 10px) !important;
+    max-height: var(--tt-frame-handle, 10px) !important;
+    background-color: #ffffff !important;
+    border: var(--tt-frame-handle-border, 1.5px) solid #9ca3af !important;
+    box-sizing: border-box !important;
+    transform: translate(-50%, -50%) scale(var(--tt-frame-ui-scale, 1.4)) !important;
+    transform-origin: center center !important;
+    pointer-events: auto !important;
+    z-index: 60 !important;
+  }
+  .dark .tt-group-resize .react-flow__resize-control.handle {
+    background-color: #1a1a1a !important;
+    border-color: #9ca3af !important;
   }
 
   /* Override React Flow's default positioning for top/bottom handles to ensure half-on-half-off */

@@ -21,6 +21,7 @@ import type { Node, Edge, EdgeProps } from 'reactflow' // Types only — value `
 import 'reactflow/dist/style.css'
 import '@/components/threads/thread-view-stroke.css' // After RF — screen-constant stroke (RF sets width:1)
 import { ChatPanelNode } from './chat-panel-node' // Eager: next/dynamic breaks RF nodeTypes + left frames blank forever
+import { MultiSelectResizeBox } from './multi-select-resize-box' // One resize box around every selected frame / drawing / shape
 import { BlockGroupNode } from './block-group-node' // Legacy dashed wrapper around frames
 import {
   EditableThread,
@@ -67,7 +68,9 @@ import {
   FRAME_SHAPE_DEFAULT_SIZE,
   FRAME_SHAPE_MIN_SIZE,
   FRAME_SHAPE_NONE,
+  frameShapeSpawnMeta,
   parseFrameShape,
+  readDefaultFrameShape,
   type FrameShapeChoice,
 } from '@/lib/frame-shape' // Frame-as-shape silhouette helpers
 import { FRAME_BORDER_WEIGHT } from '@/lib/frame-colors' // Fixed frame border stroke width
@@ -191,6 +194,7 @@ import {
   clearMarqueeFrameSelect,
   isMarqueeFrameSelectArmed,
 } from '@/lib/frame-drag-transient' // Frame select = click release; marquee still allowed
+import { syncMarqueeSelection } from '@/lib/marquee-selection-sync' // Drop dragging-flag hits; update when the set changes
 import {
   PREVIEW_READY_MESSAGE,
   PREVIEW_RESIZE_MESSAGE,
@@ -1261,10 +1265,13 @@ function BoardFlowInner({
     isLocked, // Locked board: move only, no group change
   })
 
-  // Arm marquee so frame select:true from the selection rect is not treated as mousedown-select
+  // Arm marquee so frame select:true from the selection rect is not treated as mousedown-select.
+  // Also rewrite the selection from geometry: RF keeps `node.dragging` inside the box and only
+  // emits select changes when the count changes, so the frame you just moved stays selected.
   useEffect(() => {
     return rfStore.subscribe((state) => {
       if (state.userSelectionActive) armMarqueeFrameSelect()
+      syncMarqueeSelection(state)
     })
   }, [rfStore])
 
@@ -7615,18 +7622,30 @@ function BoardFlowInner({
     } // Seed content + Turn into kind (empty text if omitted)
   ): Promise<string | null> => {
     const zoom = reactFlowInstance?.getViewport().zoom || 1 // Live board zoom at place
-    const drawnShape = opts?.box ? parseFrameShape(opts.frameShape) : null // Only a known silhouette gets a shaped frame
-    const drawnW = drawnShape
-      ? Math.max(FRAME_SHAPE_MIN_SIZE.width, Math.round(opts!.box!.width)) // Same floor as the shape menu
+    const smartDrawn = Boolean(opts?.box) // Smart Draw stroke box — top-left is flowX/flowY
+    const shapeFromOpts = parseFrameShape(opts?.frameShape) // Explicit silhouette from caller
+    const shapeFromPrefs =
+      !smartDrawn && !shapeFromOpts
+        ? parseFrameShape(readDefaultFrameShape()) // Shape menu → Set default
+        : null
+    const appliedShape = smartDrawn ? shapeFromOpts : shapeFromOpts ?? shapeFromPrefs
+    const drawnW = appliedShape
+      ? Math.max(
+          FRAME_SHAPE_MIN_SIZE.width,
+          Math.round(opts?.box?.width ?? FRAME_SHAPE_DEFAULT_SIZE.width)
+        )
       : 0
-    const drawnH = drawnShape
-      ? Math.max(FRAME_SHAPE_MIN_SIZE.height, Math.round(opts!.box!.height))
+    const drawnH = appliedShape
+      ? Math.max(
+          FRAME_SHAPE_MIN_SIZE.height,
+          Math.round(opts?.box?.height ?? FRAME_SHAPE_DEFAULT_SIZE.height)
+        )
       : 0
     const fs = placeFrameScale(zoom) // Match I-bar screen size → persisted frameScale
     const cursorOffsetX = BLOCK_CREATE_OFFSET_X * fs // Pad is unscaled then CSS-scaled
     // First-line Y; property strip sits above the text so spawn higher by PROPERTY_GROUP_H
     const cursorOffsetY = BLOCK_CREATE_OFFSET_Y * fs + (opts?.propertyType ? PROPERTY_GROUP_H : 0)
-    const itemPosition = drawnShape
+    const itemPosition = smartDrawn
       ? { x: flowX, y: flowY } // Stroke box is already the frame origin
       : { x: flowX - cursorOffsetX, y: flowY - cursorOffsetY }
     setIBarPosition(null) // Clear pre-create cursor
@@ -7654,13 +7673,8 @@ function BoardFlowInner({
       metadata: newBlockMetadata({
         position: itemPosition, // Spawn aligned to I-bar, or to the drawn box
         fadeIn: true, // Autofocus TipTap once the panel mounts
-        ...(drawnShape
-          ? {
-              frameShape: drawnShape, // Same silhouette a frame menu would set
-              frameUnlocked: true, // Shaped frames free-resize, they don't hug empty text
-              resizeDimensions: { width: drawnW, height: drawnH },
-              unlockedFrameSize: { width: drawnW, height: drawnH },
-            }
+        ...(appliedShape
+          ? frameShapeSpawnMeta(appliedShape, { width: drawnW, height: drawnH })
           : placeScaleMetadata(zoom)), // Zoom-compensated size so place matches across zoom
         ...(opts?.blockType ? { blockType: opts.blockType } : {}),
         ...(opts?.propertyType ? { propertyType: opts.propertyType } : {}),
@@ -7684,7 +7698,7 @@ function BoardFlowInner({
           responseMessage: undefined,
           conversationId: liveBoardId,
           isResponseCollapsed: false,
-          ...(drawnShape ? { frameShape: drawnShape } : {}), // First paint reads data before metadata effect
+          ...(appliedShape ? { frameShape: appliedShape } : {}), // First paint reads data before metadata effect
         },
       },
     ])
@@ -9677,6 +9691,7 @@ function BoardFlowInner({
         iBarPendingMessageIdRef.current = messageId
         markIbarLiveCreate(messageId) // This tab: no Yjs until reload (avoids create-remount merge split)
         const html = isSlashSpawn ? '<p></p>' : bufferToHtml(iBarTypeBufferRef.current)
+        const prefsShape = parseFrameShape(readDefaultFrameShape()) // Shape menu → Set default
         const optimisticMessage = {
           id: messageId,
           role: 'user' as const,
@@ -9685,7 +9700,9 @@ function BoardFlowInner({
           metadata: newBlockMetadata({
             position: notePosition,
             fadeIn: true,
-            ...placeScaleMetadata(zoom), // Same screen size as the I-bar at this zoom
+            ...(prefsShape
+              ? frameShapeSpawnMeta(prefsShape) // Spawn as the saved silhouette
+              : placeScaleMetadata(zoom)), // Same screen size as the I-bar at this zoom
             ...(isSlashSpawn ? { slashMenuPending: true } : {}),
           }),
         }
@@ -9710,6 +9727,7 @@ function BoardFlowInner({
               responseMessage: undefined,
               conversationId: liveBoardId,
               isResponseCollapsed: false,
+              ...(prefsShape ? { frameShape: prefsShape } : {}), // First paint before metadata effect
             },
           },
         ])
@@ -11267,6 +11285,9 @@ function BoardFlowInner({
 
         {/* Helper lines for snap-to-grid functionality */}
         <HelperLines />
+
+        {/* Shared resize box when 2+ frames, drawings, or shapes are selected */}
+        <MultiSelectResizeBox canEdit={canEdit} onCommit={publishNodesLayouts} />
 
         {/* Draw bar insert-space: guide line + the gap being opened */}
         <InsertSpaceOverlay ui={insertSpaceUi} />

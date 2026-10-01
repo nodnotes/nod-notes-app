@@ -35,6 +35,60 @@ export function parseFrameShape(value: unknown): FrameShapeType | null {
   return isFrameShapeType(value) ? value : null // Ignore unknown legacy strings
 }
 
+/** localStorage key — shape applied to newly placed frames (Add frame / I-bar). */
+const DEFAULT_FRAME_SHAPE_KEY = 'nodnotes-default-frame-shape'
+
+/** Normalize a stored / menu choice into none or a registered silhouette. */
+export function parseFrameShapeChoice(value: unknown): FrameShapeChoice {
+  if (value == null || value === '' || value === FRAME_SHAPE_NONE || value === 'default') {
+    return FRAME_SHAPE_NONE // Transparent text frame
+  }
+  return isFrameShapeType(value) ? value : FRAME_SHAPE_NONE // Drop unknown ids
+}
+
+/** Read the spawn-default shape (none = plain frame). */
+export function readDefaultFrameShape(): FrameShapeChoice {
+  if (typeof window === 'undefined') return FRAME_SHAPE_NONE
+  try {
+    return parseFrameShapeChoice(localStorage.getItem(DEFAULT_FRAME_SHAPE_KEY))
+  } catch {
+    return FRAME_SHAPE_NONE
+  }
+}
+
+/** Persist the spawn-default shape from Shape → Set default. */
+export function writeDefaultFrameShape(choice: FrameShapeChoice): void {
+  if (typeof window === 'undefined') return
+  try {
+    const next = parseFrameShapeChoice(choice)
+    if (next === FRAME_SHAPE_NONE) localStorage.removeItem(DEFAULT_FRAME_SHAPE_KEY) // Prefer missing = none
+    else localStorage.setItem(DEFAULT_FRAME_SHAPE_KEY, next)
+  } catch {
+    // Quota / private mode — ignore
+  }
+}
+
+/** Metadata fields when spawning / applying a silhouette (unlock + readable box). */
+export function frameShapeSpawnMeta(
+  shape: FrameShapeType,
+  box?: { width: number; height: number }
+): Record<string, unknown> {
+  const width = Math.max(
+    FRAME_SHAPE_MIN_SIZE.width,
+    Math.round(box?.width ?? FRAME_SHAPE_DEFAULT_SIZE.width)
+  )
+  const height = Math.max(
+    FRAME_SHAPE_MIN_SIZE.height,
+    Math.round(box?.height ?? FRAME_SHAPE_DEFAULT_SIZE.height)
+  )
+  return {
+    frameShape: shape, // Silhouette id on the frame
+    frameUnlocked: true, // Shaped frames free-resize (do not hug empty text)
+    resizeDimensions: { width, height },
+    unlockedFrameSize: { width, height },
+  }
+}
+
 /** Default box when applying a silhouette so the outline is readable. */
 export const FRAME_SHAPE_DEFAULT_SIZE = { width: 180, height: 140 } as const
 

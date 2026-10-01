@@ -1,0 +1,2 @@
+-- Group resize box hugs painted rings; drag-select ignores a stuck drag flag; Tidy up; default frame shape.
+-- App/docs marker only; no DDL (frame metadata is JSONB). Remote DDL top: 20260924223511_board_changes_autosave.

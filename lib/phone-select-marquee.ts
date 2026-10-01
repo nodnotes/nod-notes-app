@@ -3,6 +3,7 @@
 import type { Edge, Node, NodeChange, EdgeChange } from 'reactflow' // RF store item types for select changes
 import { getConnectedEdges } from 'reactflow' // Same edge-select as RF Pane while the rect grows
 import { boardRotationRef, rotateVec } from '@/lib/board-rotation' // Marquee vs rotated frame AABB
+import { setPhoneMarqueeOwnsSelection } from '@/lib/marquee-selection-sync' // Keep the desktop full-box pass off this gesture
 import { PANE_TAP_SLOP_PX } from '@/lib/pane-click-slop' // Finger jitter still counts as a tap (I-bar)
 
 const SKIP_SEL =
@@ -82,15 +83,16 @@ function selectChanges<T extends { id: string; selected?: boolean }>(items: T[],
 export function attachPhoneSelectMarquee(root: HTMLElement, store: RfStore) {
   let pointerId: number | null = null // The finger that owns this gesture
   let bounds: DOMRect | null = null // Pane bounds at pointerdown
-  let prevNodeCount = 0 // Skip redundant onNodesChange while the rect grows
-  let prevEdgeCount = 0 // Same for threads
+  let prevNodeKey = '' // Id set, not count — same number of frames must still swap
+  let prevEdgeKey = '' // Same for threads
 
   const reset = () => {
+    setPhoneMarqueeOwnsSelection(false) // Desktop sync may run again
     store.setState({ userSelectionActive: false, userSelectionRect: null }) // Drop the blue box
     pointerId = null // Gesture over
     bounds = null // Next down remeasures
-    prevNodeCount = 0 // Fresh counts next time
-    prevEdgeCount = 0
+    prevNodeKey = '' // Fresh set next time
+    prevEdgeKey = ''
   }
 
   const onDown = (event: PointerEvent) => {
@@ -107,8 +109,8 @@ export function attachPhoneSelectMarquee(root: HTMLElement, store: RfStore) {
     bounds = flow.getBoundingClientRect() // Pane origin for the whole gesture
     const { x, y } = panePoint(event, bounds) // Finger in pane pixels
     pointerId = event.pointerId // Capture this finger
-    prevNodeCount = 0
-    prevEdgeCount = 0
+    prevNodeKey = ''
+    prevEdgeKey = ''
     // Do not reset selection yet — a tap must still reach onPaneClick (deselect / I-bar)
     store.setState({
       userSelectionRect: { width: 0, height: 0, startX: x, startY: y, x, y }, // Seed; active after first move
@@ -131,6 +133,7 @@ export function attachPhoneSelectMarquee(root: HTMLElement, store: RfStore) {
     if (!state.userSelectionActive && dx * dx + dy * dy <= PANE_TAP_SLOP_PX * PANE_TAP_SLOP_PX) return // Still a tap — keep onPaneClick
     if (!state.userSelectionActive) {
       state.resetSelectedElements() // Real marquee — replace prior selection now (not on finger-down)
+      setPhoneMarqueeOwnsSelection(true) // This gesture hit-tests partial overlap; desktop sync must not undo it
     }
     const next: PaneRect = {
       startX: start.startX,
@@ -145,13 +148,15 @@ export function attachPhoneSelectMarquee(root: HTMLElement, store: RfStore) {
     const hit = nodes.filter((n) => hitsPaneRect(n, next, state.transform)) // Partial overlap
     const nodeIds = hit.map((n) => n.id)
     const edgeIds = getConnectedEdges(hit, state.edges).map((e) => e.id) // Threads between hit frames
-    if (nodeIds.length !== prevNodeCount) {
-      prevNodeCount = nodeIds.length
+    const nodeKey = nodeIds.slice().sort().join('|') // Set identity — count can stay 1 while the frame changes
+    const edgeKey = edgeIds.slice().sort().join('|')
+    if (nodeKey !== prevNodeKey) {
+      prevNodeKey = nodeKey
       const changes = selectChanges(state.getNodes(), nodeIds)
       if (changes.length) state.onNodesChange?.(changes)
     }
-    if (edgeIds.length !== prevEdgeCount) {
-      prevEdgeCount = edgeIds.length
+    if (edgeKey !== prevEdgeKey) {
+      prevEdgeKey = edgeKey
       const changes = selectChanges(state.edges, edgeIds)
       if (changes.length) state.onEdgesChange?.(changes as EdgeChange[])
     }
@@ -160,7 +165,7 @@ export function attachPhoneSelectMarquee(root: HTMLElement, store: RfStore) {
   const onUp = (event: PointerEvent) => {
     if (pointerId == null || event.pointerId !== pointerId) return // Foreign pointer
     const hadBox = store.getState().userSelectionActive // Moved vs tap
-    store.setState({ nodesSelectionActive: prevNodeCount > 0 }) // Keep RF selection chrome if anything was hit
+    store.setState({ nodesSelectionActive: prevNodeKey.length > 0 }) // Keep RF selection chrome if anything was hit
     reset() // Always clear the live rect (tap → onPaneClick still fires)
     if (hadBox) event.preventDefault() // Don't also synthesize a click after a real marquee
   }

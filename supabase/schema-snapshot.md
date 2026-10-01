@@ -1,14 +1,23 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-09-29T01:45:06Z`
+- Snapped at: `2026-10-01T01:32:26Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
-- CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`/`migration list`; versions from `.temp` + Management API list; cli-latest reports `v2.118.0`)
+- CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`/`migration list`; versions from `.temp` + Management API list; cli-latest reports `v2.119.0`)
 - Remote applied tops out at `20260924223511_board_changes_autosave` (includes `20260924222109_board_changes`; local files `20260924222048` / `20260924223507`)
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20261001013226_group_select_box_tidy_up.sql`.
+- **Group select**: one resize box around the painted rings (negative-margin gutters, not the RF fill box). Individuals keep their rings; corners, wrap lines, +'s, connection indicators, and rotate/fit/reactions hide. The group box has rotate + reactions.
+- **Drag-select**: measured boxes only — a frame still marked dragging, or a same-count move, is not kept outside the rectangle.
+- **Tidy up**: even gaps and a row/column/grid for 2+ unanchored frames.
+- **Shape → Set default**: new frames can spawn as the chosen silhouette.
+- Schema unchanged; remote DDL top remains `20260924223511_board_changes_autosave`.
+
+## Prior: Wrap / + align
 
 - DDL: none. Marker `20260929014506_wrap_line_plus_align_live_drag.sql`.
 - **Wrap / + align**: wrap dashes centered on the column X (same as fit-plus); ~8px leave-slop before bars leave the +'s.

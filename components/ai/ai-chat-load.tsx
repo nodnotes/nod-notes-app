@@ -61,18 +61,21 @@ export function ChatLoadStage({
   phase,
   placeholder,
   children,
+  className,
 }: {
   phase: ChatLoadPhase
   placeholder: ReactNode
   children: ReactNode
+  className?: string // Stretch the stage so an empty chat can pin to the bottom of the column
 }) {
   const showPlaceholder = phase === 'placeholder' || phase === 'out' // Keep mounted through fade-out
   const showContent = phase === 'in' || phase === 'shown' // Mount only after placeholder is gone
+  const stageClass = cn('w-full min-w-0', className) // Shared so placeholder and content fill the same box
   return (
     <>
       {showPlaceholder && (
         <div
-          className="w-full min-w-0"
+          className={stageClass}
           aria-busy="true"
           aria-label="Loading chat"
           style={{
@@ -86,7 +89,7 @@ export function ChatLoadStage({
       )}
       {showContent && (
         <div
-          className="w-full min-w-0"
+          className={stageClass}
           style={{
             opacity: phase === 'shown' ? 1 : 0, // in = 0 (first paint); shown = fade in
             transition: `opacity ${CHAT_CONTENT_IN_MS}ms ease-out`,
