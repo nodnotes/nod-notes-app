@@ -36,6 +36,8 @@ import {
   type ThreadEdgeData,
 } from '@/components/threads' // Miro-style editable threads + connection preview
 import { useIsThreadConnecting } from '@/components/threads/use-is-thread-connecting' // Pane class while connecting
+import { useTrackThreadDragPointer } from '@/components/threads/use-is-near-thread-connection' // Pointer, not the snapped end
+import { ThreadTipNode, THREAD_TIP_SIZE, boardTipMarker } from '@/components/threads/ThreadTipNode' // Free thread end on the board
 import {
   endpointsFromSavedEdge,
   endpointIsFlashcard,
@@ -95,7 +97,7 @@ import {
 import { attachFreehandLassoSelect } from '@/lib/freehand-lasso-select' // Draw bar Lasso — freehand trail, auto-closed
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
-import { useEffect, useRef, useMemo, useState, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useRef, useMemo, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useTheme } from '@/components/theme-provider'
 import { Button } from '@/components/ui/button'
@@ -222,7 +224,14 @@ import { NavZoomControl } from './nav-zoom-control' // Zoom % lives in bottom na
 import { NavRotateControl } from './nav-rotate-control' // Board rotate icon — right of zoom %
 import { BoardRotationProvider, useBoardRotation } from './board-rotation-context' // Two-finger twist + nav camera heading
 import { applyBoardRotationToPositionChanges, boardRotationRef, viewportKeepingPanePoint } from '@/lib/board-rotation' // Camera-aware pane ↔ flow
+import {
+  persistBoardRotation,
+  readRemoteBoardRotation,
+  storedBoardRotation,
+  writeStoredBoardRotation,
+} from '@/lib/board-rotation-persist' // Per-board heading survives reload
 import { computeMinimapViewScale, panViewportFromMinimapDrag } from '@/lib/minimap-viewport-pan' // Phone minimap drag (RF only pans on mousemove)
+import { viewportToRestore, writeBoardViewport } from '@/lib/board-viewport-persist' // Reload keeps pan/zoom; board switch still fits
 import { BoardMiniMap } from './board-minimap' // Viewport-follow framing so frames expand on zoom-in
 import { PreviewMinimap } from './preview-minimap' // Host minimap for selected nested preview
 import {
@@ -681,6 +690,7 @@ const nodeTypes = Object.freeze({
   blockGroup: BlockGroupNode, // Visual group of map blocks
   freehand: FreehandNode, // Freehand drawing node type
   shape: ShapeNode, // Shape node type
+  threadTip: ThreadTipNode, // Free end of a thread dropped on the board
   placeholder: PlaceholderNode, // Placeholder node for dynamic layouting
   frameShimmer: FrameShimmerNode, // Layout-cached shell while messages fetch
 })
@@ -789,6 +799,7 @@ function BoardFlowInner({
   // Track when a selected node is being dragged to hide placeholders
   const [isSelectedNodeDragging, setIsSelectedNodeDragging] = useState(false)
   const isThreadConnecting = useIsThreadConnecting() // Miro: hide frame adjust chrome; reveal snap targets
+  useTrackThreadDragPointer(isThreadConnecting) // Blue connection box follows the pointer, not the snap
 
   // Placeholder manager - shows placeholders where next chat panel will be added
   // Hide placeholders when a selected node is being dragged
@@ -802,6 +813,11 @@ function BoardFlowInner({
   // Then update from localStorage in useEffect after hydration
   const [isScrollMode, setIsScrollMode] = useState(true) // true = Scroll (wheel pans); false = Zoom
   const [mapPointerTool, setMapPointerTool] = useState<'select' | 'pan'>('pan') // Pan default; select via nav toggle
+  // Paint the remembered pan/select tool before the first frame (SSR stays 'pan' to match hydration)
+  useLayoutEffect(() => {
+    const saved = window.localStorage.getItem('nodnotes-pointer-tool') // Last Free-nav tool
+    if (saved === 'select' || saved === 'pan') setMapPointerTool(saved) // Icon matches the last click
+  }, [])
   // Shift flips the sticky tool for one drag: pan→marquee, select→pan (board click/type needs plain drag ≠ Figma)
   const [shiftHeld, setShiftHeld] = useState(false)
   const [viewMode, setViewModeState] = useState<'linear' | 'canvas'>('canvas')
@@ -953,6 +969,7 @@ function BoardFlowInner({
               viewMode?: 'linear' | 'canvas'
               isScrollMode?: boolean
               isMinimapHidden?: boolean
+              mapPointerTool?: 'select' | 'pan' // Free-nav pan/select
             }
 
             // Update from Supabase if values exist (Supabase is source of truth for cross-device sync)
@@ -966,6 +983,11 @@ function BoardFlowInner({
             if (typeof prefs.isScrollMode === 'boolean') {
               setIsScrollMode(prefs.isScrollMode)
               localStorage.setItem('nodnotes-scroll-mode', String(prefs.isScrollMode))
+            }
+
+            if (prefs.mapPointerTool === 'select' || prefs.mapPointerTool === 'pan') {
+              setMapPointerTool(prefs.mapPointerTool) // Profile wins when this browser differs
+              localStorage.setItem('nodnotes-pointer-tool', prefs.mapPointerTool) // Next reload is instant
             }
 
             if (typeof prefs.isMinimapHidden === 'boolean') {
@@ -2593,6 +2615,7 @@ function BoardFlowInner({
     // Save to localStorage immediately (lightweight, instant)
     localStorage.setItem('nodnotes-view-mode', viewMode)
     localStorage.setItem('nodnotes-scroll-mode', String(isScrollMode))
+    localStorage.setItem('nodnotes-pointer-tool', mapPointerTool) // Pan/select stays after reload
 
     // Save to Supabase in background (for cross-device sync)
     const saveToSupabase = async () => {
@@ -2613,7 +2636,7 @@ function BoardFlowInner({
           await supabase
             .from('profiles')
             .update({
-              metadata: { ...existingMetadata, viewMode, isScrollMode },
+              metadata: { ...existingMetadata, viewMode, isScrollMode, mapPointerTool },
             })
             .eq('id', user.id)
         }
@@ -2623,7 +2646,7 @@ function BoardFlowInner({
     }
 
     saveToSupabase()
-  }, [viewMode, isScrollMode])
+  }, [viewMode, isScrollMode, mapPointerTool])
 
   useEffect(() => {
     setScrollMode(navScrollMode) // Phone two-finger: Scroll nav pans like trackpad; Zoom nav pinches
@@ -2898,6 +2921,54 @@ function BoardFlowInner({
     }
   }, [conversationId, isMessagesPending, messages.length, boardLoadPhase])
 
+  // Same board reload only — null on board switch / sign-in so fitView still frames contents
+  const restoredViewport = useMemo(
+    () => (typeof window === 'undefined' ? null : viewportToRestore(conversationId, !!embedded)),
+    [conversationId, embedded]
+  )
+
+  // Claim init-fit before RF measures nodes, or fitViewOnInit would overwrite the restored camera.
+  // Stamp the transform before paint so the first frame is not the origin.
+  useLayoutEffect(() => {
+    if (!restoredViewport) return // Board switch / sign-in / first visit — leave fitView armed
+    rfStore.setState({
+      fitViewOnInit: false, // Prop sync also sets this, but a late measure must not fit
+      fitViewOnInitDone: true, // updateNodeDimensions skips the initial fit when this is set
+      transform: [restoredViewport.x, restoredViewport.y, restoredViewport.zoom], // Pane matrix before d3 init
+    })
+  }, [restoredViewport, rfStore])
+
+  // Remember the camera after init fit or a pan, so the next reload of this URL can restore it
+  useEffect(() => {
+    if (embedded || !conversationId) return // Previews and unsaved /board are not a reload target
+    let lastKey = '' // Skip identical writes while the store ticks for other reasons
+    let timer = 0 // Debounce sessionStorage during a gesture
+    const flush = () => {
+      const state = rfStore.getState() // Live transform
+      if (!state.fitViewOnInitDone) return // Don't replace a good camera with the pre-fit default
+      const [x, y, zoom] = state.transform // RF store tuple
+      const key = `${x}:${y}:${zoom}` // Identity for the last write
+      if (key === lastKey) return // No camera change
+      lastKey = key // Remember so the unmount flush is a no-op
+      writeBoardViewport(conversationId, { x, y, zoom }) // sessionStorage for this board
+    }
+    const unsub = rfStore.subscribe(() => {
+      window.clearTimeout(timer) // Collapse a pan into one write
+      timer = window.setTimeout(flush, 120) // Settle, then store
+    })
+    const onHide = () => {
+      window.clearTimeout(timer) // Don't lose the last move to a pending timer
+      flush() // Reload reads this
+    }
+    window.addEventListener('pagehide', onHide) // Refresh / tab discard
+    return () => {
+      unsub() // Stop listening when the board unmounts
+      window.clearTimeout(timer) // Drop a pending debounce
+      window.removeEventListener('pagehide', onHide) // This mount only
+      flush() // Client navigation away still keeps the camera for a later reload
+    }
+  }, [embedded, conversationId, rfStore])
+
   // RF `fitView` is fitViewOnInit: it retries until a node exists. On empty `/board` or a
   // settled empty board that leaves fitViewOnInitDone=false, the first user-created frame
   // would zoom the camera — mark init-fit done and skip the prop so create keeps viewport.
@@ -3107,6 +3178,111 @@ function BoardFlowInner({
     refetchOnMount: true,
     refetchOnReconnect: !embedded,
   })
+
+  // Release a new thread on empty board → arrow tip there (Miro), not a cancel
+  useEffect(() => {
+    const onDrop = (event: Event) => {
+      if (isLocked) return // View-only boards do not grow threads
+      const detail = (event as CustomEvent<{
+        clientX: number
+        clientY: number
+        sourceId: string | null
+        sourceHandle: string | null
+      }>).detail
+      if (!detail?.sourceId || !reactFlowInstance) return
+      const hit = document.elementFromPoint(detail.clientX, detail.clientY) // What was under the release
+      if (hit?.closest('.react-flow__node')) return // Over a frame — only a connection point may attach
+      if (!hit?.closest('.react-flow__pane')) return // Chrome / sidebar is not the board
+      const sourceNode = nodesRef.current.find((n) => n.id === detail.sourceId)
+      const sourceEp = threadEndpointFromNode(sourceNode)
+      if (!sourceEp || endpointIsFlashcard(sourceNode)) return
+      const flow = reactFlowInstance.screenToFlowPosition({
+        x: detail.clientX,
+        y: detail.clientY,
+      })
+      const tipId = crypto.randomUUID() // canvas_nodes id and RF node id
+      const tipNode: Node = {
+        id: tipId,
+        type: 'threadTip',
+        position: {
+          x: flow.x - THREAD_TIP_SIZE / 2, // Center the tip on the pointer
+          y: flow.y - THREAD_TIP_SIZE / 2,
+        },
+        width: THREAD_TIP_SIZE,
+        height: THREAD_TIP_SIZE,
+        style: { width: THREAD_TIP_SIZE, height: THREAD_TIP_SIZE },
+        data: { boardTip: true },
+        draggable: true, // Drag the free end around the board
+        selectable: true,
+      }
+      const stroke =
+        (typeof window !== 'undefined' && localStorage.getItem(THREAD_STROKE_COLOR_KEY)) || '#6b7280'
+      const newEdge: Edge = {
+        id: `${detail.sourceId}-${tipId}`,
+        source: detail.sourceId,
+        target: tipId,
+        sourceHandle: normalizeHandleId(detail.sourceHandle) || detail.sourceHandle || 'right',
+        targetHandle: 'tip',
+        type: 'editable',
+        markerEnd: boardTipMarker(stroke), // Arrow on the board
+        data: {
+          algorithm: threadAlgorithmFromStyle(
+            typeof window !== 'undefined'
+              ? localStorage.getItem('nodnotes-horizontal-line-style')
+              : null
+          ),
+          points: [],
+          dotted: lineStyle === 'dotted',
+          ...(stroke ? { strokeColor: stroke } : {}),
+        } satisfies ThreadEdgeData,
+      }
+      takeSnapshot() // One undo step for the new end
+      setNodes((nds) => [...nds, tipNode])
+      setEdges((eds) => [...eds, newEdge])
+      if (!conversationId) return
+      void (async () => {
+        const supabase = createClient()
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) return
+        const { error: tipError } = await supabase.from('canvas_nodes').insert({
+          id: tipId,
+          conversation_id: conversationId,
+          user_id: user.id,
+          node_type: 'threadTip',
+          position_x: tipNode.position.x,
+          position_y: tipNode.position.y,
+          width: THREAD_TIP_SIZE,
+          height: THREAD_TIP_SIZE,
+          data: { boardTip: true },
+        })
+        if (tipError) {
+          console.error('Error saving board thread tip:', tipError)
+          return
+        }
+        const targetEp = threadEndpointFromNode(tipNode)
+        if (!targetEp) return
+        const { error: edgeError } = await supabase.from('panel_edges').insert({
+          conversation_id: conversationId,
+          user_id: user.id,
+          ...panelEdgeEndpointColumns(sourceEp, targetEp),
+          metadata: newEdge.data ?? {},
+        })
+        if (edgeError) console.error('Error saving board thread:', edgeError)
+        else void refetchEdges()
+      })()
+    }
+    document.addEventListener('tt-drop-thread-on-board', onDrop)
+    return () => document.removeEventListener('tt-drop-thread-on-board', onDrop)
+  }, [
+    isLocked,
+    reactFlowInstance,
+    conversationId,
+    lineStyle,
+    setNodes,
+    setEdges,
+    takeSnapshot,
+    refetchEdges,
+  ])
 
   // Fetch canvas nodes (freehand drawings, etc.) for the conversation
   const { data: savedCanvasNodes = [], refetch: refetchCanvasNodes } = useQuery({
@@ -3918,7 +4094,7 @@ function BoardFlowInner({
       // Filter out any existing canvas nodes with same IDs (avoid duplicates)
       const existingCanvasNodeIds = new Set(
         withoutErased
-          .filter((n) => n.type === 'freehand' || n.type === 'shape' || n.type === savedCanvasNodes[0]?.node_type)
+          .filter((n) => n.type === 'freehand' || n.type === 'shape' || n.type === 'threadTip' || n.type === savedCanvasNodes[0]?.node_type)
           .map((n) => n.id)
       )
 
@@ -4013,10 +4189,15 @@ function BoardFlowInner({
           if (!handles) continue
 
           // Use closest handles directly - all handles are equal, no swapping needed
+          const tipEnd = sourceNode.type === 'threadTip' || targetNode.type === 'threadTip' // Board free end
           const finalSource = sourceNode.id
           const finalTarget = targetNode.id
-          const finalSourceHandle = handles.sourceHandle
-          const finalTargetHandle = handles.targetHandle
+          const finalSourceHandle = sourceNode.type === 'threadTip' ? 'tip' : handles.sourceHandle
+          const finalTargetHandle = targetNode.type === 'threadTip' ? 'tip' : handles.targetHandle
+          const stroke =
+            typeof savedEdge.metadata?.strokeColor === 'string' && savedEdge.metadata.strokeColor
+              ? savedEdge.metadata.strokeColor
+              : undefined
 
           const edgeId = `${finalSource}-${finalTarget}`
 
@@ -4032,6 +4213,7 @@ function BoardFlowInner({
               target: finalTarget,
               sourceHandle: finalSourceHandle,
               targetHandle: finalTargetHandle,
+              ...(tipEnd ? { markerEnd: boardTipMarker(stroke || '#6b7280') } : {}), // Arrow on the board end
               type: 'editable', // Miro-style adjustable thread
               data: {
                 algorithm: savedEdge.metadata?.algorithm ?? DEFAULT_THREAD_ALGORITHM,
@@ -4895,7 +5077,9 @@ function BoardFlowInner({
         // Check if this is a position change for a freehand node
         if (change.type === 'position' && change.dragging === false) {
           // Drag just ended - update position in database
-          const node = nodes.find((n) => n.id === change.id && n.type === 'freehand')
+          const node = nodes.find(
+            (n) => n.id === change.id && (n.type === 'freehand' || n.type === 'threadTip') // Board tip follows the free end
+          )
           if (node && change.position) {
             freehandNodeUpdates.push({
               id: change.id,
@@ -5181,6 +5365,9 @@ function BoardFlowInner({
 
   // Restore board camera from ?capture= link (viewport + rotation + nav mode)
   const captureLinkAppliedRef = useRef<string | null>(null)
+  const rotationRestoredForRef = useRef<string | null>(null) // Board id whose saved heading we already applied
+  const rotationAtRestoreRef = useRef<number | null>(null) // Heading at restore — a later twist must beat a slow remote read
+  const [rotationSyncBoard, setRotationSyncBoard] = useState<string | null>(null) // Board whose remote heading has been read
   const applyCaptureCameraRef = useRef<(target: CaptureCamera) => void>(() => {})
   applyCaptureCameraRef.current = (target: CaptureCamera) => {
     if (!reactFlowInstance) return
@@ -5233,6 +5420,67 @@ function BoardFlowInner({
 
     return () => window.clearTimeout(timeoutId)
   }, [conversationId, searchParams, reactFlowInstance, setIsScrollMode, setRotationAroundViewCenter, router])
+
+  const fitViewOnInitDone = useStore((s) => s.fitViewOnInitDone) // Init fit finished — orbiting before that gets wiped
+  const captureOwnsCamera = !!(
+    searchParams?.get('capture') ||
+    (searchParams?.get('x') && searchParams?.get('y') && searchParams?.get('z'))
+  ) // Capture link sets heading itself
+  // Restore this board's heading once the camera has settled (each board keeps its own angle)
+  useLayoutEffect(() => {
+    if (embedded) return // Preview iframe must not clobber the open board's heading
+    if (!reactFlowInstance || !fitViewOnInitDone) return // Wait until fit (or the empty-board claim) lands
+    const key = conversationId ?? '' // '' is unsaved /board
+    if (captureOwnsCamera) {
+      rotationRestoredForRef.current = key // Don't apply the saved angle over the capture camera
+      rotationAtRestoreRef.current = Number.NaN // A late remote read must not unwind the capture heading
+      return
+    }
+    if (rotationRestoredForRef.current === key) return // Already applied for this board
+    rotationRestoredForRef.current = key // Claim before setState so a switch can't write the previous heading
+    const saved = storedBoardRotation(conversationId) // null = this board has no heading yet
+    if (saved == null) {
+      rotationAtRestoreRef.current = boardRotationRef.current // /board → new id keeps the angle already on screen
+      if (Math.abs(boardRotationRef.current) > 0.05) writeStoredBoardRotation(conversationId, boardRotationRef.current) // Hand the live heading to the new id
+      return
+    }
+    rotationAtRestoreRef.current = saved // Remote read may apply only while the user hasn't twisted past this
+    if (Math.abs(saved - boardRotationRef.current) < 0.05) return // Already at that heading
+    setRotationAroundViewCenter(saved) // Orbit the view center so the fitted board stays framed
+  }, [embedded, conversationId, reactFlowInstance, fitViewOnInitDone, captureOwnsCamera, setRotationAroundViewCenter])
+  // Remember the heading after twists settle. Supabase waits until the remote read finishes so a stale local 0 can't overwrite another device.
+  useEffect(() => {
+    if (embedded) return // Host board is the one that remembers
+    const key = conversationId ?? '' // Same key the restore effect uses
+    if (rotationRestoredForRef.current !== key) return // Don't write the previous board onto this one
+    if (captureOwnsCamera) return // Capture apply will land, then this effect runs again
+    const heading = boardRotation // Settled degrees
+    const timer = window.setTimeout(() => {
+      writeStoredBoardRotation(conversationId, heading) // Instant on next reload, even mid-sync
+      if (rotationSyncBoard !== key) return // Remote read still in flight
+      void persistBoardRotation(conversationId, heading) // Same heading on another device
+    }, 300) // Twist updates every frame — write once it stops
+    return () => window.clearTimeout(timer) // Newer heading cancels the pending write
+  }, [embedded, conversationId, boardRotation, captureOwnsCamera, rotationSyncBoard])
+  // Remote heading wins when this browser has none or an older local copy
+  useEffect(() => {
+    if (embedded || captureOwnsCamera || !fitViewOnInitDone) return // Local restore / capture goes first
+    const key = conversationId ?? '' // Board this fetch belongs to
+    let cancelled = false // Ignore a response after switching boards
+    void readRemoteBoardRotation(conversationId).then((remote) => {
+      if (cancelled) return // Board changed
+      const untouched = rotationAtRestoreRef.current == null || Math.abs(boardRotationRef.current - rotationAtRestoreRef.current) < 0.05 // No twist since restore
+      if (remote != null && untouched && Math.abs(remote - boardRotationRef.current) >= 0.05) {
+        rotationAtRestoreRef.current = remote // This apply is not a user twist
+        writeStoredBoardRotation(conversationId, remote) // Next reload doesn't wait on the network
+        setRotationAroundViewCenter(remote) // Match the heading saved with this board
+      }
+      setRotationSyncBoard(key) // Local twists can upload now
+    })
+    return () => {
+      cancelled = true // Drop a stale response
+    }
+  }, [embedded, conversationId, fitViewOnInitDone, captureOwnsCamera, setRotationAroundViewCenter])
 
   // Load canvas positions from localStorage when conversation changes
   useEffect(() => {
@@ -10902,9 +11150,11 @@ function BoardFlowInner({
           })
           focusIBarCapture() // Must focus editable in this tap turn or iPhone keyboard never opens
         }}
-        defaultViewport={{ x: 0, y: 0, zoom: embedded ? 0.8 : 0.6 }}
-        // Init-fit only while a contentful board is loading — empty / new-board create must not zoom
+        defaultViewport={restoredViewport ?? { x: 0, y: 0, zoom: embedded ? 0.8 : 0.6 }}
+        // Init-fit only while a contentful board is loading — empty / new-board create must not zoom.
+        // A reload of this same board skips fit so the saved pan/zoom stays.
         fitView={
+          !restoredViewport &&
           !embedded &&
           viewMode === 'canvas' &&
           !!conversationId &&
@@ -10924,6 +11174,13 @@ function BoardFlowInner({
           boardLoadPhase === 'reveal' && 'tt-board-load-reveal' // Crossfade placeholder shells with real contents
         )}
         onInit={(instance) => {
+          if (restoredViewport && !embedded) {
+            rfStore.setState({ fitViewOnInit: false, fitViewOnInitDone: true }) // Beat a late node measure
+            instance.setViewport(restoredViewport) // Same camera as before the reload
+            syncBoardZoomCss(restoredViewport.zoom) // Screen-constant chrome matches that zoom
+            setReactFlowInstance(instance) // Rest of the board can pan
+            return // Do not fall through into the empty-viewport reset
+          }
           const currentViewport = instance.getViewport()
           if (!isFinite(currentViewport.x) || !isFinite(currentViewport.y) || !isFinite(currentViewport.zoom)) {
             instance.setViewport({ x: 0, y: 0, zoom: embedded ? 0.8 : 0.6 })

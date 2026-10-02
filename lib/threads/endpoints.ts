@@ -19,8 +19,8 @@ export type SavedPanelEdge = {
 /** Resolve a connectable RF node to a durable thread endpoint. */
 export function threadEndpointFromNode(node: Node | undefined | null): ThreadEndpoint | null {
   if (!node) return null
-  if (node.type === 'freehand' || node.type === 'shape') {
-    return { kind: 'canvas', id: node.id } // Drawing / shape id is the canvas_nodes primary key
+  if (node.type === 'freehand' || node.type === 'shape' || node.type === 'threadTip') {
+    return { kind: 'canvas', id: node.id } // Drawing, shape, or board thread tip
   }
   const messageId = (node.data as { promptMessage?: { id?: string } } | undefined)?.promptMessage?.id
   if (typeof messageId === 'string' && messageId.length > 0) {
@@ -75,7 +75,8 @@ export function nodesForSavedEndpoint(
     )
   }
   return nodes.filter(
-    (n) => (n.type === 'freehand' || n.type === 'shape') && n.id === endpoint.id
+    (n) =>
+      (n.type === 'freehand' || n.type === 'shape' || n.type === 'threadTip') && n.id === endpoint.id
   )
 }
 

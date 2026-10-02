@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-10-01T01:32:26Z`
+- Snapped at: `2026-10-02T02:00:51Z`
 - Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`/`migration list`; versions from `.temp` + Management API list; cli-latest reports `v2.119.0`)
@@ -9,6 +9,14 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20261002020051_thread_arrow_board_tip.sql`.
+- **Threads**: one smooth cubic ends on the back of the arrow; the head tracks the stroke. Zoom in stays screen-constant; zoom out uses a softer inverse so the stroke and arrow shrink with the board. Frame-size weight is about 0.45×–3.5× the menu stroke. Dropping on empty board plants a free end (`threadTip`).
+- **Reload**: the same board URL restores pan, zoom, and heading; a board switch or account change still fits contents.
+- **Ask prompt**: focused box keeps the same lift as the unfocused prompt, plus the blue glow.
+- Schema unchanged; remote DDL top remains `20260924223511_board_changes_autosave`.
+
+## Prior: Group select / tidy up
 
 - DDL: none. Marker `20261001013226_group_select_box_tidy_up.sql`.
 - **Group select**: one resize box around the painted rings (negative-margin gutters, not the RF fill box). Individuals keep their rings; corners, wrap lines, +'s, connection indicators, and rotate/fit/reactions hide. The group box has rotate + reactions.

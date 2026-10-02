@@ -1277,7 +1277,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
             <div
               data-chat-prompt
               data-chat-prompt-focused={promptFocused ? '' : undefined} // Present only while the caret is in the prompt
-              className="rounded-xl overflow-hidden border border-black/10 dark:border-white/10 shadow-sm" // Chat-bar grey via [data-chat-prompt]; soft lift like desktop sidebar
+              className="rounded-xl overflow-hidden border border-black/10 dark:border-white/10 shadow-md dark:shadow-[0_2px_10px_rgba(0,0,0,0.65)]" // Light: shadow-md. Dark: brand-disc falloff so the box lifts off #222
             >
               <div className="px-1 pt-1">{composer}</div>
             </div>
@@ -1536,7 +1536,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
           <div
             data-chat-prompt
             data-chat-prompt-focused={promptFocused ? '' : undefined} // Present only while the caret is in the prompt
-            className="rounded-xl overflow-hidden border border-black/10 dark:border-white/10 shadow-sm" // Chat-bar grey via [data-chat-prompt]; soft lift off the column
+            className="rounded-xl overflow-hidden border border-black/10 dark:border-white/10 shadow-md dark:shadow-[0_2px_10px_rgba(0,0,0,0.65)]" // Light: shadow-md. Dark: brand-disc falloff so the box lifts off #222
           >
             <div className="px-1 pt-1">{composer}</div>
           </div>

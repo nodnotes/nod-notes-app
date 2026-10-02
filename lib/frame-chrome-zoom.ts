@@ -10,6 +10,8 @@
 // `--tt-adjust-pad-x`. Upright frames cancel that pad with negative margins (RF XY stays
 // the fill origin). Rotated frames still re-glue RF XY by half the AABB delta.
 
+import { threadInvZoom } from '@/components/threads/constants' // Stroke/arrow zoom — softer than 1/zoom when zoomed out
+
 /** Keep in sync with FRAME_SCREEN_CHROME_BOOST in threads/constants. */
 const CHROME_BOOST = 1.4
 
@@ -73,7 +75,7 @@ export function readViewportZoom(root?: HTMLElement | null): number {
 
 function writeChromeVars(el: HTMLElement, z: number, ui: number): void {
   el.style.setProperty('--tt-board-zoom', String(z))
-  el.style.setProperty('--tt-thread-inv-zoom', String(1 / Math.max(0.01, z))) // Thread strokes stay screen-constant
+  el.style.setProperty('--tt-thread-inv-zoom', String(threadInvZoom(z))) // Zoom-out grows slower than 1/zoom
   el.style.setProperty('--tt-frame-chrome-boost', String(CHROME_BOOST))
   el.style.setProperty('--tt-frame-ui-scale', String(ui))
   // Line stroke stays flow-scaled (large surface). Dots use fixed local paint + scale(ui).

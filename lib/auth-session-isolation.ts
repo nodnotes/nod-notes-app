@@ -6,6 +6,7 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import { clearAllFrameDomSnapshots } from '@/lib/frame-dom-snapshot'
+import { clearStoredBoardViewports } from '@/lib/board-viewport-persist' // Reload must not restore the previous account's camera
 
 /** Fired after identity-bound client state is wiped (same tab, new user or sign-out). */
 export const ACCOUNT_CHANGED_EVENT = 'nodnotes-account-changed'
@@ -97,6 +98,7 @@ export function clearAccountClientState(queryClient: QueryClient): void {
   queryClient.removeQueries({ queryKey: ['canvas-nodes'] })
   clearIdentityLocalState()
   clearAllFrameDomSnapshots()
+  clearStoredBoardViewports() // Same-tab sign-in / account switch then reload fits contents
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(ACCOUNT_CHANGED_EVENT))
   }

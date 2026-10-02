@@ -3,8 +3,8 @@
  * RF sets `.react-flow__edge-path { stroke-width: 1 }` which would otherwise
  * override globals.css (layout loads globals before the RF import).
  *
- * `--tt-thread-inv-zoom` is a concrete 1/zoom stamped every zoom tick (same
- * pattern as `--tt-frame-line-w`) so thickness stays screen-constant.
+ * `--tt-thread-inv-zoom` is stamped every zoom tick. Zoom in is 1/zoom
+ * (screen-constant). Zoom out grows slower so threads shrink with the board.
  */
 .react-flow__edge-path {
   /* 1px unit so unitless --tt-edge-w × inv-zoom always resolves (bare calc can no-op → all look equal) */
@@ -13,6 +13,14 @@
 
 .react-flow__edge-path.tt-thread-dotted {
   stroke-dasharray: calc(5 * var(--tt-thread-inv-zoom, 1)), calc(5 * var(--tt-thread-inv-zoom, 1));
+}
+
+/* Free thread end on the board — the arrow marker is the visible tip */
+.react-flow__node-threadTip,
+.react-flow__node-threadTip.selected {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
 .react-flow__edge-interaction {

@@ -38,23 +38,32 @@ export function resolveThreadStrokeColor(color?: string | null): string {
 /** Default thread thickness in flow px (menu 1–4px options). */
 export const THREAD_DEFAULT_STROKE_WIDTH = 2
 
+/**
+ * Flow multiplier for thread stroke and arrow (`--tt-thread-inv-zoom`).
+ * Zoom in stays screen-constant. Zoom out grows slower than 1/zoom so threads shrink with the board.
+ */
+export function threadInvZoom(zoom: number): number {
+  const z = Math.max(0.01, zoom) // Never divide by zero
+  if (z >= 1) return 1 / z // Zoomed in: same screen weight as at 100%
+  return 1 / Math.pow(z, 0.4) // Zoomed out: partial compensation, not a full 1/zoom swell
+}
+
 /** Reference √(w×h) for a typical small one-line frame — below this thins, above thickens. */
 const THREAD_FRAME_SIDE_REF = 80
 
 /**
  * How thick a thread should read for a frame’s flow box (factor on menu stroke).
- * Uses √(area) so tall/wide place-scaled frames read big; steep power so small↔small vs
- * big↔big is obvious on screen.
+ * Uses √(area). Spread is wider than a 0.7–2× band, short of the old 0.2–7× swing.
  */
 export function threadWidthFactorForFrameSize(size: {
   width: number
   height: number
 }): number {
-  const w = Math.max(1, size.width)
-  const h = Math.max(1, size.height)
+  const w = Math.max(1, size.width) // Flow width
+  const h = Math.max(1, size.height) // Flow height
   const side = Math.sqrt(w * h) // Characteristic size (not max-side — wide short lines stayed too thick)
-  // ^1.75 + wide clamp — small~0.25–0.5×, large~4–7× menu stroke
-  return Math.min(7, Math.max(0.2, Math.pow(side / THREAD_FRAME_SIDE_REF, 1.75)))
+  // Small frames near 0.45×, large frames cap at 3.5× the menu stroke
+  return Math.min(3.5, Math.max(0.45, Math.pow(side / THREAD_FRAME_SIDE_REF, 1.15)))
 }
 
 /**

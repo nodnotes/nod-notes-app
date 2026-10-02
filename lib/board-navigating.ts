@@ -1,3 +1,5 @@
+import { threadInvZoom } from '@/components/threads/constants' // Stroke/arrow zoom — softer than 1/zoom when zoomed out
+
 // Board pan/pinch in progress. Freeze React zoom selectors so chrome/threads don’t
 // re-render every tick — the RF viewport CSS transform still tracks fingers live.
 // Notion DB tables no longer swap on this flag — see `database-block-view.tsx`. A selected table
@@ -15,6 +17,7 @@ const listeners = new Set<() => void>() // DB live / other subscribers
 
 const NAV_CLASS = 'tt-board-navigating'
 const NAV_WATCHDOG_MS = 1200 // Re-armed per move tick; only fires when a gesture dies silently
+
 /** Keep in sync with FRAME_SCREEN_CHROME_BOOST in threads/constants. */
 const CHROME_BOOST = 1.4
 let lastZoomCss = '' // Skip redundant style writes mid-pinch
@@ -46,7 +49,7 @@ function applyZoomCss(el: HTMLElement, zoom: number): void {
   if (next === lastZoomCss && el.style.getPropertyValue('--tt-board-zoom') === next) return
   lastZoomCss = next
   const ui = CHROME_BOOST / z // Same as frameScreenChromeScale
-  const inv = 1 / z // Concrete inverse zoom for thread strokes (avoid calc lag)
+  const inv = threadInvZoom(z) // Softer than 1/z when zoomed out so threads don't swell
   // Concrete values — avoid relying on stylesheet calc() recalculating during compositor zoom
   el.style.setProperty('--tt-board-zoom', next)
   el.style.setProperty('--tt-thread-inv-zoom', String(inv)) // Thread stroke: width * inv → screen-constant

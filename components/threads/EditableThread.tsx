@@ -14,13 +14,20 @@ import { ControlPoint, type ControlPointData } from './ControlPoint' // Miro-sty
 import { isBoardNavigating } from '@/lib/board-navigating' // Skip O(n) on-thread scans mid pan/zoom
 import { isFrameDragging } from '@/lib/frame-dragging' // Skip O(n) on-thread scans mid frame drag
 import { getPath, getControlPoints } from './path' // Path math when user has bent the thread
-import { getSmoothThreadBezier } from './path/bezier' // Same-side bow for unbent Smooth (snapped frames)
+import {
+  clampArrowHead,
+  getBoardTipBezier,
+  getSmoothThreadBezier,
+  threadArrowLength,
+  threadTipCenter,
+} from './path/bezier' // Board tip points away; arrow length tracks the stroke
 import {
   DEFAULT_THREAD_ALGORITHM,
   THREAD_DEFAULT_COLOR,
   THREAD_DEFAULT_STROKE_WIDTH,
   THREAD_SELECTED_COLOR,
   ThreadAlgorithm,
+  threadInvZoom,
   threadStrokeWidthForFrames,
 } from './constants' // Stroke + algorithm defaults + frame-size thickness
 import { normalizeHandleId } from './handle-ids' // Strip -indicator from stored handle ids
@@ -118,7 +125,6 @@ export function EditableThread({
   targetPosition,
   sourceHandleId,
   targetHandleId,
-  markerEnd,
   markerStart,
   style,
   data,
@@ -190,6 +196,16 @@ export function EditableThread({
   const fromSide = sourceSide ?? Position.Right
   const toSide = targetSide ?? Position.Left
   const sides = { fromSide, toSide }
+  const zoom = useStore((s) => s.transform[2] || 1) // Live board zoom — head length is stroke / zoom
+  const edgeWForHead = threadStrokeWidthForFrames(
+    selected ? Math.max(strokeWidth, strokeWidth + 0.5) : strokeWidth, // Same weight the stroke CSS uses
+    nodeFlowSize(sourceNode),
+    nodeFlowSize(targetNode)
+  )
+  const strokeUser = edgeWForHead * threadInvZoom(zoom) // Same user units as `--tt-edge-w * inv-zoom`
+  const tipPoint = targetNode?.type === 'threadTip' ? threadTipCenter(targetNode) : targetOrigin // Arrow tip
+  const headSpan = Math.hypot(tipPoint.x - sourceOrigin.x, tipPoint.y - sourceOrigin.y) || 1 // Room before the head
+  const head = clampArrowHead(threadArrowLength(strokeUser), headSpan) // Stroke stops this far short of the tip
 
   // Route for editable knobs (user bends). Unbent Smooth uses getSmoothThreadBezier below —
   // Catmull stubs added S-curves; RF getBezierPath went flat on same-side snapped frames.
@@ -198,7 +214,22 @@ export function EditableThread({
     points.length === 0 &&
     (algorithm === ThreadAlgorithm.BezierCatmullRom ||
       algorithm === ThreadAlgorithm.CatmullRom)
-  const smoothBezier = unbentSmooth
+  // Dropped on the board: the connection point is the center; the knob sits on the away curve.
+  const boardTip =
+    points.length === 0 && targetNode?.type === 'threadTip'
+      ? getBoardTipBezier({
+          sourceX: sourceOrigin.x, // Frame connection point
+          sourceY: sourceOrigin.y,
+          sourcePosition: fromSide, // Side the thread left
+          targetX: threadTipCenter(targetNode).x, // Arrow tip
+          targetY: threadTipCenter(targetNode).y,
+          algorithm,
+          head, // Stroke ends on the back of the arrow
+        })
+      : null
+  const smoothBezier = boardTip
+    ? boardTip
+    : unbentSmooth
     ? getSmoothThreadBezier({
         sourceX: sourceOrigin.x, // Frame-edge attach, not the outer indicator
         sourceY: sourceOrigin.y,
@@ -206,9 +237,12 @@ export function EditableThread({
         targetX: targetOrigin.x,
         targetY: targetOrigin.y,
         targetPosition: toSide,
+        head, // Stroke ends on the back of the arrow
       })
     : null
-  const controlPoints = unbentSmooth
+  const controlPoints = boardTip
+    ? [{ id: '', active: false, x: boardTip.mid.x, y: boardTip.mid.y }] // Knob on the away curve
+    : unbentSmooth
     ? [{ id: '', active: false, x: smoothBezier!.mid.x, y: smoothBezier!.mid.y }] // Hollow knob on the arch, not the chord
     : getControlPoints({
         points: routePoints,
@@ -236,6 +270,7 @@ export function EditableThread({
           targetPosition,
           sourceHandleId,
           targetHandleId,
+          arrowHead: boardTip || unbentSmooth ? head : 0, // Bent paths still run to the tip
         })
       : null
 
@@ -280,16 +315,12 @@ export function EditableThread({
     ) &&
     a.threadDots.every((p, i) => p.x === b.threadDots[i].x && p.y === b.threadDots[i].y))
   const gaps = pathGeom ? threadGapsForFrames(pathGeom, inlineGaps) : []
-  // Uniform thickness from both endpoint sizes (no along-path taper — that was too heavy for pan/zoom)
-  const sourceSize = nodeFlowSize(sourceNode)
-  const targetSize = nodeFlowSize(targetNode)
+  const edgeW = edgeWForHead // CSS thickness; the arrow head uses this same weight
 
   const stroke =
     selected
       ? THREAD_SELECTED_COLOR // Selection always reads Miro blue
       : data?.strokeColor || (style?.stroke as string) || THREAD_DEFAULT_COLOR // Custom → style → gray
-  const baseWidth = selected ? Math.max(strokeWidth, strokeWidth + 0.5) : strokeWidth // Selected reads slightly heavier
-  const edgeW = threadStrokeWidthForFrames(baseWidth, sourceSize, targetSize)
 
   // Gap slices only (on-thread frames) — one path each, same `--tt-edge-w`
   const strokePaths =
@@ -303,16 +334,37 @@ export function EditableThread({
   const dash = dotted
     ? `calc(5 * var(--tt-thread-inv-zoom, 1)), calc(5 * var(--tt-thread-inv-zoom, 1))`
     : undefined
+  const arrowId = `tt-thread-arrow-${id.replace(/[^A-Za-z0-9_-]/g, '')}` // Unique so selection can recolor this head
 
   return (
     <>
+      <defs>
+        <marker
+          id={arrowId} // Referenced by the last stroke slice
+          className="react-flow__arrowhead"
+          markerWidth={head * 4} // 20/5 × head so the tip lands on the connection point
+          markerHeight={head * 4} // Square box — wings stay proportional to the stroke
+          viewBox="-10 -10 20 20"
+          markerUnits="userSpaceOnUse" // Flow px, same space as the zoom-compensated stroke
+          orient="auto-start-reverse" // Head follows the path into the target
+          refX={boardTip || unbentSmooth ? -5 : 0} // Back of the head on an inset stroke; tip on a full stroke
+          refY="0"
+        >
+          <polyline
+            points="-5,-4 0,0 -5,4 -5,-4" // Closed arrow
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={{ stroke, fill: stroke, strokeWidth: 1 }} // Blue when the thread is selected
+          />
+        </marker>
+      </defs>
       {strokePaths.map((d, i) => (
         <BaseEdge
           key={i === 0 ? id : `${id}-gap-${i}`}
           id={i === 0 ? id : `${id}-gap-${i}`}
           path={d}
           markerStart={i === 0 ? markerStart : undefined}
-          markerEnd={i === strokePaths.length - 1 ? markerEnd : undefined}
+          markerEnd={i === strokePaths.length - 1 ? `url(#${arrowId})` : undefined} // Every thread ends in an arrow
           interactionWidth={20}
           style={{
             ...restStyle,

@@ -20,7 +20,9 @@ import {
   ConnectionIndicator, // Outer blue simulated dots (same as frames)
   INDICATOR_OUTSET, // Gap under bottom connection point for rotate chrome
   useIsThreadConnecting,
-  useIsNearThreadConnection,
+  useNearThreadConnectionSides,
+  THREAD_SIDE_BIT,
+  THREAD_CONNECTION_BOX,
 } from '@/components/threads'
 import { cn } from '@/lib/utils' // Indicator class merge (pointer-events while connecting)
 import {
@@ -136,7 +138,10 @@ export function FreehandNode({
   const { setNodes, getNodes } = useReactFlow() // Push AABB + read position for center-lock
   const updateNodeInternals = useUpdateNodeInternals() // Remeasure after size change
   const isThreadConnecting = useIsThreadConnecting() // Hide simulators while connecting unless this drawing is the snap target
-  const isNearThreadSnap = useIsNearThreadConnection(id) // Show simulators when the free end is near this drawing
+  const nearThreadSides = useNearThreadConnectionSides(id) // Margin → all dots; ink box → connection box
+  const isNearThreadSnap = nearThreadSides !== 0 // This drawing is under the thread end
+  const showConnectionBox =
+    isThreadConnecting && (nearThreadSides & THREAD_CONNECTION_BOX) !== 0 // Ink area shows the connection box
   const groupMulti = useGroupMultiSelect() // Shared box owns dots, indicators, and rotate
   // Same gate as frames: selected idle, or nearby while a thread end is dragged
   const showIndicators =
@@ -580,6 +585,17 @@ export function FreehandNode({
       style={{ width: nodeWidth, height: nodeHeight }}
     >
       <LiveFrameChromeZoom selected={selected} panelRef={shellRef} />
+      {showConnectionBox && (
+        <div
+          aria-hidden
+          data-tt-connection-box
+          className="pointer-events-none absolute z-[20]"
+          style={{
+            inset: 0, // Drawing area
+            boxShadow: 'inset 0 0 0 var(--tt-frame-line-w, 1.4px) #3b82f6', // Screen-constant connection box
+          }}
+        />
+      )}
       {/* Selected: square blue ring + circular corner dots (same chrome as frames) */}
       {showAdjustFrame && (
         <>
@@ -748,7 +764,9 @@ export function FreehandNode({
 
       {/* Simulated connection points — DOM only, outset from adjust box (same CSS as frames) */}
       {showIndicators &&
-        CONNECTION_SIDES.map((side) => (
+        CONNECTION_SIDES.filter(
+          (side) => !isThreadConnecting || (nearThreadSides & THREAD_SIDE_BIT[side]) !== 0 // Hide sides the thread is not approaching
+        ).map((side) => (
           <ConnectionIndicator
             key={`indicator-${side}`}
             side={side}

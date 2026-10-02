@@ -13,7 +13,7 @@ import {
 import { useTheme } from '@/components/theme-provider';
 import Shape from './Shape';
 import { type ShapeNodeData } from './types';
-import { useIsThreadConnecting, useIsNearThreadConnection } from '@/components/threads'; // Reveal anchors while a thread end is dragged
+import { useIsThreadConnecting, useNearThreadConnectionSides, THREAD_SIDE_BIT, THREAD_CONNECTION_BOX } from '@/components/threads'; // Adjust band → all dots; shape area → connection box
 import { useGroupMultiSelect } from '@/lib/group-selection'; // Group box owns resize handles and connection dots
 
 const handlePositions = [
@@ -133,13 +133,21 @@ export function ShapeNode({
   // Connection points: blue fill + white border (same as frame handles)
   const handleBorderColor = '#ffffff'
   const isThreadConnecting = useIsThreadConnecting() // Hide resize chrome while dragging a thread
-  const isNearThreadSnap = useIsNearThreadConnection(id) // Show handles when the free end is near this shape
+  const nearThreadSides = useNearThreadConnectionSides(id) // Margin → all dots; shape area → connection box
+  const showConnectionBox =
+    isThreadConnecting && (nearThreadSides & THREAD_CONNECTION_BOX) !== 0 // Shape area shows the connection box
   const groupMulti = useGroupMultiSelect(); // Shared box owns corners and connection dots
-  const showConnectionHandles =
-    (selected && !groupMulti) || (isThreadConnecting && isNearThreadSnap); // Nearby snap still shows while connecting
 
   return (
     <div ref={nodeRef} className="w-full h-full relative">
+      {showConnectionBox && (
+        <div
+          aria-hidden
+          data-tt-connection-box
+          className="pointer-events-none absolute inset-0 z-[20]"
+          style={{ boxShadow: 'inset 0 0 0 var(--tt-frame-line-w, 1.4px) #3b82f6' }} // Screen-constant connection box
+        />
+      )}
       {/* NodeResizer for free-form shape resizing (aspect ratio NOT locked by default) */}
       {/* Hold Shift to lock aspect ratio while resizing */}
       <NodeResizer
@@ -201,7 +209,13 @@ export function ShapeNode({
             height: '10px',
             backgroundColor: isThreadConnecting ? '#ffffff' : '#3b82f6', // Hollow while snapping
             border: '1.5px solid #3b82f6',
-            opacity: showConnectionHandles ? 1 : 0, // Selected, or nearby while a thread end is dragged
+            opacity: (
+              isThreadConnecting
+                ? (nearThreadSides & THREAD_SIDE_BIT[position]) !== 0 // Only the approached side
+                : selected && !groupMulti // Idle: all four when this shape is selected alone
+            )
+              ? 1
+              : 0,
             '--handle-border-color': handleBorderColor,
           } as React.CSSProperties}
           type="source"

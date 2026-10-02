@@ -4,7 +4,9 @@
 import { NodeProps, Handle, Position, useReactFlow, useStore, useStoreApi, NodeResizeControl, useUpdateNodeInternals } from 'reactflow' // RF node primitives + store (unselect groups before dragItems) + remeasure; useStore = live zoom for screen-constant chrome
 import {
   useIsThreadConnecting,
-  useIsNearThreadConnection,
+  useNearThreadConnectionSides,
+  THREAD_SIDE_BIT,
+  THREAD_CONNECTION_BOX,
   ConnectionIndicator,
   frameScreenChromeScale,
   INDICATOR_OUTSET,
@@ -4169,7 +4171,10 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // • Connection **point** = invisible RF Handle on the frame edge (geometry + snap)
   // • Connection **indicator** = plain DOM dot outside — starts drag on the edge point (not an RF Handle)
   const isThreadConnecting = useIsThreadConnecting() // Hide adjust chrome while dragging a thread
-  const isNearThreadSnap = useIsNearThreadConnection(id) // Pointer near this frame → show connection simulators
+  const nearThreadSides = useNearThreadConnectionSides(id) // Adjust box → all dots; fill → connection box
+  const isNearThreadSnap = nearThreadSides !== 0 // This frame is under the thread end
+  const showConnectionBox =
+    isThreadConnecting && (nearThreadSides & THREAD_CONNECTION_BOX) !== 0 // Fill shows the connection box
   const groupMulti = useGroupMultiSelect() // Shared box owns handles, dots, and the rotate/reactions row
   // Mid-press on the body — hide connection indicators only (resize / ⋮⋮ / rotate stay mounted)
   const [pressing, setPressing] = useState(false)
@@ -4394,7 +4399,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       a.every((x, i) => x.side === b[i].side && x.groupId === b[i].groupId)
   )
 
-  // Indicators: selected frame (idle), OR nearby snap target while connecting — never during frame drag.
+  // Indicators: selected frame (idle), or the frame under a dragged thread end.
   // Mid-press on the *body* hides them (`pressing`); press on the indicator itself is excluded so
   // the simulator stays mounted and can arm the thread instead of RF frame-dragging.
   const showIndicators =
@@ -9437,6 +9442,19 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       {isBlock && selected && (
         <LiveFrameChromeZoom selected={selected} panelRef={panelRef} />
       )}
+      {/* Thread end over the fill: blue connection box (dots stay for the adjust-box band) */}
+      {showConnectionBox && !frameShape && (
+        <div
+          aria-hidden
+          data-tt-connection-box
+          className="pointer-events-none absolute z-[20]"
+          style={{
+            inset: 0, // Frame area — the box the thread can attach to
+            borderRadius: 0,
+            boxShadow: 'inset 0 0 0 var(--tt-frame-line-w, 1.4px) #3b82f6', // Same screen-constant stroke as the adjust ring
+          }}
+        />
+      )}
       {/* Drag move: blue box on default frames; silhouettes use SVG stroke on the fill shell */}
       {showDragBorderOnly && !frameShape && (
         <div
@@ -9527,6 +9545,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       {showIndicators && (
         <>
           {(['left', 'right', 'top', 'bottom'] as const).map((side) => {
+            if (isThreadConnecting && (nearThreadSides & THREAD_SIDE_BIT[side]) === 0) return null // Thread over the frame or its adjust box shows every side
             if (chatThreadVisibleSides.has(side)) return null // Thread stroke owns this end — no simulator
             if (chatLinkLogoSides.has(side) && promptMessage?.id) {
               return (

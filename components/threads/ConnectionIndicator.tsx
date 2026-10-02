@@ -246,6 +246,18 @@ export function ConnectionIndicator({
           setEdges(addEdge(edgeParams, store.getState().edges))
         }
         onConnectAction?.(edgeParams as Connection)
+      } else {
+        const start = store.getState().connectionStartHandle // Frame the drag started on
+        doc.dispatchEvent(
+          new CustomEvent('tt-drop-thread-on-board', {
+            detail: {
+              clientX: e.clientX, // Release point
+              clientY: e.clientY,
+              sourceId: start?.nodeId ?? null, // Frame (or drawing) id
+              sourceHandle: start?.handleId ?? null, // Side the thread left from
+            },
+          })
+        )
       }
 
       store.getState().onConnectEnd?.(e)

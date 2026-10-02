@@ -4,7 +4,7 @@ import type { Edge, Node, XYPosition, Position } from 'reactflow'
 import type { ControlPointData } from '@/components/threads/ControlPoint'
 import type { ThreadEdgeData } from '@/components/threads/EditableThread'
 import { getPath, getControlPoints } from '@/components/threads/path'
-import { getSmoothThreadBezier } from '@/components/threads/path/bezier'
+import { getBoardTipBezier, getSmoothThreadBezier, threadTipCenter } from '@/components/threads/path/bezier'
 import {
   DEFAULT_THREAD_ALGORITHM,
   ThreadAlgorithm,
@@ -37,6 +37,7 @@ type BuildArgs = {
   targetPosition: Position
   sourceHandleId?: string | null
   targetHandleId?: string | null
+  arrowHead?: number // Flow px the smooth stroke stops short of the arrow tip
 }
 
 /** Same routing as EditableThread — shared for placement + gap rendering. */
@@ -64,6 +65,20 @@ export function buildThreadPathGeometry(args: BuildArgs): ThreadPathGeometry {
     points.length === 0 &&
     (algorithm === ThreadAlgorithm.BezierCatmullRom ||
       algorithm === ThreadAlgorithm.CatmullRom)
+  // Board free end: connection point is the center; stroke and arrow point away from it.
+  if (args.targetNode?.type === 'threadTip' && points.length === 0) {
+    const tip = threadTipCenter(args.targetNode) // Arrow tip, not the left-side handle
+    const pathD = getBoardTipBezier({
+      sourceX: sourceOrigin.x, // Frame connection point
+      sourceY: sourceOrigin.y,
+      sourcePosition: fromSide, // Side the thread left
+      targetX: tip.x, // Free end
+      targetY: tip.y,
+      algorithm, // Honor Smooth / Sharp / Linear
+      head: args.arrowHead, // Stroke ends on the back of the arrow
+    }).path
+    return geometryFromPathD(pathD, sourceOrigin, tip)
+  }
   const pathD = unbentSmooth
     ? getSmoothThreadBezier({
         sourceX: sourceOrigin.x,
@@ -72,6 +87,7 @@ export function buildThreadPathGeometry(args: BuildArgs): ThreadPathGeometry {
         targetX: targetOrigin.x,
         targetY: targetOrigin.y,
         targetPosition: toSide,
+        head: args.arrowHead, // Stroke ends on the back of the arrow
       }).path
     : getPath({ points: routePoints, algorithm, sides })
 

@@ -2504,11 +2504,17 @@ span[data-added="true"] {
       0 4px 6px -4px rgb(0 0 0 / 0.1),
       0 0 8px 0 color-mix(in srgb, var(--nod-blue) 35%, transparent); /* Light blue halo, not a second border */
   }
-  /* I-bar in the prompt — hairline stays; a blue glow sits outside it. */
+  /* I-bar in the prompt — hairline stays; the same shadow-md lift stays, plus a blue glow outside it. */
   [data-chat-prompt][data-chat-prompt-focused] {
     box-shadow:
-      0 1px 2px 0 rgb(0 0 0 / 0.05), /* Keep the same shadow-sm lift */
+      0 4px 6px -1px rgb(0 0 0 / 0.1), /* shadow-md falloff — same lift as the unfocused prompt */
+      0 2px 4px -2px rgb(0 0 0 / 0.1),
       0 0 8px 0 color-mix(in srgb, var(--nod-blue) 35%, transparent); /* Light blue glow, not a second border */
+  }
+  .dark [data-chat-prompt][data-chat-prompt-focused] {
+    box-shadow:
+      0 2px 10px rgba(0, 0, 0, 0.65), /* Same dark falloff as the unfocused prompt on #222 */
+      0 0 8px 0 color-mix(in srgb, var(--nod-blue) 35%, transparent); /* Same blue glow as light mode */
   }
   /* Draw bar Smart draw on — grey wash stays on the button; glow matches the focused prompt shadow. */
   [data-smart-draw] {
