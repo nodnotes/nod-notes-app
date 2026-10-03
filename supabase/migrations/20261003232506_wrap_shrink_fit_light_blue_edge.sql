@@ -1,0 +1,2 @@
+-- Free wrap shrinks glyphs to the wrap-line gap as the lines move in. Fit-to-text lines go light blue at the edge that turns wrap off.
+-- App/docs marker only; no DDL (frame metadata is JSONB). Remote DDL top: 20260924223511_board_changes_autosave.

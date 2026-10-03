@@ -3396,7 +3396,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const wrapShiftPosRef = useRef<{ x: number; y: number } | null>(null) // Fit left/center wrap drag: moved RF XY to persist on release
   const wrapDragPaintRef = useRef<number | null>(null) // Paint scale frozen at wrap-line press — contain-fit must not remap the bar
   const freeFitScaleRef = useRef(1) // Last settled contain-fit — reused for the whole wrap-line drag
-  const nowrapCapRef = useRef<number | null>(null) // Wrap-line space at drag start — fill / + far edge (not nowrap content)
+  const nowrapCapRef = useRef<number | null>(null) // Column where this drag turns wrap off — light blue from there
   const paintScaleRef = useRef(1) // Live CSS scale so wrap-line drag converts fill X → unscaled col
   const frameAlignXRef = useRef(frameAlignX) // Wrap-line drag — fit-to-content shows one bar
   frameAlignXRef.current = frameAlignX
@@ -6508,7 +6508,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         : plusInnerW / paint0 // Free: wrap-line space is the + box or fill — settable past the glyphs
     ) // Far edge of wrap-line space — never nowrap alone (that jumped the bars onto short content)
     const unapplyCol = locked0 ? nowrapW : spaceCol // Fit unwraps at the text run; free only at the fill / + edge
-    nowrapCapRef.current = spaceCol // Light-blue at the wrap-space edge, not the content edge
+    nowrapCapRef.current = unapplyCol // Light blue at the edge that turns wrap off — fit: the text run, free: the fill / +
     const edgeCol = spaceCol // Drag max = wrap-line space
     if (!frameTextWrapRef.current) {
       // Wrap unapplied: the line sits at the far edge — arm wrap there (no reflow until dragged inward)
@@ -6545,7 +6545,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     let hugRaf = 0 // One follow-up measure after wrap layout commits — the move itself can run too early
     let liveVisualW = startVisual // Where the wrap lines are — kept for the post-layout measure
     // Free wrap: lines follow the pointer. Layout stays at least one word wide so tokens do not split.
-    // Once every word is on its own line, further inward drag shrinks the glyphs to fit between the lines.
+    // Glyphs shrink to that gap as soon as the lines move in — not only after they hit one word.
     const fitFreeWrapScale = (column: number, visual: number) => {
       const fitEl = contentFitRef.current // Column element — may remount across the gesture
       if (!fitEl || !fill || locked0) return // Fit-to-text shrinks frameScale instead — the peach stays on the glyphs
@@ -6569,11 +6569,16 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       const d = (ev.clientX - e.clientX) * flowPerScreen // Flow px from press — board zoom captured above
       let visualW = startVisual + growth * dirSign * d // Column width the pointer is asking for
       const minVisual = 8 // Past the longest word the lines keep closing — glyphs scale down to this gap
-      visualW = Math.max(minVisual, Math.min(plusInnerW, edgeCol * paint0, visualW)) // Hard max = painted +'s
+      const visualMax = locked0 ? edgeCol * paint0 : plusInnerW // Fit grows out to the text run; free stops on the +'s
+      visualW = Math.max(minVisual, Math.min(visualMax, visualW)) // That far edge is also where wrap turns off
       const leaveSlop = 8 * flowPerScreen // ~8 screen px extra inward before bars leave the +'s (grab jitter)
-      if (visualW > plusInnerW - leaveSlop) visualW = plusInnerW // Stay on the + until that slop is spent
+      if (!locked0 && visualW > plusInnerW - leaveSlop) visualW = plusInnerW // Stay on the + until that slop is spent
       liveVisualW = visualW // Post-layout measure uses the same line gap
-      const col = Math.max(wordMin, Math.min(edgeCol, Math.round((visualW / paint0) * 100) / 100)) // Layout never splits a word
+      const gapT = startVisual > 1 ? visualW / startVisual : 1 // 1 at the grab; inward is smaller
+      const rawCol = locked0
+        ? visualW / paint0 // Fit: the column is the gap — the frame hugs it
+        : startW * gapT + wordMin * (1 - gapT) // Free: share the drag between reflow and shrink
+      const col = Math.max(wordMin, Math.min(edgeCol, Math.round(rawCol * 100) / 100)) // Layout never splits a word
       wrapColWidthRef.current = col // Live readers (resize) see this tick
       setWrapColWidth(col) // Reflow text at the line
       if (!frameUnlockedRef.current) {
@@ -6633,7 +6638,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       // Lines follow the pointer. The layout column stops at the longest word, so a stale word box must not win.
       const scaledBox = cf ? wrapColumnInFill(fill, cf) : null // Glyph box after this move's scale
       const scaledMatches = !!scaledBox && Math.abs(scaledBox.width - visualW) < 4 // Use it only when it already fits the gap
-      const w = Math.min(plusInnerW, scaledMatches && scaledBox ? scaledBox.width : visualW)
+      const lineMax = locked0 ? edgeCol * paint0 : plusInnerW // Fit lines ride the growing hug; free lines stay inside the +'s
+      const w = Math.min(lineMax, scaledMatches && scaledBox ? scaledBox.width : visualW)
       const align = frameAlignXRef.current
       const left = scaledMatches && scaledBox
         ? scaledBox.left // Parked on the glyphs (fit left/right stay on their edge)
@@ -7605,7 +7611,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const wrapApplied =
     wrapActive &&
     wrapColWidth != null &&
-    !(wrapLineDraggingRef.current && wrapColWidth >= (nowrapCapRef.current ?? Infinity) - 0.005) // Mid-drag at the far edge = unapplied
+    !(wrapLineDraggingRef.current && wrapColWidth >= (nowrapCapRef.current ?? Infinity) - 0.02) // Mid-drag at the off edge = light blue
   const clipUnlocked =
     isBlock &&
     frameUnlocked &&
@@ -7841,6 +7847,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       ? Math.min(contentFitBox?.height ?? unlockedInnerH, unlockedInnerH)
       : null
   const heldGap = wrapGapRef.current // Released wrap gap — inset lines must not grow back onto the + box
+  const contentPaintForGap = Math.max(1, (fitWrapCol ?? 1) * renderFrameScale) // Column at place scale, before the wrap-line fit
   const wrapFillsBox =
     heldGap != null && fitBoxW != null
       ? heldGap.width >= fitBoxW - 1.5 // Only grow when the released lines sit on the + box
@@ -7856,7 +7863,10 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             frameShape, // Contain inside the silhouette, not the rect
             true // May grow past fit-to-text while the lines sit on the + box
           )
-        : 1 // Inset lines — frameScale already fits the glyphs in the gap; height must not crush them
+        : Math.max(
+            FRAME_SCALE_EPSILON,
+            (heldGap?.width ?? contentPaintForGap) / contentPaintForGap // Inset lines — glyphs fit that gap without another forced drag
+          )
       : unlockedResized && fitBoxW != null && fitBoxH != null
         ? freeContentFitScale(fitBoxW, fitBoxH, contentVisualW, contentVisualH, frameShape, contentFitBox != null)
         : 1
