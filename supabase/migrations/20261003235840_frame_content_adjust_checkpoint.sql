@@ -1,0 +1,2 @@
+-- Checkpoint: correct frame and content adjust. Fit and free share one frameScale gutter; unlocking does not widen the adjust box. The block handle uses that same strip.
+-- App/docs marker only; no DDL (frame metadata is JSONB). Remote DDL top: 20260924223511_board_changes_autosave.

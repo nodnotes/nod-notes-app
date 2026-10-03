@@ -4240,7 +4240,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       : 1 // Place + locked resize — gutters track CSS-scaled fill
   const screenChromeScale = frameScreenChromeScale(rfZoom || 1) // Handles / dots / rotate only
   const adjustChromeX = showFrameChrome
-    ? Math.round(adjustChromeXFlow(rfZoom || 1, chromeScale))
+    ? Math.round(adjustChromeXFlow(rfZoom || 1, chromeScale)) // Same L/R strip in fit and free — unlock must not grow the adjust box
     : 0
   const handleGutterFlow = showFrameChrome
     ? handleGutterFlowPx(rfZoom || 1, chromeScale) // Live — matches pad so grip stays centered in the strip
@@ -10452,7 +10452,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               coldReady={coldReady} // Snapshot exists → proximity alone must not mount a live editor
               deferredBox={deferredBox}
               contentPadLeft={isBlock ? BLOCK_FRAME_PAD_X : 0}
-              frameScale={isBlock && applyPaintScale ? paintScale : frameScale} // ⋮⋮ size/pad track the painted text scale — free contain-fit is not frameScale
+              frameScale={frameScale} // Same ⋮⋮ strip as fit — free contain must not paint the grip larger than the adjust gutter
               handleGutterFlow={handleGutterFlow}
               centerInShape={shapeCenterContent}
               enableCollab={
