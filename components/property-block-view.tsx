@@ -1,7 +1,7 @@
 'use client'
 
 // React NodeView for propertyBlock: cell box with the type icon inside + Empty placeholder.
-// Header-only (empty + !inline) renders nothing in the body — icon lives on the frame top strip.
+// Every property is a block in the frame (including older empty cells that used to sit above it).
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -21,7 +21,6 @@ import {
 } from '@/lib/tiptap/property-block-drag' // Reorder among property cells
 import { PropertyDropLinePortal } from '@/components/property-drop-line-portal' // Blue dashed insert line
 import {
-  isPropertyBlockHeaderOnly,
   isPropertyBlockInline,
   updatePropertyBlockAttrs,
   insertPropertyBlockBeside,
@@ -71,7 +70,6 @@ export function PropertyBlockView({ node, updateAttributes, selected, editor, ge
   const stored = typeof node.attrs.value === 'string' ? node.attrs.value : ''
   const propertyName = typeof node.attrs.propertyName === 'string' ? node.attrs.propertyName : ''
   const inline = isPropertyBlockInline(node.attrs as Record<string, unknown>)
-  const headerOnly = isPropertyBlockHeaderOnly(node.attrs as Record<string, unknown>)
   const [draft, setDraft] = useState(stored)
   const label = propertyTypeLabel(propertyType)
   const iconRef = useRef<HTMLSpanElement>(null)
@@ -130,8 +128,8 @@ export function PropertyBlockView({ node, updateAttributes, selected, editor, ge
       if (from == null || from < 0) return
       if (action === 'editType' && payload?.type) updatePropertyBlockAttrs(editor, from, { propertyType: payload.type })
       else if (action === 'editName' && payload?.name != null) updatePropertyBlockAttrs(editor, from, { propertyName: payload.name })
-      else if (action === 'displayIcon') updatePropertyBlockAttrs(editor, from, { inline: false })
-      else if (action === 'displayInline') updatePropertyBlockAttrs(editor, from, { inline: true })
+      else if (action === 'displayIcon') updatePropertyBlockAttrs(editor, from, { inline: false }) // Back to the top strip
+      else if (action === 'displayInline') updatePropertyBlockAttrs(editor, from, { inline: true }) // Empty cell in the body
       else if (action === 'insertLeft') insertPropertyBlockBeside(editor, from, 'left')
       else if (action === 'insertRight') insertPropertyBlockBeside(editor, from, 'right')
       else if (action === 'duplicate') duplicatePropertyBlock(editor, from)
@@ -146,9 +144,10 @@ export function PropertyBlockView({ node, updateAttributes, selected, editor, ge
     input?.setSelectionRange(input.value.length, input.value.length)
   }, [])
 
-  // A textarea has no intrinsic size: `cols` (not the value) drives width and `rows` drives
-  // height. Nowrap frames get an explicit glyph width so the cell stays on ONE line and the
-  // frame hug (which reads this same width) fits it; wrap frames stretch and grow taller.
+  // A textarea has no intrinsic size: `cols` drives width and `rows` drives height.
+  // Fit-to-text (nowrap) gets an explicit glyph width so the cell hugs one line, same as a
+  // text block, and the frame hug reads that width. Wrap (and free wrap) clears it so the
+  // value reflows in the column and the cell grows taller with the lines.
   useEffect(() => {
     const el = inputRef.current
     if (!el) return
@@ -189,18 +188,6 @@ export function PropertyBlockView({ node, updateAttributes, selected, editor, ge
     },
     [canEditCell, editor, getPos, propertyType, openPropertyMenu]
   )
-
-  if (headerOnly) {
-    return (
-      <NodeViewWrapper
-        as="div"
-        className="tt-property-block tt-property-block-header-only nokey"
-        data-type="propertyBlock"
-        data-header-only="true"
-        style={{ display: 'none' }}
-      />
-    )
-  }
 
   return (
     <NodeViewWrapper

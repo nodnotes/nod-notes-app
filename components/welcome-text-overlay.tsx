@@ -211,6 +211,27 @@ export function WelcomeText() {
   const [desktop, setDesktop] = useState(false) // Skip phone chrome arrows — too tight
   const [chromeHints, setChromeHints] = useState(false) // First-board sign-in only; default off so returning users don’t flash
   const [layouts, setLayouts] = useState<HintLayout[]>([]) // Placed callouts
+  const [brandFontsReady, setBrandFontsReady] = useState(false) // Stay blank until Virgil + Young Serif — fallback faces were flashing on load
+
+  useLayoutEffect(() => {
+    let cancelled = false // Ignore a late load after unmount
+    const young = getComputedStyle(document.body).getPropertyValue('--font-young-serif').split(',')[0].trim() // next/font family, not the Georgia fallback
+    const virgilSpec = '20px Virgil' // Same size as the empty-board hint
+    const nodSpec = young ? `64px ${young}` : '64px serif' // Wordmark size — request the real face
+    const show = () => {
+      if (!cancelled) setBrandFontsReady(true) // Fade in only after both faces can paint
+    }
+    if (document.fonts.check(virgilSpec) && document.fonts.check(nodSpec)) {
+      show() // Already cached — reveal before the browser paints a blank frame
+      return
+    }
+    const timer = window.setTimeout(show, 1500) // Don’t leave the mark blank if a face stalls
+    void Promise.all([document.fonts.load(virgilSpec), document.fonts.load(nodSpec)]).then(show) // Kick the download and wait for it
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [])
 
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 860px)') // Below this, hints collide with chrome
@@ -546,7 +567,7 @@ export function WelcomeText() {
       {/* Home top-bar brand, centered — slides off open menus; clicks pass through so the board still adds a frame */}
       <div
         ref={brandRef}
-        className="absolute left-1/2 top-1/2 flex flex-col items-center animate-in fade-in duration-500"
+        className={`absolute left-1/2 top-1/2 flex flex-col items-center ${brandFontsReady ? 'animate-in fade-in duration-500' : 'opacity-0'}`} // Hidden until the real faces are in so cursive/Georgia never paint
         style={{ transform: `translate(calc(-50% + ${brandNudge.x}px), calc(-50% + ${brandNudge.y}px))` }}
       >
         <div className="inline-flex items-center text-4xl min-[900px]:text-5xl leading-none opacity-90">
@@ -618,7 +639,7 @@ export function WelcomeText() {
       {layouts.map((h) => (
         <div
           key={h.id}
-          className="absolute board-hint whitespace-pre-line animate-in fade-in duration-500"
+          className={`absolute board-hint whitespace-pre-line ${brandFontsReady ? 'animate-in fade-in duration-500' : 'opacity-0'}`} // Same gate as the center hint — don’t paint cursive then swap to Virgil
           style={{
             left: h.textX,
             top: h.textY,

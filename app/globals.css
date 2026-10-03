@@ -6,7 +6,7 @@
 @font-face {
   font-family: "Virgil";
   src: url("/fonts/Virgil.woff2") format("woff2");
-  font-display: swap;
+  font-display: block; /* Invisible until Virgil is in — swap was painting cursive for a moment on load */
 }
 
 @layer base {
@@ -1770,8 +1770,53 @@ span[data-added="true"] {
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1) !important;
   }
 
+  /* Selected, not a group: invisible points sit on the simulated dots (adjust-box side
+     centers, same outset as the blue disc) so a drop lands on the dot. Group select keeps
+     the fill rules below — those dots are hidden. */
+  .react-flow:not(.tt-group-select) .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point[data-handlepos="left"],
+  .react-flow:not(.tt-group-select) .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-left,
+  .react-flow:not(.tt-group-select) .react-flow__node-freehand.selected .react-flow__handle.handle-dot.tt-connection-point[data-handlepos="left"],
+  .react-flow:not(.tt-group-select) .react-flow__node-freehand.selected .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-left {
+    left: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important; /* Same outset as the indicator */
+    right: auto !important;
+    top: 50% !important; /* Center of the adjust box, not the fill */
+    bottom: auto !important;
+    transform: translate(-50%, -50%) !important;
+  }
+  .react-flow:not(.tt-group-select) .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point[data-handlepos="right"],
+  .react-flow:not(.tt-group-select) .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-right,
+  .react-flow:not(.tt-group-select) .react-flow__node-freehand.selected .react-flow__handle.handle-dot.tt-connection-point[data-handlepos="right"],
+  .react-flow:not(.tt-group-select) .react-flow__node-freehand.selected .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-right {
+    left: auto !important;
+    right: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    top: 50% !important;
+    bottom: auto !important;
+    transform: translate(50%, -50%) !important;
+  }
+  .react-flow:not(.tt-group-select) .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point[data-handlepos="top"],
+  .react-flow:not(.tt-group-select) .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-top,
+  .react-flow:not(.tt-group-select) .react-flow__node-freehand.selected .react-flow__handle.handle-dot.tt-connection-point[data-handlepos="top"],
+  .react-flow:not(.tt-group-select) .react-flow__node-freehand.selected .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-top {
+    left: 50% !important; /* Center of the adjust box */
+    top: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    right: auto !important;
+    bottom: auto !important;
+    transform: translate(-50%, -50%) !important;
+  }
+  .react-flow:not(.tt-group-select) .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point[data-handlepos="bottom"],
+  .react-flow:not(.tt-group-select) .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-bottom,
+  .react-flow:not(.tt-group-select) .react-flow__node-freehand.selected .react-flow__handle.handle-dot.tt-connection-point[data-handlepos="bottom"],
+  .react-flow:not(.tt-group-select) .react-flow__node-freehand.selected .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-bottom {
+    left: 50% !important;
+    top: auto !important;
+    right: auto !important;
+    bottom: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    transform: translate(-50%, 50%) !important;
+  }
+
+  /* Group selection: dots are hidden. Keep points on the fill so the stroke does not float. */
   /* Frame connection points stay on the **fill** edge; selected gutters are outside that.
-     Park L/R handles at `--tt-adjust-pad-x` so RF geometry + settled threads meet the peach
+     Park L/R handles at `--tt-adjust-pad-x` so a group selection meets the peach
      frame, not the blue adjust box. T/B pads are the property / connections bands. */
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point[data-handlepos="left"],
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-left {
@@ -2258,9 +2303,8 @@ span[data-added="true"] {
   [data-tt-align-box="true"] .ProseMirror:not([data-single-line="true"]) blockquote {
     width: 100% !important;
     text-align: inherit;
-    overflow-wrap: anywhere; /* Wrap lines are a hard column — break tehhh… runs with no spaces */
-    word-break: break-word; /* Older engines — same hard column */
-    min-width: 0; /* Defeat min-content of an unbreakable word */
+    overflow-wrap: normal; /* Wrap at spaces only — never split a word */
+    word-break: normal; /* Same: the column stops at the longest word */
   }
   /* Applied wrap (any align): glyphs must stay inside the wrap column */
   [data-block-resized="wrap"] .ProseMirror:not([data-single-line="true"]),
@@ -2271,9 +2315,8 @@ span[data-added="true"] {
   [data-block-resized="wrap"] .ProseMirror:not([data-single-line="true"]) h4,
   [data-block-resized="wrap"] .ProseMirror:not([data-single-line="true"]) li,
   [data-block-resized="wrap"] .ProseMirror:not([data-single-line="true"]) blockquote {
-    overflow-wrap: anywhere; /* Soft-wrap at spaces AND mid-token when the column is tighter */
-    word-break: break-word; /* Same column on engines without overflow-wrap:anywhere */
-    min-width: 0; /* Allow the wrap box to shrink below the longest token */
+    overflow-wrap: normal; /* Wrap at spaces only — never split a word */
+    word-break: normal; /* A tight column does not break the token */
   }
   /* Free left: hug the widest block, center that column, left-align shorter blocks to it */
   [data-tt-free-left="true"] .ProseMirror,
@@ -2302,9 +2345,8 @@ span[data-added="true"] {
   [data-tt-align-box="true"][data-tt-free-left="true"] .ProseMirror blockquote {
     width: fit-content !important; /* Each block hugs glyphs so the stack width is the widest */
     max-width: 100% !important; /* Soft-wrap at the parent column */
-    overflow-wrap: anywhere; /* fit-content min-content was the full token — it painted past the wrap lines */
-    word-break: break-word; /* Same hard column as align-box wrap */
-    min-width: 0 !important; /* auto min-width kept the unbreakable word wider than the column */
+    overflow-wrap: normal; /* Wrap at spaces only — never split a word */
+    word-break: normal; /* Longest word stays intact inside the column */
   }
   /* Empty block (new add-block / Enter line): fit-content + min-width 0 was 0px wide — no caret paints */
   :is([data-tt-free-left="true"], [data-tt-align-box="true"][data-tt-free-left="true"])
@@ -3494,8 +3536,38 @@ span[data-added="true"] {
     max-width: 100%;
   }
   .ProseMirror:not([data-single-line="true"]) .tt-property-block,
-  .ProseMirror:not([data-single-line="true"]) .react-renderer.node-propertyBlock {
-    width: 100%; /* Resized frame: cell stretches with the box */
+  .ProseMirror:not([data-single-line="true"]) .react-renderer.node-propertyBlock,
+  .ProseMirror:not([data-single-line="true"]) .tt-property-block-row,
+  .ProseMirror:not([data-single-line="true"]) .tt-property-block-cell {
+    width: 100%; /* Same column as frame text once wrap lines are in */
+    min-width: 0; /* 160px floor blocked the column, so the value never wrapped */
+    max-width: 100%;
+  }
+  /* Fit-to-text: the cell is the line. max-width 100% + the 160px floor sized the frame
+     to the text block and clipped "Empty" on the blue edge. */
+  .ProseMirror[data-single-line="true"] .tt-property-block,
+  .ProseMirror[data-single-line="true"] .react-renderer.node-propertyBlock {
+    width: max-content;
+    min-width: max-content;
+    max-width: none;
+  }
+  .ProseMirror[data-single-line="true"] .tt-property-block-row {
+    width: max-content;
+    min-width: max-content;
+  }
+  .ProseMirror[data-single-line="true"] .tt-property-block-cell {
+    flex: 0 0 auto; /* Don't shrink the value under the icon */
+    width: max-content;
+    min-width: max-content;
+  }
+  /* Fixed column (free resize / align): stay inside the frame and wrap the value */
+  [data-tt-align-box="true"] .ProseMirror[data-single-line="true"] .tt-property-block,
+  [data-tt-align-box="true"] .ProseMirror[data-single-line="true"] .react-renderer.node-propertyBlock,
+  [data-tt-align-box="true"] .ProseMirror[data-single-line="true"] .tt-property-block-row,
+  [data-tt-align-box="true"] .ProseMirror[data-single-line="true"] .tt-property-block-cell {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
   }
   .ProseMirror .tt-property-block-row {
     display: flex;
@@ -3511,8 +3583,13 @@ span[data-added="true"] {
     align-items: center;
     justify-content: center;
     width: 20px;
-    height: 24px; /* Same box as in-frame cells — glyph is h-4 (16px) */
+    height: 24px; /* In-frame cell box — glyph is h-4 (16px) */
     color: #6b7280;
+  }
+  /* Chrome strip above the fill — same 14px as board prose, tight to the frame and the blue edge */
+  [data-tt-property-header] .tt-property-block-icon {
+    width: 14px;
+    height: 14px;
   }
   .dark .ProseMirror .tt-property-block-icon,
   .dark [data-tt-property-header] .tt-property-block-icon {

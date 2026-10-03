@@ -13,7 +13,7 @@ export const GRIP_SIDE_PAD_SCREEN = 3
 /** Nominal blue↔gutter air at 100% zoom. */
 export const ADJUST_CONTENT_GAP_X = 3
 export const ADJUST_CONTENT_GAP_Y = 6 // T/B band air when no property / connections strip
-export const CONNECTIONS_GROUP_H = 28 // Connections strip height
+export const CONNECTIONS_GROUP_H = 18 // One chrome row: 14px glyph (frame text) + 2px air each side
 /** `+# rows — show more / show less` under a Notion DB table (py-1 + 11px). */
 export const DB_ROWS_REVEAL_FOOTER_H = 24
 
@@ -61,6 +61,47 @@ export function adjustGapYFlow(zoom: number, frameScale = 1): number {
   return gripComfortFlow(zoom, frameScale, ADJUST_CONTENT_GAP_Y)
 }
 
+/**
+ * Split a painted strip into the first row (used to center the fill) and wrapped rows.
+ * A missing strip is `{0,0}` — no row is reserved on that side.
+ */
+export function splitChromeStrip(painted: number, rowH: number): { slot: number; extra: number } {
+  if (painted <= 0) return { slot: 0, extra: 0 } // No icons — do not reserve a row
+  const unit = Math.max(1, rowH) // One-row height; guard a zero scale
+  const rows = Math.max(1, Math.round(painted / unit)) // A slightly tall row still counts as one
+  if (rows <= 1) return { slot: painted, extra: 0 } // Single row — its full height can be mirrored
+  return { slot: unit, extra: painted - unit } // Second+ rows stay on this side only
+}
+
+/**
+ * Selected upright pads between the fill and the adjust box.
+ * Neither strip → equal blue↔fill air (no empty row).
+ * One strip → the empty side matches that one row so the fill stays centered.
+ * Wrapped rows and the DB footer grow only their own side.
+ */
+export function selectedAdjustChromeY(opts: {
+  gapY: number // Air when both strips are absent
+  rowH: number // One property / connections row
+  propH: number // 0, or painted property-strip height
+  connH: number // 0, or painted connections-strip height
+  footerH: number // DB `+# rows` — real bottom chrome, not a mirrored row
+  dbTopBand: boolean // DB frames keep a top band so the blue edge is not flush
+}): { yTop: number; yBottom: number } {
+  const top = splitChromeStrip(opts.propH, opts.rowH) // Property first row + wrap
+  const bottom = splitChromeStrip(opts.connH, opts.rowH) // Connections first row + wrap
+  const shared = Math.max(top.slot, bottom.slot) // Empty side copies the other side's one row
+  const footer = Math.max(0, opts.footerH) // Footer lives in the bottom pad only
+  if (shared === 0 && footer === 0) {
+    // No rows present — air only, same on both sides
+    const yTop = opts.dbTopBand ? Math.max(opts.gapY, opts.rowH) : opts.gapY // DB top stays a full band
+    return { yTop, yBottom: opts.gapY } // Bottom air matches; no connections row reserved
+  }
+  let yTop = shared + top.extra // Centered one-row gap, plus wrapped property rows
+  let yBottom = shared + bottom.extra + footer // Centered one-row gap, plus wrap + footer
+  if (opts.dbTopBand && opts.propH <= 0) yTop = Math.max(yTop, opts.rowH) // DB without properties stays open on top
+  return { yTop, yBottom } // Pads the blue box uses above / below the fill
+}
+
 /** Full L/R pad: [blue][air][pad][grip][pad][fill] — small gaps on both sides of the handle. */
 export function adjustChromeXFlow(zoom: number, frameScale = 1): number {
   return handleGutterFlowPx(zoom, frameScale) + adjustGapFlowPx(zoom, frameScale)
@@ -100,9 +141,8 @@ export function nominalAdjustChromeInsets(
   const band = Math.round(CONNECTIONS_GROUP_H * fs)
   const gapY = Math.round(adjustGapYFlow(zoom, fs)) // Blue↔fill air when no strip
   const footer = isDatabase ? Math.round(DB_ROWS_REVEAL_FOOTER_H * fs) : 0
-  const namedProp = typeof meta.propertyType === 'string' && !!meta.propertyType
-  // DB frames keep a top band even without property icons so the blue box isn't flush
-  const yTop = namedProp ? band : isDatabase ? Math.max(gapY, band) : 0
+  // No property row above the fill. DB frames still keep a top band so the blue edge isn't flush.
+  const yTop = isDatabase ? Math.max(gapY, band) : 0
   // Bottom adjust band (footer + connections) — snap/stack must clear it
   const yBottom = (meta.notionConnected === true ? band : 0) + footer
   return { x, yTop, yBottom }

@@ -16,7 +16,7 @@ const youngSerif = Young_Serif({
   subsets: ["latin"],
   weight: "400",
   variable: "--font-young-serif",
-  display: "swap",
+  display: "block", // Hold the wordmark until Young Serif arrives — swap flashed Georgia on first paint
 });
 
 const notesSans = Asap({
@@ -50,6 +50,15 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <link
+          rel="preload"
+          href="/fonts/Virgil.woff2"
+          as="font"
+          type="font/woff2"
+          crossOrigin="anonymous"
+        />
+      </head>
       <body className={`${inter.variable} ${youngSerif.variable} ${notesSans.variable}`} suppressHydrationWarning>
         <Script id="nn-board-font" strategy="beforeInteractive">{`
           (function () {

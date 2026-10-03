@@ -7,6 +7,7 @@ export type BoardViewport = {
   x: number // Pane translate X
   y: number // Pane translate Y
   zoom: number // Camera scale
+  rotation?: number // Heading in degrees — paired with this pan so reload doesn’t orbit twice
 }
 
 // Board id that was in the address bar when this document reloaded.
@@ -48,7 +49,9 @@ export function readBoardViewport(boardId: string): BoardViewport | null {
     ) {
       return null // Bad payload must not move the camera
     }
-    return { x: parsed.x, y: parsed.y, zoom: parsed.zoom } // Safe to pass to setViewport
+    const rotation =
+      typeof parsed.rotation === 'number' && Number.isFinite(parsed.rotation) ? parsed.rotation : undefined // Heading saved with this pan
+    return { x: parsed.x, y: parsed.y, zoom: parsed.zoom, rotation } // Safe to pass to setViewport
   } catch {
     return null // Private mode / bad JSON
   }
@@ -66,9 +69,11 @@ export function writeBoardViewport(boardId: string, viewport: BoardViewport): vo
     return // Never persist NaN — a later reload would skip fit and show a blank pane
   }
   try {
+    const rotation =
+      typeof viewport.rotation === 'number' && Number.isFinite(viewport.rotation) ? viewport.rotation : undefined // Omit when unknown
     window.sessionStorage.setItem(
       STORAGE_PREFIX + boardId,
-      JSON.stringify({ x: viewport.x, y: viewport.y, zoom: viewport.zoom }) // Compact camera only
+      JSON.stringify({ x: viewport.x, y: viewport.y, zoom: viewport.zoom, rotation }) // Pan + heading, one camera
     )
   } catch {
     // Quota / private mode — reload will fit contents instead

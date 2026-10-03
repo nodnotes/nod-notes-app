@@ -148,6 +148,84 @@ function aabbOfRotatedPoints(
   return { width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) }
 }
 
+/** Which frame edge a thread uses. */
+export type FrameShapeSide = 'left' | 'right' | 'top' | 'bottom'
+
+/** Cardinal midpoint of the unit box — correct when the outline already passes through it. */
+const BOX_SIDE_ANCHOR: Record<FrameShapeSide, { x: number; y: number }> = {
+  left: { x: 0, y: 0.5 },
+  right: { x: 1, y: 0.5 },
+  top: { x: 0.5, y: 0 },
+  bottom: { x: 0.5, y: 1 },
+}
+
+/** X where the horizontal line `y` crosses segment a→b, or null when it misses. */
+function crossHorizontal(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  y: number
+): number | null {
+  if (a.y === b.y) return null // Parallel to the ray — the vertical edges own this side
+  const minY = Math.min(a.y, b.y)
+  const maxY = Math.max(a.y, b.y)
+  if (y < minY || y > maxY) return null // Segment stays on one side of the ray
+  const t = (y - a.y) / (b.y - a.y) // How far along a→b the ray sits
+  return a.x + t * (b.x - a.x)
+}
+
+/** Y where the vertical line `x` crosses segment a→b, including a horizontal edge that contains x. */
+function crossVertical(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  x: number
+): number | null {
+  const minX = Math.min(a.x, b.x)
+  const maxX = Math.max(a.x, b.x)
+  if (x < minX || x > maxX) return null // Segment misses this column
+  if (a.y === b.y) return a.y // Horizontal outline edge (plus top, parallelogram top, …)
+  if (a.x === b.x) return null // Vertical edge not on this column — handled as a miss
+  const t = (x - a.x) / (b.x - a.x)
+  return a.y + t * (b.y - a.y)
+}
+
+/**
+ * Connection point on the silhouette for one side, in unit box coords (0..1, top-left).
+ * The ray leaves the box center along that side and stops at the first outline hit,
+ * so a parallelogram’s left point sits on the slant instead of the empty bounding-box edge.
+ */
+export function shapeSideAnchor(
+  shape: FrameShapeType,
+  side: FrameShapeSide
+): { x: number; y: number } {
+  const box = BOX_SIDE_ANCHOR[side] // Mid-side of the rectangle
+  if (
+    shape === 'rectangle' ||
+    shape === 'round-rectangle' ||
+    shape === 'circle' ||
+    shape === 'cylinder'
+  ) {
+    return box // Those outlines already pass through the four mid-sides
+  }
+  const pts = shapeUnitPoints(shape)
+  if (!pts || pts.length < 3) return box
+  const horizontal = side === 'left' || side === 'right' // Left/right travel along Y = 0.5
+  const at = 0.5 // Through the center
+  let best: number | null = null // Closest outline hit in the outward direction
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i]
+    const b = pts[(i + 1) % pts.length]
+    const hit = horizontal ? crossHorizontal(a, b, at) : crossVertical(a, b, at)
+    if (hit == null) continue
+    if (side === 'left' && hit > at) continue // Keep the left half
+    if (side === 'right' && hit < at) continue
+    if (side === 'top' && hit > at) continue
+    if (side === 'bottom' && hit < at) continue
+    if (best == null || Math.abs(hit - at) < Math.abs(best - at)) best = hit // First boundary the ray meets
+  }
+  if (best == null) return box
+  return horizontal ? { x: best, y: at } : { x: at, y: best }
+}
+
 /** Unit-box polygon for a silhouette (0..1), converted to centered px via w/h. */
 function shapeUnitPoints(type: FrameShapeType): Array<{ x: number; y: number }> | null {
   // Coordinates in 0..1 box (top-left origin), matching frameShapeClipCss polygons

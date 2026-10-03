@@ -133,7 +133,7 @@ export function useOnThreadFrames({
         if (!anchor) return n
         const edge = findEdgeForOnThread(edges, nds, anchor)
         if (!edge) return n
-        const geom = geometryForEdge(edge, nds)
+        const geom = geometryForEdge(edge, nds, edges)
         if (!geom) return n
         const size = onThreadFrameVisualSize(n)
         const target = positionForOnThreadFrame(geom, anchor, size)
@@ -162,7 +162,7 @@ export function useOnThreadFrames({
       const targetMsgId = targetNode?.data?.promptMessage?.id as string | undefined
       if (!sourceNode || !targetNode || !sourceMsgId || !targetMsgId) return
 
-      const geom = geometryForEdge(edge, live)
+      const geom = geometryForEdge(edge, live, edges)
       if (!geom) return
 
       takeSnapshot()
@@ -290,7 +290,7 @@ export function useOnThreadFrames({
       const current = rfNode ? { ...rfNode, position: node.position } : node
       const anchor = { ...session.anchor }
       const edge = findEdgeForOnThread(edges, live, anchor)
-      const geom = edge ? geometryForEdge(edge, live) : null
+      const geom = edge ? geometryForEdge(edge, live, edges) : null
       const size = onThreadFrameVisualSize(current)
 
       let position = node.position

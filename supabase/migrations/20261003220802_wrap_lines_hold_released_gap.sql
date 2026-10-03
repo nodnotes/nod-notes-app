@@ -1,0 +1,2 @@
+-- Wrap lines stay on the released gap; glyphs shrink between them once words are fully wrapped. Threads route around frames.
+-- App/docs marker only; no DDL (frame metadata is JSONB). Remote DDL top: 20260924223511_board_changes_autosave.

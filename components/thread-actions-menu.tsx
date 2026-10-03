@@ -9,6 +9,7 @@ import {
   Info,
   Link2,
   Lock,
+  Unlock,
   PaintRoller,
   Plus,
   ClipboardPaste,
@@ -31,6 +32,7 @@ export type ThreadActionId =
   | 'copyStyle'
   | 'pasteStyle'
   | 'lock'
+  | 'unlock'
   | 'insertBetween'
   | 'saveAsTemplate'
   | 'info'
@@ -50,6 +52,7 @@ export type ThreadActionsMenuProps = {
   canPasteStyle?: boolean // Enables Paste style when a style was copied
   currentStyle?: 'smooth' | 'sharp' | 'linear' // Checkmark in Style → path style
   currentStrokeWidth?: number // Checkmark in Thickness flyout (1–4)
+  locked?: boolean // Locked thread: connection points stay, menu offers Unlock
   onAction: (action: ThreadActionId) => void // Parent wires delete / insert / style
   onClose: () => void // Dismiss on Escape / outside
   edgeId?: string // Clicked thread RF id — avoid its path even before .selected
@@ -80,6 +83,7 @@ export function ThreadActionsMenu({
   canPasteStyle = false,
   currentStyle = 'smooth',
   currentStrokeWidth = 2,
+  locked = false,
   onAction,
   onClose,
   edgeId,
@@ -183,10 +187,10 @@ export function ThreadActionsMenu({
     { kind: 'separator' },
     {
       kind: 'action',
-      id: 'lock',
-      label: 'Lock',
+      id: locked ? 'unlock' : 'lock', // Locked menu swaps this row to Unlock
+      label: locked ? 'Unlock' : 'Lock',
       shortcut: '⌘⇧L',
-      icon: <Lock className="h-4 w-4" />,
+      icon: locked ? <Unlock className="h-4 w-4" /> : <Lock className="h-4 w-4" />,
     },
     {
       kind: 'action',

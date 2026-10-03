@@ -1277,7 +1277,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
             <div
               data-chat-prompt
               data-chat-prompt-focused={promptFocused ? '' : undefined} // Present only while the caret is in the prompt
-              className="rounded-xl overflow-hidden border border-black/10 dark:border-white/10 shadow-md dark:shadow-[0_2px_10px_rgba(0,0,0,0.65)]" // Light: shadow-md. Dark: brand-disc falloff so the box lifts off #222
+              className="rounded-lg overflow-hidden border border-black/10 dark:border-white/10 shadow-md dark:shadow-[0_2px_10px_rgba(0,0,0,0.65)]" // 8px corners (app --radius); light shadow-md, dark brand-disc falloff so the box lifts off #222
             >
               <div className="px-1 pt-1">{composer}</div>
             </div>
@@ -1404,7 +1404,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
               {!hasTranscript ? (
               <div className="mt-auto flex flex-col items-start gap-4 w-full min-w-0"> {/* Greeting + skills sit just above the composer */}
                 <div
-                  className="flex items-center gap-2.5"
+                  className="flex items-center gap-2.5 pl-2" // Match skill-row inset so the disc lines up with labels inside the hover
                   onMouseEnter={() => setHoverBrand(true)}
                   onMouseLeave={() => setHoverBrand(false)}
                 >
@@ -1439,7 +1439,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                 </div>
 
                 <div className="w-full min-w-0">
-                  <h2 className="text-xl font-semibold tracking-tight text-gray-900 dark:text-gray-50">
+                  <h2 className="px-2 text-xl font-semibold tracking-tight text-gray-900 dark:text-gray-50"> {/* Same inset as the skill labels */}
                     What&apos;s on your mind?
                   </h2>
                   {/* Skills under the greeting — attach a pill, or open Customize for a new agent */}
@@ -1448,7 +1448,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                       <button
                         type="button"
                         onClick={openCustomize}
-                        className="w-full flex items-center gap-2.5 h-8 rounded-md text-sm text-gray-800 dark:text-gray-200 hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
+                        className="w-full flex items-center gap-2.5 h-8 px-2 rounded-md text-sm text-gray-800 dark:text-gray-200 hover:bg-black/[0.04] dark:hover:bg-white/[0.06]" // Label sits inside the hover, not on its edge
                       >
                         <Settings2 className="h-4 w-4 flex-shrink-0 text-gray-500 dark:text-gray-400" />
                         Create custom agent
@@ -1462,7 +1462,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
                           <button
                             type="button"
                             onClick={() => setSeedSkillIds([skill.id])} // Same pill path as the + menu
-                            className="w-full flex items-center gap-2.5 h-8 rounded-md text-sm text-gray-800 dark:text-gray-200 hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
+                            className="w-full flex items-center gap-2.5 h-8 px-2 rounded-md text-sm text-gray-800 dark:text-gray-200 hover:bg-black/[0.04] dark:hover:bg-white/[0.06]" // Label sits inside the hover, not on its edge
                           >
                             <Icon className="h-4 w-4 flex-shrink-0 text-gray-500 dark:text-gray-400" />
                             {skill.name}
@@ -1536,7 +1536,7 @@ export function ChatSidebar({ conversationId }: ChatSidebarProps) {
           <div
             data-chat-prompt
             data-chat-prompt-focused={promptFocused ? '' : undefined} // Present only while the caret is in the prompt
-            className="rounded-xl overflow-hidden border border-black/10 dark:border-white/10 shadow-md dark:shadow-[0_2px_10px_rgba(0,0,0,0.65)]" // Light: shadow-md. Dark: brand-disc falloff so the box lifts off #222
+            className="rounded-lg overflow-hidden border border-black/10 dark:border-white/10 shadow-md dark:shadow-[0_2px_10px_rgba(0,0,0,0.65)]" // 8px corners (app --radius); light shadow-md, dark brand-disc falloff so the box lifts off #222
           >
             <div className="px-1 pt-1">{composer}</div>
           </div>

@@ -17,7 +17,7 @@ import ReactFlow, {
   BaseEdge,
   getSmoothStepPath,
 } from 'reactflow'
-import type { Node, Edge, EdgeProps } from 'reactflow' // Types only — value `Node` is undefined and shadows DOM Node
+import type { Node, Edge, EdgeChange, EdgeProps } from 'reactflow' // Types only — value `Node` is undefined and shadows DOM Node
 import 'reactflow/dist/style.css'
 import '@/components/threads/thread-view-stroke.css' // After RF — screen-constant stroke (RF sets width:1)
 import { ChatPanelNode } from './chat-panel-node' // Eager: next/dynamic breaks RF nodeTypes + left frames blank forever
@@ -46,7 +46,13 @@ import {
   panelEdgesMatchOrFilter,
   savedEdgePairKey,
   threadEndpointFromNode,
+  type ThreadEndpoint,
 } from '@/lib/threads/endpoints' // Frame + drawing/shape thread ends
+import {
+  closestClearConnection,
+  connectionOverlapsFrames,
+  pointerInNodeFill,
+} from '@/lib/threads/closest-connection' // Frame drop follows the closest sides that stay outside the fill
 import {
   BlockActionsMenu,
   type BlockActionId,
@@ -181,11 +187,14 @@ import {
 } from '@/lib/blocks' // blocks, groups (page-body ensure is promote-only — not cold load)
 import { transformHtmlToBlockType } from '@/lib/blocks/turn-into' // Seed empty-frame HTML for I-bar Turn into
 import { boardTitleOrDefault, DEFAULT_BOARD_TITLE } from '@/lib/board-title' // Empty board names start as New board
-import { PROPERTY_GROUP_H } from '@/lib/blocks/property' // Top property strip height — I-bar spawn offset
 import { propertyBlockHtml } from '@/lib/tiptap/property-block' // I-bar Turn into → Property seeds icon + Empty cell
 import { absFlowPosition, nodeFlowSize, useBlockGroupDrag } from './use-block-group-drag' // Drag attach/detach between groups / page
 import { useFrameNestStackDrag, isStackCollapsedMeta } from './use-frame-nest-stack-drag' // Edge-snap → stack reveal
-import { isHiddenByLiveBoardFilter } from '@/lib/board-frame-filters' // Board Filter strip hides non-matches
+import {
+  isHiddenByLiveBoardFilter,
+  frameShownByLiveBoardFilter, // Thread stays only when both frames pass
+  getLiveBoardFilters,
+} from '@/lib/board-frame-filters' // Board Filter strip hides non-matches
 import { minStackIndex } from '@/lib/frame-side-stacks' // Per-side stack z-order
 import { FrameNestStackOverlay } from './frame-nest-stack-overlay' // Snap preview line on host edge
 import { IBarFlowAnchor } from './ibar-flow-anchor' // I-bar placement without BoardFlow pan/zoom re-renders
@@ -432,6 +441,13 @@ function isFrameMenuChromeTarget(target: EventTarget | null): boolean {
   if (!el) return false
   if (isFrameAdjustBoxTarget(target)) return false // Adjust box click opens the frame menu
   return !!el.closest(FRAME_MENU_CHROME_SEL) // ⋮⋮ / corners / marks keep their own gesture
+}
+
+/** Both saved-edge signatures for one pair — a delete must block either stored direction. */
+function threadEndpointPairKeys(source: ThreadEndpoint, target: ThreadEndpoint): [string, string] {
+  const sourceKey = `${source.kind[0]}:${source.id}` // Same fragment as savedEdgePairKey
+  const targetKey = `${target.kind[0]}:${target.id}` // Same fragment as savedEdgePairKey
+  return [`${sourceKey}>${targetKey}`, `${targetKey}>${sourceKey}`] // Forward and reverse
 }
 
 /** Thread path hit band — not endpoint updaters or bend knobs (those drag). */
@@ -775,13 +791,51 @@ function BoardFlowInner({
   const nodesRef = useRef(nodes) // Long-press / drag handlers without stale closures
   nodesRef.current = nodes
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
+  const filterThreadKeyRef = useRef('') // Last filter-hidden frame ids — reused mid-drag
+
+  // A thread stays visible only when both ends are frames the board filter still shows
+  const filterThreadKey = useMemo(() => {
+    if (isFrameDragging()) return filterThreadKeyRef.current // Positions don't change who matched
+    if (getLiveBoardFilters().length === 0) {
+      filterThreadKeyRef.current = ''
+      return '' // No filter — don't scan frames on drag
+    }
+    const hidden: string[] = [] // Frames the filter removed
+    for (const n of nodes) {
+      if (frameShownByLiveBoardFilter(n)) continue // Still on the board
+      if (n.type !== 'chatPanel') continue // Drawings aren't the filter set
+      hidden.push(n.id)
+    }
+    hidden.sort()
+    const key = `on|${hidden.join('|')}` // Prefix so turning the filter on always re-checks threads
+    filterThreadKeyRef.current = key
+    return key
+  }, [nodes])
+  useEffect(() => {
+    const filtersOn = getLiveBoardFilters().length > 0 // Empty filter shows every thread
+    const byId = new Map(nodesRef.current.map((n) => [n.id, n]))
+    setEdges((eds) => {
+      let changed = false
+      const next = eds.map((e) => {
+        const shown =
+          !filtersOn ||
+          (frameShownByLiveBoardFilter(byId.get(e.source)) &&
+            frameShownByLiveBoardFilter(byId.get(e.target))) // Both ends still on the board
+        const hidden = !shown
+        if (!!e.hidden === hidden) return e
+        changed = true
+        return { ...e, hidden }
+      })
+      return changed ? next : eds // Same array when nothing flipped — no edge loop
+    })
+  }, [filterThreadKey, edges, setEdges])
 
   const { publishNodesLayouts } = useBoardCollabLayoutSync({
     nodes,
     setNodes,
     canEdit,
   })
-  const { publishThread } = useBoardCollabThreads({
+  const { publishThread, unpublishThread } = useBoardCollabThreads({
     edges,
     setEdges,
     canEdit,
@@ -1230,7 +1284,7 @@ function BoardFlowInner({
   }, [rfStore])
   const updateNodeInternals = useUpdateNodeInternals() // Remeasure Handles after connect so paths attach
   const { setReactFlowInstance, registerSetNodes, isLocked, layoutMode, setLayoutMode, setIsDeterministicMapping, panelWidth: contextPanelWidth, isPromptBoxCentered, lineStyle, setLineStyle, arrowDirection, setArrowDirection, boardRule: contextBoardRule, boardStyle: contextBoardStyle, boardFont, clickedEdge: contextClickedEdge, setClickedEdge: setContextClickedEdge, fillColor, borderColor, borderWeight, borderStyle, flashcardMode, setFlashcardMode, selectedTag, setSelectedTag, isDrawing, setIsDrawing, drawTool, setDrawTool, drawShape, setDrawShape, setFillColor, setBorderColor, setBorderWeight, setBorderStyle, registerMapUndoRedo, registerMapTakeSnapshot, snapEnabled, setSnapEnabled } = useReactFlowContext()
-  const { rotation: boardRotation, setScrollMode, setRotationAroundViewCenter } = useBoardRotation() // Subscribe so I-bar / overlays re-place when the camera twists
+  const { rotation: boardRotation, setScrollMode, setRotationAroundViewCenter, adoptRotation } = useBoardRotation() // Subscribe so I-bar / overlays re-place when the camera twists
 
   const chatPanelCountRef = useRef(0) // Frame count is stable mid-drag — skip the O(n) scan per tick
   const chatPanelCount = useMemo(() => {
@@ -2922,6 +2976,8 @@ function BoardFlowInner({
   }, [conversationId, isMessagesPending, messages.length, boardLoadPhase])
 
   // Same board reload only — null on board switch / sign-in so fitView still frames contents
+  const rotationRestoredForRef = useRef<string | null>(null) // Board id whose saved heading we already applied
+  const rotationAtRestoreRef = useRef<number | null>(null) // Heading at restore — a later twist must beat a slow remote read
   const restoredViewport = useMemo(
     () => (typeof window === 'undefined' ? null : viewportToRestore(conversationId, !!embedded)),
     [conversationId, embedded]
@@ -2936,7 +2992,17 @@ function BoardFlowInner({
       fitViewOnInitDone: true, // updateNodeDimensions skips the initial fit when this is set
       transform: [restoredViewport.x, restoredViewport.y, restoredViewport.zoom], // Pane matrix before d3 init
     })
-  }, [restoredViewport, rfStore])
+    // Paint only the heading this pan was saved at. A different prefs heading is one orbit later, once the camera exists.
+    const fromPrefs = storedBoardRotation(conversationId) // Slider / twist write this immediately
+    const fromSession =
+      typeof restoredViewport.rotation === 'number' ? restoredViewport.rotation : null // Missing on older camera blobs
+    const heading = fromPrefs != null ? fromPrefs : fromSession // A session 0° must not hide a saved heading
+    const sessionHeading = fromSession ?? 0 // This pan already keeps the view for this angle
+    const paint = heading != null && Math.abs(heading - sessionHeading) > 0.05 ? sessionHeading : (heading ?? 0) // Don't swing the frames before the orbit
+    if (Math.abs(paint) > 0.05) adoptRotation(paint) // CSS for the restored pan
+    rotationRestoredForRef.current = conversationId ?? '' // This reload owns the camera; the orbit effect finishes a mismatched heading
+    rotationAtRestoreRef.current = heading ?? 0 // Remote read must not treat the orbit as a user twist
+  }, [restoredViewport, rfStore, conversationId, adoptRotation])
 
   // Remember the camera after init fit or a pan, so the next reload of this URL can restore it
   useEffect(() => {
@@ -2947,10 +3013,11 @@ function BoardFlowInner({
       const state = rfStore.getState() // Live transform
       if (!state.fitViewOnInitDone) return // Don't replace a good camera with the pre-fit default
       const [x, y, zoom] = state.transform // RF store tuple
-      const key = `${x}:${y}:${zoom}` // Identity for the last write
+      const rotation = boardRotationRef.current // Heading that belongs with this pan
+      const key = `${x}:${y}:${zoom}:${rotation}` // Identity for the last write
       if (key === lastKey) return // No camera change
       lastKey = key // Remember so the unmount flush is a no-op
-      writeBoardViewport(conversationId, { x, y, zoom }) // sessionStorage for this board
+      writeBoardViewport(conversationId, { x, y, zoom, rotation }) // sessionStorage for this board
     }
     const unsub = rfStore.subscribe(() => {
       window.clearTimeout(timer) // Collapse a pan into one write
@@ -3191,15 +3258,80 @@ function BoardFlowInner({
       }>).detail
       if (!detail?.sourceId || !reactFlowInstance) return
       const hit = document.elementFromPoint(detail.clientX, detail.clientY) // What was under the release
-      if (hit?.closest('.react-flow__node')) return // Over a frame — only a connection point may attach
+      const hitNodeId = hit?.closest('.react-flow__node')?.getAttribute('data-id') ?? null // Frame under the release
+      const flow = reactFlowInstance.screenToFlowPosition({
+        x: detail.clientX, // Release X
+        y: detail.clientY, // Release Y
+      })
+      const sourceNode = nodesRef.current.find((n) => n.id === detail.sourceId) // Frame the drag started on
+      const targetNode = hitNodeId ? nodesRef.current.find((n) => n.id === hitNodeId) : null // Frame under the pointer
+      // Fill (connection box), not a simulated connection point: attach and let the sides follow closeness.
+      if (
+        targetNode &&
+        sourceNode &&
+        targetNode.id !== sourceNode.id &&
+        pointerInNodeFill(targetNode, flow.x, flow.y)
+      ) {
+        const sourceEp = threadEndpointFromNode(sourceNode)
+        const targetEp = threadEndpointFromNode(targetNode)
+        if (!sourceEp || !targetEp) return // Not a threadable object
+        if (endpointIsFlashcard(sourceNode) || endpointIsFlashcard(targetNode)) return // Flashcards do not take threads
+        const pair = closestClearConnection(sourceNode, targetNode) // Sides that stay outside both fills
+        if (!pair) return // Not measured yet
+        const exists = rfStore.getState().edges.some(
+          (e) =>
+            (e.source === sourceNode.id && e.target === targetNode.id) ||
+            (e.source === targetNode.id && e.target === sourceNode.id)
+        )
+        if (exists) return // One thread between this pair
+        const stroke =
+          (typeof window !== 'undefined' && localStorage.getItem(THREAD_STROKE_COLOR_KEY)) || undefined
+        const newEdge: Edge = {
+          id: `${sourceNode.id}-${targetNode.id}`,
+          source: sourceNode.id,
+          target: targetNode.id,
+          sourceHandle: pair.sourceHandle, // Closest clear side, which may not be the side the drag started on
+          targetHandle: pair.targetHandle,
+          type: 'editable',
+          data: {
+            algorithm: threadAlgorithmFromStyle(
+              typeof window !== 'undefined'
+                ? localStorage.getItem('nodnotes-horizontal-line-style')
+                : null
+            ),
+            points: [],
+            dotted: lineStyle === 'dotted',
+            floatHandles: true, // Keep switching sides as the frames move
+            sourceHandle: pair.sourceHandle,
+            targetHandle: pair.targetHandle,
+            ...(stroke ? { strokeColor: stroke } : {}),
+          } satisfies ThreadEdgeData,
+        }
+        takeSnapshot() // One undo step for the new thread
+        setEdges((eds) => (eds.some((e) => e.id === newEdge.id) ? eds : [...eds, newEdge]))
+        updateNodeInternals(sourceNode.id) // Remeasure so the path meets the new side
+        updateNodeInternals(targetNode.id)
+        void publishThread(newEdge) // Peers see the floating thread
+        if (!conversationId) return
+        void (async () => {
+          const supabase = createClient()
+          const { data: { user } } = await supabase.auth.getUser()
+          if (!user) return
+          const { error } = await supabase.from('panel_edges').insert({
+            conversation_id: conversationId,
+            user_id: user.id,
+            ...panelEdgeEndpointColumns(sourceEp, targetEp),
+            metadata: newEdge.data ?? {},
+          })
+          if (error) console.error('Error saving frame thread:', error)
+          else void refetchEdges()
+        })()
+        return
+      }
+      if (hitNodeId) return // Adjust box, away from a connection point — still a cancel
       if (!hit?.closest('.react-flow__pane')) return // Chrome / sidebar is not the board
-      const sourceNode = nodesRef.current.find((n) => n.id === detail.sourceId)
       const sourceEp = threadEndpointFromNode(sourceNode)
       if (!sourceEp || endpointIsFlashcard(sourceNode)) return
-      const flow = reactFlowInstance.screenToFlowPosition({
-        x: detail.clientX,
-        y: detail.clientY,
-      })
       const tipId = crypto.randomUUID() // canvas_nodes id and RF node id
       const tipNode: Node = {
         id: tipId,
@@ -3282,6 +3414,9 @@ function BoardFlowInner({
     setEdges,
     takeSnapshot,
     refetchEdges,
+    publishThread,
+    updateNodeInternals,
+    rfStore,
   ])
 
   // Fetch canvas nodes (freehand drawings, etc.) for the conversation
@@ -4116,6 +4251,8 @@ function BoardFlowInner({
 
   // Signature of the last thread-load pass, so the body below runs on real changes only
   const savedEdgeLoadSigRef = useRef<string>('')
+  // Pairs whose thread is being deleted — the loader only adds, so it would put the line back
+  const pendingDeletedThreadKeysRef = useRef(new Set<string>())
 
   // Load saved edges from database when nodes are available
   useEffect(() => {
@@ -4140,6 +4277,14 @@ function BoardFlowInner({
     if (sig === savedEdgeLoadSigRef.current) return
     savedEdgeLoadSigRef.current = sig
 
+    const pendingDeleted = pendingDeletedThreadKeysRef.current // Pairs a Delete already claimed
+    if (pendingDeleted.size > 0) {
+      const liveKeys = new Set((savedEdges ?? []).map((row) => savedEdgePairKey(row))) // Still in the cache
+      for (const key of pendingDeleted) {
+        if (!liveKeys.has(key)) pendingDeleted.delete(key) // Cache dropped it — a later thread on this pair may load
+      }
+    }
+
     if (!savedEdges || savedEdges.length === 0) {
       console.log('🔄 BoardFlow: No saved edges to load', { savedEdgesLength: savedEdges?.length || 0 })
       return
@@ -4156,6 +4301,7 @@ function BoardFlowInner({
     const reactFlowEdges: Edge[] = []
 
     for (const savedEdge of savedEdges) {
+      if (pendingDeleted.has(savedEdgePairKey(savedEdge))) continue // Delete in flight — do not put this thread back
       const { source: sourceEp, target: targetEp } = endpointsFromSavedEdge(savedEdge)
       if (!sourceEp || !targetEp) {
         console.warn('🔄 BoardFlow: Skipping edge with missing endpoints', savedEdge)
@@ -4184,11 +4330,28 @@ function BoardFlowInner({
       // Create edges between all matching source and target nodes
       for (const sourceNode of sourceNodes) {
         for (const targetNode of targetNodes) {
-          // Find closest handles
-          const handles = findClosestHandles(sourceNode, targetNode)
+          const meta = savedEdge.metadata // Saved sides + whether they may move
+          const floating = meta?.floatHandles === true // Dropped on the frame, not a connection point
+          const pinned =
+            !floating &&
+            typeof meta?.sourceHandle === 'string' &&
+            typeof meta?.targetHandle === 'string' // Snapped connection point
+          let handles = floating
+            ? closestClearConnection(sourceNode, targetNode) ?? findClosestHandles(sourceNode, targetNode)
+            : pinned
+              ? { sourceHandle: meta.sourceHandle as string, targetHandle: meta.targetHandle as string }
+              : findClosestHandles(sourceNode, targetNode) // Older threads: closest pair, then stay
+          if (
+            handles &&
+            meta?.locked !== true &&
+            sourceNode.type !== 'threadTip' &&
+            targetNode.type !== 'threadTip' &&
+            connectionOverlapsFrames(sourceNode, targetNode, handles.sourceHandle, handles.targetHandle)
+          ) {
+            handles = closestClearConnection(sourceNode, targetNode) ?? handles // Saved far sides would cross the frames
+          }
           if (!handles) continue
 
-          // Use closest handles directly - all handles are equal, no swapping needed
           const tipEnd = sourceNode.type === 'threadTip' || targetNode.type === 'threadTip' // Board free end
           const finalSource = sourceNode.id
           const finalTarget = targetNode.id
@@ -4213,6 +4376,7 @@ function BoardFlowInner({
               target: finalTarget,
               sourceHandle: finalSourceHandle,
               targetHandle: finalTargetHandle,
+              ...(meta?.locked === true ? { updatable: false } : {}), // Locked ends stay on these points
               ...(tipEnd ? { markerEnd: boardTipMarker(stroke || '#6b7280') } : {}), // Arrow on the board end
               type: 'editable', // Miro-style adjustable thread
               data: {
@@ -4220,6 +4384,10 @@ function BoardFlowInner({
                 points: savedEdge.metadata?.points ?? [],
                 dotted: savedEdge.metadata?.dotted ?? lineStyle === 'dotted',
                 strokeWidth: savedEdge.metadata?.strokeWidth ?? THREAD_DEFAULT_STROKE_WIDTH,
+                ...(floating ? { floatHandles: true as const } : {}), // Keep following the closest clear sides
+                ...(meta?.locked === true ? { locked: true as const, floatHandles: false as const } : {}),
+                sourceHandle: finalSourceHandle,
+                targetHandle: finalTargetHandle,
                 ...(typeof savedEdge.metadata?.strokeColor === 'string' && savedEdge.metadata.strokeColor
                   ? { strokeColor: savedEdge.metadata.strokeColor }
                   : {}),
@@ -4877,12 +5045,55 @@ function BoardFlowInner({
     return () => window.removeEventListener('tt-delete-empty-frame', onEmptyFrame)
   }, [deleteNodesByIds])
 
-  // Recalculate edge handles based on current node positions
-  // Previously remapped every connected edge to the nearest sides while dragging.
-  // Disabled — keep the sides the user snapped to; a future cleanup action will re-route.
-  const recalculateEdgeHandles = useCallback((_nodeId: string, _currentNodes: Node[]) => {
-    return
-  }, [])
+  // Threads dropped on a frame (not a simulated connection point) follow the closest clear sides.
+  // Threads snapped to a connection point keep the sides the user chose.
+  const recalculateEdgeHandles = useCallback((nodeId: string, currentNodes: Node[], persist: boolean) => {
+    const eds = rfStore.getState().edges // Live threads, including ones added this gesture
+    let changed = false // Skip setEdges when every floating thread is already on the closest pair
+    const next = eds.map((edge) => {
+      const data = edge.data as ThreadEdgeData | undefined // Path + pin flag
+      if (!data?.floatHandles) return edge // A simulated connection point stays put
+      if (data.points && data.points.length > 0) return edge // A manual bend keeps its sides
+      if (edge.source !== nodeId && edge.target !== nodeId) return edge // This drag does not move this thread
+      const sourceNode = currentNodes.find((n) => n.id === edge.source) // Frame the thread leaves
+      const targetNode = currentNodes.find((n) => n.id === edge.target) // Frame the thread joins
+      if (!sourceNode || !targetNode) return edge // Endpoint missing
+      if (sourceNode.type === 'threadTip' || targetNode.type === 'threadTip') return edge // A board tip has no sides
+      const pair = closestClearConnection(sourceNode, targetNode) // Shortest path that stays outside both fills
+      if (!pair) return edge // Frames not measured yet
+      if (edge.sourceHandle === pair.sourceHandle && edge.targetHandle === pair.targetHandle) return edge // Already there
+      changed = true
+      return {
+        ...edge,
+        sourceHandle: pair.sourceHandle, // New source side
+        targetHandle: pair.targetHandle, // New target side
+        data: { ...data, sourceHandle: pair.sourceHandle, targetHandle: pair.targetHandle },
+      }
+    })
+    if (!changed) return // Nothing moved
+    setEdges(next) // Show the new sides immediately
+    if (!persist || !conversationId) return // Save only when the drag ends
+    const moved = next.filter((edge) => {
+      const data = edge.data as ThreadEdgeData | undefined
+      return data?.floatHandles && (edge.source === nodeId || edge.target === nodeId)
+    })
+    void (async () => {
+      const supabase = createClient() // Persist the sides the stroke is using
+      for (const edge of moved) {
+        const sourceNode = currentNodes.find((n) => n.id === edge.source)
+        const targetNode = currentNodes.find((n) => n.id === edge.target)
+        const sourceEp = threadEndpointFromNode(sourceNode)
+        const targetEp = threadEndpointFromNode(targetNode)
+        if (!sourceEp || !targetEp) continue // Cannot match the row
+        await supabase
+          .from('panel_edges')
+          .update({ metadata: edge.data ?? {} })
+          .eq('conversation_id', conversationId)
+          .or(panelEdgesMatchOrFilter(sourceEp, targetEp))
+        void publishThread(edge) // Peers see the new sides
+      }
+    })()
+  }, [conversationId, publishThread, rfStore, setEdges])
 
   // Track node position changes in Canvas mode to update stored positions
   const handleNodesChange = useCallback((changes: any[]) => {
@@ -5055,7 +5266,14 @@ function BoardFlowInner({
       const updatedNodes = nodes.map(node => {
         const positionChange = changesToProcess.find(c => c.type === 'position' && c.id === node.id && c.position)
         if (positionChange && positionChange.position) {
-          return { ...node, position: positionChange.position }
+          return {
+            ...node,
+            position: positionChange.position, // Live drag position
+            // Root frames store flow position in positionAbsolute — the side picker reads that first
+            ...(!(node.parentId || (node as { parentNode?: string }).parentNode)
+              ? { positionAbsolute: positionChange.position }
+              : {}),
+          }
         }
         return node
       })
@@ -5065,7 +5283,7 @@ function BoardFlowInner({
       
       // Recalculate edge handles for each node being dragged or that finished dragging
       nodesToRecalculate.forEach(nodeId => {
-        recalculateEdgeHandles(nodeId, updatedNodes)
+        recalculateEdgeHandles(nodeId, updatedNodes, dragEndedNodeIds.has(nodeId)) // Save sides only on release
       })
     }
 
@@ -5365,8 +5583,6 @@ function BoardFlowInner({
 
   // Restore board camera from ?capture= link (viewport + rotation + nav mode)
   const captureLinkAppliedRef = useRef<string | null>(null)
-  const rotationRestoredForRef = useRef<string | null>(null) // Board id whose saved heading we already applied
-  const rotationAtRestoreRef = useRef<number | null>(null) // Heading at restore — a later twist must beat a slow remote read
   const [rotationSyncBoard, setRotationSyncBoard] = useState<string | null>(null) // Board whose remote heading has been read
   const applyCaptureCameraRef = useRef<(target: CaptureCamera) => void>(() => {})
   applyCaptureCameraRef.current = (target: CaptureCamera) => {
@@ -5436,7 +5652,18 @@ function BoardFlowInner({
       rotationAtRestoreRef.current = Number.NaN // A late remote read must not unwind the capture heading
       return
     }
-    if (rotationRestoredForRef.current === key) return // Already applied for this board
+    if (rotationRestoredForRef.current === key) {
+      const savedNow = storedBoardRotation(conversationId) // Heading for this board
+      if (savedNow == null || Math.abs(savedNow - boardRotationRef.current) < 0.05) return // Pan and heading already match
+      setRotationAroundViewCenter(savedNow) // One orbit so the frames stay in view while the heading catches up
+      return
+    }
+    if (rotationRestoredForRef.current != null) {
+      writeStoredBoardRotation(
+        rotationRestoredForRef.current || undefined, // '' is unsaved /board
+        boardRotationRef.current // Heading still on screen, before this board’s restore
+      )
+    }
     rotationRestoredForRef.current = key // Claim before setState so a switch can't write the previous heading
     const saved = storedBoardRotation(conversationId) // null = this board has no heading yet
     if (saved == null) {
@@ -5448,19 +5675,35 @@ function BoardFlowInner({
     if (Math.abs(saved - boardRotationRef.current) < 0.05) return // Already at that heading
     setRotationAroundViewCenter(saved) // Orbit the view center so the fitted board stays framed
   }, [embedded, conversationId, reactFlowInstance, fitViewOnInitDone, captureOwnsCamera, setRotationAroundViewCenter])
-  // Remember the heading after twists settle. Supabase waits until the remote read finishes so a stale local 0 can't overwrite another device.
+  // Remember the heading after twists settle. Flush on leave so a reload doesn’t drop the debounce.
   useEffect(() => {
     if (embedded) return // Host board is the one that remembers
     const key = conversationId ?? '' // Same key the restore effect uses
-    if (rotationRestoredForRef.current !== key) return // Don't write the previous board onto this one
-    if (captureOwnsCamera) return // Capture apply will land, then this effect runs again
-    const heading = boardRotation // Settled degrees
+    const flush = () => {
+      if (rotationRestoredForRef.current !== key) return // Don’t write the previous board onto this one
+      if (captureOwnsCamera) return // Capture apply will land, then this effect runs again
+      const heading = boardRotationRef.current // Live heading, not a stale render
+      const saved = storedBoardRotation(conversationId) // What reload will actually apply
+      if (saved != null && Math.abs(saved) > 0.05 && Math.abs(heading) < 0.05 && Math.abs(boardRotation) < 0.05) return // Mount-at-0° must not erase a heading already stored
+      writeStoredBoardRotation(conversationId, heading) // Keep prefs aligned with the camera
+    }
     const timer = window.setTimeout(() => {
-      writeStoredBoardRotation(conversationId, heading) // Instant on next reload, even mid-sync
+      flush() // Instant on next reload
       if (rotationSyncBoard !== key) return // Remote read still in flight
+      const heading = boardRotationRef.current // Same value flush just considered
+      const saved = storedBoardRotation(conversationId) // Local heading wins over an upright upload
+      if (saved != null && Math.abs(saved) > 0.05 && Math.abs(heading) < 0.05 && Math.abs(boardRotation) < 0.05) return // Don't upload 0° over a stored heading
       void persistBoardRotation(conversationId, heading) // Same heading on another device
     }, 300) // Twist updates every frame — write once it stops
-    return () => window.clearTimeout(timer) // Newer heading cancels the pending write
+    const onHide = () => {
+      window.clearTimeout(timer) // Don’t let the debounce outlive the page
+      flush() // Refresh reads this
+    }
+    window.addEventListener('pagehide', onHide) // Reload / tab discard
+    return () => {
+      window.clearTimeout(timer) // Newer heading cancels the pending write
+      window.removeEventListener('pagehide', onHide) // This mount only
+    }
   }, [embedded, conversationId, boardRotation, captureOwnsCamera, rotationSyncBoard])
   // Remote heading wins when this browser has none or an older local copy
   useEffect(() => {
@@ -5469,6 +5712,10 @@ function BoardFlowInner({
     let cancelled = false // Ignore a response after switching boards
     void readRemoteBoardRotation(conversationId).then((remote) => {
       if (cancelled) return // Board changed
+      if (storedBoardRotation(conversationId) != null) {
+        setRotationSyncBoard(key) // Local heading wins — a slow 0 from the server must not unwind it
+        return
+      }
       const untouched = rotationAtRestoreRef.current == null || Math.abs(boardRotationRef.current - rotationAtRestoreRef.current) < 0.05 // No twist since restore
       if (remote != null && untouched && Math.abs(remote - boardRotationRef.current) >= 0.05) {
         rotationAtRestoreRef.current = remote // This apply is not a user twist
@@ -7891,8 +8138,7 @@ function BoardFlowInner({
       : 0
     const fs = placeFrameScale(zoom) // Match I-bar screen size → persisted frameScale
     const cursorOffsetX = BLOCK_CREATE_OFFSET_X * fs // Pad is unscaled then CSS-scaled
-    // First-line Y; property strip sits above the text so spawn higher by PROPERTY_GROUP_H
-    const cursorOffsetY = BLOCK_CREATE_OFFSET_Y * fs + (opts?.propertyType ? PROPERTY_GROUP_H : 0)
+    const cursorOffsetY = BLOCK_CREATE_OFFSET_Y * fs // First-line Y — a property cell is in the frame, not above it
     const itemPosition = smartDrawn
       ? { x: flowX, y: flowY } // Stroke box is already the frame origin
       : { x: flowX - cursorOffsetX, y: flowY - cursorOffsetY }
@@ -7925,7 +8171,6 @@ function BoardFlowInner({
           ? frameShapeSpawnMeta(appliedShape, { width: drawnW, height: drawnH })
           : placeScaleMetadata(zoom)), // Zoom-compensated size so place matches across zoom
         ...(opts?.blockType ? { blockType: opts.blockType } : {}),
-        ...(opts?.propertyType ? { propertyType: opts.propertyType } : {}),
       }),
     }
 
@@ -8039,8 +8284,7 @@ function BoardFlowInner({
 
       if (action === 'turnInto' && payload?.propertyType && pos) {
         await createBlockAtFlowPosition(pos.x, pos.y, {
-          html: propertyBlockHtml(payload.propertyType, '', { inline: true }), // User Turn into → stay in body
-          propertyType: payload.propertyType, // New frame with property chrome at top
+          html: propertyBlockHtml(payload.propertyType, '', { inline: true }), // Empty property block in the new frame
         })
         return
       }
@@ -8991,84 +9235,27 @@ function BoardFlowInner({
     [conversationId, rightClickedNode, takeSnapshot, queryClient]
   )
 
-  // Turn into → Property: stamp propertyType on focused frame(s) (top icon only).
-  // First-time apply shifts the frame up so block text stays on its prior board Y (I-bar / line).
+  // Turn into → Property: empty block in the frame (same as dragging a property icon in).
   const handleTurnIntoProperty = useCallback(
-    async (propertyType: import('@/lib/blocks/property').PropertyTypeId) => {
+    (propertyType: import('@/lib/blocks/property').PropertyTypeId) => {
       const targets = frameActionTargets()
       if (targets.length === 0) return
-      takeSnapshot?.()
-      const ids = new Set(targets.map((n) => n.id))
-      const patchMeta = (meta: Record<string, unknown>, nextPos?: { x: number; y: number }) => {
-        const out: Record<string, unknown> = { ...meta, propertyType }
-        if (nextPos) out.position = nextPos // Keep placement in sync with RF node
-        return out
-      }
-      setNodes((nds) =>
-        nds.map((n) => {
-          if (!ids.has(n.id)) return n
-          const pm = n.data?.promptMessage
-          if (!pm) return n
-          const prevMeta = { ...((pm.metadata as Record<string, unknown>) || {}) }
-          const firstProperty = !prevMeta.propertyType // Strip is new → compensate Y
-          const nextPos = firstProperty
-            ? { x: n.position.x, y: n.position.y - PROPERTY_GROUP_H }
-            : n.position
-          return {
-            ...n,
-            position: nextPos,
-            data: {
-              ...n.data,
-              promptMessage: {
-                ...pm,
-                metadata: patchMeta(prevMeta, firstProperty ? nextPos : undefined),
-              },
-            },
-          }
+      takeSnapshot?.() // Undo restores the doc before this cell
+      const messageIds = targets
+        .map((n) => (typeof n.data?.promptMessage?.id === 'string' ? n.data.promptMessage.id : null))
+        .filter((id): id is string => !!id)
+      window.dispatchEvent(
+        new CustomEvent('tt-add-frame-property', {
+          detail: {
+            nodeIds: targets.map((n) => n.id), // Frames that own the editors
+            messageIds, // Cold HTML path when an editor is not mounted
+            propertyType, // Type chosen in the pane
+          },
         })
       )
-      setRightClickedNode((prev) => {
-        if (!prev || !ids.has(prev.id)) return prev
-        const pm = prev.data?.promptMessage
-        if (!pm) return prev
-        const prevMeta = { ...((pm.metadata as Record<string, unknown>) || {}) }
-        const firstProperty = !prevMeta.propertyType
-        const nextPos = firstProperty
-          ? { x: prev.position.x, y: prev.position.y - PROPERTY_GROUP_H }
-          : prev.position
-        return {
-          ...prev,
-          position: nextPos,
-          data: {
-            ...prev.data,
-            promptMessage: {
-              ...pm,
-              metadata: patchMeta(prevMeta, firstProperty ? nextPos : undefined),
-            },
-          },
-        }
-      })
-      const supabase = createClient()
-      for (const n of targets) {
-        const msgId = n.data?.promptMessage?.id as string | undefined
-        if (!msgId) continue
-        const live = nodes.find((x) => x.id === n.id) || n
-        const pm = live.data?.promptMessage
-        const prevMeta = { ...((pm?.metadata as Record<string, unknown>) || {}) }
-        const firstProperty = !prevMeta.propertyType
-        const nextPos = firstProperty
-          ? { x: live.position.x, y: live.position.y - PROPERTY_GROUP_H }
-          : undefined
-        const meta = patchMeta(prevMeta, nextPos)
-        try {
-          await supabase.from('messages').update({ metadata: meta }).eq('id', msgId)
-        } catch (err) {
-          console.error('Failed to save frame property type:', err)
-        }
-      }
-      setRightClickedNode(null)
+      setRightClickedNode(null) // Close the frame menu after the pick
     },
-    [frameActionTargets, nodes, setNodes, takeSnapshot]
+    [frameActionTargets, takeSnapshot]
   )
 
   // Pin selected frames to the board (not draggable)
@@ -9184,7 +9371,7 @@ function BoardFlowInner({
           break
         case 'turnInto':
           if (payload?.propertyType) {
-            void handleTurnIntoProperty(payload.propertyType) // Property pane → frame top chrome
+            void handleTurnIntoProperty(payload.propertyType) // Property pane → empty block in the frame
           } else if (payload?.blockType) {
             // Page/Page in on a multi-selection → snapshot to a new page; else single-frame promote
             const relevantSelected = nodes.filter(
@@ -9237,6 +9424,26 @@ function BoardFlowInner({
             void handleConvertLayout(payload.convertLayout)
           }
           break
+        case 'addProperty': {
+          // Frame owns the editor — broadcast so ChatPanelNode inserts the cell (live or cold HTML).
+          if (!payload?.propertyType || !rightClickedNode) break
+          takeSnapshot?.() // Undo restores the doc before this icon
+          const messageId =
+            typeof rightClickedNode.data?.promptMessage?.id === 'string'
+              ? (rightClickedNode.data.promptMessage.id as string)
+              : null
+          window.dispatchEvent(
+            new CustomEvent('tt-add-frame-property', {
+              detail: {
+                nodeIds: [rightClickedNode.id],
+                messageIds: messageId ? [messageId] : [],
+                propertyType: payload.propertyType,
+              },
+            })
+          )
+          setRightClickedNode(null) // Close the frame menu after the pick
+          break
+        }
         case 'setDbRows': {
           // Frame owns dbVisibleRowCap — broadcast and let ChatPanelNode persist (same as lock).
           if (payload?.dbRows == null || !rightClickedNode) break
@@ -9304,6 +9511,7 @@ function BoardFlowInner({
       rightClickedNode,
       addChildNode,
       queryClient,
+      takeSnapshot,
     ]
   )
 
@@ -9479,100 +9687,97 @@ function BoardFlowInner({
     setClickedEdge(edge)
   }, [isMobileMode, reactFlowInstance])
 
-  // Handle delete edge - delete from both React Flow state and database
-  const handleDeleteEdge = useCallback(async () => {
-    console.log('🗑️ handleDeleteEdge called', { clickedEdge, conversationId, nodesLength: nodes?.length })
+  // Drop threads from the board and the database. Claim the pair first so the loader cannot put it back.
+  const deleteThreadEdges = useCallback(async (targets: Edge[]) => {
+    const edgesToDelete = targets.filter((edge) => edge.type !== 'placeholder') // Placeholders are not saved threads
+    if (!conversationId || edgesToDelete.length === 0) return // Nothing durable to remove
 
-    if (!clickedEdge) {
-      console.warn('Cannot delete edge: no clicked edge')
-      return
+    const pending = pendingDeletedThreadKeysRef.current // Shared with the saved-thread loader
+    const claimed: string[] = [] // Keys this call added — release them if the delete fails
+    for (const edge of edgesToDelete) {
+      const sourceEp = threadEndpointFromNode(nodesRef.current.find((n) => n.id === edge.source)) // Durable source
+      const targetEp = threadEndpointFromNode(nodesRef.current.find((n) => n.id === edge.target)) // Durable target
+      if (!sourceEp || !targetEp) continue // Not a threadable pair — still drop the RF line below
+      for (const key of threadEndpointPairKeys(sourceEp, targetEp)) {
+        pending.add(key) // Block the loader in either stored direction
+        claimed.push(key) // So a failed delete can allow the row back
+      }
+      unpublishThread(edge) // Drop the collab copy so a remote apply cannot redraw it
+    }
+    queryClient.setQueryData<FetchedPanelEdge[]>(['panel-edges', conversationId], (old) =>
+      (old ?? []).filter((row) => !pending.has(savedEdgePairKey(row))) // Cache forgets the row before the next paint
+    )
+
+    const ids = new Set(edgesToDelete.map((edge) => edge.id)) // RF ids leaving the board
+    setEdges((eds) => eds.filter((edge) => !ids.has(edge.id))) // Optimistic — the line is gone on this click
+    setClickedEdge((current) => (current && ids.has(current.id) ? null : current)) // Close the menu if it was this thread
+
+    const releaseClaim = () => {
+      for (const key of claimed) pending.delete(key) // Let the loader see the row again
+    }
+    const restore = () => {
+      releaseClaim() // Failed delete is not pending anymore
+      setEdges((eds) => {
+        const present = new Set(eds.map((edge) => edge.id)) // Don't duplicate a line that is already back
+        return [...eds, ...edgesToDelete.filter((edge) => !present.has(edge.id))]
+      })
+      for (const edge of edgesToDelete) void publishThread(edge) // Put the collab copy back
+      void refetchEdges() // Cache matches the database again
     }
 
-    if (!conversationId) {
-      console.warn('Cannot delete edge: no conversation ID')
-      return
-    }
-
-    console.log('🗑️ Deleting edge:', clickedEdge.id, 'from', clickedEdge.source, 'to', clickedEdge.target)
-
-    // Store the edge to restore if deletion fails (store all needed data before setting clickedEdge to null)
-    const edgeToDelete = clickedEdge
-    const sourceNodeId = clickedEdge.source
-    const targetNodeId = clickedEdge.target
-
-    // Delete from React Flow state immediately (optimistic update)
-    setEdges((eds) => {
-      const filtered = eds.filter((e) => e.id !== clickedEdge.id)
-      console.log(`🗑️ Removed edge from React Flow state. Had ${eds.length} edges, now have ${filtered.length}`)
-      return filtered
-    })
-    setClickedEdge(null) // Close popup
-
-    // Delete from database (lightweight - just message IDs)
     try {
       const supabase = createClient()
-
-      // Find the source and target message IDs from the edge (use stored IDs since clickedEdge is now null)
-      const sourceNode = nodes.find(n => n.id === sourceNodeId)
-      const targetNode = nodes.find(n => n.id === targetNodeId)
-
-      if (!sourceNode) {
-        console.error('Cannot delete edge: source node not found', sourceNodeId, 'Available nodes:', nodes.map(n => n.id))
-        // Re-add edge to React Flow state
-        setEdges((eds) => [...eds, edgeToDelete])
-        return
-      }
-
-      if (!targetNode) {
-        console.error('Cannot delete edge: target node not found', targetNodeId, 'Available nodes:', nodes.map(n => n.id))
-        // Re-add edge to React Flow state
-        setEdges((eds) => [...eds, edgeToDelete])
-        return
-      }
-
-      // Resolve durable endpoints (frame message id or canvas node id)
-      const sourceEp = threadEndpointFromNode(sourceNode)
-      const targetEp = threadEndpointFromNode(targetNode)
-      if (!sourceEp || !targetEp) {
-        console.warn('Cannot delete edge: source or target is not a threadable node')
-        // Re-add edge to React Flow state
-        setEdges((eds) => [...eds, edgeToDelete])
-        return
-      }
-
-      console.log('🗑️ Deleting edge from database:', {
-        conversationId,
-        sourceEp,
-        targetEp,
-      })
-
-      const { error, data } = await supabase
-        .from('panel_edges')
-        .delete()
-        .eq('conversation_id', conversationId)
-        .or(panelEdgesMatchOrFilter(sourceEp, targetEp))
-        .select()
-
-      if (error) {
-        console.error('Error deleting edge from database:', error)
-        // Re-add edge to React Flow state if database deletion failed
-        setEdges((eds) => [...eds, edgeToDelete])
-        setClickedEdge(edgeToDelete) // Re-open popup
-      } else {
-        console.log('✅ Deleted edge from database', data)
-        if (sourceEp.kind === 'message' && targetEp.kind === 'message') {
-          void detachFramesOnDeletedEdge(sourceEp.id, targetEp.id)
+      for (const edge of edgesToDelete) {
+        const sourceNode = nodesRef.current.find((n) => n.id === edge.source) // Frame or drawing the thread leaves
+        const targetNode = nodesRef.current.find((n) => n.id === edge.target) // Frame or drawing the thread enters
+        const sourceEp = threadEndpointFromNode(sourceNode) // Message id or canvas node id
+        const targetEp = threadEndpointFromNode(targetNode) // Message id or canvas node id
+        if (!sourceEp || !targetEp) {
+          restore() // Can't name the row — put the line back
+          return
         }
-        // Refetch edges to update savedEdges and prevent edge loading useEffect from re-adding it
-        refetchEdges()
+        const { error } = await supabase
+          .from('panel_edges')
+          .delete()
+          .eq('conversation_id', conversationId)
+          .or(panelEdgesMatchOrFilter(sourceEp, targetEp))
+        if (error) {
+          console.error('Error deleting edge from database:', error)
+          restore() // Database still has the thread
+          return
+        }
+        if (sourceEp.kind === 'message' && targetEp.kind === 'message') {
+          void detachFramesOnDeletedEdge(sourceEp.id, targetEp.id) // Frames sitting on this stroke drop their anchor
+        }
       }
+      void refetchEdges() // Confirm the cache once the rows are gone
     } catch (error) {
       console.error('Error deleting edge:', error)
-      // Re-add edge to React Flow state if deletion failed
-      setEdges((eds) => [...eds, edgeToDelete])
-      setClickedEdge(edgeToDelete) // Re-open popup
+      restore() // Network or client failure — the thread stays
     }
-  }, [clickedEdge, conversationId, nodes, setEdges, refetchEdges, detachFramesOnDeletedEdge])
+  }, [conversationId, detachFramesOnDeletedEdge, publishThread, queryClient, refetchEdges, setEdges, unpublishThread])
+
+  // Menu Delete — one thread, the one the menu is open on
+  const handleDeleteEdge = useCallback(() => {
+    if (!clickedEdge) return // Menu closed
+    void deleteThreadEdges([clickedEdge]) // Same path as the Delete key
+  }, [clickedEdge, deleteThreadEdges])
+
+  const deleteThreadEdgesRef = useRef(deleteThreadEdges) // Key handler stays stable while the deleter updates
+  deleteThreadEdgesRef.current = deleteThreadEdges
+
+  // Delete key removes selected threads here. Forwarding the remove to RF first let the loader paint the line back.
+  const handleEdgesChange = useCallback((changes: EdgeChange[]) => {
+    const removedIds = new Set(
+      changes.filter((change) => change.type === 'remove').map((change) => change.id) // Threads the Delete key named
+    )
+    if (removedIds.size > 0) {
+      const removed = edgesRef.current.filter((edge) => removedIds.has(edge.id)) // Full edge, not just the id
+      if (removed.length > 0) void deleteThreadEdgesRef.current(removed) // Claim, drop cache, then delete the row
+    }
+    const rest = changes.filter((change) => change.type !== 'remove') // Selection and other updates still belong to RF
+    if (rest.length > 0) onEdgesChange(rest)
+  }, [onEdgesChange])
 
   // Handle toggle edge style (dotted/solid) for selected edge
   const handleToggleEdgeStyle = useCallback(() => {
@@ -9697,6 +9902,73 @@ function BoardFlowInner({
         case 'thickness4':
           patchClickedThreadData({ strokeWidth: 4 })
           return
+        case 'lock':
+        case 'unlock': {
+          const locking = action === 'lock' // Freeze the sides this thread is using right now
+          const sourceNode = nodes.find((n) => n.id === clickedEdge.source)
+          const targetNode = nodes.find((n) => n.id === clickedEdge.target)
+          let sourceHandle =
+            normalizeHandleId(clickedEdge.sourceHandle) ||
+            clickedEdge.sourceHandle ||
+            prev.sourceHandle
+          let targetHandle =
+            normalizeHandleId(clickedEdge.targetHandle) ||
+            clickedEdge.targetHandle ||
+            prev.targetHandle
+          if (
+            locking &&
+            sourceNode &&
+            targetNode &&
+            connectionOverlapsFrames(sourceNode, targetNode, sourceHandle, targetHandle)
+          ) {
+            const pair = closestClearConnection(sourceNode, targetNode) // Sides the stroke is actually using
+            if (pair) {
+              sourceHandle = pair.sourceHandle
+              targetHandle = pair.targetHandle
+            }
+          }
+          const nextData: ThreadEdgeData = {
+            ...prev,
+            algorithm: prev.algorithm ?? DEFAULT_THREAD_ALGORITHM,
+            points: prev.points ?? [],
+            locked: locking, // Unlock lets the sides follow closeness again
+            floatHandles: !locking, // Locked matches a simulated connection point: sides stay
+            sourceHandle: sourceHandle || undefined,
+            targetHandle: targetHandle || undefined,
+          }
+          takeSnapshot() // One undo step for lock / unlock
+          setEdges((eds) =>
+            eds.map((e) => {
+              if (e.id !== clickedEdge.id) return e
+              const next: Edge = {
+                ...e,
+                sourceHandle: sourceHandle || e.sourceHandle, // Keep the sides visible at lock
+                targetHandle: targetHandle || e.targetHandle,
+                updatable: locking ? false : undefined, // Can't drag a locked end onto another point
+                type: 'editable',
+                data: nextData,
+              }
+              return next
+            })
+          )
+          setClickedEdge(null) // Close; the next click shows Unlock or Lock
+          if (!conversationId) return
+          const sourceEp = threadEndpointFromNode(nodes.find((n) => n.id === clickedEdge.source))
+          const targetEp = threadEndpointFromNode(nodes.find((n) => n.id === clickedEdge.target))
+          if (!sourceEp || !targetEp) return
+          void (async () => {
+            const supabase = createClient()
+            const { error } = await supabase
+              .from('panel_edges')
+              .update({ metadata: nextData })
+              .eq('conversation_id', conversationId)
+              .or(panelEdgesMatchOrFilter(sourceEp, targetEp))
+            if (error && !String(error.message || '').includes('metadata')) {
+              console.error('Failed to persist thread lock:', error)
+            }
+          })()
+          return
+        }
         default:
           // Stubs (copy / duplicate / lock / template / info…) — close for now
           setClickedEdge(null)
@@ -9709,6 +9981,10 @@ function BoardFlowInner({
       handleToggleEdgeStyle,
       patchClickedThreadData,
       isLocked,
+      takeSnapshot,
+      setEdges,
+      conversationId,
+      nodes,
     ]
   )
 
@@ -9750,6 +10026,9 @@ function BoardFlowInner({
           algorithm:
             (oldEdge.data as ThreadEdgeData | undefined)?.algorithm ?? DEFAULT_THREAD_ALGORITHM,
           points: [], // Reset bends after reattach
+          floatHandles: false, // Reconnect landed on a simulated connection point
+          sourceHandle: normalizeHandleId(newConnection.sourceHandle) || newConnection.sourceHandle || undefined,
+          targetHandle: normalizeHandleId(newConnection.targetHandle) || newConnection.targetHandle || undefined,
         } satisfies ThreadEdgeData,
       }
 
@@ -10588,7 +10867,7 @@ function BoardFlowInner({
         nodes={nodes}
         edges={edges}
         onNodesChange={handleNodesChange}
-        onEdgesChange={onEdgesChange}
+        onEdgesChange={handleEdgesChange}
         // Fill the (positioned) BoardFlow root via absolute insets — percentage height:100%
         // was resolving short, so the pane/dotted <Background> only covered the top of the map
         // (nodes/chrome still painted lower). inset:0 gives a definite full-height box.
@@ -10765,14 +11044,14 @@ function BoardFlowInner({
             // Take snapshot before creating edge for undo support
             takeSnapshot()
             
-            // Keep the sides the user snapped to; only fall back to closest if a side is missing
+            // A simulated connection point stays pinned; only a missing side falls back to the closest clear pair
             const sourceHandle =
               normalizeHandleId(params.sourceHandle) || params.sourceHandle || null
             const targetHandle =
               normalizeHandleId(params.targetHandle) || params.targetHandle || null
             const fallback =
               !sourceHandle || !targetHandle
-                ? findClosestHandles(sourceNode!, targetNode!)
+                ? closestClearConnection(sourceNode!, targetNode!) ?? findClosestHandles(sourceNode!, targetNode!)
                 : null
             if (!sourceHandle && !fallback?.sourceHandle) {
               console.warn('🔄 BoardFlow: Could not resolve source handle for edge creation')
@@ -10799,6 +11078,9 @@ function BoardFlowInner({
                 ),
                 points: [],
                 dotted: lineStyle === 'dotted',
+                floatHandles: false, // Snapped to a simulated connection point — those sides stay
+                sourceHandle: sourceHandle || fallback?.sourceHandle || undefined,
+                targetHandle: targetHandle || fallback?.targetHandle || undefined,
                 ...(typeof window !== 'undefined'
                   ? (() => {
                       const c = localStorage.getItem(THREAD_STROKE_COLOR_KEY) // Style-bar board default
@@ -11171,7 +11453,8 @@ function BoardFlowInner({
           !embedded && panOnDragSetting === true && 'tt-map-pan-tool', // Grab cursor whenever plain left-drag pans
           !embedded && lassoArmed && panOnDragSetting !== true && 'tt-map-lasso-tool', // Crosshair while the lasso owns left-drag
           insertSpaceArmed && (insertSpaceAxis === 'vertical' ? 'tt-map-insert-space-v' : 'tt-map-insert-space-h'), // Row/col-resize cursor while a gap can be dragged
-          boardLoadPhase === 'reveal' && 'tt-board-load-reveal' // Crossfade placeholder shells with real contents
+          boardLoadPhase === 'reveal' && 'tt-board-load-reveal', // Crossfade placeholder shells with real contents
+          Math.abs(boardRotation) > 0.01 && 'tt-board-rotated' // React owns this class — a DOM toggle is wiped on the next render, so the saved heading never rotates the frames
         )}
         onInit={(instance) => {
           if (restoredViewport && !embedded) {
@@ -12249,6 +12532,7 @@ function BoardFlowInner({
             (clickedEdge.data as ThreadEdgeData | undefined)?.strokeWidth ??
             THREAD_DEFAULT_STROKE_WIDTH
           }
+          locked={(clickedEdge.data as ThreadEdgeData | undefined)?.locked === true}
           onAction={handleThreadMenuAction}
           onClose={() => {
             setClickedEdge(null)
@@ -12418,7 +12702,7 @@ export function BoardFlow({
   return (
     <BoardEmbedProvider embedded={embedded}>
       <ReactFlowProvider>
-        <BoardRotationProvider>
+        <BoardRotationProvider boardId={conversationId} persist={!embedded}>
           <Suspense fallback={<div className="h-full w-full flex items-center justify-center">Loading...</div>}>
             <BoardFlowWithSearchParams
               conversationId={conversationId}

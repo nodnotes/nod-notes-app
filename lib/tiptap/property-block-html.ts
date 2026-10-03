@@ -37,6 +37,16 @@ export function htmlHasPropertyBlocks(html: string): boolean {
   return !!html && /data-type=["']propertyBlock["']/.test(html) // Any cell present
 }
 
+/**
+ * Append an empty in-frame property block.
+ * Cold frames have no editor, so the frame menu writes the same HTML the live insert would.
+ */
+export function htmlAppendHeaderProperty(html: string, type: PropertyTypeId): string {
+  const snippet = propertyBlockHtml(type, '', { inline: true }) // Empty block inside the frame
+  const base = html && html.trim() ? html : '<p></p>' // Keep a body when the frame is blank
+  return base + snippet // After existing blocks — same as a dragged-in empty cell
+}
+
 /** Parse one propertyBlock opening tag for top-strip / inline harvest. */
 export function parsePropertyBlockTag(tag: string): {
   type: PropertyTypeId | null

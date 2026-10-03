@@ -272,6 +272,7 @@ export type BlockActionId =
   | 'resendPrompt' // Chat prompt frame — truncate later turns and send again
   | 'regenerateResponse' // Chat response frame — re-run from the preceding prompt
   | 'addToSet' // Opens the sets picker (not the utility sidebar)
+  | 'addProperty' // Frame menu → insert a property (top icon, or inline in chat)
 
 export type FrameAlignX = 'left' | 'center' | 'right' // Frame content horizontal
 export type FrameAlignY = 'top' | 'center' | 'bottom' // Frame content vertical (free extra height)
@@ -440,7 +441,7 @@ type RowDef =
       icon: React.ReactNode
       danger?: boolean
       disabled?: boolean // Grey out + skip onAction (e.g. Revert with no edits)
-      submenu?: 'turnInto' | 'color' | 'listFormat' | 'skills' | 'boardIn' | 'frameShape' | 'frameAlign' | 'frameColor' | 'connections' | 'convertLayout' | 'dbRows' | 'sets'
+      submenu?: 'turnInto' | 'color' | 'listFormat' | 'skills' | 'boardIn' | 'frameShape' | 'frameAlign' | 'frameColor' | 'connections' | 'convertLayout' | 'dbRows' | 'sets' | 'addProperty'
       hidden?: boolean
     }
   | { kind: 'separator'; hidden?: boolean }
@@ -620,6 +621,7 @@ export function BlockActionsMenu({
     | 'convertLayout'
     | 'dbRows'
     | 'sets'
+    | 'addProperty'
     | null
   >(null) // Flyout
   const inputRef = useRef<HTMLInputElement>(null) // Autofocus search
@@ -672,7 +674,7 @@ export function BlockActionsMenu({
 
   // Reset to Format when the Turn into flyout closes so reopen starts compact
   useEffect(() => {
-    if (openSubmenu !== 'turnInto' && openSubmenu !== 'boardIn') {
+    if (openSubmenu !== 'turnInto' && openSubmenu !== 'boardIn' && openSubmenu !== 'addProperty') {
       setTurnIntoPane('format')
       setShowPropertySearch(false)
       setPropertyQuery('')
@@ -687,6 +689,12 @@ export function BlockActionsMenu({
   useEffect(() => {
     if (showPropertySearch) propertySearchRef.current?.focus() // Caret in Property search
   }, [showPropertySearch])
+
+  useEffect(() => {
+    if (openSubmenu !== 'addProperty') return // Only the Add property flyout
+    if (typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches) return // Don't pop the phone keyboard
+    propertySearchRef.current?.focus() // Desktop: filter the type grid immediately
+  }, [openSubmenu])
 
   // Park the card + any open flyout in the chrome-free window (below top bar, above chat)
   useLayoutEffect(() => {
@@ -768,6 +776,14 @@ export function BlockActionsMenu({
         label: 'Color',
         icon: <PaintRoller className="h-4 w-4" />,
         submenu: showFrameShape ? 'frameColor' : 'color', // Frame → fill/border palette; block → stub
+      },
+      {
+        kind: 'action',
+        id: 'addProperty',
+        label: 'Add property',
+        icon: <Plus className="h-4 w-4" />,
+        submenu: 'addProperty', // Type grid — inserts a top-strip icon (board) or inline cell (chat)
+        hidden: !showFrameShape || !!dbRowSetter, // Frame menu only; DB tables already have named columns
       },
       {
         kind: 'action',
@@ -914,6 +930,8 @@ export function BlockActionsMenu({
           (r.id === 'turnInto' &&
             (TURN_INTO_OPTIONS.some((t) => t.label.toLowerCase().includes(q)) ||
               PROPERTY_TURN_INTO_OPTIONS.some((t) => t.label.toLowerCase().includes(q)))) ||
+          (r.id === 'addProperty' &&
+            PROPERTY_TURN_INTO_OPTIONS.some((t) => t.label.toLowerCase().includes(q))) ||
           (r.id === 'setFrameShape' &&
             ['default', 'shape', ...FRAME_SHAPE_TYPES].some((s) =>
               frameShapeLabel(s === 'default' ? FRAME_SHAPE_NONE : (s as FrameShapeChoice))
@@ -936,6 +954,13 @@ export function BlockActionsMenu({
     if (!q || showFrameShape) return []
     return PROPERTY_TURN_INTO_OPTIONS.filter((t) => t.label.toLowerCase().includes(q))
   }, [query, showFrameShape])
+
+  // Frame menu search: "date" → Add property · Date (the row stays; these are one-click picks)
+  const framePropertyMatches = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q || !showFrameShape || dbRowSetter) return [] // Same hide as the Add property row
+    return PROPERTY_TURN_INTO_OPTIONS.filter((t) => t.label.toLowerCase().includes(q))
+  }, [query, showFrameShape, dbRowSetter])
 
   const filteredTurnInto = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -1133,7 +1158,7 @@ export function BlockActionsMenu({
       </div>
 
       <div data-tt-menu-body className="flex min-h-0 flex-col gap-0.5 overflow-y-auto px-0.5 pb-0.5">
-        {rows.length === 0 && turnIntoMatches.length === 0 && propertyMatches.length === 0 && (
+        {rows.length === 0 && turnIntoMatches.length === 0 && propertyMatches.length === 0 && framePropertyMatches.length === 0 && (
           <div className="px-2 py-2 text-xs text-gray-400">No matching actions</div>
         )}
 
@@ -1155,6 +1180,7 @@ export function BlockActionsMenu({
           const isConvertLayoutOpen =
             row.submenu === 'convertLayout' && openSubmenu === 'convertLayout'
           const isSetsOpen = row.submenu === 'sets' && openSubmenu === 'sets'
+          const isAddPropertyOpen = row.submenu === 'addProperty' && openSubmenu === 'addProperty'
           return (
             <Button
               key={row.id}
@@ -1175,6 +1201,7 @@ export function BlockActionsMenu({
                 else if (row.submenu === 'convertLayout') setOpenSubmenu('convertLayout')
                 else if (row.submenu === 'dbRows') setOpenSubmenu('dbRows')
                 else if (row.submenu === 'sets') setOpenSubmenu('sets') // Add to set picker
+                else if (row.submenu === 'addProperty') setOpenSubmenu('addProperty') // Property type grid
                 else if (row.submenu === 'connections') return // Click-only picker
                 else setOpenSubmenu(null)
               }}
@@ -1185,6 +1212,12 @@ export function BlockActionsMenu({
                   e.preventDefault()
                   e.stopPropagation()
                   setOpenSubmenu('sets') // Click opens the picker even if the later click is swallowed
+                  return
+                }
+                if (row.submenu === 'addProperty') {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setOpenSubmenu('addProperty') // Click opens the type grid (hover may already have it open)
                   return
                 }
                 if (row.submenu) return // Submenus toggle on click / hover
@@ -1229,6 +1262,10 @@ export function BlockActionsMenu({
                   setOpenSubmenu('sets') // Click keeps the picker open (hover already opened it)
                   return
                 }
+                if (row.submenu === 'addProperty') {
+                  setOpenSubmenu('addProperty') // Click keeps the type grid open
+                  return
+                }
                 // Submenus without UI yet — fire stub action and close
                 if (row.submenu) {
                   onAction(row.id)
@@ -1247,7 +1284,8 @@ export function BlockActionsMenu({
                   isFrameColorOpen ||
                   isConnectionsOpen ||
                   isConvertLayoutOpen ||
-                  isSetsOpen) &&
+                  isSetsOpen ||
+                  isAddPropertyOpen) &&
                   'bg-gray-100 dark:bg-[#2a2a2a]'
               )}
             >
@@ -1297,6 +1335,25 @@ export function BlockActionsMenu({
           >
             <span className="mr-2 text-gray-500 dark:text-gray-400">{t.icon}</span>
             <span className="flex-1 text-left">Turn into · {t.label}</span>
+          </Button>
+        ))}
+
+        {/* Frame menu search: pick a type without opening the flyout */}
+        {framePropertyMatches.map((t) => (
+          <Button
+            key={`search-add-prop-${t.id}`}
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onAction('addProperty', { propertyType: t.id }) // Insert that property on this frame
+              onClose()
+            }}
+            className="justify-start text-sm h-8 px-2 font-normal"
+          >
+            <span className="mr-2 text-gray-500 dark:text-gray-400">{t.icon}</span>
+            <span className="flex-1 text-left">Add property · {t.label}</span>
           </Button>
         ))}
       </div>
@@ -1540,6 +1597,57 @@ export function BlockActionsMenu({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Add property — same type grid as Turn into → Property, without Format */}
+      {openSubmenu === 'addProperty' && (
+        <div
+          data-tt-menu-flyout="main"
+          className="absolute z-[1001] w-[320px] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f]"
+          onMouseEnter={() => setOpenSubmenu('addProperty')} // Keep the grid open while the pointer is on it
+        >
+          <div className="border-b border-gray-100 px-2.5 py-1.5 dark:border-[#2f2f2f]">
+            <input
+              ref={propertySearchRef}
+              value={propertyQuery}
+              onChange={(e) => setPropertyQuery(e.target.value)} // Filter the type grid
+              onMouseDown={(e) => e.stopPropagation()} // Menu root preventDefault must not steal this caret
+              placeholder="Type property name..."
+              className="h-7 w-full rounded-md border border-gray-200 bg-gray-50 px-2 text-xs outline-none dark:border-[#3a3a3a] dark:bg-[#2a2a2a] dark:text-gray-100"
+            />
+          </div>
+          <div data-tt-menu-scroll className="max-h-[min(70vh,420px)] overflow-y-auto p-1.5">
+            {filteredPropertySections.map((section, i) => (
+              <div key={section.id}>
+                {i > 0 && <div className="my-1.5 h-px bg-gray-100 dark:bg-[#2f2f2f]" />}
+                <div className="grid grid-cols-2 gap-0.5">
+                  {section.items.map((t) => (
+                    <Button
+                      key={t.id}
+                      variant="ghost"
+                      size="sm"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        onAction('addProperty', { propertyType: t.id }) // Board: top icon; chat: inline cell
+                        onClose()
+                      }}
+                      className="justify-start text-sm h-8 px-1.5 font-normal w-full"
+                    >
+                      <span className="mr-1.5 flex h-4 w-4 shrink-0 items-center justify-center text-gray-500 dark:text-gray-400">
+                        {t.icon}
+                      </span>
+                      <span className="min-w-0 truncate text-left">{t.label}</span>
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {filteredPropertySections.length === 0 && (
+              <div className="px-2 py-2 text-xs text-gray-400">No matching properties</div>
+            )}
+          </div>
         </div>
       )}
 

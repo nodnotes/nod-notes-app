@@ -117,7 +117,7 @@ function stampConnectionIndicators(panel: HTMLElement, ui: number): void {
     // translate centers on the edge; scale(ui) keeps the disc screen-constant
     if (side === 'left') {
       dot.style.setProperty('left', `${-out}px`, 'important')
-      // Mid of the fill — not the taller adjust box when T/B bands are reserved
+      // Mid of the fill — 50% of the panel is the adjust box and sat the dot off the text
       dot.style.setProperty('top', 'calc(var(--tt-adjust-pad-y-top, 0px) + (100% - var(--tt-adjust-pad-y-top, 0px) - var(--tt-adjust-pad-y-bottom, 0px)) / 2)', 'important')
       dot.style.setProperty('transform', `translate(-50%, -50%) scale(${ui})`, 'important')
     } else if (side === 'right') {
@@ -204,7 +204,7 @@ function stampChromeElements(node: HTMLElement, ui: number, zoom: number): void 
     const chrome = el as HTMLElement
     chrome.style.setProperty('transform', `scale(${ui})`, 'important')
     chrome.style.setProperty('transform-origin', 'top left', 'important')
-    chrome.style.setProperty('margin-left', `${-8 * ui}px`, 'important')
+    chrome.style.setProperty('margin-left', `${-10 * ui}px`, 'important') // Rotate glyph left = visible left edge of the corner dot
     // 2× outset: equal gap box→point and point→rotate/fit/wrap
     chrome.style.setProperty('margin-top', `${28 * ui}px`, 'important')
   })

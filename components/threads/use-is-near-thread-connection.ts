@@ -7,6 +7,7 @@ import {
   adjustGapYFlow, // Blue↔fill air on T/B
   CONNECTIONS_GROUP_H, // Property / connections strip
   DB_ROWS_REVEAL_FOOTER_H, // Notion DB footer inside the bottom band
+  selectedAdjustChromeY, // One-row balance so a lone strip does not shove the fill
 } from '@/lib/frame-adjust-box'
 import { FRAME_SCREEN_CHROME_BOOST } from './constants' // Screen-constant chrome boost
 import { INDICATOR_OUTSET, normalizeHandleId } from './handle-ids' // Dot outset; `right-indicator` → `right`
@@ -59,13 +60,16 @@ function frameChromeInsets(
   const band = Math.round(CONNECTIONS_GROUP_H * fs) // Full strip height
   const isDb = /data-type=["']databaseBlock["']/i.test(content) // Notion table frame
   const footer = isDb ? Math.round(DB_ROWS_REVEAL_FOOTER_H * fs) : 0 // `+# rows` under the table
-  const hasProp =
-    (typeof meta.propertyType === 'string' && meta.propertyType.length > 0) ||
-    /data-type=["']property/i.test(content) // Top property band
-  const yTop = hasProp ? band : isDb ? Math.max(gapY, band) : gapY // Top adjust band
-  const conn = meta.notionConnected === true ? band : 0 // Bottom connections strip
-  const yBottom = conn + footer > 0 ? conn + footer : gapY // Bottom adjust band
-  return { x, yTop, yBottom }
+  const conn = meta.notionConnected === true ? band : 0 // Bottom connections strip (one row — wrap is live in the panel)
+  const pads = selectedAdjustChromeY({
+    gapY, // Air when both strips are absent
+    rowH: band, // One row
+    propH: 0, // Properties are blocks in the frame — top gap only mirrors a connection below
+    connH: conn, // No connections row → nothing reserved on the bottom
+    footerH: footer, // DB footer stays on the bottom
+    dbTopBand: isDb, // DB top band when there are no property icons
+  })
+  return { x, yTop: pads.yTop, yBottom: pads.yBottom }
 }
 
 type InternalsNode = {

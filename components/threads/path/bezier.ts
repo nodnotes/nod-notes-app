@@ -64,6 +64,10 @@ export type SmoothThreadBezierArgs = {
 export type SmoothThreadBezier = {
   path: string // SVG `d` for BaseEdge / connection line
   mid: XYPosition // t=0.5 on the cubic — hollow knob sits on the stroke
+  p0?: XYPosition // Cubic start, set on the smooth cubic so avoidance can sample it
+  c1?: XYPosition // Leave control
+  c2?: XYPosition // Arrive control
+  p3?: XYPosition // Stroke end (back of the arrow)
 };
 
 /** Flow length of the arrow for a stroke `strokeUser` units thick (about 2× the stroke). */
@@ -136,6 +140,10 @@ function pathIntoArrowBack(args: {
   return {
     path: `M${sourceX},${sourceY} C${c1x},${c1y} ${c2x},${c2y} ${endX},${endY}`, // Single smooth cubic, no straight neck
     mid: cubicAt(p0, c1, c2, p3, 0.5), // Knob on the arch
+    p0, // Exposed so avoidance can sample the same cubic the stroke paints
+    c1,
+    c2,
+    p3,
   };
 }
 
@@ -156,6 +164,20 @@ export function getSmoothThreadBezier(args: SmoothThreadBezierArgs): SmoothThrea
     dirY: dir.y,
     head, // Stroke ends on the back; marker covers the rest
   });
+}
+
+/**
+ * Points along the unbent Smooth cubic, including both stroke ends.
+ * Avoidance samples these so a bow that leaves the straight chord still counts as a conflict.
+ */
+export function sampleSmoothThreadBezier(args: SmoothThreadBezierArgs, steps = 12): XYPosition[] {
+  const curve = getSmoothThreadBezier(args); // Same cubic the stroke uses
+  const { p0, c1, c2, p3 } = curve; // Controls from that cubic
+  if (!p0 || !c1 || !c2 || !p3) return [curve.mid]; // Linear / sharp callers never hit this
+  const n = Math.max(1, steps); // At least one step so the loop has a point
+  const pts: XYPosition[] = []; // Samples from the connection point to the back of the arrow
+  for (let i = 0; i <= n; i++) pts.push(cubicAt(p0, c1, c2, p3, i / n)); // Even steps along the cubic
+  return pts;
 }
 
 /** Center of a board free-end node — the arrow tip sits here, not on a side handle. */

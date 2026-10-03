@@ -10,7 +10,6 @@ import {
   ArrowRightToLine, // Insert right
   ArrowUpDown, // Sort
   Copy, // Duplicate
-  Eye, // Display as
   EyeOff, // Hide
   LayoutGrid, // Group
   ListFilter, // Filter
@@ -90,14 +89,14 @@ type MenuRow = ActionRow | { kind: 'separator' } // Hairline between bands
 
 /**
  * Property menu — frame-menu chrome (Search + context label + ghost rows).
- * Edit property changes name/type; Display as toggles strip vs in-frame.
+ * Edit property changes name/type. Properties always render as blocks in the frame.
  */
 export function PropertyMenu({
   open,
   anchor,
   type,
   name,
-  inline,
+  inline: _inline, // Callers still pass it; display no longer toggles a top strip
   onAction,
   onClose,
 }: {
@@ -105,7 +104,7 @@ export function PropertyMenu({
   anchor: PropertyMenuAnchor | null // Icon screen box
   type: PropertyTypeId // Current property type
   name: string // Notion column name (may be empty)
-  inline: boolean // true = in-frame cell; false + empty = top-strip icon
+  inline: boolean // Unused — properties always stay in the frame
   onAction: (action: PropertyMenuAction, payload?: { type?: PropertyTypeId; name?: string }) => void
   onClose: () => void // Click-away / Escape / after a mutating action
 }) {
@@ -117,8 +116,6 @@ export function PropertyMenu({
   const [hideForBoardNav, setHideForBoardNav] = useState(false) // Same hide as the frame menu
   const [nameDraft, setNameDraft] = useState(name) // Local rename until blur / type pick
   const title = name.trim() || propertyTypeLabel(type) // Context label under Search
-  const displayAs = inline ? 'In frame' : 'Icon' // Current Display as caption
-
   useEffect(() => {
     setNameDraft(name) // Re-seed when the host opens a different icon
     setQuery('') // Fresh search each open
@@ -201,14 +198,13 @@ export function PropertyMenu({
       { kind: 'action', id: 'freeze', label: 'Freeze', icon: <Pin className={icon} />, stub: true },
       { kind: 'action', id: 'hide', label: 'Hide', icon: <EyeOff className={icon} />, stub: true },
       { kind: 'action', id: 'unwrap', label: 'Unwrap content', icon: <ArrowRightFromLine className={icon} />, stub: true },
-      { kind: 'action', id: 'display', label: 'Display as', icon: <Eye className={icon} />, flyout: 'display', trailing: displayAs },
       { kind: 'separator' },
       { kind: 'action', id: 'insertLeft', label: 'Insert left', icon: <ArrowLeftToLine className={icon} /> },
       { kind: 'action', id: 'insertRight', label: 'Insert right', icon: <ArrowRightToLine className={icon} /> },
       { kind: 'action', id: 'duplicate', label: 'Duplicate property', icon: <Copy className={icon} /> },
       { kind: 'action', id: 'delete', label: 'Delete property', icon: <Trash2 className={icon} />, danger: true },
     ],
-    [displayAs]
+    []
   )
 
   const q = query.trim().toLowerCase() // Empty = show every row
@@ -367,39 +363,6 @@ export function PropertyMenu({
               </Button>
             ))}
           </div>
-        </div>
-      )}
-
-      {flyout === 'display' && (
-        <div
-          data-tt-menu-flyout="main"
-          data-tt-property-menu
-          className="absolute z-[1001] min-w-[160px] rounded-lg border border-gray-200 p-1 shadow-lg tt-menu-surface dark:border-[#2f2f2f]"
-        >
-          {(
-            [
-              { id: 'displayIcon' as const, label: 'Icon' },
-              { id: 'displayInline' as const, label: 'In frame' },
-            ] as const
-          ).map((opt) => (
-            <Button
-              key={opt.id}
-              variant="ghost"
-              size="sm"
-              onClick={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                onAction(opt.id)
-                onClose()
-              }}
-              className={cn(
-                'h-8 w-full justify-start px-2 text-sm font-normal',
-                (opt.id === 'displayInline') === inline && 'tt-selected'
-              )}
-            >
-              <span className="flex-1 text-left">{opt.label}</span>
-            </Button>
-          ))}
         </div>
       )}
 

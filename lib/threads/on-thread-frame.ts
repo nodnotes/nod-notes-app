@@ -185,7 +185,7 @@ export function projectFrameOntoThreadPath(
   if (!anchor) return null
   const edge = findEdgeForOnThread(edges, nodes, anchor)
   if (!edge) return null
-  const geom = geometryForEdge(edge, nodes)
+  const geom = geometryForEdge(edge, nodes, edges)
   if (!geom) return null
   const size = onThreadFrameVisualSize(node)
   const cx = proposedTopLeft.x + size.width / 2

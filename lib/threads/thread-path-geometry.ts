@@ -4,7 +4,25 @@ import type { Edge, Node, XYPosition, Position } from 'reactflow'
 import type { ControlPointData } from '@/components/threads/ControlPoint'
 import type { ThreadEdgeData } from '@/components/threads/EditableThread'
 import { getPath, getControlPoints } from '@/components/threads/path'
-import { getBoardTipBezier, getSmoothThreadBezier, threadTipCenter } from '@/components/threads/path/bezier'
+import {
+  boardTipArrivalSide,
+  getBoardTipBezier,
+  getSmoothThreadBezier,
+  threadTipCenter,
+} from '@/components/threads/path/bezier'
+import {
+  frameMessageId,
+  frameObstaclesFromNodes,
+  routeThreadAroundFrames,
+  smoothSpreadClear,
+  type FrameObstacle,
+} from '@/lib/threads/avoid-frames' // Unbent threads route around frames they are not attached to
+import {
+  NO_SPREAD,
+  threadCorridorsFrom,
+  threadSpread,
+  type ThreadCorridor,
+} from '@/lib/threads/separate-threads' // Same lanes the painted stroke uses
 import {
   DEFAULT_THREAD_ALGORITHM,
   ThreadAlgorithm,
@@ -38,6 +56,9 @@ type BuildArgs = {
   sourceHandleId?: string | null
   targetHandleId?: string | null
   arrowHead?: number // Flow px the smooth stroke stops short of the arrow tip
+  obstacles?: FrameObstacle[] // Other frames on the board; unbent threads try to route around them
+  corridors?: ThreadCorridor[] // Other unbent threads; smooth strokes take a free lane
+  pathOverride?: string | null // Stroke already chosen by the caller (keeps gaps on the same path)
 }
 
 /** Same routing as EditableThread — shared for placement + gap rendering. */
@@ -61,6 +82,39 @@ export function buildThreadPathGeometry(args: BuildArgs): ThreadPathGeometry {
   const toSide = targetSide ?? args.targetPosition
   const sides = { fromSide, toSide }
   const routePoints = [sourceOrigin, ...points, targetOrigin]
+  const freeEnd = args.targetNode?.type === 'threadTip' && points.length === 0 // Dropped on the board, not on a frame
+  const visualTarget: XYPosition = freeEnd ? threadTipCenter(args.targetNode!) : targetOrigin // Tip center, else the frame side
+  const arrivalSide = freeEnd
+    ? boardTipArrivalSide(visualTarget.x - sourceOrigin.x, visualTarget.y - sourceOrigin.y) // Arrow points away from the source
+    : toSide
+  const spread = points.length === 0 ? threadSpread(args.edge.id, args.corridors ?? []) : NO_SPREAD // Lane shared with the paint
+  // Unbent only. A manual bend is the user's route and stays put.
+  const detour =
+    points.length === 0 && !args.pathOverride
+      ? routeThreadAroundFrames({
+          source: sourceOrigin, // Leave this connection point
+          target: visualTarget, // Arrive here
+          fromSide, // Out along the source side
+          toSide: arrivalSide, // Into the target side, or away from a free end
+          sourceId: args.sourceNode?.id ?? args.edge.source, // Don't treat the source frame as an obstacle
+          targetId: args.targetNode?.id ?? args.edge.target, // Don't treat the target frame as an obstacle
+          sourceMessageId: frameMessageId(args.sourceNode), // Keep this thread's on-thread frames on the stroke
+          targetMessageId: frameMessageId(args.targetNode),
+          obstacles: args.obstacles ?? [], // Empty → direct stroke
+          head: args.arrowHead, // Stroke ends where the arrow begins
+          shape:
+            algorithm === ThreadAlgorithm.Orthogonal
+              ? 'sharp'
+              : algorithm === ThreadAlgorithm.Linear
+                ? 'linear' // Straight line — do not route around other frames
+                : 'smooth',
+          sampleSmooth:
+            algorithm === ThreadAlgorithm.BezierCatmullRom || algorithm === ThreadAlgorithm.CatmullRom,
+          fan: spread.rank * spread.sep, // Same extra lane the painted detour uses
+        })
+      : null
+  if (args.pathOverride) return geometryFromPathD(args.pathOverride, sourceOrigin, visualTarget) // Caller already routed
+  if (detour) return geometryFromPathD(detour.path, sourceOrigin, visualTarget) // Around the frames in the way
   const unbentSmooth =
     points.length === 0 &&
     (algorithm === ThreadAlgorithm.BezierCatmullRom ||
@@ -68,34 +122,46 @@ export function buildThreadPathGeometry(args: BuildArgs): ThreadPathGeometry {
   // Board free end: connection point is the center; stroke and arrow point away from it.
   if (args.targetNode?.type === 'threadTip' && points.length === 0) {
     const tip = threadTipCenter(args.targetNode) // Arrow tip, not the left-side handle
-    const pathD = getBoardTipBezier({
-      sourceX: sourceOrigin.x, // Frame connection point
-      sourceY: sourceOrigin.y,
-      sourcePosition: fromSide, // Side the thread left
-      targetX: tip.x, // Free end
-      targetY: tip.y,
-      algorithm, // Honor Smooth / Sharp / Linear
-      head: args.arrowHead, // Stroke ends on the back of the arrow
-    }).path
+    const pathD = smoothSpreadClear(
+      getBoardTipBezier({
+        sourceX: sourceOrigin.x, // Frame connection point
+        sourceY: sourceOrigin.y,
+        sourcePosition: fromSide, // Side the thread left
+        targetX: tip.x, // Free end
+        targetY: tip.y,
+        algorithm, // Honor Smooth / Sharp / Linear
+        head: args.arrowHead, // Stroke ends on the back of the arrow
+      }),
+      spread, // Neighboring lane
+      args.obstacles ?? [],
+      args.sourceNode?.id ?? args.edge.source,
+      args.targetNode?.id ?? args.edge.target
+    ).path
     return geometryFromPathD(pathD, sourceOrigin, tip)
   }
   const pathD = unbentSmooth
-    ? getSmoothThreadBezier({
-        sourceX: sourceOrigin.x,
-        sourceY: sourceOrigin.y,
-        sourcePosition: fromSide,
-        targetX: targetOrigin.x,
-        targetY: targetOrigin.y,
-        targetPosition: toSide,
-        head: args.arrowHead, // Stroke ends on the back of the arrow
-      }).path
+    ? smoothSpreadClear(
+        getSmoothThreadBezier({
+          sourceX: sourceOrigin.x,
+          sourceY: sourceOrigin.y,
+          sourcePosition: fromSide,
+          targetX: targetOrigin.x,
+          targetY: targetOrigin.y,
+          targetPosition: toSide,
+          head: args.arrowHead, // Stroke ends on the back of the arrow
+        }),
+        spread, // Neighboring lane
+        args.obstacles ?? [],
+        args.sourceNode?.id ?? args.edge.source,
+        args.targetNode?.id ?? args.edge.target
+      ).path
     : getPath({ points: routePoints, algorithm, sides })
 
   return geometryFromPathD(pathD, sourceOrigin, targetOrigin)
 }
 
 /** Build geometry from an RF edge + live nodes (on-thread drag / insert). */
-export function geometryForEdge(edge: Edge, nodes: Node[]): ThreadPathGeometry | null {
+export function geometryForEdge(edge: Edge, nodes: Node[], edges?: Edge[]): ThreadPathGeometry | null {
   const sourceNode = nodes.find((n) => n.id === edge.source)
   const targetNode = nodes.find((n) => n.id === edge.target)
   if (!sourceNode || !targetNode) return null
@@ -111,6 +177,8 @@ export function geometryForEdge(edge: Edge, nodes: Node[]): ThreadPathGeometry |
     targetPosition: (edge.targetHandle as Position) || ('left' as Position),
     sourceHandleId: edge.sourceHandle,
     targetHandleId: edge.targetHandle,
+    obstacles: frameObstaclesFromNodes(nodes), // Same boxes the painted thread routes around
+    corridors: edges ? threadCorridorsFrom(nodes, edges) : [], // Same lanes the painted stroke uses
   })
 }
 

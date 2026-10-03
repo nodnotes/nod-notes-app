@@ -15,12 +15,24 @@ import { isBoardNavigating } from '@/lib/board-navigating' // Skip O(n) on-threa
 import { isFrameDragging } from '@/lib/frame-dragging' // Skip O(n) on-thread scans mid frame drag
 import { getPath, getControlPoints } from './path' // Path math when user has bent the thread
 import {
+  boardTipArrivalSide,
   clampArrowHead,
   getBoardTipBezier,
   getSmoothThreadBezier,
   threadArrowLength,
   threadTipCenter,
 } from './path/bezier' // Board tip points away; arrow length tracks the stroke
+import {
+  frameMessageId,
+  routeThreadAroundFrames,
+  smoothSpreadClear,
+  snapshotFrameObstacles,
+} from '@/lib/threads/avoid-frames' // Unbent threads route around frames they are not attached to
+import {
+  NO_SPREAD,
+  snapshotThreadCorridors,
+  threadSpread,
+} from '@/lib/threads/separate-threads' // Neighboring lanes when strokes would sit on each other
 import {
   DEFAULT_THREAD_ALGORITHM,
   THREAD_DEFAULT_COLOR,
@@ -35,6 +47,10 @@ import {
   connectionPointOnNode,
   sideFromHandleId,
 } from './connection-point-on-node' // Frame-edge attach from node box
+import {
+  closestClearConnection,
+  connectionOverlapsFrames,
+} from '@/lib/threads/closest-connection' // Switch sides when the current pair would cross a frame
 import { onThreadFrameVisualSize, readOnThread, isOnThreadInline, ON_THREAD_DOT_R, ON_THREAD_PERP_THRESHOLD } from '@/lib/threads/on-thread-frame'
 import {
   buildThreadPathGeometry,
@@ -49,6 +65,10 @@ export type ThreadEdgeData = {
   dotted?: boolean // Optional dashed stroke (View toolbar)
   strokeWidth?: number // Thickness in flow px (1–4 from thread menu; default 2)
   strokeColor?: string // Idle stroke hex; empty/omit = THREAD_DEFAULT_COLOR
+  floatHandles?: boolean // Dropped on the frame: sides follow the closest path that stays outside both fills
+  locked?: boolean // Lock keeps the current connection points, the way a simulated point does
+  sourceHandle?: string // Side last used, so a pinned connection point survives reload
+  targetHandle?: string // Side last used on the other frame
 }
 
 export type ThreadEdge = Edge<ThreadEdgeData>
@@ -141,11 +161,29 @@ export function EditableThread({
 
   const sourceSide = sideFromHandleId(sourceHandleId, sourcePosition)
   const targetSide = sideFromHandleId(targetHandleId, targetPosition)
+  // Far sides hook the curve back through the frames. Unbent threads hop to the closest clear pair.
+  // A locked thread keeps the sides it had when it was locked.
+  const clearPair =
+    data?.locked !== true &&
+    points.length === 0 &&
+    sourceNode &&
+    targetNode &&
+    sourceNode.type !== 'threadTip' &&
+    targetNode.type !== 'threadTip' &&
+    connectionOverlapsFrames(sourceNode, targetNode, sourceHandleId, targetHandleId)
+      ? closestClearConnection(sourceNode, targetNode)
+      : null
+  const usedSourceSide = clearPair
+    ? sideFromHandleId(clearPair.sourceHandle, sourceSide) ?? sourceSide
+    : sourceSide
+  const usedTargetSide = clearPair
+    ? sideFromHandleId(clearPair.targetHandle, targetSide) ?? targetSide
+    : targetSide
 
   const sourceOrigin: XYPosition =
-    connectionPointOnNode(sourceNode, sourceSide) ?? { x: sourceX, y: sourceY }
+    connectionPointOnNode(sourceNode, usedSourceSide) ?? { x: sourceX, y: sourceY }
   const targetOrigin: XYPosition =
-    connectionPointOnNode(targetNode, targetSide) ?? { x: targetX, y: targetY }
+    connectionPointOnNode(targetNode, usedTargetSide) ?? { x: targetX, y: targetY }
 
   // Persist edge-anchor handle ids (strip *-indicator) so RF also prefers edge handles
   useEffect(() => {
@@ -164,6 +202,28 @@ export function EditableThread({
       )
     )
   }, [id, sourceHandleId, targetHandleId, setEdges])
+
+  // Remember the closer sides so the next move, reload, and peers don't snap back to the overlap.
+  useEffect(() => {
+    if (!clearPair) return // Current sides already stay outside both frames
+    if (sourceHandleId === clearPair.sourceHandle && targetHandleId === clearPair.targetHandle) return
+    setEdges((edges) =>
+      edges.map((e) => {
+        if (e.id !== id) return e
+        const prev = (e.data as ThreadEdgeData | undefined) ?? {}
+        return {
+          ...e,
+          sourceHandle: clearPair.sourceHandle, // Side that leaves the source frame
+          targetHandle: clearPair.targetHandle, // Side that enters the target frame
+          data: {
+            ...prev,
+            sourceHandle: clearPair.sourceHandle,
+            targetHandle: clearPair.targetHandle,
+          },
+        }
+      })
+    )
+  }, [clearPair?.sourceHandle, clearPair?.targetHandle, id, sourceHandleId, targetHandleId, setEdges])
 
   const shouldShowPoints = useStore((store) => {
     const src = store.nodeInternals.get(source)
@@ -193,8 +253,8 @@ export function EditableThread({
     [setEdges, id, algorithm]
   )
 
-  const fromSide = sourceSide ?? Position.Right
-  const toSide = targetSide ?? Position.Left
+  const fromSide = usedSourceSide ?? Position.Right
+  const toSide = usedTargetSide ?? Position.Left
   const sides = { fromSide, toSide }
   const zoom = useStore((s) => s.transform[2] || 1) // Live board zoom — head length is stroke / zoom
   const edgeWForHead = threadStrokeWidthForFrames(
@@ -206,6 +266,39 @@ export function EditableThread({
   const tipPoint = targetNode?.type === 'threadTip' ? threadTipCenter(targetNode) : targetOrigin // Arrow tip
   const headSpan = Math.hypot(tipPoint.x - sourceOrigin.x, tipPoint.y - sourceOrigin.y) || 1 // Room before the head
   const head = clampArrowHead(threadArrowLength(strokeUser), headSpan) // Stroke stops this far short of the tip
+  const obstacles = useStore((s) => snapshotFrameObstacles(s.nodeInternals)) // Shared frame boxes for this store snapshot
+  const corridors = useStore((s) => snapshotThreadCorridors(s.nodeInternals, s.edges)) // Other unbent threads
+  const spread = points.length === 0 ? threadSpread(id, corridors) : NO_SPREAD // Lane among threads that share this run
+  const freeEnd = points.length === 0 && targetNode?.type === 'threadTip' // Dropped on the board
+  const routeTarget = freeEnd ? threadTipCenter(targetNode!) : targetOrigin // Tip center, else the frame side
+  const arrivalSide = freeEnd
+    ? boardTipArrivalSide(routeTarget.x - sourceOrigin.x, routeTarget.y - sourceOrigin.y) // Arrow points away from the source
+    : toSide
+  // Manual bends stay. Otherwise step around frames this thread is not attached to.
+  const detour =
+    points.length === 0
+      ? routeThreadAroundFrames({
+          source: sourceOrigin, // Leave this connection point
+          target: routeTarget, // Arrive here
+          fromSide, // Out along the source side
+          toSide: arrivalSide, // Into the target side
+          sourceId: source, // Not an obstacle
+          targetId: target, // Not an obstacle
+          sourceMessageId: frameMessageId(sourceNode), // On-thread frames of this pair stay on the stroke
+          targetMessageId: frameMessageId(targetNode),
+          obstacles, // Every other frame
+          head, // Stroke ends where the arrow begins
+          shape:
+            algorithm === ThreadAlgorithm.Orthogonal
+              ? 'sharp' // Ridged elbows
+              : algorithm === ThreadAlgorithm.Linear
+                ? 'linear' // Straight line — do not route around other frames
+                : 'smooth', // Default thread curve
+          sampleSmooth:
+            algorithm === ThreadAlgorithm.BezierCatmullRom || algorithm === ThreadAlgorithm.CatmullRom,
+          fan: spread.rank * spread.sep, // Detour sits one lane further out than a neighbor on the same side
+        })
+      : null
 
   // Route for editable knobs (user bends). Unbent Smooth uses getSmoothThreadBezier below —
   // Catmull stubs added S-curves; RF getBezierPath went flat on same-side snapped frames.
@@ -216,31 +309,47 @@ export function EditableThread({
       algorithm === ThreadAlgorithm.CatmullRom)
   // Dropped on the board: the connection point is the center; the knob sits on the away curve.
   const boardTip =
-    points.length === 0 && targetNode?.type === 'threadTip'
-      ? getBoardTipBezier({
-          sourceX: sourceOrigin.x, // Frame connection point
-          sourceY: sourceOrigin.y,
-          sourcePosition: fromSide, // Side the thread left
-          targetX: threadTipCenter(targetNode).x, // Arrow tip
-          targetY: threadTipCenter(targetNode).y,
-          algorithm,
-          head, // Stroke ends on the back of the arrow
-        })
+    !detour && points.length === 0 && targetNode?.type === 'threadTip'
+      ? smoothSpreadClear(
+          getBoardTipBezier({
+            sourceX: sourceOrigin.x, // Frame connection point
+            sourceY: sourceOrigin.y,
+            sourcePosition: fromSide, // Side the thread left
+            targetX: threadTipCenter(targetNode).x, // Arrow tip
+            targetY: threadTipCenter(targetNode).y,
+            algorithm,
+            head, // Stroke ends on the back of the arrow
+          }),
+          spread, // Neighboring lane, when another thread already uses this run
+          obstacles,
+          source,
+          target
+        )
       : null
-  const smoothBezier = boardTip
+  const smoothBezier = detour
+    ? null // The detour path replaces the direct cubic
+    : boardTip
     ? boardTip
     : unbentSmooth
-    ? getSmoothThreadBezier({
-        sourceX: sourceOrigin.x, // Frame-edge attach, not the outer indicator
-        sourceY: sourceOrigin.y,
-        sourcePosition: fromSide, // Snapped side (top↔top when frames sit left/right)
-        targetX: targetOrigin.x,
-        targetY: targetOrigin.y,
-        targetPosition: toSide,
-        head, // Stroke ends on the back of the arrow
-      })
+    ? smoothSpreadClear(
+        getSmoothThreadBezier({
+          sourceX: sourceOrigin.x, // Frame-edge attach, not the outer indicator
+          sourceY: sourceOrigin.y,
+          sourcePosition: fromSide, // Snapped side (top↔top when frames sit left/right)
+          targetX: targetOrigin.x,
+          targetY: targetOrigin.y,
+          targetPosition: toSide,
+          head, // Stroke ends on the back of the arrow
+        }),
+        spread, // Neighboring lane, when another thread already uses this run
+        obstacles,
+        source,
+        target
+      )
     : null
-  const controlPoints = boardTip
+  const controlPoints = detour
+    ? [{ id: '', active: false, x: detour.mid.x, y: detour.mid.y }] // Knob on the clear lane
+    : boardTip
     ? [{ id: '', active: false, x: boardTip.mid.x, y: boardTip.mid.y }] // Knob on the away curve
     : unbentSmooth
     ? [{ id: '', active: false, x: smoothBezier!.mid.x, y: smoothBezier!.mid.y }] // Hollow knob on the arch, not the chord
@@ -252,7 +361,9 @@ export function EditableThread({
   const controlPointsWithIds = useIdsForInactiveControlPoints(controlPoints)
 
   // Unbent Smooth → bowed cubic (same-side) / RF bezier (opposite). Bent / Sharp / Linear → waypoints.
-  const path = smoothBezier
+  const path = detour
+    ? detour.path // Around frames this thread is not attached to
+    : smoothBezier
     ? smoothBezier.path
     : getPath({ points: routePoints, algorithm, sides })
 
@@ -270,7 +381,8 @@ export function EditableThread({
           targetPosition,
           sourceHandleId,
           targetHandleId,
-          arrowHead: boardTip || unbentSmooth ? head : 0, // Bent paths still run to the tip
+          arrowHead: boardTip || unbentSmooth || detour ? head : 0, // Bent paths still run to the tip
+          pathOverride: detour?.path ?? smoothBezier?.path ?? null, // Gaps follow the stroke, including a lane shift
         })
       : null
 
@@ -347,7 +459,7 @@ export function EditableThread({
           viewBox="-10 -10 20 20"
           markerUnits="userSpaceOnUse" // Flow px, same space as the zoom-compensated stroke
           orient="auto-start-reverse" // Head follows the path into the target
-          refX={boardTip || unbentSmooth ? -5 : 0} // Back of the head on an inset stroke; tip on a full stroke
+          refX={boardTip || unbentSmooth || detour ? -5 : 0} // Back of the head on an inset stroke; tip on a full stroke
           refY="0"
         >
           <polyline

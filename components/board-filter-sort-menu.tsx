@@ -37,7 +37,13 @@ import { getGlobalSortSkipConfirm } from '@/lib/global-sort-confirm' // Don’t-
 import { useReactFlowContext } from './react-flow-context' // Selection outside RF provider
 import { usePhoneModeMenu } from './phone-mode-menu-context' // Desktop center vs phone left-align
 import { ToolbarTitle } from './toolbar-title' // Animated icon-adjacent titles
-import { newId, type DatabaseFilter, type DatabaseSort, type FilterOperator } from '@/lib/notion/database-view'
+import {
+  newId,
+  type ContentSearchTarget, // Content search: text (default) or property cells
+  type DatabaseFilter,
+  type DatabaseSort,
+  type FilterOperator,
+} from '@/lib/notion/database-view'
 import {
   getBoardFilterSortUi,
   subscribeBoardFilterSortUi,
@@ -60,6 +66,7 @@ import { parsePropertyBlockTag } from '@/lib/tiptap/property-block-html' // Harv
 import { isStackCollapsedMeta } from './use-frame-nest-stack-drag' // Keep stack collapse when applying filters
 import {
   appliedFilters,
+  isBoardFilterActive, // Property target counts as applied with no typed value
   nodeMatchesBoardFilters,
   setLiveBoardFilters,
 } from '@/lib/board-frame-filters' // Board-global hide non-matches
@@ -252,6 +259,17 @@ function useFilterSortUi() {
   return useSyncExternalStore(subscribeBoardFilterSortUi, getBoardFilterSortUi, getBoardFilterSortUi)
 }
 
+/** Content search scope shown beside the contains pill. Text is the default. */
+const CONTENT_SEARCH_TARGETS: Array<{ id: ContentSearchTarget; label: string }> = [
+  { id: 'text', label: 'Text' }, // Body text (default)
+  { id: 'property', label: 'Property' }, // propertyBlock name, type, and value
+]
+
+/** Lowercase label on the content-target pill (matches the contains pill). */
+function contentTargetTriggerLabel(target: ContentSearchTarget): string {
+  return target === 'property' ? 'property' : 'text'
+}
+
 /** Text operators shown when clicking the contains pill (Name / text properties). */
 const TEXT_FILTER_OPERATORS: Array<{ id: FilterOperator; label: string }> = [
   { id: 'is', label: 'Is' },
@@ -311,6 +329,14 @@ function filterChipLabel(f: DatabaseFilter): string {
   if (f.operator === 'is_empty' || f.operator === 'is_not_empty') {
     return `${f.property}: ${op}`
   }
+  if (
+    f.contentTarget === 'property' &&
+    f.property.trim().toLowerCase() === 'content' &&
+    !f.value.trim() &&
+    operatorNeedsValue(f.operator)
+  ) {
+    return `${f.property}: ${op} property` // Content: Contains property
+  }
   if (f.operator === 'is') {
     return `${f.property}: ${f.value.trim() || '…'}`
   }
@@ -319,8 +345,7 @@ function filterChipLabel(f: DatabaseFilter): string {
 
 /** True when the filter has enough to show the blue applied chip. */
 function isFilterApplied(f: DatabaseFilter): boolean {
-  if (!operatorNeedsValue(f.operator)) return true // Is empty / Is not empty
-  return f.value.trim().length > 0 // Typed a value
+  return isBoardFilterActive(f)
 }
 
 /** Glyph for a strip chip — Name → Aa, Content → search, else text bars. */
@@ -426,13 +451,17 @@ function FilterChipEditor({
   onAddToAdvanced: () => void
 }) {
   const [opOpen, setOpOpen] = useState(false) // Operator list under "contains"
+  const [targetOpen, setTargetOpen] = useState(false) // Text / Property list beside contains
   const [moreOpen, setMoreOpen] = useState(false) // … menu to the right
+  const isContentSearch = filter.property.trim().toLowerCase() === 'content' // Only Content has a target
+  const contentTarget: ContentSearchTarget = filter.contentTarget === 'property' ? 'property' : 'text'
   const valueRef = useRef<HTMLInputElement>(null) // Autofocus value on open
   const applied = isFilterApplied(filter) // Blue pill once a value (or empty-op) is set
 
   useEffect(() => {
     if (!open) {
       setOpOpen(false) // Close nested menus with the card
+      setTargetOpen(false)
       setMoreOpen(false)
       return
     }
@@ -443,6 +472,7 @@ function FilterChipEditor({
 
   const applyAndClose = () => {
     setOpOpen(false)
+    setTargetOpen(false)
     setMoreOpen(false)
     onOpenChange(false) // Value already live via onChange while typing
   }
@@ -453,6 +483,7 @@ function FilterChipEditor({
       onOpenChange={(next) => {
         if (!next) {
           setOpOpen(false)
+          setTargetOpen(false)
           setMoreOpen(false)
         }
         onOpenChange(next) // Click-outside applies whatever was typed
@@ -495,7 +526,8 @@ function FilterChipEditor({
       <DropdownMenuContent
         {...TOOLBAR_MENU_PLACEMENT}
         className={cn(
-          'tt-menu-surface z-[1000] w-[280px] overflow-visible rounded-lg border border-gray-200 p-0 shadow-lg',
+          'tt-menu-surface z-[1000] overflow-visible rounded-lg border border-gray-200 p-0 shadow-lg',
+          isContentSearch ? 'w-[320px]' : 'w-[280px]', // Room for the text/property pill beside contains
           'dark:border-[#2f2f2f] bg-transparent'
         )}
         onCloseAutoFocus={(e) => e.preventDefault()}
@@ -520,6 +552,7 @@ function FilterChipEditor({
                 onPointerDown={(e) => e.preventDefault()} // Don't dismiss the parent menu
                 onClick={() => {
                   setMoreOpen(false)
+                  setTargetOpen(false) // One flyout at a time
                   setOpOpen((v) => !v)
                 }}
               >
@@ -562,6 +595,56 @@ function FilterChipEditor({
                 </div>
               ) : null}
             </div>
+            {isContentSearch ? (
+              <div className="relative">
+                <button
+                  type="button"
+                  className={cn(
+                    'inline-flex h-6 items-center gap-0.5 rounded-md px-1.5 text-[13px] font-medium',
+                    'text-gray-800 hover:bg-gray-100 dark:text-gray-100 dark:hover:bg-[#2a2a2a]',
+                    targetOpen && 'bg-gray-100 dark:bg-[#2a2a2a]'
+                  )}
+                  aria-label="Search in"
+                  onPointerDown={(e) => e.preventDefault()} // Don't dismiss the parent menu
+                  onClick={() => {
+                    setOpOpen(false)
+                    setMoreOpen(false)
+                    setTargetOpen((v) => !v)
+                  }}
+                >
+                  <span>{contentTargetTriggerLabel(contentTarget)}</span>
+                  <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+                </button>
+                {targetOpen ? (
+                  <div
+                    data-filter-editor-flyout="content-target"
+                    className={cn(
+                      'tt-menu-surface absolute left-0 top-full z-[1001] mt-1 min-w-[140px]',
+                      'rounded-lg border border-gray-200 p-1 shadow-lg dark:border-[#2f2f2f] bg-transparent'
+                    )}
+                    onPointerDown={(e) => e.stopPropagation()}
+                  >
+                    {CONTENT_SEARCH_TARGETS.map((row) => (
+                      <button
+                        key={row.id}
+                        type="button"
+                        className={cn(
+                          'flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm text-gray-700',
+                          'hover:bg-[var(--nod-tab-hover)] dark:text-gray-200',
+                          contentTarget === row.id && 'bg-gray-100 dark:bg-[#2a2a2a]'
+                        )}
+                        onClick={() => {
+                          onChange({ ...filter, contentTarget: row.id }) // Text searches body; property searches cells
+                          setTargetOpen(false)
+                        }}
+                      >
+                        {row.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             <div className="relative ml-auto">
               <button
                 type="button"
@@ -574,6 +657,7 @@ function FilterChipEditor({
                 onPointerDown={(e) => e.preventDefault()}
                 onClick={() => {
                   setOpOpen(false)
+                  setTargetOpen(false)
                   setMoreOpen((v) => !v)
                 }}
               >

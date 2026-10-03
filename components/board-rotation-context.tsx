@@ -29,6 +29,7 @@ import {
   touchBoardNavigating,
 } from '@/lib/board-navigating'
 import { clampBoardZoom } from '@/lib/board-extent'
+import { writeStoredBoardRotation } from '@/lib/board-rotation-persist' // Heading hits localStorage in the same turn as the twist
 
 const CHROME_SEL =
   '[data-minimap-toggle-context], [data-minimap-context], [data-minimap-pill-context], [data-edit-top-bar]' // Free nav / minimap / top bar — never steal twist from chrome
@@ -38,6 +39,7 @@ type BoardRotationContextValue = {
   setRotationAroundPanePoint: (nextDeg: number, paneX: number, paneY: number, nextZoom?: number) => void // Orbit a pane pixel
   setRotationAroundViewCenter: (nextDeg: number, opts?: { snap?: boolean }) => void // Icon scrub / slider / reset
   resetRotation: () => void // Snap heading to 0 around the view center
+  adoptRotation: (nextDeg: number) => void // Paint a saved heading without moving the camera
   setScrollMode: (on: boolean) => void // Free-nav Scroll vs Zoom: wheel + phone two-finger pan/swipe-zoom; pinch always zooms
 }
 
@@ -96,14 +98,32 @@ function overBoard(e: { clientX?: number; clientY?: number; target?: EventTarget
   return false
 }
 
-export function BoardRotationProvider({ children }: { children: ReactNode }) {
+export function BoardRotationProvider({
+  children,
+  boardId,
+  persist = true,
+}: {
+  children: ReactNode
+  boardId?: string // This board, or undefined on unsaved /board
+  persist?: boolean // Host remembers the heading; a preview must not write it
+}) {
   const instance = useReactFlow() // Viewport helpers + patch target
   const storeApi = useStoreApi() // Imperative transform reads — avoid React re-renders on every pan/zoom tick
   const domNode = useStore((s) => s.domNode) // .react-flow — WebKit dispatches gestures onto this tree
+  const domNodeRef = useRef<HTMLElement | null>(null) // adoptRotation paints this root, not the first .react-flow on the page
+  domNodeRef.current = domNode
+  const boardIdRef = useRef(boardId) // Twist callbacks read the board that is on screen now
+  boardIdRef.current = boardId
+  const persistRef = useRef(persist) // Same, so a preview never writes the host key
+  persistRef.current = persist
   const [rotation, setRotation] = useState(0) // React state for nav UI
   const rotationRef = useRef(0) // Gesture math must not wait a render
   rotationRef.current = rotation
-  boardRotationRef.current = rotation // Non-React readers stay in sync
+  if (persist) boardRotationRef.current = rotation // Preview heading stays local — it must not zero the open board
+  const rememberHeading = (heading: number) => {
+    if (!persistRef.current) return // Nested preview keeps its own camera
+    writeStoredBoardRotation(boardIdRef.current, heading) // Reload reads this even if the page closes mid-twist
+  }
   const scrollModeRef = useRef(false) // Live Free-nav Scroll vs Zoom — don’t rebind gesture listeners on toggle
   const setScrollMode = useCallback((on: boolean) => {
     scrollModeRef.current = on // Phone two-finger reads this every move
@@ -117,8 +137,9 @@ export function BoardRotationProvider({ children }: { children: ReactNode }) {
       const next = viewportKeepingPanePoint(paneX, paneY, vp, rotationRef.current, heading, zoom)
       instance.setViewport(next) // New T so the pivot flow point stays under the finger
       rotationRef.current = heading
-      boardRotationRef.current = heading
+      if (persistRef.current) boardRotationRef.current = heading // Host drag / marquee readers
       setRotation(heading)
+      rememberHeading(heading) // Slider, scrub, and reset — stored before the next paint
     },
     [instance]
   )
@@ -129,8 +150,9 @@ export function BoardRotationProvider({ children }: { children: ReactNode }) {
       const el = flowEl()
       if (!el) {
         rotationRef.current = heading
-        boardRotationRef.current = heading
+        if (persistRef.current) boardRotationRef.current = heading // Host readers, once the pane exists
         setRotation(heading)
+        rememberHeading(heading) // Same write as the orbit path
         return
       }
       const c = paneCenter(el)
@@ -143,6 +165,18 @@ export function BoardRotationProvider({ children }: { children: ReactNode }) {
     setRotationAroundViewCenter(0) // Always orbit the view center so the board doesn’t jump
   }, [setRotationAroundViewCenter])
 
+  // Saved camera already includes the pan that matches this heading — don’t orbit again
+  const adoptRotation = useCallback((nextDeg: number) => {
+    const heading = normalizeDeg(nextDeg) // Same range as the slider
+    rotationRef.current = heading // Gesture math sees it before the next render
+    if (persistRef.current) boardRotationRef.current = heading // Host readers — a preview adopt must not zero the open board
+    setRotation(heading) // Nav slider
+    const el = domNodeRef.current // This board’s RF root — not a preview’s .react-flow
+    if (!el) return // RF root not mounted yet; the layout effect paints on the next rotation render
+    el.style.setProperty('--tt-board-rot', `${heading}deg`) // Nodes / threads / dots
+    el.classList.toggle('tt-board-rotated', Math.abs(heading) > 0.01) // Skip the identity transform when upright
+  }, [])
+
   // Keep RF screenToFlow / flowToScreen rotation-aware once d3 is ready
   useEffect(() => {
     if (!instance.viewportInitialized) return
@@ -153,10 +187,11 @@ export function BoardRotationProvider({ children }: { children: ReactNode }) {
   // Subscribe imperatively — a React `useStore(transform)` here re-rendered the whole board
   // (incl. large Notion DB tables) on every pinch/pan tick and crashed phone Safari over tunnel.
   useLayoutEffect(() => {
-    const el = flowEl()
+    const el = domNode // This provider’s .react-flow
     if (!el) return
-    el.style.setProperty('--tt-board-rot', `${rotation}deg`) // Inner layers read this
-    el.classList.toggle('tt-board-rotated', Math.abs(rotation) > 0.01) // Skip identity transforms when upright
+    const painted = rotationRef.current // Child restore may have updated this ref before this effect
+    el.style.setProperty('--tt-board-rot', `${painted}deg`) // Inner layers read this — state can still be 0 in this commit
+    el.classList.toggle('tt-board-rotated', Math.abs(painted) > 0.01) // Skip identity transforms when upright
     const syncPanOrigin = (
       state?: { transform: [number, number, number] },
       prev?: { transform: [number, number, number] }
@@ -251,8 +286,9 @@ export function BoardRotationProvider({ children }: { children: ReactNode }) {
       syncBoardZoomCss(next.zoom, storeApi.getState().domNode) // Screen-constant chrome mid-pinch
       if (heading === rotationRef.current) return // Pan/zoom only — skip a React render every frame
       rotationRef.current = heading
-      boardRotationRef.current = heading
+      if (persistRef.current) boardRotationRef.current = heading // Host drag / marquee readers
       setRotation(heading)
+      rememberHeading(heading) // Two-finger twist — stored even if the page reloads before the debounce
     }
 
     // Pinch always zooms. Scroll nav: mid travel pans (+ coast). Zoom nav: mid travel zooms (+ coast) like trackpad.
@@ -551,9 +587,10 @@ export function BoardRotationProvider({ children }: { children: ReactNode }) {
       setRotationAroundPanePoint: applyAroundPanePoint,
       setRotationAroundViewCenter,
       resetRotation,
+      adoptRotation,
       setScrollMode,
     }),
-    [rotation, applyAroundPanePoint, setRotationAroundViewCenter, resetRotation, setScrollMode]
+    [rotation, applyAroundPanePoint, setRotationAroundViewCenter, resetRotation, adoptRotation, setScrollMode]
   )
 
   return <BoardRotationContext.Provider value={value}>{children}</BoardRotationContext.Provider>
@@ -567,6 +604,7 @@ export function useBoardRotation() {
       setRotationAroundPanePoint: () => {},
       setRotationAroundViewCenter: () => {},
       resetRotation: () => {},
+      adoptRotation: () => {},
       setScrollMode: () => {},
     }
   }

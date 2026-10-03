@@ -98,6 +98,7 @@ export function readPropertyBlockTypesFromDoc(doc: {
 // without pulling @tiptap/react + the NodeView component into a server bundle.
 export {
   htmlHasPropertyBlocks,
+  htmlAppendHeaderProperty,
   readPropertyBlockTypesFromHtml,
 } from '@/lib/tiptap/property-block-html'
 
@@ -190,6 +191,36 @@ export function updatePropertyBlockAttrs(
     .chain()
     .command(({ tr }) => {
       tr.setNodeMarkup(from, undefined, { ...node.attrs, ...patch }) // Merge so value/name survive type change
+      return true
+    })
+    .run()
+}
+
+/**
+ * Frame menu → Add property.
+ * Inserts an empty property block at the end of the frame (same cell as dragging an icon into the frame).
+ */
+export function insertFrameProperty(
+  editor: Editor,
+  propertyType: PropertyTypeId,
+  opts?: { inline?: boolean } // false only for a legacy hidden cell; default is a visible block
+): boolean {
+  if (!editor || editor.isDestroyed) return false // Unmounted editor — caller falls back to HTML
+  if (!isPropertyTypeId(propertyType)) return false // Ignore unknown type ids
+  const inline = opts?.inline !== false // Visible Empty cell in the frame
+  const nodeType = editor.schema.nodes.propertyBlock // Atom the schema already registers
+  if (!nodeType) return false // Extensions missing — nothing to insert
+  const insertAt = editor.state.doc.content.size // After existing blocks
+  return editor
+    .chain()
+    .command(({ tr }) => {
+      const node = nodeType.create({
+        propertyType, // Type chosen in the flyout
+        value: '', // Empty until the user fills it
+        inline, // Stays in the frame when empty
+        propertyName: '', // Unnamed until the property menu renames it
+      })
+      tr.insert(insertAt, node) // Direct insert — a NodeSelection on an atom would swallow insertContentAt
       return true
     })
     .run()

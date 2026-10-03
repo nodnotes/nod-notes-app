@@ -4,6 +4,34 @@ import type { ControlPointData } from '../ControlPoint';
 import { isControlPoint } from './utils';
 import { getControlWithCurvature } from './bezier';
 
+/** One cubic of the Catmull-Rom chain, including the side-biased phantom ends. */
+function catmullSegment(
+  points: XYPosition[], // Full polyline, including the connection points
+  i: number, // Segment index (points[i] → points[i + 1])
+  bezier: boolean, // Bias the first and last tangents along the frame sides
+  sides: { fromSide: Position; toSide: Position }, // Those sides
+) {
+  const p1 = points[i]; // Segment start
+  const p2 = points[i + 1]; // Segment end — the curve passes through this
+  const p0 =
+    points[i - 1] ??
+    (bezier ? calculateBezierP0(p1, p2, sides.fromSide) : p1); // Point before, or a phantom that leaves along the source side
+  const p3 =
+    points[i + 2] ?? (bezier ? calculateBezierP3(p1, p2, sides.toSide) : p2); // Point after, or a phantom that arrives along the target side
+  return {
+    p1, // Cubic start
+    b1: {
+      x: (-p0.x + 6 * p1.x + p2.x) / 6, // First control — same weights the path string uses
+      y: (-p0.y + 6 * p1.y + p2.y) / 6,
+    },
+    b2: {
+      x: (p1.x + 6 * p2.x - p3.x) / 6, // Second control
+      y: (p1.y + 6 * p2.y - p3.y) / 6,
+    },
+    p2, // Cubic end
+  };
+}
+
 export function getCatmullRomPath(
   points: XYPosition[],
   bezier = false,
@@ -14,26 +42,7 @@ export function getCatmullRomPath(
   let path = `M ${points[0].x} ${points[0].y}`;
 
   for (let i = 0; i < points.length - 1; i++) {
-    const p1 = points[i];
-    const p2 = points[i + 1];
-
-    const p0 =
-      points[i - 1] ??
-      (bezier ? calculateBezierP0(p1, p2, sides.fromSide) : p1);
-
-    const p3 =
-      points[i + 2] ?? (bezier ? calculateBezierP3(p1, p2, sides.toSide) : p2);
-
-    const b1 = {
-      x: (-p0.x + 6 * p1.x + p2.x) / 6,
-      y: (-p0.y + 6 * p1.y + p2.y) / 6,
-    };
-
-    const b2 = {
-      x: (p1.x + 6 * p2.x - p3.x) / 6,
-      y: (p1.y + 6 * p2.y - p3.y) / 6,
-    };
-
+    const { b1, b2, p2 } = catmullSegment(points, i, bezier, sides); // Same cubic as before
     path += ` C ${b1.x} ${b1.y}, ${b2.x} ${b2.y}, ${p2.x} ${p2.y}`;
   }
 

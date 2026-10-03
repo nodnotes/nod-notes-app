@@ -26,11 +26,15 @@ export type FilterOperator =
   | 'gt'
   | 'lt'
 
+/** What a Content search looks at — body text, or property cells. */
+export type ContentSearchTarget = 'text' | 'property'
+
 export type DatabaseFilter = {
   id: string
   property: string // Property name
   operator: FilterOperator
   value: string // Compared as plain text / tag name / number string
+  contentTarget?: ContentSearchTarget // Content search only; omitted means text
 }
 
 export type DatabaseSort = {

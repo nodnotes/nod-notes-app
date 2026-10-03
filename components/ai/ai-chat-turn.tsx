@@ -32,6 +32,8 @@ import {
 } from '@/components/block-actions-menu'
 import { SelectionFormatPopupAnchor } from '@/components/selection-format-popup'
 import { addMember, clipSetLabel } from '@/lib/sets-list' // Frame menu → a named set
+import { insertFrameProperty } from '@/lib/tiptap/property-block' // Frame menu → Add property (inline cell)
+import { isPropertyTypeId } from '@/lib/blocks/property' // Known property type ids
 import { BLOCK_HANDLE_GUTTER_W } from '@/lib/frame-adjust-box'
 import { useReactFlowContext } from '@/components/react-flow-context'
 import { cn } from '@/lib/utils'
@@ -427,6 +429,13 @@ export function AiChatTurn({
       if (action === 'regenerateResponse') {
         setFrameMenu(null)
         onRegenerateResponse?.(message.id)
+        return
+      }
+      if (action === 'addProperty' && _payload?.propertyType && isPropertyTypeId(_payload.propertyType)) {
+        if (editor && !editor.isDestroyed) {
+          insertFrameProperty(editor, _payload.propertyType, { inline: true }) // Chat has no top strip — show the cell
+        }
+        setFrameMenu(null)
         return
       }
       // Same menu chrome as the board; chat-only wiring for now is Revert / resend / regenerate

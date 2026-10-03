@@ -313,7 +313,8 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
   const showBoardStyle =
     !q || matchesQuery('board style rule wide college narrow none dotted lined grid', q) // Background rule + style submenu
   const showFooter = !q // Metadata stays at the bottom when not filtering
-  const showConnections = !q || matchesQuery('connections notion', q) // Same hay as Connections row
+  const showConnections =
+    !q || matchesQuery('connections notion show connections', q) // Connections row + Show connections toggle
   const showAiHighlightMenu =
     !q || matchesQuery('show ai content highlight sparkles pin unpin', q)
   const showFavoriteMenu =

@@ -5,7 +5,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { useQueryClient } from '@tanstack/react-query'
-import { LayoutGrid, Sparkles, Loader2 } from 'lucide-react' // Connections + import + sync spinner
+import { LayoutGrid, Sparkles, Loader2, Waypoints } from 'lucide-react' // Connections + import + sync + show-connections toggle
 import {
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -23,6 +23,10 @@ import { checkBoardNotionPages } from '@/lib/notion/check-board-notion-pages'
 import { showNotionSyncNotice } from '@/lib/notion/sync-notice'
 import { useAiEditSession } from '@/lib/ai/edit-session'
 import { ACCOUNT_CHANGED_EVENT } from '@/lib/auth-session-isolation'
+import {
+  useShowFrameConnections,
+  writeShowFrameConnections,
+} from '@/lib/show-frame-connections' // Show connections toggle in this submenu
 
 /** localStorage — whether the connected Notion mark stays left of Share. */
 const TOPBAR_PIN_KEY = 'nodnotes-notion-topbar-pinned'
@@ -420,13 +424,34 @@ export function NotionConnectProvider({
   )
 }
 
+/** Notion-style switch on the right of Show connections. */
+function ShowConnectionsToggle({ on }: { on: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        'ml-auto relative h-4 w-7 rounded-full transition-colors', // Same track as other More toggles
+        on ? 'bg-blue-500' : 'bg-gray-200' // Blue when the strip is allowed
+      )}
+    >
+      <span
+        className={cn(
+          'absolute top-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-[left]',
+          on ? 'left-3.5' : 'left-0.5' // Knob slides to the on side
+        )}
+      />
+    </span>
+  )
+}
+
 /** More → Connections — flat actions when connected (no 3rd nested submenu that ate OAuth clicks). */
 export function NotionConnectMenuItems({ filterQuery = '' }: { filterQuery?: string }) {
   const api = useContext(NotionConnectContext) // Provider owns status / OAuth
+  const showFrameConnections = useShowFrameConnections() // Switch state for this submenu
   if (!api) return null
   const { status, loading, authHref } = api
   const q = filterQuery.trim().toLowerCase() // Search actions… filter
-  const hay = `connections notion unpin pin permissions manage ${status?.workspaceName || ''}` // Match row or actions
+  const hay = `connections notion show connections unpin pin permissions manage ${status?.workspaceName || ''}` // Match row, toggle, or actions
   if (q && !hay.toLowerCase().includes(q)) return null // Hide when search misses
   const rightLabel = status?.connected ? status.workspaceName || 'Notion' : 'None' // Screenshot-style status
 
@@ -442,6 +467,17 @@ export function NotionConnectMenuItems({ filterQuery = '' }: { filterQuery?: str
         <span className="ml-auto mr-1 text-xs text-gray-400">{rightLabel}</span>
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent className="w-56">
+        <DropdownMenuItem
+          onSelect={(e) => {
+            e.preventDefault() // Stay open so the switch can be flipped again
+            writeShowFrameConnections(!showFrameConnections) // On keeps the Notion mark under unselected frames
+          }}
+        >
+          <Waypoints className="h-4 w-4 mr-2 shrink-0" />
+          Show connections
+          <ShowConnectionsToggle on={showFrameConnections} />
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         {status?.connected ? (
           <>
             <div className="px-2 py-1.5 flex items-center gap-2 text-sm text-gray-700">

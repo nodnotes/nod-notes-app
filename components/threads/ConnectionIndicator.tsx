@@ -169,6 +169,19 @@ export function ConnectionIndicator({
       if (!bestEl) return null
 
       const targetNodeId = bestEl.getAttribute('data-nodeid')!
+      const nodeEl = doc.querySelector(
+        `.react-flow__node[data-id="${CSS.escape(targetNodeId)}"]`
+      ) as HTMLElement | null
+      const nodeRect = nodeEl?.getBoundingClientRect() // Fill box — dots sit outside it
+      if (
+        nodeRect &&
+        clientX >= nodeRect.left &&
+        clientX <= nodeRect.right &&
+        clientY >= nodeRect.top &&
+        clientY <= nodeRect.bottom
+      ) {
+        return null // Over the frame itself — sides stay free to follow the closest path
+      }
       const targetHandleId = bestEl.getAttribute('data-handleid')
       const type = bestEl.classList.contains('target') ? 'target' : 'source'
       if (connectionMode === 'strict' && type !== 'target') return null

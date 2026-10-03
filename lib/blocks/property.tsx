@@ -25,7 +25,7 @@ import {
 } from 'lucide-react'
 
 /** Height of the top property strip (`h-7`) — keep text aligned when the strip appears. */
-export const PROPERTY_GROUP_H = 28
+export const PROPERTY_GROUP_H = 18 // Matches the chrome strip (14px text-size icon + 2px air each side)
 
 /** Notion-like property kinds (Turn into → Property pane). */
 export type PropertyTypeId =
