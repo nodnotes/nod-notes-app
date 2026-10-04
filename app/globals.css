@@ -1816,8 +1816,8 @@ span[data-added="true"] {
 
   /* Group selection: dots are hidden. Keep points on the fill so the stroke does not float. */
   /* Frame connection points stay on the **fill** edge; selected gutters are outside that.
-     Park L/R handles at `--tt-adjust-pad-x` so a group selection meets the peach
-     frame, not the blue adjust box. T/B pads are the property / connections bands. */
+     Park L/R at `--tt-adjust-pad-x` and T/B at the property / connections pads so a
+     group selection meets the peach frame, not the blue adjust box. */
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point[data-handlepos="left"],
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-left {
     left: var(--tt-adjust-pad-x, 0px) !important;
@@ -1837,7 +1837,7 @@ span[data-added="true"] {
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point[data-handlepos="top"],
   .react-flow__node-chatPanel.selected [data-block-node="true"] .react-flow__handle.handle-dot.tt-connection-point.react-flow__handle-top {
     left: 50% !important;
-    top: 0 !important;
+    top: var(--tt-adjust-pad-y-top, 0px) !important; /* Peach top — 0 is the blue edge */
     right: auto !important;
     bottom: auto !important;
     transform: translate(-50%, -50%) !important;
@@ -1847,7 +1847,7 @@ span[data-added="true"] {
     left: 50% !important;
     top: auto !important;
     right: auto !important;
-    bottom: 0 !important;
+    bottom: var(--tt-adjust-pad-y-bottom, 0px) !important; /* Peach bottom */
     transform: translate(-50%, 50%) !important;
   }
 
@@ -3578,18 +3578,27 @@ span[data-added="true"] {
   }
   .ProseMirror .tt-property-block-icon,
   [data-tt-property-header] .tt-property-block-icon {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 24px; /* In-frame cell box — glyph is h-4 (16px) */
-    color: #6b7280;
+    flex-shrink: 0; /* Icon stays a fixed slot beside the value */
+    display: flex; /* Center the glyph in the slot */
+    align-items: center; /* Vertical center on the first text line */
+    justify-content: center; /* Horizontal center in the 14px slot */
+    width: 14px; /* Same as frame body text — was 20px and read as a big chip */
+    height: 14px; /* Same — was 24px, taller than the 14px glyph line */
+    color: #6b7280; /* Muted type mark */
   }
-  /* Chrome strip above the fill — same 14px as board prose, tight to the frame and the blue edge */
-  [data-tt-property-header] .tt-property-block-icon {
-    width: 14px;
-    height: 14px;
+  .ProseMirror .tt-property-block-icon svg,
+  [data-tt-property-header] .tt-property-block-icon svg {
+    width: 14px; /* Lucide’s 24 attribute must not win over the slot */
+    height: 14px; /* Keep the glyph on the text size */
+  }
+  /* In-cell icon: the value line is 14px × 1.7, so a 14px slot top-aligned sits above the glyphs.
+     The wrapper is one line tall and the glyph centers in it; wrap still pins that slot to line 1. */
+  .ProseMirror .tt-property-block-cell > .inline-flex {
+    display: flex; /* Center the 14px glyph in the line slot */
+    align-items: center; /* Vertical center on the value, not the top of the line box */
+    align-self: flex-start; /* Stay on the first line when the value wraps */
+    height: calc(14px * 1.7); /* Same line box as .tt-property-block-input */
+    flex-shrink: 0; /* Don't squash the slot when the cell is tight */
   }
   .dark .ProseMirror .tt-property-block-icon,
   .dark [data-tt-property-header] .tt-property-block-icon {
@@ -3642,6 +3651,7 @@ span[data-added="true"] {
     font: inherit;
     font-size: 14px;
     line-height: 1.7;
+    padding: 0; /* UA padding dropped the glyphs below the type icon */
     color: inherit;
   }
   /* Fit-to-text frame: value stays on ONE line like every other block; the NodeView sets an
@@ -3650,6 +3660,11 @@ span[data-added="true"] {
   .ProseMirror[data-single-line="true"] .tt-property-block-input {
     white-space: pre;
     overflow-wrap: normal;
+  }
+  /* Empty placeholder wraps at spaces only — same as frame text. A typed value still uses anywhere above. */
+  .ProseMirror:not([data-single-line="true"]) .tt-property-block-input:placeholder-shown {
+    overflow-wrap: normal; /* Don't split "Empty" when the wrap column is tighter than the word */
+    word-break: normal; /* Same: the placeholder stays one word */
   }
   .ProseMirror .tt-property-block-input::placeholder {
     color: #9ca3af;

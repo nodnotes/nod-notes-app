@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react' // Stable setters + sanitize indicator handle ids
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react' // Stable setters; selected threads re-read the box before paint
 import {
   BaseEdge,
   EdgeProps,
@@ -11,7 +11,7 @@ import {
 } from 'reactflow' // Custom edge primitives + selection store
 
 import { ControlPoint, type ControlPointData } from './ControlPoint' // Miro-style path knobs
-import { isBoardNavigating } from '@/lib/board-navigating' // Skip O(n) on-thread scans mid pan/zoom
+import { getBoardNavEpoch, isBoardNavigating, subscribeBoardNavigating } from '@/lib/board-navigating' // Skip O(n) scans mid pan/zoom; re-read the painted frame when zoom settles
 import { isFrameDragging } from '@/lib/frame-dragging' // Skip O(n) on-thread scans mid frame drag
 import { getPath, getControlPoints } from './path' // Path math when user has bent the thread
 import {
@@ -45,8 +45,10 @@ import {
 import { normalizeHandleId } from './handle-ids' // Strip -indicator from stored handle ids
 import {
   connectionPointOnNode,
+  connectionPointPainted,
   sideFromHandleId,
-} from './connection-point-on-node' // Frame-edge attach from node box
+} from './connection-point-on-node' // Frame-edge attach from node box; painted box while zooming
+import { useLiveBoardZoom } from '@/lib/use-live-board-zoom' // Selected adjust box resizes on every zoom tick
 import {
   closestClearConnection,
   connectionOverlapsFrames,
@@ -100,6 +102,13 @@ const useIdsForInactiveControlPoints = (points: ControlPointData[]) => {
 
 type EditableThreadProps = EdgeProps<ThreadEdgeData>
 
+/** True when two attach points are the same flow pixel (avoids a render loop). */
+function sameAttach(a: XYPosition | null, b: XYPosition | null): boolean {
+  if (!a && !b) return true // Both missing
+  if (!a || !b) return false // One side gained or lost a painted box
+  return Math.abs(a.x - b.x) < 0.25 && Math.abs(a.y - b.y) < 0.25 // Subpixel noise from offset reads
+}
+
 /** Flow box of a frame node — prefer RF measure, then style, then saved resize box. */
 function nodeFlowSize(n?: RFNode | null): { width: number; height: number } {
   if (!n) return { width: 80, height: 40 } // Neutral mid size when a side is missing
@@ -149,6 +158,9 @@ export function EditableThread({
   style,
   data,
 }: EditableThreadProps) {
+  // Zoom changes frame chrome without a new measure. Re-render when the gesture settles
+  // so an unselected frame can drop the box it had while it was selected.
+  const navEpoch = useSyncExternalStore(subscribeBoardNavigating, getBoardNavEpoch, getBoardNavEpoch)
   const algorithm = data?.algorithm ?? DEFAULT_THREAD_ALGORITHM
   const points = data?.points ?? []
   const dotted = data?.dotted === true
@@ -180,10 +192,53 @@ export function EditableThread({
     ? sideFromHandleId(clearPair.targetHandle, targetSide) ?? targetSide
     : targetSide
 
+  // Selected chrome resizes every zoom tick. After deselect, the store width can still be
+  // that adjust box — read the panel that is actually painted, including once chrome is gone.
+  const endpointSelected = Boolean(sourceNode?.selected || targetNode?.selected)
+  const liveZoom = useLiveBoardZoom(endpointSelected) // No per-tick subscription while both ends are idle
+  const sourceFlowX = sourceNode?.positionAbsolute?.x ?? sourceNode?.position.x // Drag/move, not a new object each render
+  const sourceFlowY = sourceNode?.positionAbsolute?.y ?? sourceNode?.position.y
+  const targetFlowX = targetNode?.positionAbsolute?.x ?? targetNode?.position.x
+  const targetFlowY = targetNode?.positionAbsolute?.y ?? targetNode?.position.y
+  const [paintedEnds, setPaintedEnds] = useState<{
+    source: XYPosition | null
+    target: XYPosition | null
+  } | null>(null)
+  useLayoutEffect(() => {
+    const dragging = isFrameDragging() // A drag moves the node every tick — don't freeze the last box
+    const sourcePt = connectionPointPainted(sourceNode, usedSourceSide) // Fill edge after this commit's chrome
+    const targetPt = connectionPointPainted(targetNode, usedTargetSide)
+    setPaintedEnds((prev) => {
+      // Keep the last fill when the panel is mid-unmount. A drag falls through to the live node box.
+      const nextSource = sourcePt ?? (dragging ? null : prev?.source ?? null)
+      const nextTarget = targetPt ?? (dragging ? null : prev?.target ?? null)
+      if (sameAttach(prev?.source ?? null, nextSource) && sameAttach(prev?.target ?? null, nextTarget)) {
+        return prev // Same pixel — don't render the thread again
+      }
+      return { source: nextSource, target: nextTarget }
+    })
+  }, [
+    endpointSelected, // Deselect drops the adjust box — read the fill that replaced it
+    liveZoom, // Selected adjust box changes size during the gesture
+    navEpoch, // Zoom finished while selected; unselected box is the one to keep
+    usedSourceSide,
+    usedTargetSide,
+    source,
+    target,
+    sourceFlowX,
+    sourceFlowY,
+    targetFlowX,
+    targetFlowY,
+  ])
+
   const sourceOrigin: XYPosition =
-    connectionPointOnNode(sourceNode, usedSourceSide) ?? { x: sourceX, y: sourceY }
+    paintedEnds?.source ??
+    connectionPointOnNode(sourceNode, usedSourceSide) ??
+    { x: sourceX, y: sourceY }
   const targetOrigin: XYPosition =
-    connectionPointOnNode(targetNode, usedTargetSide) ?? { x: targetX, y: targetY }
+    paintedEnds?.target ??
+    connectionPointOnNode(targetNode, usedTargetSide) ??
+    { x: targetX, y: targetY }
 
   // Persist edge-anchor handle ids (strip *-indicator) so RF also prefers edge handles
   useEffect(() => {

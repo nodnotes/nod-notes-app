@@ -1,14 +1,40 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-10-02T02:00:51Z`
-- Source: local `supabase/migrations/` + remote applied tops (Nod Notes Management API) + `.temp` service versions
-- Service versions (from `supabase/.temp` / `apps/web/supabase/.temp`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
-- CLI: `supabase` `2.90.0` (`.env.local` parse blocks `link`/`db dump`/`migration list`; versions from `.temp` + Management API list; cli-latest reports `v2.119.0`)
+- Snapped at: `2026-10-04T18:05:41Z`
+- Source: local `supabase/migrations/` + remote applied tops (plugin Supabase `list_migrations` on `yhsyhtnnklpkfcpydbst`) + `.temp` service versions
+- Service versions (from `supabase/.temp` / `get_project`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
+- CLI: `supabase` `2.90.0`. A stray `---` in `.env.local` blocks every command until commented; with that line skipped, `migration list --linked` still fails (`42501` cannot alter `cli_login_postgres`). Remote list is from the Management API. cli-latest reports `v2.119.0`.
 - Remote applied tops out at `20260924223511_board_changes_autosave` (includes `20260924222109_board_changes`; local files `20260924222048` / `20260924223507`)
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20261004180541_thread_painted_fill_property_caret_notion_frame.sql`.
+- **Threads**: ends sit on the painted panel fill. Zoom and deselect re-read that box. A frame that has not mounted still gets connection points from its known size so the stroke can paint.
+- **Property cells**: the I-bar stays in the value. The ⋮⋮ follows the painted caret, including that textarea. Free→fit hugs the cell margin so the frame does not walk upward.
+- **Notion**: Add page as frame keeps that page’s body (or database) on this board. A page tree still puts each body on its own nested board.
+- Schema unchanged; remote DDL top remains `20260924223511_board_changes_autosave`.
+
+## Prior: Frame content adjust
+
+- DDL: none. Marker `20261003235840_frame_content_adjust_checkpoint.sql`.
+- Fit and free share one frameScale gutter. Unlocking does not widen the adjust box. The block handle uses that same strip.
+- Schema unchanged; remote DDL top remains `20260924223511_board_changes_autosave`.
+
+## Prior: Wrap shrink / fit light-blue edge
+
+- DDL: none. Marker `20261003232506_wrap_shrink_fit_light_blue_edge.sql`.
+- Free wrap shrinks glyphs to the wrap-line gap as the lines move in. Fit-to-text lines go light blue at the edge that turns wrap off.
+- Schema unchanged; remote DDL top remains `20260924223511_board_changes_autosave`.
+
+## Prior: Wrap lines hold the released gap
+
+- DDL: none. Marker `20261003220802_wrap_lines_hold_released_gap.sql`.
+- Wrap lines stay on the released gap. Glyphs shrink between them once words are fully wrapped. Threads route around frames.
+- Schema unchanged; remote DDL top remains `20260924223511_board_changes_autosave`.
+
+## Prior: Thread arrow / board tip
 
 - DDL: none. Marker `20261002020051_thread_arrow_board_tip.sql`.
 - **Threads**: one smooth cubic ends on the back of the arrow; the head tracks the stroke. Zoom in stays screen-constant; zoom out uses a softer inverse so the stroke and arrow shrink with the board. Frame-size weight is about 0.45×–3.5× the menu stroke. Dropping on empty board plants a free end (`threadTip`).

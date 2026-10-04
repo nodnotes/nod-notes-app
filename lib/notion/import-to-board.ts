@@ -1,4 +1,6 @@
-// Import selected Notion pages onto a NodNotes page as boardLink frames (body on nested pages)
+// Import Notion pages onto a board.
+// Add page as frame: that page’s body (or database table) is the frame.
+// Add page tree: title boardLink frames; each body lives on a nested board.
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { newBlockMetadata } from '@/lib/blocks'
@@ -42,6 +44,30 @@ function databaseBlockHtml(page: NotionSearchPage): string {
   return `<div data-type="databaseBlock" data-notion-database-id="${id}" data-title="${title}"${urlAttr}${iconAttr}></div>`
 }
 
+
+/**
+ * HTML for one Notion page or database.
+ * Child pages become boardLinks when their boards already exist; otherwise the title.
+ * Empty pages fall back to the title so the frame is not a blank box.
+ */
+function pageContentHtml(
+  page: NotionSearchPage, // Notion page or database being rendered
+  tree: NotionBlock[] | undefined, // Fetched block tree (pages only)
+  childPageLinks: ChildPageLinkMap, // child_page id → nested board
+  pagesById: Map<string, NotionSearchPage> // Search rows for databaseBlock url/icon
+): string {
+  if (page.object === 'database') return databaseBlockHtml(page) // Live table is the frame body
+  if (tree) {
+    const html = enrichDatabaseBlocksInHtml(
+      notionPageBodyToHtml(tree, { childPageLinks }), // Blocks → TipTap; sub-pages → boardLinks
+      pagesById
+    )
+    const text = html.replace(/<[^>]*>/g, '').trim() // Visible characters
+    const hasAtom = html.includes('data-type="') // boardLink / databaseBlock count as content
+    if (text || hasAtom) return html // This is what Add page as frame shows
+  }
+  return `<p>${escapeHtml(page.title || 'Untitled')}</p>` // No blocks fetched — keep the name
+}
 
 /** Title-variant boardLink HTML — same chrome as local page blocks (icon + title + open menu). */
 function boardLinkHtml(opts: {
@@ -380,8 +406,10 @@ export async function importNotionPagesToBoard(opts: {
   await Promise.all(framePages.map((page) => fetchTreeAndDiscover(page)))
   throwIfAborted()
 
-  // Map frames: Notion pages + databases → temp title, then title-variant boardLink
-  // (DB table lives on the nested board body as databaseBlock — same as Add frame pages)
+  // Map frames: card mode keeps the page body on this frame (patched after child boards exist).
+  // Mindmap mode is a temp title, then a title-variant boardLink; the body is on the nested board.
+  const cardMode = mode === 'card' // Add page as frame — body in the frame, not a title link
+  const mapFrameIds = new Set(framePages.map((p) => normalizeNotionId(p.id))) // Picked frames
   const rows = framePages.map((page) => {
     const position = positions.get(page.id) || { x: START_X, y: START_Y } // Fallback origin
     const isDatabase = page.object === 'database'
@@ -390,7 +418,7 @@ export async function importNotionPagesToBoard(opts: {
       conversation_id: conversationId, // Target board
       user_id: opts.userId, // Owner
       role: 'user', // Frames are user-role messages in this app
-      content: `<p>${escapeHtml(title)}</p>`, // Temp until boardLink patch (pages + DBs)
+      content: `<p>${escapeHtml(title)}</p>`, // Temp until body (card) or boardLink (mindmap) patch
       metadata: newBlockMetadata({
         position, // Canvas coordinates
         blockTitle: title,
@@ -398,8 +426,10 @@ export async function importNotionPagesToBoard(opts: {
         notionObject: page.object, // page vs database
         notionUrl: page.url ?? null, // Deep link for Open in Notion
         notionIcon: page.icon ?? null, // Optional icon payload
-        isBoard: true, // Map frame links a nested NodNotes board
-        blockType: 'board', // Title boardLink chrome after patch
+        // Card: body stays here. Mindmap: title link to a nested board.
+        ...(cardMode
+          ? { notionContentInFrame: true }
+          : { isBoard: true, blockType: 'board' }),
       }),
     }
   })
@@ -511,6 +541,8 @@ export async function importNotionPagesToBoard(opts: {
     const id = normalizeNotionId(page.id)
     if (queued.has(id)) return
     queued.add(id)
+    // Add page as frame: the picked page is the frame body — no nested board for it.
+    if (cardMode && mapFrameIds.has(id)) return
     const parentKey = notionParentKey(page)
     if (parentKey && bodyPagesNeeded.has(parentKey) && !queued.has(parentKey)) {
       enqueue(bodyPagesNeeded.get(parentKey)!) // Parent first
@@ -571,9 +603,9 @@ export async function importNotionPagesToBoard(opts: {
     const linkedBoardId = notionIdToConvId.get(nid)
     if (!linkedBoardId) continue
 
-    // Wire map frame ↔ nested board: pages + databases → sole title boardLink
-    // (databaseBlock / page body live on the child board)
-    if (sourceBlockMessageId) {
+    // Mindmap only: map frame becomes a title boardLink; body stays on the child board.
+    // Card mode never creates a board for the picked page, so this does not run for it.
+    if (!cardMode && sourceBlockMessageId) {
       const { data: frameRow } = await admin
         .from('messages')
         .select('content, metadata')
@@ -614,26 +646,43 @@ export async function importNotionPagesToBoard(opts: {
     })
   }
 
-  // Seed each board body with THAT page’s content only (child_pages → boardLinks, not inlined)
+  // Add page as frame: write the page body onto the map frame now that sub-page boards exist.
+  if (cardMode) {
+    for (const page of framePages) {
+      const msgId = notionIdToMessageId.get(normalizeNotionId(page.id)) // Frame inserted above
+      if (!msgId) continue
+      const nid = normalizeNotionId(page.id)
+      const body = pageContentHtml(page, treesByNotionId.get(nid), childPageLinks, pagesById)
+      const { data: frameRow } = await admin
+        .from('messages')
+        .select('metadata')
+        .eq('id', msgId)
+        .maybeSingle()
+      const existingMeta = (frameRow?.metadata as Record<string, unknown>) || {}
+      const title = page.title || (page.object === 'database' ? 'Untitled database' : 'Untitled')
+      const { error: contentError } = await admin
+        .from('messages')
+        .update({
+          content: body, // Page blocks or database table — not a title-only boardLink
+          metadata: {
+            ...existingMeta,
+            blockTitle: title,
+            notionContentInFrame: true, // Page-body sync; do not collapse to a title link
+            notionUrl: page.url ?? null,
+          },
+        })
+        .eq('id', msgId)
+      if (contentError) console.error('Failed to write Notion page body onto frame:', contentError)
+    }
+  }
+
+  // Seed each nested board with THAT page’s content only (child_pages → boardLinks, not inlined)
   for (const page of orderedForMenu) {
     const nid = normalizeNotionId(page.id)
     const boardId = notionIdToConvId.get(nid)
     if (!boardId) continue
 
-    let body: string
-    if (page.object === 'database') {
-      body = databaseBlockHtml(page)
-    } else {
-      const tree = treesByNotionId.get(nid)
-      if (tree) {
-        body = enrichDatabaseBlocksInHtml(
-          notionPageBodyToHtml(tree, { childPageLinks }),
-          pagesById
-        )
-      } else {
-        body = `<p>${escapeHtml(page.title || 'Untitled')}</p>`
-      }
-    }
+    const body = pageContentHtml(page, treesByNotionId.get(nid), childPageLinks, pagesById)
 
     const hasBody =
       body.replace(/<[^>]*>/g, '').trim().length > 0 ||

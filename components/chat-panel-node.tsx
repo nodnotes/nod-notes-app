@@ -27,6 +27,7 @@ import {
 import {
   BLOCK_HANDLE_GUTTER_W,
   CONNECTIONS_GROUP_H,
+  CONNECTIONS_ROW_PAD,
   DB_ROWS_REVEAL_FOOTER_H,
   adjustChromeXFlow,
   adjustGapYFlow,
@@ -146,6 +147,7 @@ import {
 import { PropertyDropLinePortal } from '@/components/property-drop-line-portal' // Blue dashed insert line
 import type { Editor } from '@tiptap/core' // Property header drag + popup edits
 import { PropertyIconWithTooltip } from '@/components/property-icon-with-tooltip' // Top-strip icon + name popup
+import { caretIndexInTextarea } from '@/components/property-block-view' // Click → caret inside the property value
 import { PropertyMenu, type PropertyMenuAction } from '@/components/property-menu' // Icon click → property menu
 
 import { NotionMarkIcon } from '@/components/notion-mark-icon' // Logo at bottom of a Notion-connected frame
@@ -345,7 +347,7 @@ function measurePropertyBlockWidth(block: HTMLElement): number {
   const icon = block.querySelector('.tt-property-block-icon') as HTMLElement | null
   const input = block.querySelector('.tt-property-block-input') as HTMLTextAreaElement | null
   const cell = block.querySelector('.tt-property-block-cell') as HTMLElement | null
-  const iconW = icon?.offsetWidth ?? 20 // Icon sits inside the cell, left of the value
+  const iconW = icon?.offsetWidth ?? 14 // 14px type glyph sits inside the cell, left of the value
   const gap = cell ? parseFloat(getComputedStyle(cell).gap) || 6 : 6
   const cellPadL = cell ? parseFloat(getComputedStyle(cell).paddingLeft) || 4 : 4
   const cellPadR = cell ? parseFloat(getComputedStyle(cell).paddingRight) || 8 : 8
@@ -569,7 +571,42 @@ function measureLongestWordWidth(contentFit: HTMLElement): number {
   }
   const cs = getComputedStyle(contentFit) // Pads sit outside the glyphs
   const pad = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0) // Column includes both sides
-  return Math.max(BLOCK_THREE_CHARS_W, Math.ceil(max + pad)) // Never narrower than one word
+  const prop = measurePropertyColumnWidth(contentFit) // Icon + Empty — a placeholder is not a text node
+  return Math.max(BLOCK_THREE_CHARS_W, Math.ceil(max + pad), prop) // Never narrower than one word or the property
+}
+
+/** Unscaled contentFit width of the widest property cell (icon + longest word, or the Empty placeholder). */
+function measurePropertyColumnWidth(contentFit: HTMLElement): number {
+  const pm = contentFit.querySelector('.ProseMirror') as HTMLElement | null // Cells live in the editor
+  if (!pm) return 0 // No editor yet
+  const canvas = document.createElement('canvas') // Measure the placeholder without reflow
+  const ctx = canvas.getContext('2d') // Same font the input paints at
+  if (!ctx) return 0 // Canvas unavailable
+  let inner = 0 // Widest cell before the frame pad
+  pm.querySelectorAll('textarea.tt-property-block-input').forEach((node) => {
+    const input = node as HTMLTextAreaElement // Placeholder is not a text node the word walk can see
+    const sample = input.value.trim() ? input.value : input.placeholder || 'Empty' // Empty shows until a value is typed
+    const font = getComputedStyle(input) // 14px on the cell — not the frame body size
+    ctx.font = `${font.fontStyle} ${font.fontWeight} ${font.fontSize} ${font.fontFamily}` // Canvas shorthand is often empty
+    let wordW = 0 // Longest unbreakable token in this cell
+    for (const word of sample.split(/\s+/)) {
+      if (!word) continue // Blank split piece
+      wordW = Math.max(wordW, ctx.measureText(word).width) // Do not split the placeholder
+    }
+    const cell = input.closest('.tt-property-block-cell') as HTMLElement | null // Icon + pads sit beside the word
+    const cellCs = cell ? getComputedStyle(cell) : null // Live chrome — not a hardcoded guess
+    const padX = cellCs ? (parseFloat(cellCs.paddingLeft) || 0) + (parseFloat(cellCs.paddingRight) || 0) : 12 // Cell inset
+    const borderX = cellCs ? (parseFloat(cellCs.borderLeftWidth) || 0) + (parseFloat(cellCs.borderRightWidth) || 0) : 0 // Border-box eats this
+    const gap = cellCs ? parseFloat(cellCs.columnGap) || parseFloat(cellCs.gap) || 0 : 6 // Icon ↔ value
+    const icon = cell?.querySelector('.tt-property-block-icon') as HTMLElement | null // Type glyph
+    const iconW = icon ? parseFloat(getComputedStyle(icon).width) || 0 : 14 // Missing icon still reserves the 14px slot
+    const inputPad = (parseFloat(font.paddingLeft) || 0) + (parseFloat(font.paddingRight) || 0) // Textarea UA padding
+    inner = Math.max(inner, wordW + inputPad + padX + borderX + gap + iconW) // Whole cell, one word
+  })
+  if (inner <= 0) return 0 // No property cells
+  const cs = getComputedStyle(contentFit) // Same outer pad the word floor uses
+  const outer = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0) // Column includes both sides
+  return Math.ceil(inner + outer) // Comparable to wrapColWidth
 }
 
 /** Painted wrap column in fill-local px — the contentFit box (wrapCol × CSS scale), not the PM glyph hug. */
@@ -608,8 +645,12 @@ function measureNaturalContentHeight(
   let body = 0
   if (pm) {
     for (const child of Array.from(pm.children) as HTMLElement[]) {
-      // offsetTop+Height is transform-agnostic (unscaled), same space as padT/padB
-      const bottom = child.offsetTop + child.offsetHeight
+      // offsetTop+Height is transform-agnostic (unscaled), same space as padT/padB.
+      // margin-bottom sits outside that border box (property cells use 2px). Leaving it
+      // out made contentFit taller than the hug; free mode centers that extra and each
+      // free→fit followed the overflow, walking the frame up.
+      const marginBottom = parseFloat(getComputedStyle(child).marginBottom) || 0
+      const bottom = child.offsetTop + child.offsetHeight + marginBottom
       if (bottom > body) body = bottom
     }
     if (body <= 0) {
@@ -1121,7 +1162,7 @@ function FramePropertyGroup({
             'tt-property-block-icon nodrag nopan pointer-events-auto rounded hover:bg-gray-100 dark:hover:bg-[#2a2a2a]',
             item.from >= 0 && liveEditor() && 'cursor-grab active:cursor-grabbing'
           )}
-          iconClassName="h-3.5 w-3.5" // 14px — same as board frame text, not the in-frame 16px cell glyph
+          iconClassName="h-3.5 w-3.5" // 14px — same as board frame text and the in-frame cell glyph
           onPointerDown={(e) => onHeaderPointerDown(e, item)}
         />
       ))}
@@ -1203,7 +1244,7 @@ function FrameConnectionsGroup({
           'flex w-full flex-wrap items-center', // Hug the 14px mark; wrap still grows the bottom gap
           className
         )}
-        style={{ paddingTop: 2, paddingBottom: 2 }} // 2px air toward the frame and the blue edge
+        style={{ paddingTop: CONNECTIONS_ROW_PAD, paddingBottom: CONNECTIONS_ROW_PAD }} // Same air toward the fill and the blue edge; the top gap copies this row
       >
         <button
           ref={markRef}
@@ -1633,6 +1674,7 @@ function TipTapContentLive({
     ]
   )
 
+  const editorLiveRef = useRef<Editor | null>(null) // Value mousedown enables the editor before the caret is placed
   const editorProps = useMemo(
     () => ({
       attributes: {
@@ -1703,6 +1745,34 @@ function TipTapContentLive({
             selectOnlyClickRef.current = true // Suppress I-bar on the matching click
             clearFrameTextEditActive() // Selecting the frame — not editing yet
             return false
+          }
+          // Property value is a textarea inside the atom. PM's mouseup calls view.focus()
+          // and the I-bar jumps into the neighboring text block. The value is its own
+          // gesture (same as a textarea), so this press keeps the caret there.
+          const propertyHost = mouseTarget?.closest?.('.tt-property-block') as HTMLElement | null
+          if (propertyHost && !mouseTarget?.closest?.('[data-tt-property-icon]')) {
+            if (hostNodeIdRef.current) setFrameTextEditActive(hostNodeIdRef.current) // Delete edits the value, not the frame
+            const ed = editorLiveRef.current // Fit-to stays non-editable until this press
+            if (ed && !ed.isDestroyed && !ed.isEditable) ed.setEditable(true) // Sync — a later effect would drop the caret
+            const placeValueCaret = () => {
+              const input = propertyHost.querySelector(
+                'textarea.tt-property-block-input'
+              ) as HTMLTextAreaElement | null // Re-query — setEditable can replace the node view
+              if (!input || propertyHost.hasAttribute('data-tt-property-popup')) return // Date/checkbox open their own editor
+              const onInput = !!mouseTarget?.closest?.('textarea.tt-property-block-input') // Browser places this caret
+              if (document.activeElement !== input) input.focus() // Padding press never hit the textarea
+              if (onInput || document.activeElement !== input) return // Leave the browser caret alone
+              const idx = caretIndexInTextarea(input, mouseEvent.clientX, mouseEvent.clientY) // Same spot the pointer hit
+              try {
+                input.setSelectionRange(idx, idx) // Keep the I-bar there
+              } catch {
+                // Some input types reject setSelectionRange
+              }
+            }
+            placeValueCaret() // Before mouseup can move focus to the editor
+            requestAnimationFrame(placeValueCaret) // After the editable re-render, put the I-bar back
+            mouseEvent.stopPropagation() // RF must not drag the frame out from under the caret
+            return true // Don't arm PM's mouseup focus
           }
           // DB table / title chrome owns clicks (cells, toolbar) — table nodrag stops RF drag
           if (mouseTarget?.closest?.('.tt-database-block, .tt-notion-db')) {
@@ -1825,6 +1895,7 @@ function TipTapContentLive({
     // Include collabActive so we remount once when Yjs binds (UniqueID / empty-para safety).
     [extensions, editorProps, collabActive]
   )
+  editorLiveRef.current = editor // Same instance the value press uses to turn editing on
 
   // First peer: seed empty Y fragment from durable HTML once (others already have CRDT state)
   useEffect(() => {
@@ -1989,6 +2060,24 @@ function TipTapContentLive({
         )
       ) {
         return // ⋮⋮ / insert / board open / DB / sync highlight own the gesture
+      }
+      // Property value keeps the I-bar. preventDefault + view.focus() below would pull it into the editor.
+      if (target?.closest?.('.tt-property-block') && !target.closest('[data-tt-property-icon]')) {
+        if (hostNodeId) setFrameTextEditActive(hostNodeId) // This tap is the caret
+        const host = target.closest('.tt-property-block') as HTMLElement | null // Cell around the value
+        const input = host?.querySelector('textarea.tt-property-block-input') as HTMLTextAreaElement | null
+        const onInput = !!target.closest('textarea.tt-property-block-input') // Browser places this caret
+        const touch = e.touches[0] // The finger that hit the cell
+        if (input && !onInput && touch && !host?.hasAttribute('data-tt-property-popup')) {
+          input.focus() // Padding tap — the textarea never received it
+          try {
+            const idx = caretIndexInTextarea(input, touch.clientX, touch.clientY) // Same spot as the finger
+            input.setSelectionRange(idx, idx) // Keep the I-bar there
+          } catch {
+            // Some input types reject setSelectionRange
+          }
+        }
+        return // Don't preventDefault — that would keep the keyboard off the value
       }
       // Fit-to: first finger moves the frame. Caret waits for text-edit or the open menu.
       if (
@@ -2431,6 +2520,11 @@ function TipTapContentLive({
     }
     // Selected-frame click opens the frame menu; I-bar only after that (menu open) or while editing
     if (hostNodeId && !isFrameTextEditActive(hostNodeId) && !document.querySelector('.node-popup')) {
+      return
+    }
+    // Value press already placed the I-bar. setTextSelection would snap it to the next text block.
+    if (t?.closest?.('.tt-property-block') && !t.closest('[data-tt-property-icon]')) {
+      if (hostNodeId) setFrameTextEditActive(hostNodeId) // Typing stays in this frame
       return
     }
     // Drag-select ends with a click — collapsing to a caret here wiped the range every time
@@ -3291,7 +3385,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     const responseHtml = responseRaw ? formatResponseContent(responseRaw) : ''
     const merged = mergePanelHtml(data.promptMessage?.content, responseHtml)
     const meta = (data.promptMessage?.metadata || {}) as Record<string, unknown>
-    if (isBoardBodyMeta(meta) || meta.notionObject === 'database') return merged
+    if (isBoardBodyMeta(meta) || meta.notionObject === 'database' || meta.notionContentInFrame === true) return merged
     const linkedId = getLinkedBoardId(meta)
     if (!linkedId) return merged
     const iconMeta = meta.notionIcon as { type?: string; emoji?: string } | null
@@ -4536,7 +4630,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     if (!promptMessage?.id || !conversationId) return
     if (hasBoardLinkForFrame) return
     const meta = (promptMessage.metadata as Record<string, unknown>) || {}
-    if (meta.notionObject === 'database') return // Live table stays on this frame / board body
+    if (meta.notionObject === 'database' || meta.notionContentInFrame === true) return // Body stays on this frame
     const serverContent = promptMessage.content || ''
     const needsMigrate =
       isSoleDatabaseBlockContent(serverContent) || isSoleDatabaseBlockContent(promptContent)
@@ -4624,7 +4718,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     if (repairedBoardFrameRef.current || isProjectBoard || isBoardBody) return
     if (!promptMessage?.id || !linkedBoardId) return
     const meta = (promptMessage.metadata as Record<string, unknown>) || {}
-    if (meta.notionObject === 'database') return
+    if (meta.notionObject === 'database' || meta.notionContentInFrame === true) return // Page body stays on this frame
     if (meta.dbLayout === 'card') return // Row→card frames keep title + property cells
     const bt = typeof meta.blockType === 'string' ? meta.blockType : ''
     if (bt !== 'board' && bt !== 'boardIn' && bt !== 'page' && bt !== 'pageIn') return
@@ -6342,7 +6436,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         setResizeDimensions(nextDims)
         resizeDimensionsRef.current = nextDims
         metaPatch = { ...metaPatch, resizeDimensions: nextDims }
-        fitShift = { x: painted.left + alignShift, y: painted.top } // Fill origin → the glyphs’ left (mid-frame in free)
+        // Never follow a negative top. contentFit can stick out above the fill (centered
+        // strut / margin); chasing it walks the frame up on every free→fit.
+        fitShift = { x: painted.left + alignShift, y: Math.max(0, painted.top) }
         const storePos = rfStoreApi.getState().nodeInternals.get(id)?.position
         if (storePos) {
           metaPatch = {
@@ -7847,7 +7943,18 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       ? Math.min(contentFitBox?.height ?? unlockedInnerH, unlockedInnerH)
       : null
   const heldGap = wrapGapRef.current // Released wrap gap — inset lines must not grow back onto the + box
-  const contentPaintForGap = Math.max(1, (fitWrapCol ?? 1) * renderFrameScale) // Column at place scale, before the wrap-line fit
+  const propertyFloor = contentFitRef.current ? measurePropertyColumnWidth(contentFitRef.current) : 0 // Icon + Empty — wider than a short word
+  // Free centers this box. Pin it to the glyph hug so a taller PM (strut / margin) cannot
+  // lift the text above the fill — that lift is what free→fit was chasing upward.
+  const freeContentHugH =
+    unlockedResized && !soleImageContent && contentFitRef.current
+      ? measureNaturalContentHeight(contentFitRef.current, notionConnected)
+      : 0
+  const linePaint = Math.max(1, (fitWrapCol ?? 1) * renderFrameScale) // Where the wrap lines are, before the property floor
+  const layoutPaint = propertyFloor > 0
+    ? Math.max(linePaint, propertyFloor * renderFrameScale) // Cell laid out wide enough for Empty, then scaled into the lines
+    : linePaint // No property — the word column is the fit
+  const contentPaintForGap = layoutPaint // Shrink denominator — a short word column would clip Empty
   const wrapFillsBox =
     heldGap != null && fitBoxW != null
       ? heldGap.width >= fitBoxW - 1.5 // Only grow when the released lines sit on the + box
@@ -7865,7 +7972,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           )
         : Math.max(
             FRAME_SCALE_EPSILON,
-            (heldGap?.width ?? contentPaintForGap) / contentPaintForGap // Inset lines — glyphs fit that gap without another forced drag
+            (heldGap?.width ?? linePaint) / contentPaintForGap // Inset lines — shrink so the property placeholder fits that gap
           )
       : unlockedResized && fitBoxW != null && fitBoxH != null
         ? freeContentFitScale(fitBoxW, fitBoxH, contentVisualW, contentVisualH, frameShape, contentFitBox != null)
@@ -7955,7 +8062,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       : wrapColWidth
   const wrapContentWidth =
     wrapActive && wrapPlusMaxCol != null // Locked + free: same column; free resize must not steal wrap
-      ? wrapPlusMaxCol
+      ? Math.max(wrapPlusMaxCol, frameUnlocked ? propertyFloor : 0) // Free: lay Empty out full, then the contain scale fits it between the lines
       : null
   // Free nowrap center/right: unscaled fill so text-align can park each line on the frame
   const freeAlignCol =
@@ -9801,7 +9908,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                 type="button"
                 className={cn(
                   'flex h-5 w-5 items-center justify-center rounded-full text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800',
-                  !frameUnlocked && 'bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-50' // Active when fitted to text
+                  frameUnlocked && 'text-blue-500 dark:text-blue-500' // Free mode: blue icon, no fill
                 )}
                 title={frameUnlocked ? 'Fit to text' : 'Free resize (keep size)'}
                 aria-label={frameUnlocked ? 'Fit to text' : 'Free resize'}
@@ -9813,9 +9920,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             )}
             <button
               type="button"
-              className={cn(
-                'flex h-5 w-5 items-center justify-center rounded-full text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800', // Same chrome as rotate / fit / wrap — no fill
-                showComments && 'bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-50' // Active wash only while open
+                className={cn(
+                'flex h-5 w-5 items-center justify-center rounded-full text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800', // Same chrome as rotate / fit — no fill
+                showComments && 'text-blue-500 dark:text-blue-500' // Open: blue icon, no fill
               )}
               title={showComments ? 'Hide reactions' : 'Reactions'}
               aria-label={showComments ? 'Hide reactions' : 'Reactions'}
@@ -10341,6 +10448,13 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                   } as React.CSSProperties)
                 : {}),
               lineHeight: isBlock ? '1.25' : '1.7', // Blocks hug glyphs; chat panels keep looser rhythm
+              ...(freeContentHugH > 0
+                ? {
+                    height: freeContentHugH, // Unscaled hug — CSS scale paints it; flex centers this, not the strut
+                    boxSizing: 'border-box' as const, // Measure already includes the T/B pad
+                    overflow: 'hidden', // Drop the PM tail that used to stick out above the fill
+                  }
+                : {}),
               textAlign: isBlock ? frameAlignX : undefined, // Glyph align inside the wrap / hug box (PM inherits)
               ...(wrapContentWidth != null && !soleImageContent
                 ? { width: wrapContentWidth, maxWidth: wrapContentWidth }
@@ -10459,9 +10573,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                 // Notion page bodies stay on HTML/LWW + Notion sync — not Yjs text CRDT
                 allowCollabJoin &&
                 !(
-                  isBoardBodyMeta(promptMessage?.metadata as Record<string, unknown>) &&
                   typeof (promptMessage?.metadata as { notionPageId?: string } | undefined)
-                    ?.notionPageId === 'string'
+                    ?.notionPageId === 'string' &&
+                  (isBoardBodyMeta(promptMessage?.metadata as Record<string, unknown>) ||
+                    (promptMessage?.metadata as { notionContentInFrame?: boolean } | undefined)
+                      ?.notionContentInFrame === true)
                 )
               }
               boardInTargets={(() => {

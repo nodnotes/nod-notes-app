@@ -446,6 +446,30 @@ type RowDef =
     }
   | { kind: 'separator'; hidden?: boolean }
 
+/** Flyouts that stay open when their row is clicked (stubs color / listFormat / skills still close). */
+const PERSISTENT_FLYOUTS = [
+  'turnInto',
+  'boardIn',
+  'frameShape',
+  'frameAlign',
+  'frameColor',
+  'connections',
+  'convertLayout',
+  'dbRows',
+  'sets',
+  'addProperty',
+] as const
+
+type PersistentFlyout = (typeof PERSISTENT_FLYOUTS)[number] // Matches openSubmenu
+
+/** Real flyout for this row, or null when the chevron is still a stub. */
+function persistentFlyout(submenu: NonNullable<Extract<RowDef, { kind: 'action' }>['submenu']> | undefined): PersistentFlyout | null {
+  if (!submenu) return null // No chevron — the row runs its action
+  return (PERSISTENT_FLYOUTS as readonly string[]).includes(submenu)
+    ? (submenu as PersistentFlyout) // Click leaves this flyout open
+    : null // Stub chevron — caller still closes after the action
+}
+
 /** Human label for a baseline block type (menu context + Turn into). */
 export function blockTypeLabel(type: BlockTypeId): string {
   const map: Record<BlockTypeId, string> = {
@@ -1208,19 +1232,14 @@ export function BlockActionsMenu({
               // pointerdown: menu root preventDefault on mousedown can suppress click
               onPointerDown={(e) => {
                 if (e.button !== 0) return // Left button only
-                if (row.submenu === 'sets') {
-                  e.preventDefault()
+                const flyout = persistentFlyout(row.submenu) // Shape, Color, Align, and the other chevrons
+                if (flyout) {
+                  e.preventDefault() // Own the gesture so a later click cannot toggle the flyout shut
                   e.stopPropagation()
-                  setOpenSubmenu('sets') // Click opens the picker even if the later click is swallowed
+                  setOpenSubmenu(flyout) // Click keeps this submenu open
                   return
                 }
-                if (row.submenu === 'addProperty') {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  setOpenSubmenu('addProperty') // Click opens the type grid (hover may already have it open)
-                  return
-                }
-                if (row.submenu) return // Submenus toggle on click / hover
+                if (row.submenu) return // Stub chevrons still run on click
                 if (row.disabled) return // Revert (etc.) greyed out when nothing to restore
                 e.preventDefault()
                 e.stopPropagation()
@@ -1230,40 +1249,9 @@ export function BlockActionsMenu({
                 e.preventDefault()
                 e.stopPropagation()
                 if (row.disabled) return // Skip greyed-out rows
-                if (row.submenu === 'turnInto') {
-                  setOpenSubmenu((s) => (s === 'turnInto' ? null : 'turnInto'))
-                  return
-                }
-                if (row.submenu === 'frameShape') {
-                  setOpenSubmenu((s) => (s === 'frameShape' ? null : 'frameShape'))
-                  return
-                }
-                if (row.submenu === 'frameAlign') {
-                  setOpenSubmenu((s) => (s === 'frameAlign' ? null : 'frameAlign'))
-                  return
-                }
-                if (row.submenu === 'frameColor') {
-                  setOpenSubmenu((s) => (s === 'frameColor' ? null : 'frameColor'))
-                  return
-                }
-                if (row.submenu === 'convertLayout') {
-                  setOpenSubmenu((s) => (s === 'convertLayout' ? null : 'convertLayout'))
-                  return
-                }
-                if (row.submenu === 'dbRows') {
-                  setOpenSubmenu((s) => (s === 'dbRows' ? null : 'dbRows'))
-                  return
-                }
-                if (row.submenu === 'connections') {
-                  setOpenSubmenu((s) => (s === 'connections' ? null : 'connections')) // Click → Notion
-                  return
-                }
-                if (row.submenu === 'sets') {
-                  setOpenSubmenu('sets') // Click keeps the picker open (hover already opened it)
-                  return
-                }
-                if (row.submenu === 'addProperty') {
-                  setOpenSubmenu('addProperty') // Click keeps the type grid open
+                const flyout = persistentFlyout(row.submenu) // Same flyout pointerdown already opened
+                if (flyout) {
+                  setOpenSubmenu(flyout) // If click still fires, leave the submenu open
                   return
                 }
                 // Submenus without UI yet — fire stub action and close

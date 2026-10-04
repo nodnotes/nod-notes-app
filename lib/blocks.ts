@@ -186,11 +186,12 @@ export function shouldPushNotionPage(_sync?: NotionSyncMode): boolean {
   return true
 }
 
-/** Imported Notion page on a board-body frame — eligible for page-body sync. */
+/** Imported Notion page whose body lives on this frame — eligible for page-body sync. */
 export function notionPageBodySyncTarget(meta?: Record<string, unknown> | null): {
   pageId: string
 } | null {
-  if (!meta || !isBoardBodyMeta(meta)) return null
+  // Board body, or Add page as frame (body on the map frame, not a title link).
+  if (!meta || (!isBoardBodyMeta(meta) && meta.notionContentInFrame !== true)) return null
   const pageId = typeof meta.notionPageId === 'string' ? meta.notionPageId : null
   if (!pageId) return null
   if (meta.notionObject === 'database') return null

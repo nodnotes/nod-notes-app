@@ -53,6 +53,7 @@ import {
   connectionOverlapsFrames,
   pointerInNodeFill,
 } from '@/lib/threads/closest-connection' // Frame drop follows the closest sides that stay outside the fill
+import { seedOffscreenThreadEnds } from '@/lib/threads/seed-offscreen-thread-ends' // Draw threads whose far frame is still culled
 import {
   BlockActionsMenu,
   type BlockActionId,
@@ -129,6 +130,7 @@ import {
   endBoardNavigating,
   isBoardNavigating,
   registerBoardZoomCssReader,
+  subscribeBoardNavigating,
   syncBoardZoomCss,
   touchBoardNavigating,
 } from '@/lib/board-navigating' // Freeze React zoom during pan/pinch; CSS chrome tracks live zoom
@@ -425,7 +427,7 @@ function isFrameDragAreaTarget(target: EventTarget | null): boolean {
 
 /** Chrome that owns the click — ⋮⋮, corner knobs, connections — not the selected frame / adjust box. */
 const FRAME_MENU_CHROME_SEL =
-  '.react-flow__resize-control.handle, [data-frame-chrome], [data-tt-block-handle], [data-tt-insert-line], .block-actions-menu, [data-tt-connection-indicator], [data-tt-property-header] span, [data-tt-connections-header] button, input, textarea, a, button, [data-page-link-preview], [data-tt-ibar-grip], .tt-database-block, .tt-notion-db, [data-tt-wrap-line], [data-tt-fit-plus]'
+  '.react-flow__resize-control.handle, [data-frame-chrome], [data-tt-block-handle], [data-tt-insert-line], .block-actions-menu, [data-tt-connection-indicator], [data-tt-property-header] span, [data-tt-connections-header] button, input, textarea, .tt-property-block, a, button, [data-page-link-preview], [data-tt-ibar-grip], .tt-database-block, .tt-notion-db, [data-tt-wrap-line], [data-tt-fit-plus]'
 
 /** True when the click hit the blue adjust box (line hit target), not a corner knob. */
 function isFrameAdjustBoxTarget(target: EventTarget | null): boolean {
@@ -1262,6 +1264,12 @@ function BoardFlowInner({
 
   const reactFlowInstance = useReactFlow()
   const rfStore = useStoreApi() // Embed: force pane width/height when CSS % height collapses
+  // Culled frames never mount, so their connection points stay empty and the thread is omitted.
+  useEffect(() => {
+    const stamp = () => seedOffscreenThreadEnds(rfStore) // Runs after RF copies nodes into the store
+    stamp() // Catch ends already in the store when this effect attaches
+    return rfStore.subscribe(stamp) // Nodes and threads arrive in later store updates
+  }, [rfStore])
   // Live chrome CSS — full-precision zoom stamped on selected nodes (rAF while selected)
   useEffect(() => {
     const read = () => {
@@ -1283,6 +1291,22 @@ function BoardFlowInner({
     }
   }, [rfStore])
   const updateNodeInternals = useUpdateNodeInternals() // Remeasure Handles after connect so paths attach
+  // Connection points are placed with `--tt-frame-ui-scale` (boost/zoom). RF keeps the last
+  // measured flow offset until updateNodeInternals — selecting the frame did that, zoom did not.
+  useEffect(() => {
+    let zoomAtStart = rfStore.getState().transform[2] // Pan-only gestures must not remeasure
+    return subscribeBoardNavigating(() => {
+      if (isBoardNavigating()) {
+        zoomAtStart = rfStore.getState().transform[2] // Capture zoom when the gesture begins
+        return
+      }
+      const zoomNow = rfStore.getState().transform[2] // Settled zoom
+      if (Math.abs(zoomNow - zoomAtStart) < 0.0001) return // Pan did not move connection points
+      const ids = rfStore.getState().getNodes().map((n) => n.id) // Every mounted node; missing DOM is skipped
+      if (ids.length === 0) return
+      updateNodeInternals(ids) // Same remeasure a frame reselect runs
+    })
+  }, [rfStore, updateNodeInternals])
   const { setReactFlowInstance, registerSetNodes, isLocked, layoutMode, setLayoutMode, setIsDeterministicMapping, panelWidth: contextPanelWidth, isPromptBoxCentered, lineStyle, setLineStyle, arrowDirection, setArrowDirection, boardRule: contextBoardRule, boardStyle: contextBoardStyle, boardFont, clickedEdge: contextClickedEdge, setClickedEdge: setContextClickedEdge, fillColor, borderColor, borderWeight, borderStyle, flashcardMode, setFlashcardMode, selectedTag, setSelectedTag, isDrawing, setIsDrawing, drawTool, setDrawTool, drawShape, setDrawShape, setFillColor, setBorderColor, setBorderWeight, setBorderStyle, registerMapUndoRedo, registerMapTakeSnapshot, snapEnabled, setSnapEnabled } = useReactFlowContext()
   const { rotation: boardRotation, setScrollMode, setRotationAroundViewCenter, adoptRotation } = useBoardRotation() // Subscribe so I-bar / overlays re-place when the camera twists
 
@@ -11491,7 +11515,7 @@ function BoardFlowInner({
         maxZoom={embedded ? Math.min(2.5, zoomRange.maxZoom) : zoomRange.maxZoom}
         preventScrolling={!hideMapChrome} // Homepage previews let the marketing page scroll under the wheel
         autoPanOnNodeDrag={false}
-        onlyRenderVisibleElements // Bound DOM + composited layers to frames currently in/near the pane
+        onlyRenderVisibleElements // Culled frames stay unmounted; seedOffscreenThreadEnds still draws their threads
         selectNodesOnDrag={previewLive && !isDrawing && !eraserArmed}
         multiSelectionKeyCode={MULTI_SELECT_KEYS}
         selectionKeyCode={

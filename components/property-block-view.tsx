@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { NodeViewWrapper, type NodeViewProps } from '@tiptap/react'
+import { NodeViewWrapper, type Editor, type NodeViewProps } from '@tiptap/react'
 import { cn } from '@/lib/utils'
 import {
   isPropertyTypeId,
@@ -27,6 +27,7 @@ import {
   duplicatePropertyBlock,
   deletePropertyBlock,
 } from '@/lib/tiptap/property-block'
+import { setFrameTextEditActive } from '@/lib/frame-text-edit' // Value caret — Delete edits text, not the frame
 
 // Caret room past the last glyph — the frame hug reads the width we set here, so any slack
 // has to live in this one number or the cell ends up wider than the frame and clips.
@@ -52,6 +53,115 @@ function measureValueWidth(el: HTMLElement, text: string): number {
   return Math.ceil(w) + VALUE_CARET_PAD
 }
 
+/** Position of this property cell in the current doc. `getPos` stays stale after a content replace. */
+function propertyPosFromDom(
+  editor: Editor, // Host editor — its doc is the source of truth
+  dom: HTMLElement | null, // Textarea inside the node view
+  getPos: (() => number | undefined) | undefined, // Fallback when the DOM is not mapped yet
+  node: NodeViewProps['node'] // Same cell — match it if the saved position is past the fragment
+): number | null {
+  if (!editor || editor.isDestroyed) return null // View is gone
+  const doc = editor.state.doc // Current fragment — not the one getPos was captured against
+  const size = doc.content.size // Valid positions are 0..size
+  const accept = (pos: number | null | undefined): number | null => {
+    if (typeof pos !== 'number' || !Number.isFinite(pos)) return null // Unmapped
+    if (pos < 0 || pos > size) return null // The reported crash: position past the fragment
+    const direct = pos < size ? doc.nodeAt(pos) : null // Atom starts at this pos
+    if (direct?.type.name === 'propertyBlock') return pos // Exact node
+    const $pos = doc.resolve(Math.min(Math.max(0, pos), size)) // posAtDOM can land beside the atom
+    for (let d = $pos.depth; d > 0; d--) {
+      if ($pos.node(d).type.name !== 'propertyBlock') continue // Keep walking up
+      return $pos.before(d) // Start of the cell, safe for setNodeMarkup
+    }
+    return null // Not a property cell
+  }
+  if (dom) {
+    try {
+      const fromDom = accept(editor.view.posAtDOM(dom, 0)) // Map the live textarea, not the saved pos
+      if (fromDom != null) return fromDom // DOM wins when the node view position is stale
+    } catch {
+      // Detached DOM — try getPos below
+    }
+  }
+  const mapped = accept(getPos?.()) // Bounds-checked saved position
+  if (mapped != null) return mapped
+  let only: number | null = null // One matching cell in this frame
+  let hits = 0 // More than one means we cannot guess
+  doc.descendants((child, pos) => {
+    if (child.type.name !== 'propertyBlock') return false // Skip text blocks
+    const same =
+      child === node ||
+      (child.attrs.propertyType === node.attrs.propertyType &&
+        child.attrs.propertyName === node.attrs.propertyName &&
+        child.attrs.value === node.attrs.value) // Attrs survive a content replace that drops the old node object
+    if (!same) return false
+    hits += 1
+    only = pos
+    return false // Atom — no children
+  })
+  return hits === 1 ? only : null // Unique cell still gets the typed value
+}
+
+/**
+ * Caret index under a click on the value. The textarea’s screen rect already includes board
+ * zoom, so this does not use ProseMirror positions (those snap out of the cell).
+ */
+export function caretIndexInTextarea(
+  input: HTMLTextAreaElement, // Property value — not the frame editor
+  clientX: number, // Click, viewport px
+  clientY: number // Click, viewport px
+): number {
+  const text = input.value // Placeholder "Empty" is not an offset in the value
+  if (!text) return 0 // Empty cell — the I-bar sits at the start
+  const style = getComputedStyle(input) // Font the glyphs paint at
+  const ctx = document.createElement('canvas').getContext('2d') // Widths without reflowing the cell
+  if (!ctx) return text.length // No canvas — the end is closer than a jump to the start
+  ctx.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`.trim() // Same face as the value
+  const rect = input.getBoundingClientRect() // Screen box — board zoom is already in it
+  const padL = parseFloat(style.paddingLeft) || 0 // Click x starts after the padding
+  const padT = parseFloat(style.paddingTop) || 0 // Click y starts after the padding
+  const x = clientX - rect.left - padL + (input.scrollLeft || 0) // Local x in the text
+  const y = clientY - rect.top - padT + (input.scrollTop || 0) // Local y in the text
+  const lh = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) || 14) * 1.7 // One line box
+  const targetLine = Math.max(0, Math.floor(y / lh)) // Wrapped line under the pointer
+  const padR = parseFloat(style.paddingRight) || 0 // Right inset is not a glyph
+  const innerW = Math.max(1, input.clientWidth - padL - padR) // Where pre-wrap breaks
+  const wraps = style.whiteSpace !== 'pre' && style.whiteSpace !== 'nowrap' // Fit-to-text stays one line
+  const indexOnLine = (start: number, end: number): number => {
+    let lo = start // Left of the search
+    let hi = end // Exclusive end of this visual line
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1 // Bias high so the glyph under the click wins
+      if (ctx.measureText(text.slice(start, mid)).width <= x) lo = mid // Click is still to the right
+      else hi = mid - 1 // Click is left of this midpoint
+    }
+    return lo // Index to place the I-bar
+  }
+  if (!wraps) return indexOnLine(0, text.length) // Nowrap — the whole value is one line
+  let line = 0 // Visual line being measured
+  let lineStart = 0 // Value index where this line begins
+  let i = 0 // Scan cursor
+  while (i < text.length) {
+    if (text[i] === '\n') {
+      if (line === targetLine) return indexOnLine(lineStart, i) // Hard break ends the clicked line
+      line += 1 // Next visual line
+      i += 1 // Skip the break itself
+      lineStart = i // Next line starts after the break
+      continue
+    }
+    const w = ctx.measureText(text.slice(lineStart, i + 1)).width // Width if this char stays on the line
+    if (i > lineStart && w > innerW) {
+      if (line === targetLine) return indexOnLine(lineStart, i) // Wrap before this char
+      line += 1 // This char starts the next line
+      lineStart = i // Don't consume it yet
+      continue
+    }
+    i += 1 // Char fits on this line
+  }
+  if (line === targetLine) return indexOnLine(lineStart, text.length) // Click on the last line
+  return text.length // Click below the value — I-bar at the end
+}
+
 function propertyTypeNeedsPopup(type: PropertyTypeId): boolean {
   return (
     type === 'date' ||
@@ -64,7 +174,7 @@ function propertyTypeNeedsPopup(type: PropertyTypeId): boolean {
   )
 }
 
-export function PropertyBlockView({ node, updateAttributes, selected, editor, getPos }: NodeViewProps) {
+export function PropertyBlockView({ node, selected, editor, getPos }: NodeViewProps) {
   const rawType = node.attrs.propertyType as string
   const propertyType: PropertyTypeId = isPropertyTypeId(rawType) ? rawType : 'text'
   const stored = typeof node.attrs.value === 'string' ? node.attrs.value : ''
@@ -100,11 +210,18 @@ export function PropertyBlockView({ node, updateAttributes, selected, editor, ge
     setDraft(stored)
   }, [stored])
 
+  const writeValue = useCallback((value: string) => {
+    if (!editor || editor.isDestroyed) return // Editor gone mid-blur
+    const from = propertyPosFromDom(editor, inputRef.current, getPos, node) // Live pos — updateAttributes used a stale 49
+    if (from == null) return // Doc shrank under this node view; skip rather than throw
+    updatePropertyBlockAttrs(editor, from, { value }) // setNodeMarkup only when the cell is in range
+  }, [editor, getPos, node])
+
   const commit = useCallback(() => {
     const next = draft.trim()
     if (next === stored) return
-    updateAttributes({ value: next })
-  }, [draft, stored, updateAttributes])
+    writeValue(next) // Blur / Enter — same path as the empty toggle
+  }, [draft, stored, writeValue])
 
   const openAtIcon = useCallback((set: (a: PropertyEditorAnchor) => void) => {
     const el = iconRef.current
@@ -138,10 +255,12 @@ export function PropertyBlockView({ node, updateAttributes, selected, editor, ge
     [editor, getPos]
   )
 
-  const focusInput = useCallback(() => {
-    const input = inputRef.current
-    input?.focus()
-    input?.setSelectionRange(input.value.length, input.value.length)
+  const focusInput = useCallback((clientX: number, clientY: number) => {
+    const input = inputRef.current // Value field — the I-bar lives here, not in the frame editor
+    if (!input) return // Unmounted mid-press
+    input.focus() // Show the caret even when the press hit cell padding
+    const idx = caretIndexInTextarea(input, clientX, clientY) // Where the pointer landed
+    input.setSelectionRange(idx, idx) // Keep that spot — the end would jump the I-bar
   }, [])
 
   // A textarea has no intrinsic size: `cols` drives width and `rows` drives height.
@@ -151,13 +270,27 @@ export function PropertyBlockView({ node, updateAttributes, selected, editor, ge
   useEffect(() => {
     const el = inputRef.current
     if (!el) return
+    const keepCaret = (mutate: () => void) => {
+      const focused = document.activeElement === el // Hug must not kick the I-bar out of the value
+      const start = focused ? el.selectionStart : null // Caret before this size write
+      const end = focused ? el.selectionEnd : null // Selection end, same moment
+      mutate() // Width/height changes are sync and can move the caret
+      if (start == null || end == null) return // Wasn't editing this cell
+      if (document.activeElement !== el) return // Focus left — don't pull it back
+      el.setSelectionRange(start, end) // Chrome drops the caret when the textarea is resized
+    }
     const fitHeight = () => {
-      el.style.height = 'auto'
-      el.style.height = `${el.scrollHeight}px`
+      keepCaret(() => {
+        el.style.height = 'auto' // scrollHeight is the content, not the previous fit
+        el.style.height = `${el.scrollHeight}px` // Hug the lines — a textarea has no intrinsic height
+      })
     }
     if (nowrap) {
-      el.style.width = `${measureValueWidth(el, draft || 'Empty')}px`
-      fitHeight()
+      keepCaret(() => {
+        el.style.width = `${measureValueWidth(el, draft || 'Empty')}px` // Glyph width — cols would ignore the value
+        el.style.height = 'auto' // Same hug as wrap, inside the same caret restore
+        el.style.height = `${el.scrollHeight}px` // One line tall once the width is the text
+      })
       return
     }
     el.style.width = ''
@@ -199,6 +332,7 @@ export function PropertyBlockView({ node, updateAttributes, selected, editor, ge
       )}
       data-type="propertyBlock"
       data-inline={inline ? 'true' : undefined}
+      data-tt-property-popup={propertyTypeNeedsPopup(propertyType) ? 'true' : undefined} // Date/checkbox — no text I-bar
     >
       <div className="tt-property-block-row">
         <div
@@ -210,7 +344,12 @@ export function PropertyBlockView({ node, updateAttributes, selected, editor, ge
             e.stopPropagation()
             e.preventDefault()
             if (propertyTypeNeedsPopup(propertyType)) openValuePopup()
-            else focusInput()
+            else {
+              const host = (editor?.storage as { frameHost?: { hostNodeId?: string | null } } | undefined)
+                ?.frameHost?.hostNodeId // This frame — text-edit is per host
+              if (host) setFrameTextEditActive(host) // Keep the I-bar if mousedown is canceled
+              focusInput(e.clientX, e.clientY) // I-bar at the click, not the end of the value
+            }
           }}
         >
           <span ref={iconRef} className="inline-flex">
@@ -218,6 +357,7 @@ export function PropertyBlockView({ node, updateAttributes, selected, editor, ge
               type={propertyType}
               name={propertyName}
               className={cn('tt-property-block-icon', canEditCell && 'cursor-grab active:cursor-grabbing')}
+              iconClassName="h-3.5 w-3.5" // 14px — match frame text, not the default 16px glyph
               onPointerDown={onIconPointerDown}
             />
           </span>
@@ -254,7 +394,7 @@ export function PropertyBlockView({ node, updateAttributes, selected, editor, ge
                 const wasEmpty = !stored.trim()
                 const nowEmpty = !v.trim()
                 if (wasEmpty !== nowEmpty) {
-                  updateAttributes({ value: nowEmpty ? '' : v.trim() })
+                  writeValue(nowEmpty ? '' : v.trim()) // Crossing empty used the same stale position
                 }
               }}
               onBlur={commit}
@@ -278,7 +418,7 @@ export function PropertyBlockView({ node, updateAttributes, selected, editor, ge
         value={stored}
         onCommit={(next) => {
           setDraft(next)
-          updateAttributes({ value: next })
+          writeValue(next) // Calendar / checkbox — same live position as the textarea
         }}
         onClose={() => setEditorOpen(null)}
       />

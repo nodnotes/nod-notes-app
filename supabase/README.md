@@ -31,6 +31,11 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20261004180541_thread_painted_fill_property_caret_notion_frame` — Threads on the painted fill (offscreen ends included); property I-bar stays in the cell; Add page as frame keeps the Notion body here
+- `20261003235840_frame_content_adjust_checkpoint` — Fit and free share one frameScale gutter; unlocking does not widen the adjust box
+- `20261003232506_wrap_shrink_fit_light_blue_edge` — Free wrap shrinks to the line gap; fit-to-text wrap turns light blue at the off edge
+- `20261003220802_wrap_lines_hold_released_gap` — Wrap lines stay on the released gap; threads route around frames
+- `20261002020051_thread_arrow_board_tip` — Thread arrow meets the stroke and shrinks on zoom-out; reload restores the camera; empty-board drop plants a free end
 - `20261001013226_group_select_box_tidy_up` — Group resize box on painted rings; drag-select drops the last moved frame; Tidy up; default frame shape
 - `20260929014506_wrap_line_plus_align_live_drag` — Wrap dashes on + center; leave-slop + frozen contain live wrap; +'s stay on fill
 - `20260929012015_fit_plus_frame_relative_phone_chrome` — Frame-relative fit-plus size; phone wrap/+ drag; sticky-note fills + dark remap; More Present→Views

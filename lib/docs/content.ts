@@ -704,7 +704,7 @@ export const DOCS_CATEGORIES: DocsCategory[] = [
           },
           {
             type: 'p',
-            text: 'Creates a title-variant board-link frame plus a nested Nod Notes board whose board-body holds the Notion content (or a database block for DBs).',
+            text: 'Places the Notion page on the current board as a frame that contains the page body (or a live database table when the pick is a database). Sub-pages inside that body stay links to their own boards.',
           },
           {
             type: 'h2',

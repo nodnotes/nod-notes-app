@@ -1,6 +1,8 @@
 import { Position, type Node, type XYPosition } from 'reactflow' // Node box → mid-side attach point
 import { normalizeHandleId, INDICATOR_OUTSET } from './handle-ids' // left-indicator → left; exit stub length
 import { readFrameChromePad } from '@/lib/frame-chrome-offset' // Selected L/R gutter — not part of the fill
+import { isBoardNavigating } from '@/lib/board-navigating' // Skip layout reads while the viewport is moving
+import { isFrameDragging } from '@/lib/frame-dragging' // Skip layout reads while a frame is moving
 import {
   parseFrameShape,
   shapeSideAnchor,
@@ -65,11 +67,97 @@ function frameContentSize(node: Node): { width: number; height: number } | null 
 }
 
 /**
+ * Panel border box in node-local flow px.
+ * `offset*` ignores viewport zoom, and negative chrome margins show up as a negative offset,
+ * so this is the box on screen — not the last RF measure, which zoom does not refresh.
+ */
+function paintedPanelBox(
+  nodeId: string,
+  duringZoom = false // Selected chrome moves every tick — that read happens after layout, not in render
+): { dx: number; dy: number; w: number; h: number; padX: number; yTop: number; yBottom: number } | null {
+  if (typeof document === 'undefined' || isFrameDragging()) return null // A drag already moves the node every tick
+  if (!duringZoom && isBoardNavigating()) return null // Idle threads wait until the gesture settles
+  const nodeEl = document.querySelector(
+    `.react-flow__node[data-id="${CSS.escape(nodeId)}"]`
+  ) as HTMLElement | null // The RF node the thread is attached to
+  const panel = nodeEl?.querySelector('[data-panel-container="true"]') as HTMLElement | null // Blue box / fill
+  if (!nodeEl || !panel || panel.offsetWidth < 1 || panel.offsetHeight < 1) return null // Not painted yet
+  let dx = 0 // Panel border left, relative to the node border
+  let dy = 0 // Panel border top — negative when the adjust box hangs above the fill origin
+  let el: HTMLElement | null = panel // Walk offset parents until the RF node
+  let reached = false // True once the sum is relative to the node, not the page
+  while (el && el !== nodeEl) {
+    dx += el.offsetLeft // Includes a negative marginLeft from the L/R gutter
+    dy += el.offsetTop // Includes a negative marginTop from the top adjust band
+    const parent = el.offsetParent as HTMLElement | null // Next positioned ancestor
+    if (parent === nodeEl) {
+      reached = true // Offsets above are already node-local
+      break
+    }
+    if (!parent || !nodeEl.contains(parent)) return null // Left the node — don't use a page-relative sum
+    el = parent
+  }
+  if (!reached) return null // Could not relate the panel to this node
+  return {
+    dx, // Flow px from the node origin to the painted left
+    dy, // Flow px from the node origin to the painted top
+    w: panel.offsetWidth, // Painted width, gutters included
+    h: panel.offsetHeight, // Painted height, T/B bands included
+    padX: parseFloat(panel.getAttribute('data-tt-chrome-pad-x') || '') || 0, // L/R gutter inside that box
+    yTop: parseFloat(panel.getAttribute('data-tt-chrome-pad-y-top') || '') || 0, // Top band inside that box
+    yBottom: parseFloat(panel.getAttribute('data-tt-chrome-pad-y-bottom') || '') || 0, // Bottom band inside that box
+  }
+}
+
+/** Side point on the painted panel. All four sides stay on the fill, not the blue adjust box. */
+function pointOnPaintedPanel(
+  origin: XYPosition,
+  box: { dx: number; dy: number; w: number; h: number; padX: number; yTop: number; yBottom: number },
+  side: Position
+): XYPosition | null {
+  const left = origin.x + box.dx + box.padX // Peach left — skip the L/R gutter
+  const top = origin.y + box.dy + box.yTop // Peach top — skip the property band
+  const fillW = Math.max(1, box.w - box.padX * 2) // Fill width inside the adjust box
+  const fillH = Math.max(1, box.h - box.yTop - box.yBottom) // Fill height inside the T/B bands
+  const midX = left + fillW / 2 // Horizontal center of the fill
+  const midY = top + fillH / 2 // Vertical center of the fill
+  switch (side) {
+    case Position.Left:
+      return { x: left, y: midY } // Peach left, not the blue gutter
+    case Position.Right:
+      return { x: left + fillW, y: midY } // Peach right
+    case Position.Top:
+      return { x: midX, y: top } // Peach top — selecting must not slide this onto the blue edge
+    case Position.Bottom:
+      return { x: midX, y: top + fillH } // Peach bottom
+    default:
+      return null
+  }
+}
+
+/**
+ * Painted fill edge after layout.
+ * Selected zoom resizes the adjust box; deselect removes it. Either way this is the box on screen,
+ * not the node width captured while chrome was on.
+ */
+export function connectionPointPainted(
+  node: Node | undefined,
+  side: Position | undefined
+): XYPosition | null {
+  if (!node || !side) return null // No frame or side to meet
+  if (Math.abs(frameRotationFromNode(node)) > 0.5 || frameShapeFromNode(node)) return null // Those stay on the formula
+  const box = paintedPanelBox(node.id, true) // Read even during a zoom settle — layout has already committed
+  if (!box) return null // Panel not in the document yet
+  const x = node.positionAbsolute?.x ?? node.position.x // Node origin in flow space
+  const y = node.positionAbsolute?.y ?? node.position.y
+  return pointOnPaintedPanel({ x, y }, box, side) // Peach edge — chrome pads are skipped when they are present
+}
+
+/**
  * Mid-side point on a node's **frame** edge (the connection **point**).
  * Ignores outer indicator Handle positions entirely.
  * When selected, RF width includes the adjust gutters — inset by `frameChromePad` so threads
- * meet the peach fill, not the blue adjust box. Left/right use the adjust-box vertical center
- * (the simulated dots), unless a group selection is hiding those dots.
+ * meet the peach fill on every side, not the blue adjust box.
  * A shaped frame meets the silhouette: the side ray from the center stops on the outline.
  */
 export function connectionPointOnNode(
@@ -79,6 +167,11 @@ export function connectionPointOnNode(
   if (!node || !side) return null
   const x = node.positionAbsolute?.x ?? node.position.x
   const y = node.positionAbsolute?.y ?? node.position.y
+  const upright = Math.abs(frameRotationFromNode(node)) <= 0.5 // Content rotation uses the AABB math below
+  if (upright && !frameShapeFromNode(node)) {
+    const painted = paintedPanelBox(node.id) // Live box — zoom moves chrome without a new RF measure
+    if (painted) return pointOnPaintedPanel({ x, y }, painted, side) // Meet the box that is actually painted
+  }
   const w = node.width ?? 0
   const h = node.height ?? 0
   if (w <= 0 || h <= 0) return null // Not measured yet — caller falls back to RF coords
@@ -86,7 +179,7 @@ export function connectionPointOnNode(
   const pad = readFrameChromePad(node.data)
   const { yTop, yBottom } = readChromeYBands(node.id)
   // Upright RF XY is the fill origin (negative margins grow the painted box). T/B bands
-  // are extra height on the node — subtract them to find the fill, then attach T/B on the adjust box.
+  // are extra height on the node — subtract them so top and bottom meet the fill, not the blue edge.
   const fillX = x + pad.x
   const fillY = y + pad.y
   const fillW = Math.max(1, w - pad.x * 2)
@@ -121,9 +214,9 @@ export function connectionPointOnNode(
     case Position.Right:
       return { x: fillX + fillW, y: fillMidY } // Same mid — the adjust box can be taller
     case Position.Top:
-      return { x: fillX + fillW / 2, y: fillY - yTop } // Adjust-box top (above properties)
+      return { x: fillX + fillW / 2, y: fillY } // Peach top — do not step up into the property band
     case Position.Bottom:
-      return { x: fillX + fillW / 2, y: fillY + fillH + yBottom } // Adjust-box bottom (below connections)
+      return { x: fillX + fillW / 2, y: fillY + fillH } // Peach bottom — do not step into the connections band
     default:
       return null
   }

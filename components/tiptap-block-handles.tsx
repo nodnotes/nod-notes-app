@@ -10,7 +10,7 @@ import { GripVertical } from 'lucide-react' // ⋮⋮ grip; between-block add is
 import { useReactFlow } from 'reactflow' // Nested RF for chat stubs; board extract prefers context instance
 import { useReactFlowContext } from '@/components/react-flow-context' // Real board screenToFlowPosition from chat
 import { useLiveBoardZoom } from '@/lib/use-live-board-zoom' // Viewport-CSS zoom (store can lag)
-import { blockGripChromeScale } from '@/lib/frame-adjust-box' // Same √ curve as blue ⋮⋮ gutter
+import { adjustChromeXFlow, blockGripChromeScale } from '@/lib/frame-adjust-box' // Same √ curve as the blue↔fill pad
 import { useQueryClient } from '@tanstack/react-query' // Refresh panels after extract-to-card
 import { createClient } from '@/lib/supabase/client' // Persist a new map card from a dragged line
 import { isBlockContentEmpty, newBlockMetadata } from '@/lib/blocks' // Canonical isBlock metadata + empty check
@@ -92,7 +92,7 @@ type TipTapBlockHandlesProps = {
   notionConnected?: boolean // Notion-connected frame → slimmer block ⋮⋮ menu + connections strip grip
   notionSync?: NotionSyncMode // Live Sync vs Manual — connections ⋮⋮ menu
   onNotionConnection?: (next: { connected: boolean; sync?: NotionSyncMode }) => void // Connections ⋮⋮ actions
-  /** contentFit paddingLeft — absolute grips originate inside the padded content box, not the fill edge */
+  /** Chat hosts only. Fill grips portal onto the peach edge — do not shift by this pad. */
   contentPadLeft?: number
   /** Host locked-resize scale — CSS transform skips ResizeObserver; re-measure when it changes */
   frameScale?: number
@@ -195,6 +195,35 @@ function propertyHeaderBlock(editor: Editor): { block: EditorBlockRef; insertFro
     insertFrom: first.from,
     insertTo: last.to,
   }
+}
+
+/**
+ * Property values edit in a textarea, so the TipTap editor is not focused and the caret grip
+ * never parks. Map that focused cell back to its atom.
+ */
+function propertyBlockFromDom(editor: Editor, target: EventTarget | null): EditorBlockRef | null {
+  const el = target instanceof HTMLElement ? target : null // Focus event targets can be non-elements
+  if (!el) return null // Nothing focused
+  const host = el.closest('.react-renderer.node-propertyBlock, .tt-property-block') // Cell chrome around the textarea
+  if (!(host instanceof HTMLElement)) return null // Not a property cell
+  const root = editor.view?.dom // View can be unset while the editor is mounting
+  if (!root || !root.contains(host)) return null // A different frame's cell, or no view yet
+  let found: EditorBlockRef | null = null // Atom whose DOM contains the caret
+  editor.state.doc.descendants((node, pos) => {
+    if (found) return false // Stop walking once the cell is known
+    if (node.type.name !== 'propertyBlock') return true // Descend into text to reach later cells
+    let nodeEl: HTMLElement | null = null // Renderer element for this atom
+    try {
+      const dom = editor.view.nodeDOM(pos) // Throws when the pos is past the current view
+      nodeEl = dom instanceof HTMLElement ? dom : null // nodeDOM can be a text node
+    } catch {
+      return false // Atom has no children to walk
+    }
+    if (!nodeEl || (nodeEl !== host && !nodeEl.contains(host) && !host.contains(nodeEl))) return false // Different cell
+    found = { from: pos, to: pos + node.nodeSize, node, typeName: 'propertyBlock' } // Grip range for this cell
+    return false // Don't walk inside the atom
+  })
+  return found // Null when the focused node is not one of this editor's cells
 }
 
 /** Sentinel block for the connections strip — not a doc range (grip key is `connections-header`). */
@@ -438,6 +467,20 @@ function layoutForBlock(
     return null
   }
 }
+
+// Last pointer, so a frame that becomes selected under a resting cursor still gets a ⋮⋮.
+let lastClientPoint: { x: number; y: number } | null = null
+let pointerWatchInstalled = false
+function installGripPointerWatch() {
+  if (pointerWatchInstalled || typeof window === 'undefined') return // One listener for every frame
+  pointerWatchInstalled = true
+  const remember = (event: PointerEvent) => {
+    lastClientPoint = { x: event.clientX, y: event.clientY } // Where the pointer is, even before this frame's hover effect exists
+  }
+  window.addEventListener('pointermove', remember, { passive: true })
+  window.addEventListener('pointerdown', remember, { passive: true })
+}
+installGripPointerWatch() // Before any frame is selected, so the selecting click is remembered
 
 /** Host **frame** that owns this editor (full width hover target — RF node or chat turn). */
 function frameForEditor(dom: HTMLElement): HTMLElement {
@@ -705,6 +748,11 @@ export function TipTapBlockHandles({
       resolveFromPoint(event.clientX, event.clientY, event.target)
     }
 
+    const onEnter = (event: MouseEvent) => {
+      if (event.buttons !== 0) return // Press is a drag — don't swap the grip mid-gesture
+      resolveFromPoint(event.clientX, event.clientY, event.target) // Entering the frame shows the block under the pointer
+    }
+
     const onLeave = (event: MouseEvent) => {
       if (draggingRef.current) return
       const related = event.relatedTarget as HTMLElement | null
@@ -720,16 +768,55 @@ export function TipTapBlockHandles({
         return
       }
       if (related && frame.contains(related)) return
+      // Grip measurement inserts a probe into the editor. That fires mouseleave with
+      // no relatedTarget while the pointer is still on the block — don't drop the ⋮⋮.
+      if (!related) {
+        const under = document.elementFromPoint(event.clientX, event.clientY)
+        if (
+          under &&
+          (frame.contains(under) ||
+            !!under.closest('[data-tt-block-handle], [data-tt-gutter-hover], [data-tt-insert-line]'))
+        ) {
+          return
+        }
+      }
       setHover(null)
     }
 
+    // Click-select ignores mousemove while the button is down, then the pointer rests.
+    // pointerup is the moment the grip should appear without a second nudge.
+    const onPointerUp = (event: PointerEvent) => {
+      if (event.pointerType === 'touch') return // Touch uses pointerdown to park the grip
+      resolveFromPoint(event.clientX, event.clientY, event.target)
+    }
+
     frame.addEventListener('mousemove', onMove)
+    frame.addEventListener('mouseenter', onEnter)
     frame.addEventListener('mouseleave', onLeave)
     frame.addEventListener('pointerdown', onPointerDown)
+    frame.addEventListener('pointerup', onPointerUp)
+    installGripPointerWatch()
+    if (lastClientPoint) {
+      const fr = frame.getBoundingClientRect()
+      const inside =
+        lastClientPoint.x >= fr.left &&
+        lastClientPoint.x <= fr.right &&
+        lastClientPoint.y >= fr.top &&
+        lastClientPoint.y <= fr.bottom
+      if (inside) {
+        resolveFromPoint(
+          lastClientPoint.x,
+          lastClientPoint.y,
+          document.elementFromPoint(lastClientPoint.x, lastClientPoint.y)
+        ) // Pointer was already on this block when the frame became selected
+      }
+    }
     return () => {
       frame.removeEventListener('mousemove', onMove)
       frame.removeEventListener('mouseleave', onLeave)
+      frame.removeEventListener('mouseenter', onEnter)
       frame.removeEventListener('pointerdown', onPointerDown)
+      frame.removeEventListener('pointerup', onPointerUp)
     }
   }, [editor, enabled, isPanelSelected, notionConnected])
 
@@ -760,8 +847,15 @@ export function TipTapBlockHandles({
 
     const syncFocus = () => {
       if (menu) return
-      if (!editor.isFocused) return // blur handler decides whether to clear
-      const block = findEditorBlockAtPos(editor, editor.state.selection.from)
+      // Property values edit in a textarea, so TipTap never becomes focused and the caret grip
+      // used to stay missing on that cell.
+      const propertyFocus = propertyBlockFromDom(editor, document.activeElement)
+      // TipTap's `isFocused` flag can stay false after the DOM already has the caret
+      // (blur ran, focus never re-fired). The painted caret is what should park the ⋮⋮.
+      const domFocused = !editor.isDestroyed && !!editor.view?.hasFocus?.()
+      if (domFocused && !editor.isFocused) editor.isFocused = true // Repair the lagging flag
+      if (!propertyFocus && !editor.isFocused && !domFocused) return // Truly blurred — leave the grip to hover
+      const block = propertyFocus ?? findEditorBlockAtPos(editor, editor.state.selection.from)
       if (!block) {
         setFocusLayout(null)
         return
@@ -770,6 +864,7 @@ export function TipTapBlockHandles({
       setFocusLayout((prev) => (sameLayout(prev, next) ? prev : next))
     }
 
+    let blurTimer = 0 // Stale-blur recheck — cleared if this effect re-runs first
     const onBlur = ({ event }: { event?: FocusEvent }) => {
       if (menu) return
       const related = event?.relatedTarget as HTMLElement | null
@@ -781,7 +876,28 @@ export function TipTapBlockHandles({
       ) {
         return
       }
-      setFocusLayout(null)
+      // Blur can fire while the caret never leaves the editor. Re-check after the
+      // turn so a stale blur doesn't drop the ⋮⋮ on the block you're still in.
+      window.clearTimeout(blurTimer)
+      blurTimer = window.setTimeout(() => {
+        if (editor.isDestroyed || menuRef.current) return
+        if (propertyBlockFromDom(editor, document.activeElement)) {
+          syncFocus() // Value textarea still focused — keep this cell's ⋮⋮
+          return
+        }
+        if (editor.view?.hasFocus?.()) {
+          if (!editor.isFocused) editor.isFocused = true
+          syncFocus()
+          return
+        }
+        setFocusLayout(null)
+      }, 0)
+    }
+
+    // Textarea focus does not emit editor `focus`. Park the grip from the editor DOM.
+    const onDomFocusIn = (event: FocusEvent) => {
+      if (!propertyBlockFromDom(editor, event.target)) return // Ordinary text still uses editor focus
+      syncFocus() // Clicking Empty should show the ⋮⋮ without a later hover
     }
 
     // Re-measure after typing / Enter / zoom-driven reflow so grips stay glued to lines
@@ -813,6 +929,7 @@ export function TipTapBlockHandles({
     editor.on('focus', syncFocus)
     editor.on('blur', onBlur)
     editor.on('transaction', refreshLayouts)
+    editor.view.dom.addEventListener('focusin', onDomFocusIn) // Property textarea is inside the node view
     syncFocus()
 
     // RF zoom / panel grow changes getBoundingClientRect without a TipTap transaction
@@ -824,6 +941,8 @@ export function TipTapBlockHandles({
     if (frame !== container) ro.observe(frame)
 
     return () => {
+      window.clearTimeout(blurTimer) // Don't restore a grip onto an unmounted editor
+      editor.view.dom.removeEventListener('focusin', onDomFocusIn)
       editor.off('selectionUpdate', syncFocus)
       editor.off('focus', syncFocus)
       editor.off('blur', onBlur)
@@ -1619,30 +1738,33 @@ export function TipTapBlockHandles({
   // Unselected frames never paint ⋮⋮ (hover / caret / armed) — only when the blue adjust box is up
   if (!isPanelSelected) return null
 
-  // Grips render for every selected block (persistent wash) + the hovered/caret/menu block
-  // (hover still updates while one block is armed — so other ⋮⋮ appear for multi-select).
+  // Grips render for every selected block (persistent wash) + the hovered block, or the
+  // I-bar block when nothing else is hovered (a different hover hides the caret’s ⋮⋮) + the menu block.
   // AI pending marks tint the grip when shown — they do not force a ⋮⋮ on every edited block.
   const container = gripLayoutRoot(editor)
   // `rfZoom` / handleGutterFlow / frameScale in render deps so grips remeasure
   void rfZoom
-  // Horizontal: ⋮⋮ centered in the LEFT chrome strip (outside the filled frame).
-  // Absolute grips are positioned in the content box (inside contentFit pad), so subtract
-  // contentPadLeft to measure from the fill’s left edge — otherwise the pad pulls grips
-  // toward the fill and they look off-center in the blue gutter (worse after resize scale).
-  // handleGutterFlow = painted grip width in flow (√ × frameScale); ÷ frameScale so after
-  // contentFit CSS scale the center still sits in that strip.
+  // Horizontal: visual center of the ⋮⋮ (scale origin) is the midpoint of the blue↔fill pad.
+  // Grips portal onto the fill, so left 0 is already the fill edge. The content pad sits
+  // inside that edge. Subtracting it (fixed flow px) walked the grip toward the blue line
+  // as the √ comfort pad shrank on zoom-in.
   const contentCssScale = Math.max(0.01, frameScale || 1) // Painted text scale (free contain can go far below 0.15)
   const fill = frameFillForEditor(editor) // Fill left — wrap column may sit inset (right/center)
   const hostScale = fill ? 1 : contentCssScale // Grips portal into the unscaled fill — only in-content hosts inverse-scale
-  const localGutter =
-    handleGutterFlow > 0 ? handleGutterFlow / hostScale : HANDLE_GUTTER
   const fillLeftLocal =
     container && fill && fill !== container
       ? screenToLocal(container, fill.getBoundingClientRect().left, fill.getBoundingClientRect().top).x
       : 0 // Same box as the grips — no extra shift
-  const padLocal = fill ? contentPadLeft * (contentCssScale / hostScale) : contentPadLeft // Pad paints at text scale inside the fill
-  const gutterCenterLeft =
-    fillLeftLocal - padLocal - localGutter + (localGutter / 2 - GRIP_W / 2)
+  // Same rounded pad the panel paints as paddingLeft (grip column + blue air).
+  const stripLocal =
+    fill && handleGutterFlow > 0
+      ? Math.round(adjustChromeXFlow(rfZoom || 1, contentCssScale)) / hostScale
+      : handleGutterFlow > 0
+        ? handleGutterFlow / hostScale
+        : HANDLE_GUTTER
+  const padLocal = fill ? 0 : contentPadLeft // Chat host only — fill origin is already the peach edge
+  // Box left so the unscaled GRIP_W center (and the scaled visual) lands on the strip midpoint.
+  const gutterCenterLeft = fillLeftLocal - padLocal - stripLocal / 2 - GRIP_W / 2
   // Same √ curve as host gutter — grips stay centered in the blue strip
   const gripChromeScale =
     blockGripChromeScale(rfZoom || 1, contentCssScale) * (fill ? contentCssScale / hostScale : 1) // Fill host: bake the text scale in — the fill does not CSS-scale the ⋮⋮
@@ -1655,31 +1777,33 @@ export function TipTapBlockHandles({
       if (gl) gripLayouts.set(b.from, gl)
     }
   }
-  const hoverLayout =
-    hover
-      ? hover
-      : focusLayout
-        ? focusLayout
-        : null
-  if (hoverLayout?.propertyHeader && container) {
-    const group = propertyHeaderBlock(editor)
-    if (group) {
+  // Park one transient ⋮⋮. Hover wins; the I-bar block’s grip is only added when no other block is hovered.
+  const parkTransientGrip = (layout: HandleLayout | null) => {
+    if (!layout || !container) return // Nothing to paint, or no layout root yet
+    if (layout.propertyHeader) {
+      // Hover/caret on the property strip — one header grip, not a cell grip
+      const group = propertyHeaderBlock(editor)
+      if (!group || gripLayouts.has('property-header')) return // Already parked (armed or the other pointer)
       const fresh = layoutForPropertyHeader(container, group.block, group.insertFrom, group.insertTo)
-      if (fresh) gripLayouts.set('property-header', fresh)
+      if (fresh) gripLayouts.set('property-header', fresh) // Keyed so a second call does not duplicate
+      return
     }
-  } else if (hoverLayout?.connectionsHeader && container && notionConnected) {
-    const sentinel = connectionsHeaderBlock(editor)
-    if (sentinel) {
+    if (layout.connectionsHeader) {
+      if (!notionConnected || gripLayouts.has('connections-header')) return // Footer grip only when Notion is on
+      const sentinel = connectionsHeaderBlock(editor)
+      if (!sentinel) return
       const fresh = layoutForConnectionsHeader(container, sentinel)
       if (fresh) gripLayouts.set('connections-header', fresh)
+      return
     }
-  } else if (hoverLayout && !gripLayouts.has(hoverLayout.block.from) && container) {
+    if (gripLayouts.has(layout.block.from)) return // Same block already has a grip (selection, hover, or caret)
     // Don't park a cell grip from caret/hover while the header owns the property list
-    if (!(propertyHeaderArmed && hoverLayout.block.typeName === 'propertyBlock')) {
-      const fresh = layoutForBlock(editor, container, hoverLayout.block)
-      if (fresh) gripLayouts.set(fresh.block.from, fresh)
-    }
+    if (propertyHeaderArmed && layout.block.typeName === 'propertyBlock') return
+    const fresh = layoutForBlock(editor, container, layout.block) // Re-measure so typing doesn’t leave a stale box
+    if (fresh) gripLayouts.set(fresh.block.from, fresh)
   }
+  parkTransientGrip(hover) // Hovered block replaces the caret grip
+  if (!hover) parkTransientGrip(focusLayout) // I-bar block’s ⋮⋮ only while the pointer isn’t on a different block
   if (menu && container && !gripLayouts.has(menu.block.from)) {
     if (!(propertyHeaderArmed && menu.block.typeName === 'propertyBlock')) {
       const ml = layoutForBlock(editor, container, menu.block)

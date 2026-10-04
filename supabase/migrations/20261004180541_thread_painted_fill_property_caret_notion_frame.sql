@@ -1,0 +1,2 @@
+-- Threads meet the painted fill (including offscreen ends). Property I-bars stay in the cell. Add page as frame keeps the Notion body on this board.
+-- App/docs marker only; no DDL (frame metadata is JSONB). Remote DDL top: 20260924223511_board_changes_autosave.

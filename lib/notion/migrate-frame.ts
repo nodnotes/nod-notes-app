@@ -169,6 +169,8 @@ export async function ensureNotionMapFrameIsBoardLink(
   // Sole databaseBlock on a map frame → title boardLink; DB stays on the nested board body
   if (!isSoleDatabaseBlockContent(content)) return null // Already a page block / mixed body
   if (/data-type="boardLink"/.test(content)) return null
+  // Add page as frame keeps the body (including a lone database) on this frame
+  if (metadata.notionContentInFrame === true) return null
   // Imported/live Notion databases keep the table where it is (do not migrate on remount)
   if (metadata.notionObject === 'database') return null
 
@@ -283,6 +285,7 @@ export async function repairBoardFrameToSoleLink(
   const { messageId, userId, content, metadata } = opts
   const bt = typeof metadata.blockType === 'string' ? metadata.blockType : ''
   if (bt !== 'board' && bt !== 'boardIn' && bt !== 'page' && bt !== 'pageIn') return null
+  if (metadata.notionContentInFrame === true) return null // Add page as frame keeps the body here
   // Live Notion DB tables must stay as databaseBlock (row→card remounts used to wipe them)
   if (metadata.notionObject === 'database' || isSoleDatabaseBlockContent(content)) return null
   // Card-view frames intentionally keep boardLink + property cells on the map frame

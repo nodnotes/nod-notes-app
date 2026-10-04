@@ -13,6 +13,7 @@ let navigating = false
 let frozenZoom: number | null = null // Stable zoom for useStore selectors during the gesture
 let settleTimer: ReturnType<typeof setTimeout> | null = null
 let watchdogTimer: ReturnType<typeof setTimeout> | null = null // Gesture that never called end
+let navEpoch = 0 // Bumps when a gesture settles so threads can re-read the painted frame
 const listeners = new Set<() => void>() // DB live / other subscribers
 
 const NAV_CLASS = 'tt-board-navigating'
@@ -107,6 +108,11 @@ export function subscribeBoardNavigating(listener: () => void): () => void {
   return () => listeners.delete(listener)
 }
 
+/** Settled-gesture counter. Threads subscribe so they re-read the painted frame after zoom. */
+export function getBoardNavEpoch(): number {
+  return navEpoch
+}
+
 /**
  * While navigating, return the zoom frozen at gesture start so React `useStore`
  * selectors stay stable. Viewport transform still updates every move.
@@ -132,6 +138,7 @@ function clearNavigating(): void {
   }
   const el = zoomCssReader?.().el ?? flowElFallback()
   el?.classList.remove(NAV_CLASS)
+  navEpoch += 1 // Zoom moved connection-point chrome; threads must attach to the painted box
   notifyNavigating()
 }
 

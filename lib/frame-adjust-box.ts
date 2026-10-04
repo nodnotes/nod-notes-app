@@ -13,7 +13,8 @@ export const GRIP_SIDE_PAD_SCREEN = 3
 /** Nominal blue↔gutter air at 100% zoom. */
 export const ADJUST_CONTENT_GAP_X = 3
 export const ADJUST_CONTENT_GAP_Y = 6 // T/B band air when no property / connections strip
-export const CONNECTIONS_GROUP_H = 18 // One chrome row: 14px glyph (frame text) + 2px air each side
+export const CONNECTIONS_ROW_PAD = 4 // Air above and below the 14px connections mark
+export const CONNECTIONS_GROUP_H = 14 + CONNECTIONS_ROW_PAD * 2 // One chrome row — top gap copies this when connections show
 /** `+# rows — show more / show less` under a Notion DB table (py-1 + 11px). */
 export const DB_ROWS_REVEAL_FOOTER_H = 24
 
