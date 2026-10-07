@@ -119,7 +119,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { ArrowDown, GripVertical, SquareDashedMousePointer, Move, ChevronsUp, ChevronsDown } from 'lucide-react' // Move = pan (NSEW); SquareDashedMousePointer = select/marquee; ChevronsUp/Down = minimap
+import { ArrowDown, GripVertical, Plus, SquareDashedMousePointer, Move, ChevronsUp, ChevronsDown } from 'lucide-react' // Plus = I-bar empty-frame; Move = pan (NSEW); SquareDashedMousePointer = select/marquee; ChevronsUp/Down = minimap
 import { useReactFlowContext } from './react-flow-context'
 import { useSidebarContext, PHONE_LAYOUT_MAX_WIDTH } from './sidebar-context'
 import { useChatSidebarViewportAdjust } from '@/lib/hooks/use-chat-sidebar-viewport'
@@ -241,20 +241,24 @@ import {
   storedBoardRotation,
   writeStoredBoardRotation,
 } from '@/lib/board-rotation-persist' // Per-board heading survives reload
-import { computeMinimapViewScale, panViewportFromMinimapDrag } from '@/lib/minimap-viewport-pan' // Phone minimap drag (RF only pans on mousemove)
+import { panViewportToFlowOrigin } from '@/lib/minimap-viewport-pan' // Phone minimap drag keeps the grabbed point under the pointer
 import { viewportToRestore, writeBoardViewport } from '@/lib/board-viewport-persist' // Reload keeps pan/zoom; board switch still fits
-import { BoardMiniMap } from './board-minimap' // Viewport-follow framing so frames expand on zoom-in
+import { BoardMiniMap } from './board-minimap' // Full-board frame; white mask hole is the current view
 import { PreviewMinimap } from './preview-minimap' // Host minimap for selected nested preview
 import {
   PREVIEW_MINIMAP_COMMAND_MESSAGE,
   PREVIEW_MINIMAP_STATE_MESSAGE,
   computePreviewMinimapGeometry,
-  computePreviewMinimapViewScale,
   getFocusedPreviewIframe,
   postPreviewMinimapCommand,
   type PreviewMinimapState,
   type PreviewMinimapCommand,
 } from '@/lib/preview-host-minimap' // Host minimap ↔ nested preview viewport
+import {
+  minimapClientToFlow,
+  minimapGrabbedViewOrigin,
+  readMinimapViewBox,
+} from '@/lib/minimap-geometry' // Minimap pointer → flow, so drag stays on the cursor
 import { getNodePositionWithOrigin } from '@reactflow/core'
 import { useInsertSpaceDrag, type InsertSpaceAxis } from './use-insert-space-drag' // Draw bar insert-space drag
 import { InsertSpaceOverlay } from './insert-space-overlay' // Guide line + inserted band preview
@@ -307,6 +311,7 @@ import {
 import { isPhoneLikeBoard, isHeavyFrame } from '@/lib/phone-frame-budget' // Phone: defer TipTap + skip huge load shells
 import {
   BOARD_ZOOM_DEFAULT,
+  BOARD_ZOOM_HARD,
   expandSoftBounds,
   expandZoomRange,
   softBoundsFromNodes,
@@ -355,9 +360,9 @@ const BRAND_RIGHT = 12 // Inset from map column right edge
 /** Flow → frame top-left so the caret/⋮⋮ land on the I-bar (block chrome only). */
 const BLOCK_CREATE_OFFSET_X = 2 // contentFit BLOCK_FRAME_PAD_X (⋮⋮ lives outside the fill)
 const BLOCK_CREATE_OFFSET_Y = 2 // contentFit paddingTop only (legacy 20 assumed chat p-1 + extra)
-/** Empty hug seed — matches chat-panel BLOCK_LOCKED_MIN_W / BLOCK_MIN_FRAME_H (gutter 20 + ~3ch). */
-const BLOCK_PLACE_MIN_W = 48
-const BLOCK_PLACE_MIN_H = 22
+/** Empty hug seed — matches chat-panel BLOCK_LOCKED_MIN_W / BLOCK_MIN_FRAME_H (gutter 20 + ~3ch of 20px). */
+const BLOCK_PLACE_MIN_W = 51
+const BLOCK_PLACE_MIN_H = 25
 /** Place seeds must match one-line hug — do NOT floor at FRAME_RESIZE_MIN (40) or the blue box stays taller than the peach fill. */
 
 /** Metadata extras so a placed frame paints at ~100% screen size for the current zoom. */
@@ -415,7 +420,7 @@ function eventElement(target: EventTarget | null): Element | null {
 
 /** Chrome / text that own the gesture — not the frame drag strip (blue pad outside TipTap). */
 const FRAME_NON_DRAG_SEL =
-  '.react-flow__resize-control, [data-frame-chrome], [data-tt-block-handle], [data-tt-insert-line], .block-actions-menu, [data-tt-connection-indicator], [data-tt-property-header] span, [data-tt-connections-header] button, .ProseMirror, .nodrag, input, textarea, a, button, [data-page-link-preview], [data-tt-ibar-grip]'
+  '.react-flow__resize-control, [data-frame-chrome], [data-tt-block-handle], [data-tt-insert-line], .block-actions-menu, [data-tt-connection-indicator], [data-tt-property-header] span, [data-tt-connections-header] button, .ProseMirror, .nodrag, input, textarea, a, button, [data-page-link-preview], [data-tt-ibar-grip], [data-tt-ibar-plus]'
 
 /** True when the event hit the selected-frame drag area (padding / shell — not text or adjust chrome). */
 function isFrameDragAreaTarget(target: EventTarget | null): boolean {
@@ -427,7 +432,7 @@ function isFrameDragAreaTarget(target: EventTarget | null): boolean {
 
 /** Chrome that owns the click — ⋮⋮, corner knobs, connections — not the selected frame / adjust box. */
 const FRAME_MENU_CHROME_SEL =
-  '.react-flow__resize-control.handle, [data-frame-chrome], [data-tt-block-handle], [data-tt-insert-line], .block-actions-menu, [data-tt-connection-indicator], [data-tt-property-header] span, [data-tt-connections-header] button, input, textarea, .tt-property-block, a, button, [data-page-link-preview], [data-tt-ibar-grip], .tt-database-block, .tt-notion-db, [data-tt-wrap-line], [data-tt-fit-plus]'
+  '.react-flow__resize-control.handle, [data-frame-chrome], [data-tt-block-handle], [data-tt-insert-line], .block-actions-menu, [data-tt-connection-indicator], [data-tt-property-header] span, [data-tt-connections-header] button, input, textarea, .tt-property-block, a, button, [data-page-link-preview], [data-tt-ibar-grip], [data-tt-ibar-plus], .tt-database-block, .tt-notion-db, [data-tt-wrap-line], [data-tt-fit-plus]'
 
 /** True when the click hit the blue adjust box (line hit target), not a corner knob. */
 function isFrameAdjustBoxTarget(target: EventTarget | null): boolean {
@@ -1592,25 +1597,11 @@ function BoardFlowInner({
   )
 
   const handlePreviewMinimapPan = useCallback(
-    (movementX: number, movementY: number, viewScale: number) => {
-      postToFocusedPreview({ type: 'pan', movementX, movementY, viewScale })
+    (x: number, y: number, zoom: number) => {
+      postToFocusedPreview({ type: 'setViewport', x, y, zoom, duration: 0 })
     },
     [postToFocusedPreview]
   )
-
-  const handlePreviewMinimapZoom = useCallback(
-    (zoom: number) => {
-      if (!reactFlowInstance) return
-      const limits = {
-        minZoom: rfStore.getState().minZoom,
-        maxZoom: rfStore.getState().maxZoom,
-      }
-      reactFlowInstance.zoomTo(clampBoardZoom(zoom, limits))
-    },
-    [reactFlowInstance, rfStore]
-  )
-
-  const hostViewportZoom = useStore((s) => s.transform[2])
 
   useEffect(() => {
     if (embedded || !focusedPreviewId) {
@@ -1708,25 +1699,13 @@ function BoardFlowInner({
       if (cmd.type === 'fitView') {
         reactFlowInstance.fitView({
           padding: cmd.padding ?? 0.15,
-          minZoom: 0.2,
-          maxZoom: 1.5,
+          minZoom: BOARD_ZOOM_HARD.minZoom, // Fit may zoom out to 200%
+          maxZoom: BOARD_ZOOM_HARD.maxZoom, // Fit may zoom in to 50%
           duration: cmd.duration ?? 300,
         })
         return
       }
-      if (cmd.type === 'pan' && typeof cmd.movementX === 'number' && typeof cmd.movementY === 'number') {
-        const viewScale =
-          typeof cmd.viewScale === 'number'
-            ? cmd.viewScale
-            : computeMinimapViewScale(rfStore.getState(), MINIMAP_WIDTH, MINIMAP_HEIGHT)
-        panViewportFromMinimapDrag(
-          rfStore.getState(),
-          cmd.movementX,
-          cmd.movementY,
-          viewScale
-        )
-        return
-      }
+      if (cmd.type === 'pan') return // Drag now sends setViewport so the grab stays on the pointer
       if (
         cmd.type === 'setViewport' &&
         typeof cmd.x === 'number' &&
@@ -2489,7 +2468,7 @@ function BoardFlowInner({
   }, [clickedEdge, setContextClickedEdge])
   const [edgePopupPosition, setEdgePopupPosition] = useState({ x: 0, y: 0 }) // Position for edge popup
   const [rightClickedNode, setRightClickedNode] = useState<Node<ChatPanelNodeData> | null>(null) // Track right-clicked node for popup
-  const [nodePopupPosition, setNodePopupPosition] = useState({ x: 0, y: 0 }) // Position for node popup
+  const [nodePopupPosition, setNodePopupPosition] = useState({ x: 0, y: 0, openLeft: false }) // Frame menu anchor; openLeft keeps the card left of the I-bar +
   const [boardMenuPosition, setBoardMenuPosition] = useState<{ x: number; y: number } | null>(null) // Empty-board right-click menu
   const [createPublicTemplateConfirmOpen, setCreatePublicTemplateConfirmOpen] = useState(false) // Are you sure?
   const [createPublicTemplateBusy, setCreatePublicTemplateBusy] = useState(false) // Capture + navigate
@@ -2635,7 +2614,21 @@ function BoardFlowInner({
   const preferencesLoadedRef = useRef(false) // Track if preferences have been loaded from Supabase
   const nodeHeightsRef = useRef<Map<string, number>>(new Map()) // Store measured node heights
   const savePositionsTimeoutRef = useRef<NodeJS.Timeout | null>(null) // Debounce position saves
-  const minimapDragStartRef = useRef<{ x: number; y: number; isDragging?: boolean; pointerId?: number } | null>(null) // Track minimap drag start position and drag state
+  const minimapDragStartRef = useRef<{
+    x: number
+    y: number
+    isDragging?: boolean
+    pointerId?: number
+    grab?: {
+      px: number
+      py: number
+      vx: number
+      vy: number
+      zoom: number
+      preview: boolean
+      viewBox: { x: number; y: number; width: number; height: number } // Frozen CSS→flow space for the drag
+    }
+  } | null>(null) // Pointer-down point plus the flow point under it
   const edgeClickPositionRef = useRef<{ x: number; y: number } | null>(null) // Click on the thread, in flow coords (re-anchor after nav)
   const threadStyleClipboardRef = useRef<{
     algorithm: ThreadAlgorithm
@@ -3002,10 +2995,12 @@ function BoardFlowInner({
   // Same board reload only — null on board switch / sign-in so fitView still frames contents
   const rotationRestoredForRef = useRef<string | null>(null) // Board id whose saved heading we already applied
   const rotationAtRestoreRef = useRef<number | null>(null) // Heading at restore — a later twist must beat a slow remote read
-  const restoredViewport = useMemo(
-    () => (typeof window === 'undefined' ? null : viewportToRestore(conversationId, !!embedded)),
-    [conversationId, embedded]
-  )
+  const restoredViewport = useMemo(() => {
+    const raw = typeof window === 'undefined' ? null : viewportToRestore(conversationId, !!embedded)
+    if (!raw) return null // No saved camera for this reload
+    const zoom = clampBoardZoom(raw.zoom) // Saved zoom outside 50%–200% snaps into the band
+    return zoom === raw.zoom ? raw : { ...raw, zoom }
+  }, [conversationId, embedded])
 
   // Claim init-fit before RF measures nodes, or fitViewOnInit would overwrite the restored camera.
   // Stamp the transform before paint so the first frame is not the origin.
@@ -3232,7 +3227,7 @@ function BoardFlowInner({
       }
       window.dispatchEvent(new Event('resize'))
       if (forceFit || grewFromEmpty) {
-        reactFlowInstance.fitView({ padding: 0.15, minZoom: 0.2, maxZoom: 1.5 })
+        reactFlowInstance.fitView({ padding: 0.15, minZoom: BOARD_ZOOM_HARD.minZoom, maxZoom: BOARD_ZOOM_HARD.maxZoom })
       }
     }
     const onMessage = (event: MessageEvent) => {
@@ -3499,7 +3494,7 @@ function BoardFlowInner({
       window.setTimeout(() => {
         if (reactFlowInstance) {
           window.dispatchEvent(new CustomEvent('fit-view-start'))
-          reactFlowInstance.fitView({ padding: 0.2, minZoom: 0.1, maxZoom: 1, duration: 300 })
+          reactFlowInstance.fitView({ padding: 0.2, minZoom: BOARD_ZOOM_HARD.minZoom, maxZoom: BOARD_ZOOM_HARD.maxZoom, duration: 300 })
           window.setTimeout(() => window.dispatchEvent(new CustomEvent('fit-view-end')), 350)
         }
       }, 500)
@@ -3648,8 +3643,6 @@ function BoardFlowInner({
         return false
       }
 
-      let clickTimeoutId: NodeJS.Timeout | null = null
-
       const handlePointerDown = (e: PointerEvent) => {
         const target = e.target as HTMLElement
         if (!minimapElement || !minimapElement.contains(target)) return
@@ -3657,16 +3650,56 @@ function BoardFlowInner({
         // Don't process right-clicks (button 2) - allow context menu to work
         if (e.button === 2) return
 
-        if (clickTimeoutId) {
-          clearTimeout(clickTimeoutId)
-          clickTimeoutId = null
+        const svg = minimapElement.querySelector('svg')
+        const viewBox = readMinimapViewBox(svg) // Freeze for the whole drag so scope zoom cannot shift mapping
+        const box = svg?.getBoundingClientRect()
+        const flow = viewBox && box && box.width > 0
+          ? minimapClientToFlow(e.clientX, e.clientY, box, viewBox)
+          : null
+        let grab:
+          | {
+              px: number
+              py: number
+              vx: number
+              vy: number
+              zoom: number
+              preview: boolean
+              viewBox: NonNullable<typeof viewBox>
+            }
+          | undefined
+        if (flow && viewBox) {
+          if (focusedPreviewId && previewMinimapState) {
+            const t = previewMinimapState.transform // Nested camera, not the host board
+            const zoom = t[2] || 1
+            grab = {
+              px: flow.x,
+              py: flow.y,
+              vx: -t[0] / zoom,
+              vy: -t[1] / zoom,
+              zoom,
+              preview: true,
+              viewBox,
+            }
+          } else {
+            const t = rfStore.getState().transform
+            const zoom = t[2] || 1
+            grab = {
+              px: flow.x,
+              py: flow.y,
+              vx: -t[0] / zoom,
+              vy: -t[1] / zoom,
+              zoom,
+              preview: false,
+              viewBox,
+            }
+          }
         }
-
         minimapDragStartRef.current = {
           x: e.clientX,
           y: e.clientY,
           isDragging: false,
           pointerId: e.pointerId,
+          grab,
         }
 
         // RF MiniMap panHandler ignores touchmove — capture so pointermove reliably pans on phone
@@ -3678,58 +3711,6 @@ function BoardFlowInner({
           }
         }
 
-        // Desktop-only fallback: synthesized mouseup sometimes never arrives after RF drag
-        if (e.pointerType !== 'mouse' || focusedPreviewId) return
-
-        clickTimeoutId = setTimeout(() => {
-          if (minimapDragStartRef.current && !minimapDragStartRef.current.isDragging) {
-            if (focusedPreviewId) {
-              postToFocusedPreview({ type: 'fitView', padding: 0.15, duration: 300 })
-              minimapDragStartRef.current = null
-              return
-            }
-            if (reactFlowInstance) {
-              fitViewInProgressRef.current = true
-
-              const topBar = document.querySelector('[class*="bg-white"][class*="shadow-sm"][class*="border-b"]') as HTMLElement
-              const inputBox = document.querySelector('textarea[placeholder*="Type"], textarea[placeholder*="message"]')?.closest('[class*="pointer-events-auto"]') as HTMLElement
-              const reactFlowElement = document.querySelector('.react-flow') as HTMLElement
-
-              let topPadding = 0
-              let bottomPadding = 0
-
-              if (topBar && reactFlowElement) {
-                const topBarHeight = topBar.offsetHeight
-                const reactFlowHeight = reactFlowElement.offsetHeight
-                if (topBarHeight > 0) {
-                  topPadding = topBarHeight / reactFlowHeight
-                }
-              }
-
-              if (inputBox && reactFlowElement) {
-                const inputBoxRect = inputBox.getBoundingClientRect()
-                const reactFlowRect = reactFlowElement!.getBoundingClientRect()
-                const inputBoxHeight = reactFlowRect.bottom - inputBoxRect.top + 16
-                const reactFlowHeight = reactFlowElement.offsetHeight
-                if (inputBoxHeight > 0 && inputBoxHeight < reactFlowHeight) {
-                  bottomPadding = inputBoxHeight / reactFlowHeight
-                }
-              }
-
-              const uiPadding = Math.max(topPadding, bottomPadding, 0.05)
-
-              const fitViewOptions = viewMode === 'linear'
-                ? { padding: uiPadding, minZoom: 0.1, maxZoom: 1, duration: 300 }
-                : { padding: Math.max(uiPadding, 0.1), minZoom: 0.3, maxZoom: 2, duration: 300 }
-              reactFlowInstance.fitView(fitViewOptions)
-              setTimeout(() => {
-                fitViewInProgressRef.current = false
-              }, 350)
-            }
-            minimapDragStartRef.current = null
-          }
-          clickTimeoutId = null
-        }, 200)
       }
 
       const handlePointerMove = (e: PointerEvent) => {
@@ -3739,44 +3720,37 @@ function BoardFlowInner({
         const deltaX = Math.abs(e.clientX - drag.x)
         const deltaY = Math.abs(e.clientY - drag.y)
 
-        if (deltaX > 15 || deltaY > 15) {
-          drag.isDragging = true
+        if (deltaX > 3 || deltaY > 3) {
+          drag.isDragging = true // Movement means pan, so pointerup must not fit
           longPressRef.current?.cancel()
-          if (clickTimeoutId) {
-            clearTimeout(clickTimeoutId)
-            clickTimeoutId = null
-          }
         }
 
-        if (
-          drag.isDragging &&
-          (e.movementX !== 0 || e.movementY !== 0)
-        ) {
-          if (focusedPreviewId) {
-            if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return
-            const viewScale = previewMinimapState
-              ? computePreviewMinimapViewScale(
-                  previewMinimapState,
-                  MINIMAP_WIDTH,
-                  MINIMAP_HEIGHT
-                )
-              : computeMinimapViewScale(rfStore.getState(), MINIMAP_WIDTH, MINIMAP_HEIGHT)
+        if (drag.isDragging && drag.grab && (e.pointerType === 'touch' || e.pointerType === 'pen')) {
+          const svg = minimapElement?.querySelector('svg')
+          const box = svg?.getBoundingClientRect()
+          if (!box || box.width <= 0) return
+          // Use the pointer-down viewBox — live paint must not chase the camera mid-drag
+          const flow = minimapClientToFlow(e.clientX, e.clientY, box, drag.grab.viewBox)
+          const origin = minimapGrabbedViewOrigin(
+            flow.x,
+            flow.y,
+            drag.grab.px,
+            drag.grab.py,
+            drag.grab.vx,
+            drag.grab.vy
+          )
+          if (drag.grab.preview) {
             postToFocusedPreview({
-              type: 'pan',
-              movementX: e.movementX,
-              movementY: e.movementY,
-              viewScale,
+              type: 'setViewport',
+              x: -origin.x * drag.grab.zoom,
+              y: -origin.y * drag.grab.zoom,
+              zoom: drag.grab.zoom,
+              duration: 0,
             })
-            e.preventDefault()
-            return
+          } else {
+            panViewportToFlowOrigin(rfStore.getState(), origin.x, origin.y, drag.grab.zoom) // Keep the zoom from pointer-down
           }
-          if (
-            (e.pointerType === 'touch' || e.pointerType === 'pen')
-          ) {
-          const viewScale = computeMinimapViewScale(rfStore.getState(), MINIMAP_WIDTH, MINIMAP_HEIGHT)
-          panViewportFromMinimapDrag(rfStore.getState(), e.movementX, e.movementY, viewScale)
           e.preventDefault()
-          }
         }
       }
 
@@ -3789,15 +3763,16 @@ function BoardFlowInner({
         const drag = minimapDragStartRef.current
         if (!drag || e.pointerId !== drag.pointerId) return
 
-        if (clickTimeoutId) {
-          clearTimeout(clickTimeoutId)
-          clickTimeoutId = null
-        }
+        const moved =
+          drag.isDragging ||
+          Math.abs(e.clientX - drag.x) > 3 ||
+          Math.abs(e.clientY - drag.y) > 3 // Slop so a still click can still fit
+        const svg = minimapElement?.querySelector('svg')
+        const minimapDragged = svg?.getAttribute('data-minimap-drag') === '1' // Desktop mouse pan sets this
+        svg?.removeAttribute('data-minimap-drag')
 
-        const wasDragging = drag.isDragging
-
-        if (wasDragging) {
-          minimapDragStartRef.current = null
+        if (moved || minimapDragged) {
+          minimapDragStartRef.current = null // Drag only pans; fit stays a click
           return
         }
 
@@ -3975,8 +3950,8 @@ function BoardFlowInner({
 
             // In linear mode, allow zooming out more to fit all panels vertically
             const fitViewOptions = viewMode === 'linear'
-              ? { padding: uiPadding, minZoom: 0.1, maxZoom: 1, duration: 300 }
-              : { padding: Math.max(uiPadding, 0.1), minZoom: 0.3, maxZoom: 2, duration: 300 }
+              ? { padding: uiPadding, minZoom: BOARD_ZOOM_HARD.minZoom, maxZoom: BOARD_ZOOM_HARD.maxZoom, duration: 300 }
+              : { padding: Math.max(uiPadding, 0.1), minZoom: BOARD_ZOOM_HARD.minZoom, maxZoom: BOARD_ZOOM_HARD.maxZoom, duration: 300 }
             reactFlowInstance.fitView(fitViewOptions)
             // Clear flag after fitView animation completes
             setTimeout(() => {
@@ -3993,10 +3968,6 @@ function BoardFlowInner({
         if (minimapDragStartRef.current?.pointerId === e.pointerId) {
           minimapDragStartRef.current = null
         }
-        if (clickTimeoutId) {
-          clearTimeout(clickTimeoutId)
-          clickTimeoutId = null
-        }
       }
 
       const pointerMoveOpts: AddEventListenerOptions = { capture: true, passive: false }
@@ -4006,10 +3977,6 @@ function BoardFlowInner({
       document.addEventListener('pointercancel', handlePointerCancel, true)
 
       cleanup = () => {
-        if (clickTimeoutId) {
-          clearTimeout(clickTimeoutId)
-          clickTimeoutId = null
-        }
         minimapElement?.removeEventListener('pointerdown', handlePointerDown, true)
         document.removeEventListener('pointermove', handlePointerMove, pointerMoveOpts)
         document.removeEventListener('pointerup', handlePointerUp, true)
@@ -6809,10 +6776,12 @@ function BoardFlowInner({
 
     const handleWheel = (e: WheelEvent) => {
       const target = e.target as HTMLElement
-      // I-bar + Free nav / minimap sit outside `.react-flow` — still board zoom/pan, not browser zoom
+      // Minimap SVG owns scope zoom — leave the board camera alone
+      if (target.closest('[data-minimap-context]')) return
+      // I-bar + Free nav sit outside `.react-flow` — still board zoom/pan, not browser zoom
       let reactFlowElement = target.closest('.react-flow') as HTMLElement | null
       const EXTERNAL_MAP_CHROME =
-        '[data-tt-ibar-grip], [data-tt-ibar-chrome], [data-minimap-toggle-context], [data-minimap-context], [data-minimap-pill-context]'
+        '[data-tt-ibar-grip], [data-tt-ibar-chrome], [data-minimap-toggle-context], [data-minimap-pill-context]'
       const overExternalMapChrome = !reactFlowElement && !!target.closest(EXTERNAL_MAP_CHROME)
       if (overExternalMapChrome) {
         // Prefer this board’s pane (homepage can mount several BoardFlows)
@@ -7327,7 +7296,7 @@ function BoardFlowInner({
       clientX: number,
       clientY: number,
       node: Node<ChatPanelNodeData>,
-      opts?: { fromContextMenu?: boolean }
+      opts?: { fromContextMenu?: boolean; openLeft?: boolean }
     ) => {
       // pointerdown already toggled — contextmenu must not reopen in the same gesture
       if (opts?.fromContextMenu && frameMenuRightPressNodeIdRef.current === node.id) return
@@ -7375,7 +7344,7 @@ function BoardFlowInner({
         })
       })
 
-      setNodePopupPosition({ x: clientX, y: clientY }) // Viewport coords — menu is position:fixed
+      setNodePopupPosition({ x: clientX, y: clientY, openLeft: !!opts?.openLeft }) // Viewport coords — menu is position:fixed; + prefers left of the grip
       const reactFlowElement = document.querySelector('.react-flow') as HTMLElement
       if (reactFlowInstance && reactFlowElement) {
         const rect = reactFlowElement.getBoundingClientRect()
@@ -8138,6 +8107,9 @@ function BoardFlowInner({
       propertyType?: import('@/lib/blocks/property').PropertyTypeId // Turn into → Property seed
       frameShape?: string // Smart Draw silhouette — same id the frame shape menu writes
       box?: { width: number; height: number } // Drawn box; top-left is flowX/flowY (no I-bar pad)
+      focus?: boolean // false skips TipTap autofocus so the frame menu can own the caret
+      frameUnlocked?: boolean // true = free resize (plus empty frame); fit/free toggle stays hidden until there is text
+      onCreated?: (node: Node<ChatPanelNodeData>) => void // Sync, before persist — plus opens the frame menu on this node
     } // Seed content + Turn into kind (empty text if omitted)
   ): Promise<string | null> => {
     const zoom = reactFlowInstance?.getViewport().zoom || 1 // Live board zoom at place
@@ -8183,6 +8155,11 @@ function BoardFlowInner({
     const messageId = generateUUID() // Client id so the RF node and DB row match
     markIbarLiveCreate(messageId) // This tab: no Yjs until reload (avoids create-remount merge split)
 
+    const placeScale = appliedShape ? null : placeScaleMetadata(zoom) // Zoom box; null when a drawn silhouette owns size
+    const freeSeedBox = placeScale?.resizeDimensions ?? {
+      width: BLOCK_PLACE_MIN_W, // Same one-line hug a fit frame would use
+      height: BLOCK_PLACE_MIN_H,
+    }
     const optimisticMessage = {
       id: messageId,
       role: 'user' as const,
@@ -8190,11 +8167,19 @@ function BoardFlowInner({
       created_at: new Date().toISOString(),
       metadata: newBlockMetadata({
         position: itemPosition, // Spawn aligned to I-bar, or to the drawn box
-        fadeIn: true, // Autofocus TipTap once the panel mounts
+        fadeIn: opts?.focus !== false, // Autofocus TipTap once the panel mounts; plus passes false so the frame menu stays focused
         ...(appliedShape
           ? frameShapeSpawnMeta(appliedShape, { width: drawnW, height: drawnH })
-          : placeScaleMetadata(zoom)), // Zoom-compensated size so place matches across zoom
+          : placeScale), // Zoom-compensated size so place matches across zoom
         ...(opts?.blockType ? { blockType: opts.blockType } : {}),
+        ...(opts?.frameUnlocked === true && !appliedShape
+          ? {
+              frameUnlocked: true, // Free resize — corner drag keeps the box
+              resizeDimensions: freeSeedBox, // Explicit box even at 100% zoom so contain-fit / wrap lines engage
+              unlockedFrameSize: freeSeedBox, // Same box free mode restores after a later fit toggle
+              unlockedFrameScale: placeScale?.frameScale ?? 1,
+            }
+          : {}),
       }),
     }
 
@@ -8202,23 +8187,25 @@ function BoardFlowInner({
     const liveBoardId = conversationIdRef.current || ''
     originalPositionsRef.current.set(panelId, itemPosition)
     const placeBox = placeScaleNodeBox(optimisticMessage.metadata as { resizeDimensions?: { width: number; height: number } })
+    const optimisticNode: Node<ChatPanelNodeData> = {
+      id: panelId,
+      type: 'chatPanel',
+      position: itemPosition,
+      selected: true, // Frame menu and the blue adjust box need this frame selected
+      ...(placeBox || {}), // Explicit box so CSS frameScale has a layout home on first paint
+      data: {
+        promptMessage: optimisticMessage,
+        responseMessage: undefined,
+        conversationId: liveBoardId,
+        isResponseCollapsed: false,
+        ...(appliedShape ? { frameShape: appliedShape } : {}), // First paint reads data before metadata effect
+      },
+    }
     setNodes((nds) => [
       ...nds.map((n) => ({ ...n, selected: false })),
-      {
-        id: panelId,
-        type: 'chatPanel',
-        position: itemPosition,
-        selected: true,
-        ...(placeBox || {}), // Explicit box so CSS frameScale has a layout home on first paint
-        data: {
-          promptMessage: optimisticMessage,
-          responseMessage: undefined,
-          conversationId: liveBoardId,
-          isResponseCollapsed: false,
-          ...(appliedShape ? { frameShape: appliedShape } : {}), // First paint reads data before metadata effect
-        },
-      },
+      optimisticNode,
     ])
+    opts?.onCreated?.(optimisticNode) // Plus opens the frame menu in this same click, before the DB insert
 
     const patch = (key: unknown[]) => {
       queryClient.setQueryData(key, (old: unknown) => {
@@ -8286,6 +8273,29 @@ function BoardFlowInner({
       return messageId
     }
   }, [queryClient, setNodes, reactFlowInstance])
+
+  // I-bar + : empty text frame at the caret, then the frame menu (not the block menu)
+  const handleIbarPlus = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation() // Don't let the board treat this as an empty-pane click
+      event.preventDefault() // Keep the capture field from blurring into a second place
+      const pos = iBarPositionRef.current // Flow point the caret is sitting on
+      if (!pos) return
+      const rect = event.currentTarget.getBoundingClientRect() // Anchor the menu on the +
+      const MENU_W = 248 // Same width estimate as the ⋮⋮ block menu
+      const GAP = 8
+      const openLeft = rect.left - GAP - MENU_W >= 0 // Prefer left of the + so the card misses the new frame
+      void createBlockAtFlowPosition(pos.x, pos.y, {
+        html: '<p></p>', // Frame with no text
+        focus: false, // Frame menu search owns the caret
+        frameUnlocked: true, // Free mode — corner drag keeps the box; fit toggle stays off until there is text
+        onCreated: (node) => {
+          openFrameMenuAt(openLeft ? rect.left : rect.right, rect.top, node, { openLeft })
+        },
+      })
+    },
+    [createBlockAtFlowPosition, openFrameMenuAt]
+  )
 
   // Pre-frame ⋮⋮ menu — Turn into / Duplicate spawn a frame; Delete dismisses the I-bar
   const handleIBarBlockAction = useCallback(
@@ -8489,7 +8499,7 @@ function BoardFlowInner({
         case 'zoomToFit': {
           if (!reactFlowInstance) return
           fitViewInProgressRef.current = true
-          reactFlowInstance.fitView({ padding: 0.2, minZoom: 0.3, maxZoom: 2, duration: 300 })
+          reactFlowInstance.fitView({ padding: 0.2, minZoom: BOARD_ZOOM_HARD.minZoom, maxZoom: BOARD_ZOOM_HARD.maxZoom, duration: 300 })
           window.setTimeout(() => {
             fitViewInProgressRef.current = false
           }, 350)
@@ -9595,7 +9605,7 @@ function BoardFlowInner({
       const screenX = Math.round(flow.x * viewport.zoom + viewport.x + pane.left)
       const screenY = Math.round(flow.y * viewport.zoom + viewport.y + pane.top)
       setNodePopupPosition((prev) =>
-        prev.x === screenX && prev.y === screenY ? prev : { x: screenX, y: screenY }
+        prev.x === screenX && prev.y === screenY ? prev : { ...prev, x: screenX, y: screenY } // Keep openLeft from the I-bar +
       )
     }
 
@@ -10827,9 +10837,7 @@ function BoardFlowInner({
         : e.deltaY > 0
           ? -0.1
           : 0.1 // Zoom-nav: one notch ≈ RF wheel step
-      const zoomLimits: BoardZoomRange = embedded
-        ? { minZoom: Math.max(0.05, zoomRange.minZoom), maxZoom: Math.min(2.5, zoomRange.maxZoom) }
-        : zoomRange
+      const zoomLimits: BoardZoomRange = zoomRange // 50%–200% on the host board and in embeds
       const rawNext = pinch
         ? viewport.zoom * Math.pow(2, pinchDelta)
         : viewport.zoom * (1 + pinchDelta)
@@ -10850,7 +10858,7 @@ function BoardFlowInner({
 
     root.addEventListener('wheel', onWheel, { passive: false, capture: true })
     return () => root.removeEventListener('wheel', onWheel, { capture: true })
-  }, [reactFlowInstance, embedded, boardRotation, navScrollMode, zoomRange, hideMapChrome])
+  }, [reactFlowInstance, boardRotation, navScrollMode, zoomRange, hideMapChrome])
 
   return (
     <PhoneFrameDragProvider manualDragNodeId={phoneManualDragNodeId}>
@@ -11456,7 +11464,7 @@ function BoardFlowInner({
           })
           focusIBarCapture() // Must focus editable in this tap turn or iPhone keyboard never opens
         }}
-        defaultViewport={restoredViewport ?? { x: 0, y: 0, zoom: embedded ? 0.8 : 0.6 }}
+        defaultViewport={restoredViewport ?? { x: 0, y: 0, zoom: embedded ? 0.8 : 1 }}
         // Init-fit only while a contentful board is loading — empty / new-board create must not zoom.
         // A reload of this same board skips fit so the saved pan/zoom stays.
         fitView={
@@ -11468,8 +11476,8 @@ function BoardFlowInner({
         }
         fitViewOptions={{
           padding: 0.2,
-          minZoom: zoomRange.minZoom,
-          maxZoom: zoomRange.maxZoom,
+          minZoom: zoomRange.minZoom, // Auto-fit may zoom out to 200%
+          maxZoom: 1, // Auto-fit stops at the 100% default — zoom in further by hand
         }}
         className={cn(
           'h-full w-full bg-gray-50 dark:bg-[#0f0f0f]',
@@ -11493,7 +11501,7 @@ function BoardFlowInner({
             instance.setViewport({ x: 0, y: 0, zoom: embedded ? 0.8 : 0.6 })
             syncBoardZoomCss(embedded ? 0.8 : 0.6) // Seed screen-constant chrome CSS
           } else if (embedded) {
-            instance.fitView({ padding: 0.15, minZoom: 0.2, maxZoom: 1.5 }) // One-shot frame in preview
+            instance.fitView({ padding: 0.15, minZoom: BOARD_ZOOM_HARD.minZoom, maxZoom: BOARD_ZOOM_HARD.maxZoom }) // One-shot frame in preview, 50% in … 200% out
             syncBoardZoomCss(instance.getViewport().zoom)
           } else {
             syncBoardZoomCss(currentViewport.zoom) // Seed from restored viewport
@@ -11511,8 +11519,8 @@ function BoardFlowInner({
         zoomOnScroll={previewLive && !navScrollMode && !isDrawing && !eraserArmed && !hideMapChrome}
         zoomOnPinch={previewLive && !isDrawing && !eraserArmed} // Homepage still pinches; plain wheel scrolls the page
         zoomOnDoubleClick={false}
-        minZoom={embedded ? Math.max(0.05, zoomRange.minZoom) : zoomRange.minZoom}
-        maxZoom={embedded ? Math.min(2.5, zoomRange.maxZoom) : zoomRange.maxZoom}
+        minZoom={zoomRange.minZoom} // 200% max zoom-out (scale 0.01)
+        maxZoom={zoomRange.maxZoom} // 50% max zoom-in (scale 2)
         preventScrolling={!hideMapChrome} // Homepage previews let the marketing page scroll under the wheel
         autoPanOnNodeDrag={false}
         onlyRenderVisibleElements // Culled frames stay unmounted; seedOffscreenThreadEnds still draws their threads
@@ -12071,8 +12079,6 @@ function BoardFlowInner({
                   height={MINIMAP_HEIGHT}
                   resolvedTheme={resolvedTheme}
                   onPan={handlePreviewMinimapPan}
-                  onWheelZoom={handlePreviewMinimapZoom}
-                  wheelZoomBase={hostViewportZoom}
                   style={{
                     borderRadius: '8px',
                     overflow: 'hidden',
@@ -12152,7 +12158,7 @@ function BoardFlowInner({
 
 
 
-      {/* I-bar + grip — empty board click (or double-click); type to create a frame, or click ⋮⋮ for the block menu (no frame required) */}
+      {/* I-bar + grip — empty board click (or double-click); type to create a frame, click ⋮⋮ for the block menu, or + for an empty frame and the frame menu */}
       {iBarPosition && (
         <IBarFlowAnchor
           flowX={iBarPosition.x}
@@ -12166,16 +12172,17 @@ function BoardFlowInner({
           const gripW = 14 * paneScale // Frame handle w-3.5
           const gripH = 16 * paneScale // Frame GRIP_H
           const gripGap = 4 * paneScale
+          const plusW = gripW // Same hit size as the ⋮⋮ so the + sits in the same column rhythm
           return (
         <div
           data-tt-ibar-chrome
           className="absolute flex items-start"
           style={{
-            // Convert flow coordinates back to pane coordinates (rotation-aware); grip sits left of caret
+            // Convert flow coordinates back to pane coordinates (rotation-aware); + and grip sit left of caret
             left: `${left}px`,
             top: `${top}px`,
             zIndex: 1000,
-            transform: `translateX(-${gripW + gripGap}px)`, // Grip + gap → caret sits on the flow click
+            transform: `translateX(-${plusW + gripGap + gripW + gripGap}px)`, // + + grip + gaps → caret stays on the flow click
             gap: `${gripGap}px`,
           }}
           onContextMenu={(e) => {
@@ -12185,6 +12192,30 @@ function BoardFlowInner({
             openBoardMenuAt(e.clientX, e.clientY, { forceBoard: true })
           }}
         >
+          <button
+            type="button"
+            className="nodrag nopan flex items-center justify-center rounded text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-black/5 dark:hover:bg-white/10 pointer-events-auto cursor-pointer"
+            style={{
+              width: `${plusW}px`,
+              height: `${gripH}px`,
+              marginTop: `${(caretH - gripH) / 2}px`, // Same vertical center as the ⋮⋮
+            }}
+            title="Add frame"
+            aria-label="Add frame"
+            data-tt-ibar-plus
+            onMouseDown={(e) => {
+              e.stopPropagation() // Board pan / marquee must not start on the +
+              e.preventDefault()
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault() // No browser menu on the +
+              e.stopPropagation()
+              openBoardMenuAt(e.clientX, e.clientY, { forceBoard: true })
+            }}
+            onClick={handleIbarPlus}
+          >
+            <Plus style={{ width: `${14 * paneScale}px`, height: `${14 * paneScale}px` }} />
+          </button>
           <button
             type="button"
             className="nodrag nopan flex items-center justify-center rounded text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-black/5 dark:hover:bg-white/10 pointer-events-auto cursor-pointer"
@@ -12357,6 +12388,7 @@ function BoardFlowInner({
           positionMode="fixed"
           x={nodePopupPosition.x}
           y={nodePopupPosition.y}
+          openLeft={nodePopupPosition.openLeft}
           zoom={reactFlowInstance.getViewport().zoom}
           selectedCount={nodes.filter((n) => n.selected && n.type === 'chatPanel').length}
           canUngroup={

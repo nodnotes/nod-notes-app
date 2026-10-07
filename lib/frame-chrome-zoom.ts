@@ -171,16 +171,16 @@ function stampWrapDashes(node: HTMLElement, zoom: number): void {
 
 /** Blue adjust ring stroke width — screen-constant via --tt-frame-line-w. */
 function stampAdjustRing(node: HTMLElement, ui: number): void {
-  const linePx = `${ui}px`
+  const linePx = `${ui}px` // 1.4/zoom in flow px so the painted line stays the same thickness on screen
   node.querySelectorAll('[data-tt-adjust-ring]').forEach((el) => {
-    ;(el as HTMLElement).style.boxShadow = `inset 0 0 0 ${linePx} #3b82f6`
+    ;(el as HTMLElement).style.boxShadow = `inset 0 0 0 ${linePx} #3b82f6` // Paint that screen thickness
   })
 }
 
 /** Drawing selection chrome: ring + circular dots + indicators + rotate (no frame gutters). */
 function stampFreehandChrome(node: HTMLElement, ui: number): void {
   stampResizeHandles(node, ui)
-  stampAdjustRing(node, ui)
+  stampAdjustRing(node, ui) // Line thickness stays constant on screen
   const panel = node.querySelector('[data-panel-container="true"]') as HTMLElement | null
   if (panel) stampConnectionIndicators(panel, ui)
   node.querySelectorAll('[data-frame-chrome]').forEach((el) => {
@@ -195,7 +195,7 @@ function stampChromeElements(node: HTMLElement, ui: number, zoom: number): void 
   const out = 14 * ui // INDICATOR_OUTSET in flow space
   stampResizeHandles(node, ui)
   stampWrapDashes(node, zoom) // Wrap dashes: 1/zoom from slot center (React zoom can lag)
-  stampAdjustRing(node, ui)
+  stampAdjustRing(node, ui) // Line thickness stays constant on screen
 
   const panel = node.querySelector('[data-panel-container="true"]') as HTMLElement | null
   if (panel) stampConnectionIndicators(panel, ui)

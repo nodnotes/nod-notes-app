@@ -13,7 +13,7 @@ import {
 } from 'reactflow'
 import { useBoardRotation } from '@/components/board-rotation-context' // Camera heading — box must spin with the nodes layer
 import { useIsThreadConnecting } from '@/components/threads/use-is-thread-connecting' // Hide the menu while a thread end is dragged
-import { frameScreenChromeScale } from '@/components/threads/constants' // Screen-constant handle size
+import { frameScreenChromeScale } from '@/components/threads/constants' // Screen-constant handle size and blue stroke
 import { paneToFlow } from '@/lib/board-rotation' // Pointer → flow, including camera rotate
 import { rotatedRectAabbSize } from '@/lib/frame-shape' // Drawing AABB after a group rotate
 import { createClient } from '@/lib/supabase/client' // Persist drawing / shape geometry

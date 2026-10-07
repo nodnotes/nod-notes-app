@@ -298,14 +298,14 @@
   flex-direction: column;
   gap: 0; /* Paragraphs have no extra margin — line box is the row */
   width: 100%;
-  font-size: 0.875rem; /* Match `.prose` (14px) — not the RF node’s 16px */
+  font-size: 20px; /* Match board `.react-flow .prose` — smallest frame type */
   line-height: 1.25; /* Match board `.react-flow .prose p` */
   pointer-events: none;
 }
 
 @media (hover: none), (pointer: coarse) {
   .react-flow .tt-frame-shimmer-lines {
-    font-size: 16px; /* Same bump as `.react-flow .prose` on phone */
+    font-size: 20px; /* Same size as board `.react-flow .prose` */
   }
 }
 
@@ -761,11 +761,11 @@ span[data-added="true"] {
     font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   }
 
-  /* Phone Safari auto-zooms focused editors under 16px — keep board TipTap at 16px on touch */
+  /* Phone Safari auto-zooms focused editors under 16px — board TipTap stays at the 20px floor */
   @media (hover: none), (pointer: coarse) {
     .react-flow .prose,
     .react-flow .ProseMirror {
-      font-size: 16px;
+      font-size: 20px; /* Match the board body floor */
     }
   }
 
@@ -783,6 +783,7 @@ span[data-added="true"] {
 
   /* Board frames: tighter line boxes so blocks hug glyphs (less air above/below text) */
   .react-flow .prose {
+    font-size: 20px; /* Smallest board body — a step above 18px so max zoom-out stays readable */
     line-height: 1.25;
   }
   .react-flow .prose p,
@@ -1165,7 +1166,7 @@ span[data-added="true"] {
     background-color: #171717 !important; /* Dark background matching sidebar */
   }
 
-  /* Mask is an SVG evenodd <path> in flow units — never CSS-size it (196×120 clips the overlay to the origin). Never stroke it (the viewport hole would get a second border). */
+  /* Mask is an SVG evenodd <path> in flow units — never CSS-size it (196×120 clips the overlay to the origin). Never stroke it (the viewport hole would get a second border). Hole size is clamped in JS so a min dimmed band always remains when zoomed out. */
   .minimap-custom-size .react-flow__minimap-mask {
     stroke: none; /* Fill-only overlay; stroke draws both outer bounds and the inner window */
   }
@@ -3649,7 +3650,7 @@ span[data-added="true"] {
     background: transparent;
     outline: none;
     font: inherit;
-    font-size: 14px;
+    font-size: 20px; /* Match board body — property values share the frame floor */
     line-height: 1.7;
     padding: 0; /* UA padding dropped the glyphs below the type icon */
     color: inherit;
@@ -3793,6 +3794,42 @@ span[data-added="true"] {
 .dark .react-flow__node-blockGroup.drop-target [data-block-group="true"] {
   border-color: #60a5fa; /* blue-400 */
   background-color: rgba(37, 99, 235, 0.22);
+}
+
+/* Board top bar — shadow strips only on the X span where non-board paint sits behind the bar */
+[data-top-bar-shadows] {
+  position: absolute; /* In the bar's layer so the falloff paints on the board, not under the bar */
+  inset: 0;
+  pointer-events: none; /* Must not steal clicks from the bar */
+  overflow: visible; /* Shadow hangs down onto the board */
+}
+[data-top-bar-shadow-span] {
+  position: absolute;
+  top: 100%; /* Starts at the bar's bottom edge and falls onto the board */
+  pointer-events: none;
+  background: linear-gradient(to bottom, rgb(0 0 0 / 0.12), rgb(0 0 0 / 0)); /* Light fade, only as wide and tall as this line */
+}
+.dark [data-top-bar-shadow-span] {
+  background: linear-gradient(to bottom, rgb(0 0 0 / 0.32), rgb(0 0 0 / 0)); /* Dark needs a heavier falloff to read on #0f0f0f */
+}
+[data-top-bar-shadow-stroke] {
+  position: absolute;
+  top: 100%; /* Same band as the box fade */
+  left: 0;
+  width: 100%;
+  height: 8px; /* Same band as the object fade */
+  overflow: hidden; /* Nothing paints past this band */
+  pointer-events: none;
+  color: rgb(0 0 0 / 0.12); /* Same weight as the box fade */
+  mask-image: linear-gradient(to bottom, #000, transparent); /* Fade down the stroke */
+}
+[data-top-bar-shadow-stroke] path {
+  fill: none;
+  stroke: currentColor; /* Width matches the painted thread */
+  stroke-linecap: butt; /* No cap past the ink */
+}
+.dark [data-top-bar-shadow-stroke] {
+  color: rgb(0 0 0 / 0.32); /* Dark board needs a heavier stroke shadow */
 }
 
 /*

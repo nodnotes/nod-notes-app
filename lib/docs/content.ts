@@ -316,7 +316,7 @@ export const DOCS_CATEGORIES: DocsCategory[] = [
         body: [
           {
             type: 'p',
-            text: 'Boards are infinite. Pan is unbounded. Zoom typically ranges from about 5% to 200%, and soft bounds expand as you place work near the edges.',
+            text: 'Boards are infinite. Pan is unbounded. Zoom ranges from 1% to 200%, and soft bounds expand as you place work near the edges.',
           },
           {
             type: 'h2',
@@ -557,7 +557,7 @@ export const DOCS_CATEGORIES: DocsCategory[] = [
               'Each side (top, bottom, left, right) has its own stack tree.',
               'Frames attached on other sides nest with the pack when you stack.',
               'Snap alone does not lock — you can still pull frames apart.',
-              'Click the stack line for Open stack, directional stack arrows, and Lock.',
+              'Click the arrow head or the diamond between stacked frames for Open stack, directional stack arrows, and Lock.',
             ],
           },
           {

@@ -10,7 +10,8 @@ import { GripVertical } from 'lucide-react' // ⋮⋮ grip; between-block add is
 import { useReactFlow } from 'reactflow' // Nested RF for chat stubs; board extract prefers context instance
 import { useReactFlowContext } from '@/components/react-flow-context' // Real board screenToFlowPosition from chat
 import { useLiveBoardZoom } from '@/lib/use-live-board-zoom' // Viewport-CSS zoom (store can lag)
-import { adjustChromeXFlow, blockGripChromeScale } from '@/lib/frame-adjust-box' // Same √ curve as the blue↔fill pad
+import { adjustChromeXFlow, blockGripChromeScale } from '@/lib/frame-adjust-box' // L/R pad is board-fixed; ⋮⋮ still uses the √ curve
+import { frameScreenChromeScale } from '@/components/threads/constants' // Inset blue stroke stays ~1.4px on screen
 import { useQueryClient } from '@tanstack/react-query' // Refresh panels after extract-to-card
 import { createClient } from '@/lib/supabase/client' // Persist a new map card from a dragged line
 import { isBlockContentEmpty, newBlockMetadata } from '@/lib/blocks' // Canonical isBlock metadata + empty check
@@ -96,6 +97,8 @@ type TipTapBlockHandlesProps = {
   contentPadLeft?: number
   /** Host locked-resize scale — CSS transform skips ResizeObserver; re-measure when it changes */
   frameScale?: number
+  /** Painted glyph scale (frameScale × free contain). The fill does not CSS-scale the ⋮⋮. */
+  textScale?: number
   /** Blue adjust L gutter width in flow px — local ⋮⋮ left = this / frameScale so it fits after CSS scale */
   handleGutterFlow?: number
   /**
@@ -197,6 +200,26 @@ function propertyHeaderBlock(editor: Editor): { block: EditorBlockRef; insertFro
   }
 }
 
+/** `editor.view` throws until the editor is mounted and again after it unmounts. */
+function mountedEditorDom(editor: Editor): HTMLElement | null {
+  if (editor.isDestroyed) return null // Destroyed editors have no view
+  try {
+    return editor.view.dom // Getter throws in the mount/unmount window
+  } catch {
+    return null // Caller skips DOM work instead of crashing the board
+  }
+}
+
+/** Focus check that survives the same unmounted-view window as `mountedEditorDom`. */
+function editorDomHasFocus(editor: Editor): boolean {
+  if (editor.isDestroyed) return false // No caret once the editor is gone
+  try {
+    return editor.view.hasFocus() // Same getter throw as reading `view.dom`
+  } catch {
+    return false // Treat a missing view as blurred
+  }
+}
+
 /**
  * Property values edit in a textarea, so the TipTap editor is not focused and the caret grip
  * never parks. Map that focused cell back to its atom.
@@ -206,7 +229,7 @@ function propertyBlockFromDom(editor: Editor, target: EventTarget | null): Edito
   if (!el) return null // Nothing focused
   const host = el.closest('.react-renderer.node-propertyBlock, .tt-property-block') // Cell chrome around the textarea
   if (!(host instanceof HTMLElement)) return null // Not a property cell
-  const root = editor.view?.dom // View can be unset while the editor is mounting
+  const root = mountedEditorDom(editor) // View getter throws while mounting or after unmount
   if (!root || !root.contains(host)) return null // A different frame's cell, or no view yet
   let found: EditorBlockRef | null = null // Atom whose DOM contains the caret
   editor.state.doc.descendants((node, pos) => {
@@ -506,6 +529,7 @@ export function TipTapBlockHandles({
   onNotionConnection,
   contentPadLeft = 0, // Match host contentFit pad so ⋮⋮ centers in the blue-box gutter
   frameScale = 1, // Locked resize CSS scale — force re-measure (RO ignores transform)
+  textScale, // Painted glyphs — free contain can be smaller than frameScale
   handleGutterFlow = 0, // Host adjustChromeX — inverse-scale local left so ⋮⋮ fits the blue gutter
   blockDragFromGrip = false, // Chat: ⋮⋮ = block drag only (arm on press)
   chatMessageRole,
@@ -828,6 +852,8 @@ export function TipTapBlockHandles({
       setFocusLayout(null) // No caret grip on an unselected frame
       return
     }
+    const editorDom = mountedEditorDom(editor) // Keep this node — cleanup must not touch editor.view
+    if (!editorDom) return // View not mounted — skip rather than throw on editor.view
     const container = gripLayoutRoot(editor)
     if (!container) return
 
@@ -852,7 +878,7 @@ export function TipTapBlockHandles({
       const propertyFocus = propertyBlockFromDom(editor, document.activeElement)
       // TipTap's `isFocused` flag can stay false after the DOM already has the caret
       // (blur ran, focus never re-fired). The painted caret is what should park the ⋮⋮.
-      const domFocused = !editor.isDestroyed && !!editor.view?.hasFocus?.()
+      const domFocused = editorDomHasFocus(editor) // view.hasFocus throws after unmount
       if (domFocused && !editor.isFocused) editor.isFocused = true // Repair the lagging flag
       if (!propertyFocus && !editor.isFocused && !domFocused) return // Truly blurred — leave the grip to hover
       const block = propertyFocus ?? findEditorBlockAtPos(editor, editor.state.selection.from)
@@ -885,7 +911,7 @@ export function TipTapBlockHandles({
           syncFocus() // Value textarea still focused — keep this cell's ⋮⋮
           return
         }
-        if (editor.view?.hasFocus?.()) {
+        if (editorDomHasFocus(editor)) {
           if (!editor.isFocused) editor.isFocused = true
           syncFocus()
           return
@@ -929,7 +955,7 @@ export function TipTapBlockHandles({
     editor.on('focus', syncFocus)
     editor.on('blur', onBlur)
     editor.on('transaction', refreshLayouts)
-    editor.view.dom.addEventListener('focusin', onDomFocusIn) // Property textarea is inside the node view
+    editorDom.addEventListener('focusin', onDomFocusIn) // Property textarea is inside the node view
     syncFocus()
 
     // RF zoom / panel grow changes getBoundingClientRect without a TipTap transaction
@@ -937,12 +963,12 @@ export function TipTapBlockHandles({
       refreshLayouts()
     })
     ro.observe(container)
-    const frame = frameForEditor(editor.view.dom)
+    const frame = frameForEditor(editorDom)
     if (frame !== container) ro.observe(frame)
 
     return () => {
       window.clearTimeout(blurTimer) // Don't restore a grip onto an unmounted editor
-      editor.view.dom.removeEventListener('focusin', onDomFocusIn)
+      editorDom.removeEventListener('focusin', onDomFocusIn) // Captured node — view may already be gone
       editor.off('selectionUpdate', syncFocus)
       editor.off('focus', syncFocus)
       editor.off('blur', onBlur)
@@ -1744,10 +1770,9 @@ export function TipTapBlockHandles({
   const container = gripLayoutRoot(editor)
   // `rfZoom` / handleGutterFlow / frameScale in render deps so grips remeasure
   void rfZoom
-  // Horizontal: visual center of the ⋮⋮ (scale origin) is the midpoint of the blue↔fill pad.
-  // Grips portal onto the fill, so left 0 is already the fill edge. The content pad sits
-  // inside that edge. Subtracting it (fixed flow px) walked the grip toward the blue line
-  // as the √ comfort pad shrank on zoom-in.
+  // Horizontal: visual center of the ⋮⋮ is the midpoint of the clear gap inside the inset
+  // blue stroke. The stroke stays ~1.4px on screen, so in flow px it grows as you zoom out
+  // and would shove a midpoint-of-the-outer-pad grip into the line.
   const contentCssScale = Math.max(0.01, frameScale || 1) // Painted text scale (free contain can go far below 0.15)
   const fill = frameFillForEditor(editor) // Fill left — wrap column may sit inset (right/center)
   const hostScale = fill ? 1 : contentCssScale // Grips portal into the unscaled fill — only in-content hosts inverse-scale
@@ -1762,12 +1787,17 @@ export function TipTapBlockHandles({
       : handleGutterFlow > 0
         ? handleGutterFlow / hostScale
         : HANDLE_GUTTER
+  // Inset ring width in this host's px. Chat has no blue ring, so its stroke is 0.
+  const strokeLocal = fill ? frameScreenChromeScale(rfZoom || 1) / hostScale : 0
+  const clearLocal = Math.max(0, stripLocal - strokeLocal) // Gap from the stroke's inner edge to the fill
   const padLocal = fill ? 0 : contentPadLeft // Chat host only — fill origin is already the peach edge
-  // Box left so the unscaled GRIP_W center (and the scaled visual) lands on the strip midpoint.
-  const gutterCenterLeft = fillLeftLocal - padLocal - stripLocal / 2 - GRIP_W / 2
-  // Same √ curve as host gutter — grips stay centered in the blue strip
+  // Box left so the unscaled GRIP_W center (and the scaled visual) lands in that clear gap.
+  const gutterCenterLeft = fillLeftLocal - padLocal - clearLocal / 2 - GRIP_W / 2
+  // Glyph scale, not the blue-gutter scale. Free contain shrinks text below frameScale.
+  const glyphScale = Math.max(0.01, textScale ?? contentCssScale)
+  // √ curve tempers growth when text is large; below 1 it rides, then glyphScale shrinks with the text.
   const gripChromeScale =
-    blockGripChromeScale(rfZoom || 1, contentCssScale) * (fill ? contentCssScale / hostScale : 1) // Fill host: bake the text scale in — the fill does not CSS-scale the ⋮⋮
+    blockGripChromeScale(rfZoom || 1, glyphScale) * (fill ? glyphScale / hostScale : 1)
   const gripLayouts = new Map<string | number, HandleLayout>() // keyed by block.from (headers = named keys)
   if (container) {
     for (const b of selection) {

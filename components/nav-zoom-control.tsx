@@ -12,13 +12,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { BOARD_ZOOM_HARD, navPercentToZoom, zoomToNavPercent, zoomToNavPercentExact } from '@/lib/board-extent' // 50% zoom-in … 100% default … 200% zoom-out
 import { cn } from '@/lib/utils'
 
 export function NavZoomControl({ className }: { className?: string }) {
   const reactFlowInstance = useReactFlow() // RF instance for get/set viewport
-  const minZoom = useStore((s) => s.minZoom) // Grows when content needs more zoom-out
-  const maxZoom = useStore((s) => s.maxZoom) // Grows when content needs more zoom-in
-  const [zoom, setZoom] = useState(1) // Current zoom (1 = 100%)
+  const minZoom = useStore((s) => s.minZoom) // Smallest scale: 200% max zoom-out
+  const maxZoom = useStore((s) => s.maxZoom) // Largest scale: 50% max zoom-in
+  const [zoom, setZoom] = useState(1) // Current scale (1 = 100% default view)
   const [isEditingZoom, setIsEditingZoom] = useState(false) // Inline % edit active
   const [zoomEditValue, setZoomEditValue] = useState('100') // Draft string while editing
   const zoomInputRef = useRef<HTMLInputElement>(null) // Focus target for inline edit
@@ -33,7 +34,7 @@ export function NavZoomControl({ className }: { className?: string }) {
   } | null>(null)
   const suppressMenuOpenRef = useRef(false) // Block preset menu after a scrub gesture
 
-  // Keep display in sync with viewport; snap near-100% to exactly 100%
+  // Keep display in sync with viewport; snap near scale 1 to the 100% default
   useEffect(() => {
     const updateZoom = () => {
       if (isEditingZoom || isDraggingZoom) return // Don't overwrite while typing or scrubbing
@@ -42,10 +43,10 @@ export function NavZoomControl({ className }: { className?: string }) {
         const viewport = reactFlowInstance.getViewport()
         reactFlowInstance.setViewport({ ...viewport, zoom: 1 })
         setZoom(1)
-        setZoomEditValue('100')
+        setZoomEditValue(String(zoomToNavPercent(1))) // Scale 1 is 100% (the default view)
       } else {
         setZoom(currentZoom)
-        setZoomEditValue(Math.round(currentZoom * 100).toString())
+        setZoomEditValue(String(zoomToNavPercent(currentZoom))) // 50% zoom-in … 200% zoom-out
       }
     }
     updateZoom()
@@ -56,10 +57,10 @@ export function NavZoomControl({ className }: { className?: string }) {
   // Apply zoom centered on the map (same feel as wheel zoom)
   const applyScrubZoom = (rawZoom: number) => {
     let next = Math.max(minZoom, Math.min(maxZoom, rawZoom)) // Honor live board zoom range
-    if (next >= 0.98 && next <= 1.02) next = 1 // Soft snap to 100%
+    if (next >= 0.98 && next <= 1.02) next = 1 // Soft snap to the 100% default (scale 1)
     reactFlowInstance.zoomTo(next)
     setZoom(next)
-    setZoomEditValue(Math.round(next * 100).toString())
+    setZoomEditValue(String(zoomToNavPercent(next))) // Label follows the signed nav percent
   }
 
   const handleZoomPointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
@@ -84,8 +85,9 @@ export function NavZoomControl({ className }: { className?: string }) {
       setMenuOpen(false) // Close presets if open while scrubbing
       e.currentTarget.setPointerCapture(e.pointerId) // Capture only once scrubbing starts
     }
-    // Drag up (negative dy) → zoom in; ~0.5% per pixel
-    applyScrubZoom(drag.startZoom - dy * 0.005)
+    // Drag up (negative dy) → zoom in (percent falls). Drag down → zoom out, stopping at 200%.
+    const startPct = zoomToNavPercentExact(drag.startZoom) // Unrounded so the crossing at 100% doesn't jump
+    applyScrubZoom(navPercentToZoom(startPct + dy * 0.5))
   }
 
   const handleZoomPointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
@@ -104,7 +106,7 @@ export function NavZoomControl({ className }: { className?: string }) {
   const handleZoomInputFocus = () => {
     setIsEditingZoom(true) // Swap button for input
     setMenuOpen(false) // Close presets while editing
-    setZoomEditValue(Math.round(zoom * 100).toString())
+    setZoomEditValue(String(zoomToNavPercent(zoom))) // 50% in … 200% out
     setTimeout(() => zoomInputRef.current?.select(), 0)
   }
 
@@ -112,20 +114,20 @@ export function NavZoomControl({ className }: { className?: string }) {
     setIsEditingZoom(false)
     const numericValue = parseFloat(zoomEditValue)
     if (!isNaN(numericValue)) {
-      const newZoom = Math.max(minZoom, Math.min(maxZoom, numericValue / 100)) // Honor live board zoom range
+      const newZoom = Math.max(minZoom, Math.min(maxZoom, navPercentToZoom(numericValue))) // 50% zoom-in … 200% zoom-out
       const viewport = reactFlowInstance.getViewport()
       reactFlowInstance.setViewport({ ...viewport, zoom: newZoom })
       setZoom(newZoom)
-      setZoomEditValue(Math.round(newZoom * 100).toString())
+      setZoomEditValue(String(zoomToNavPercent(newZoom)))
     } else {
-      setZoomEditValue(Math.round(zoom * 100).toString()) // Revert invalid
+      setZoomEditValue(String(zoomToNavPercent(zoom))) // Revert invalid
     }
   }
 
   const handleZoomInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') zoomInputRef.current?.blur()
     if (e.key === 'Escape') {
-      setZoomEditValue(Math.round(zoom * 100).toString())
+      setZoomEditValue(String(zoomToNavPercent(zoom)))
       zoomInputRef.current?.blur()
     }
   }
@@ -157,7 +159,7 @@ export function NavZoomControl({ className }: { className?: string }) {
       const uiPadding = Math.max(topPadding, bottomPadding, 0.05)
       const nodes = reactFlowInstance.getNodes()
       if (nodes.length === 0) {
-        reactFlowInstance.fitView({ padding: uiPadding, minZoom: 0.1, maxZoom: 1, duration: 300 })
+        reactFlowInstance.fitView({ padding: uiPadding, minZoom: BOARD_ZOOM_HARD.minZoom, maxZoom: BOARD_ZOOM_HARD.maxZoom, duration: 300 })
         return
       }
 
@@ -174,14 +176,14 @@ export function NavZoomControl({ className }: { className?: string }) {
       const reactFlowWidth = reactFlowElement?.clientWidth || 0
       const reactFlowHeight = reactFlowElement?.clientHeight || 0
       if (reactFlowWidth === 0 || reactFlowHeight === 0) {
-        reactFlowInstance.fitView({ padding: uiPadding, minZoom: 0.1, maxZoom: 1, duration: 300 })
+        reactFlowInstance.fitView({ padding: uiPadding, minZoom: BOARD_ZOOM_HARD.minZoom, maxZoom: BOARD_ZOOM_HARD.maxZoom, duration: 300 })
         return
       }
 
       const availableWidth = reactFlowWidth * (1 - uiPadding * 2)
       const availableHeight = reactFlowHeight * (1 - uiPadding * 2)
       let calculatedZoom = Math.min(availableWidth / contentWidth, availableHeight / contentHeight)
-      calculatedZoom = Math.max(0.3, Math.min(1, calculatedZoom)) // Free mode min 30%, cap 100%
+      calculatedZoom = Math.max(BOARD_ZOOM_HARD.minZoom, Math.min(BOARD_ZOOM_HARD.maxZoom, calculatedZoom)) // 200% out … 50% in
       const targetViewportY = reactFlowHeight / 2 - contentCenterY * calculatedZoom
 
       window.dispatchEvent(new CustomEvent('fit-view-start'))
@@ -208,7 +210,7 @@ export function NavZoomControl({ className }: { className?: string }) {
       })
     } else {
       let finalZoom = zoomValue
-      if (zoomValue >= 0.98 && zoomValue <= 1.02) finalZoom = 1 // Snap near-100%
+      if (zoomValue >= 0.98 && zoomValue <= 1.02) finalZoom = 1 // Snap near max zoom-in (scale 1)
       const viewport = reactFlowInstance.getViewport()
       reactFlowInstance.setViewport(
         { x: viewport.x, y: viewport.y, zoom: finalZoom },
@@ -228,7 +230,7 @@ export function NavZoomControl({ className }: { className?: string }) {
         onBlur={handleZoomInputBlur}
         onKeyDown={handleZoomInputKeyDown}
         className={cn(
-          'h-6 w-12 px-0.5 text-xs text-center text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600 dark:bg-gray-800 focus:border-blue-500 focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0',
+          'h-6 w-14 px-0.5 text-xs text-center text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600 dark:bg-gray-800 focus:border-blue-500 focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0',
           className
         )}
         onFocus={(e) => e.target.select()}
@@ -280,9 +282,9 @@ export function NavZoomControl({ className }: { className?: string }) {
           }}
           title="Zoom — drag up/down to adjust, click for presets, double-click to type"
         >
-          {/* Grow with digit count (10% → 1000%); tabular so width doesn’t jump mid-scrub */}
+          {/* Grow with digit count (50% in → 200% out); tabular so width doesn’t jump mid-scrub */}
           <span className="inline-block text-center tabular-nums whitespace-nowrap">
-            {Math.round(zoom * 100)}%
+            {zoomToNavPercent(zoom)}%
           </span>
         </Button>
       </DropdownMenuTrigger>
@@ -299,15 +301,19 @@ export function NavZoomControl({ className }: { className?: string }) {
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => handleZoomChange('fit')}>Fit</DropdownMenuItem>
         <DropdownMenuSeparator />
-        {[0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 4, 5, 10]
-          .filter((z) => z >= minZoom - 1e-6 && z <= maxZoom + 1e-6)
-          .map((z) => (
+        {/* Menu opens upward: top = zoom in (50%), bottom = max zoom out (200%). */}
+        {[50, 75, 100, 150, 200]
+          .filter((p) => {
+            const z = navPercentToZoom(p) // Preset is a nav percent, not a raw scale
+            return z >= minZoom - 1e-6 && z <= maxZoom + 1e-6
+          })
+          .map((p) => (
           <DropdownMenuItem
-            key={z}
-            onClick={() => handleZoomChange(z)}
-            className={cn(Math.abs(zoom - z) < 0.01 && 'bg-gray-100 dark:bg-gray-800')}
+            key={p}
+            onClick={() => handleZoomChange(navPercentToZoom(p))}
+            className={cn(Math.abs(zoomToNavPercent(zoom) - p) < 0.5 && 'bg-gray-100 dark:bg-gray-800')}
           >
-            {Math.round(z * 100)}%
+            {p}%
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

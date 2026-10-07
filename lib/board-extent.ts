@@ -11,13 +11,51 @@ export type SoftBoardBounds = {
   maxY: number
 }
 
-/** Default zoom floor/ceiling: 10%–1000%. */
-export const BOARD_ZOOM_DEFAULT: BoardZoomRange = { minZoom: 0.1, maxZoom: 10 }
+/** Nav label at max zoom-out. Higher percent is farther out; the number does not pass 200. */
+export const BOARD_NAV_PERCENT_MAX = 200
+
+/** Nav label at max zoom-in (scale 2). The band does not go below 50%. */
+export const BOARD_NAV_PERCENT_MIN = 50
+
+/** Nav label for the default view (scale 1). */
+export const BOARD_NAV_PERCENT_DEFAULT = 100
+
+/** Camera scale at the 200% label. Same far stop as the old max zoom-out; the label stays 200. */
+export const BOARD_ZOOM_OUT_SCALE = 0.01
+
+/** Camera scale at the 50% label (max zoom-in). */
+export const BOARD_ZOOM_IN_SCALE = 2
+
+/** Default camera band: 50% zoom-in (scale 2) through 200% zoom-out (scale 0.01). */
+export const BOARD_ZOOM_DEFAULT: BoardZoomRange = { minZoom: BOARD_ZOOM_OUT_SCALE, maxZoom: BOARD_ZOOM_IN_SCALE }
 
 /** Absolute clamps — same as default; content-based expand cannot exceed this band. */
-export const BOARD_ZOOM_HARD: BoardZoomRange = { minZoom: 0.1, maxZoom: 10 }
+export const BOARD_ZOOM_HARD: BoardZoomRange = { minZoom: BOARD_ZOOM_OUT_SCALE, maxZoom: BOARD_ZOOM_IN_SCALE }
 
-/** Clamp a zoom value to the board band (10%–1000% by default). */
+/** Nav percent → scale. 50% → 2, 100% → 1. Past 100% the scale falls on a log curve to 0.01 at 200%. */
+export function navPercentToZoom(percent: number): number {
+  const p = Math.max(BOARD_NAV_PERCENT_MIN, Math.min(BOARD_NAV_PERCENT_MAX, percent)) // Stay inside 50%–200%
+  if (p <= BOARD_NAV_PERCENT_DEFAULT) return BOARD_NAV_PERCENT_DEFAULT / p // 50% is scale 2; 100% is scale 1
+  const t = (p - BOARD_NAV_PERCENT_DEFAULT) / (BOARD_NAV_PERCENT_MAX - BOARD_NAV_PERCENT_DEFAULT) // 0 at 100%, 1 at 200%
+  return Math.pow(BOARD_ZOOM_OUT_SCALE, t) // 200% lands on the far zoom-out without a higher label
+}
+
+/** Scale → nav percent, unrounded so a scrub does not jump. 100% is the default view. */
+export function zoomToNavPercentExact(zoom: number): number {
+  if (!(zoom > 0)) return BOARD_NAV_PERCENT_MAX // Non-positive scale is max zoom-out
+  if (zoom >= 1) return BOARD_NAV_PERCENT_DEFAULT / zoom // Scale 1 → 100%, scale 2 → 50%
+  const t = Math.log(zoom) / Math.log(BOARD_ZOOM_OUT_SCALE) // Inverse of the zoom-out curve
+  return BOARD_NAV_PERCENT_DEFAULT + t * (BOARD_NAV_PERCENT_MAX - BOARD_NAV_PERCENT_DEFAULT) // Scale 0.01 → 200%
+}
+
+/** Rounded nav label, clamped to 50%–200%. */
+export function zoomToNavPercent(zoom: number): number {
+  return Math.round(
+    Math.max(BOARD_NAV_PERCENT_MIN, Math.min(BOARD_NAV_PERCENT_MAX, zoomToNavPercentExact(zoom)))
+  )
+}
+
+/** Clamp a zoom value to the camera band (200% zoom-out … 50% zoom-in). */
 export function clampBoardZoom(
   zoom: number,
   hard: BoardZoomRange = BOARD_ZOOM_HARD

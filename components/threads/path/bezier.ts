@@ -75,6 +75,27 @@ export function threadArrowLength(strokeUser: number): number {
   return 2 * Math.max(0, strokeUser) // Back of the head to the tip, in flow px
 }
 
+/**
+ * Flow px the tip sits outside a frame.
+ * The frame paints over its edge, so the tip stops short and the whole head stays visible.
+ */
+export function arrowFrameClearance(head: number): number {
+  return Math.max(0, head) * 0.45 // Marker cap is ~0.1 of the head; the rest is air so the point stays visible
+}
+
+/** Connection point moved out along the side so the whole arrow sits outside the fill. */
+export function arrowTipOutsideFrame(
+  point: XYPosition, // Connection point on the fill
+  side: Position, // Side the arrow arrives on
+  head: number, // Arrow length, in flow px
+  span?: number // Distance to the other end — keep a short thread from folding back
+): XYPosition {
+  const room = span == null ? Infinity : Math.max(0, span - head) // Space left after the head itself
+  const gap = Math.min(arrowFrameClearance(head), room * 0.85) // Clear the fill, but leave a stroke
+  const dir = connectionDirection(side) // Into the frame — step the opposite way
+  return { x: point.x - dir.x * gap, y: point.y - dir.y * gap } // Tip lands here; the stroke still stops one head behind it
+}
+
 /** Keep the head from swallowing a short thread. */
 export function clampArrowHead(head: number, span: number): number {
   return Math.min(Math.max(0, head), Math.max(0, span * 0.72)) // Leave a curve in front of the head

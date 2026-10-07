@@ -184,8 +184,8 @@ const isContentEmpty = (content: string | undefined | null) => {
 
 const BOARD_LINK_ICON_W = 22 // Title emoji / page icon column
 const BOARD_OPEN_MENU_W = 52 // Open-menu pill ≈ preview + open (Notion adds a bit more)
-const BLOCK_THREE_CHARS_W = 28 // ~3ch of body text for plain frames
-const BLOCK_MIN_FRAME_H = 22 // One line (~18 at lh 1.25) + equal 2px content pads — hug the block, don't float chrome
+const BLOCK_THREE_CHARS_W = 31 // ~3ch of 20px body text for plain frames
+const BLOCK_MIN_FRAME_H = 25 // One line (20px at lh 1.25) — empty hug matches the body floor
 const ROTATE_CLICK_SLOP_PX = 4 // Rotate button: below this pointer travel → click resets; above → drag rotate
 const BLOCK_FRAME_PAD_Y = 2 // Top/bottom inset inside the fill — tight to glyphs
 const BLOCK_FRAME_PAD_X = 2 // Match T/B so the peach edge sits close to blocks
@@ -1523,6 +1523,7 @@ function TipTapContentLive({
   deferredBox = null, // Cached box/kind — sizes the cold copy held while a re-promotion mounts
   contentPadLeft = 0, // contentFit paddingLeft — ⋮⋮ centers in the blue gutter past this pad
   frameScale = 1, // Locked-resize CSS scale — grips remeasure when it changes
+  textScale, // Painted glyph scale — ⋮⋮ shrinks with free-contain text
   handleGutterFlow = 0, // Blue L/R gutter width (flow px) — ⋮⋮ local left compensates contentFit scale
   centerInShape = false, // Silhouette frames: center TipTap in the visible cross / diamond
   enableCollab = true, // False for Notion page bodies (Notion remains content SoT)
@@ -1579,6 +1580,7 @@ function TipTapContentLive({
   deferredBox?: DeferredFrameBox | null
   contentPadLeft?: number // contentFit padL — grip centering past the fill edge
   frameScale?: number // Locked-resize scale — ⋮⋮ remeasure (CSS transform skips RO)
+  textScale?: number // Painted glyph scale — ⋮⋮ follows free-contain shrink
   handleGutterFlow?: number // Adjust-box L gutter (flow px); grips inverse-scale into it
   centerInShape?: boolean // Shaped frame: center text in silhouette
   enableCollab?: boolean // Local frames join board Yjs; Notion bodies stay HTML/LWW
@@ -2128,18 +2130,17 @@ function TipTapContentLive({
     }
   }, [editor, setActiveEditor, editorRef])
 
-  // Apply font scale to editor's DOM element when fontScale changes
+  // Legacy fontScale only. Scale 1 must not set `1em` — that inherits the 14px page body and hides the board floor.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
-    
-    const scale = fontScale ?? 1
     const editorDOM = editor.view.dom as HTMLElement
-    
-    if (editorDOM) {
-      // Apply font size directly to the editor's DOM element
-      // This will affect all content in the editor
-      editorDOM.style.fontSize = `${scale}em`
+    if (!editorDOM) return
+    const scale = fontScale ?? 1
+    if (Math.abs(scale - 1) < 0.001) {
+      editorDOM.style.fontSize = '' // Board `.prose` floor (20px) wins
+      return
     }
+    editorDOM.style.fontSize = `${20 * scale}px` // Old per-frame fontScale, from the same floor
   }, [editor, fontScale])
 
   // Keep single-line mode in sync (unresized map blocks grow until Enter)
@@ -2659,6 +2660,7 @@ function TipTapContentLive({
                 onNotionConnection={onNotionConnection}
                 contentPadLeft={contentPadLeft}
                 frameScale={frameScale}
+                textScale={textScale} // Shrink the ⋮⋮ with the glyphs, not the blue gutter
                 handleGutterFlow={handleGutterFlow}
               />
             </div>
@@ -4536,10 +4538,12 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // goes through setViewport, which fires neither onMoveStart nor onMove.
   const myStackSides = useMemo(() => readSideStacks(stackMeta), [stackMeta])
   const hasAnyStackSide = FRAME_STACK_SIDES.some((side) => !!myStackSides[side])
+  const stackSidesRef = useRef(EMPTY_STACK_SIDES) // Last gap list — kept mounted while a frame is dragged
   const stackGapSides = useStore(
     (s) => {
       if (!hasAnyStackSide) return EMPTY_STACK_SIDES
-      if (isBoardNavigating() || isFrameDragging()) return EMPTY_STACK_SIDES
+      if (isFrameDragging()) return stackSidesRef.current // Don't unmount the mark; it tracks the live gap
+      if (isBoardNavigating()) return EMPTY_STACK_SIDES
       const mine = myStackSides
       const sides: Array<{ side: FrameStackSide; groupId: string }> = []
       for (const side of FRAME_STACK_SIDES) {
@@ -4557,6 +4561,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         })
         if (hasOut) sides.push({ side, groupId: entry.groupId })
       }
+      stackSidesRef.current = sides // Drag keeps this list so the mark stays mounted
       return sides
     },
     (a, b) =>
@@ -6639,56 +6644,47 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       ? { width: resizeDimensionsRef.current.width, height: resizeDimensionsRef.current.height }
       : null // Fill at press — cancelling wrap on the far edge restores this box
     let hugRaf = 0 // One follow-up measure after wrap layout commits — the move itself can run too early
-    let liveVisualW = startVisual // Where the wrap lines are — kept for the post-layout measure
-    // Free wrap: lines follow the pointer. Layout stays at least one word wide so tokens do not split.
-    // Glyphs shrink to that gap as soon as the lines move in — not only after they hit one word.
-    const fitFreeWrapScale = (column: number, visual: number) => {
+    // Free wrap: the column follows the pointer and reflows. Glyphs stay at the press-time size —
+    // scaling them to the gap painted under the floor, then release snapped the size back up.
+    const fitFreeWrapScale = (column: number) => {
       const fitEl = contentFitRef.current // Column element — may remount across the gesture
-      if (!fitEl || !fill || locked0) return // Fit-to-text shrinks frameScale instead — the peach stays on the glyphs
+      if (!fitEl || !fill || locked0) return // Fit-to-text hugs the peach; it uses the same frozen text size
       fitEl.style.width = `${column}px` // Unscaled column — never narrower than the longest word
       fitEl.style.maxWidth = `${column}px` // Match wrapContentWidth so the height measure sees this move
-      const s = Math.max(FRAME_SCALE_EPSILON, frameScaleRef.current) // Place scale — contain multiplies this
-      const contentW = Math.max(1, column * s) // Width at place scale, before contain
-      // The pointer gap is the size. A tall wrapped stack must not crush the glyphs narrower than the lines.
-      const widthFit = Math.max(1, visual) / contentW // Glyphs land on the wrap lines
-      const contain = Math.max(FRAME_SCALE_EPSILON, Number.isFinite(widthFit) ? widthFit : 1) // Live shrink, no word-width floor
-      const paint = s * contain // On-screen glyph scale this measure
-      fitEl.style.transform = Math.abs(paint - 1) > FRAME_SCALE_EPSILON ? `scale(${paint})` : '' // Shrink between the lines
+      const s = Math.max(FRAME_SCALE_EPSILON, frameScaleRef.current) // Place scale — wrap does not change it
+      const contain = Math.max(FRAME_SCALE_EPSILON, paint0 / s) // Press-time text size, held for the whole drag
+      const paint = s * contain // Same painted size as the grab — not the narrowing gap
+      fitEl.style.transform = Math.abs(paint - 1) > FRAME_SCALE_EPSILON ? `scale(${paint})` : '' // Keep the floor; do not shrink
       fitEl.style.transformOrigin = 'center center' // Stay centered — the frame does not grow
-      freeFitScaleRef.current = contain // Render reuses this for the rest of the gesture
-      paintScaleRef.current = paint // Later reads in this drag see the live size
-      wrapDragPaintRef.current = paint // Bar thickness tracks the same scale
+      freeFitScaleRef.current = contain // Render reuses the frozen size, not a live contain
+      paintScaleRef.current = paint // Later reads in this drag see the press-time size
+      wrapDragPaintRef.current = paint // Bar thickness tracks that same size
     }
     const onMove = (ev: PointerEvent) => {
       if (!fill) return // No fill — cannot convert client X
       // Press-relative. Fit-to-text moves the fill; free keeps it still and only scales the glyphs.
       const d = (ev.clientX - e.clientX) * flowPerScreen // Flow px from press — board zoom captured above
       let visualW = startVisual + growth * dirSign * d // Column width the pointer is asking for
-      const minVisual = 8 // Past the longest word the lines keep closing — glyphs scale down to this gap
       const visualMax = locked0 ? edgeCol * paint0 : plusInnerW // Fit grows out to the text run; free stops on the +'s
+      const minVisual = Math.min(visualMax, Math.max(1, wordMin * paint0)) // Longest word at the current text size — lines stop, glyphs do not shrink
       visualW = Math.max(minVisual, Math.min(visualMax, visualW)) // That far edge is also where wrap turns off
       const leaveSlop = 8 * flowPerScreen // ~8 screen px extra inward before bars leave the +'s (grab jitter)
       if (!locked0 && visualW > plusInnerW - leaveSlop) visualW = plusInnerW // Stay on the + until that slop is spent
-      liveVisualW = visualW // Post-layout measure uses the same line gap
-      const gapT = startVisual > 1 ? visualW / startVisual : 1 // 1 at the grab; inward is smaller
-      const rawCol = locked0
-        ? visualW / paint0 // Fit: the column is the gap — the frame hugs it
-        : startW * gapT + wordMin * (1 - gapT) // Free: share the drag between reflow and shrink
+      const rawCol = visualW / paint0 // Gap at the current text size — wrap reflows, it does not scale the glyphs
       const col = Math.max(wordMin, Math.min(edgeCol, Math.round(rawCol * 100) / 100)) // Layout never splits a word
       wrapColWidthRef.current = col // Live readers (resize) see this tick
       setWrapColWidth(col) // Reflow text at the line
       if (!frameUnlockedRef.current) {
-        // Past the longest word, shrink place-scale so the peach (and the line on it) keeps following the pointer.
-        const glyph = Math.min(s0, visualW / Math.max(1, col))
-        if (Math.abs(glyph - frameScaleRef.current) > FRAME_SCALE_EPSILON) {
-          frameScaleRef.current = glyph // Hug effect is paused while the line is down
-          setFrameScale(glyph)
+        // Wrap reflows the column. Keep the press-time text size — shrinking place-scale dipped under the floor and snapped back on release.
+        const s = s0 // Frozen scale — the peach hugs col × this, not a smaller glyph size
+        if (Math.abs(frameScaleRef.current - s) > FRAME_SCALE_EPSILON) {
+          frameScaleRef.current = s // Undo a shrink from an earlier sample in this gesture
+          setFrameScale(s)
         }
-        const s = Math.max(FRAME_SCALE_EPSILON, frameScaleRef.current) // Locked hug = col × this scale
-        freeFitScaleRef.current = 1 // Place-scale already holds the shrink — don't stack a free contain
+        freeFitScaleRef.current = 1 // Place-scale already holds the size — don't stack a free contain
         const width = Math.round(col * s * 100) / 100 // Equals the pointer gap once the column is one word wide
         if (shiftNode && startPos) {
-          const shiftX = -(width - startW * s0) / growth // Keep the opposite edge or the center fixed, including glyph shrink
+          const shiftX = -(width - startW * s0) / growth // Keep the opposite edge or the center fixed
           const setNodes = getSetNodes() // Live RF XY
           setNodes?.((nds: any[]) =>
             nds.map((n: any) => (n.id === id ? { ...n, position: { x: startPos.x + shiftX, y: n.position.y } } : n))
@@ -6703,14 +6699,14 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         if (cf) {
           cf.style.width = `${col}px` // Sync wrap after the spacer — outward drag must loosen this frame
           cf.style.maxWidth = `${col}px` // Match wrapContentWidth
-          cf.style.transform = Math.abs(s - 1) > FRAME_SCALE_EPSILON ? `scale(${s})` : '' // Glyphs fit the pointer gap
+          cf.style.transform = Math.abs(s - 1) > FRAME_SCALE_EPSILON ? `scale(${s})` : '' // Glyphs stay at the press-time size
           cf.style.transformOrigin =
             frameAlignXRef.current === 'right'
               ? 'top right'
               : frameAlignXRef.current === 'center'
                 ? 'top center'
                 : 'top left' // Same origin the settled render uses, so the line stays on the glyphs
-          paintScaleRef.current = s // Bar weight and the next read see the shrunk size
+          paintScaleRef.current = s // Bar weight stays on the frozen text size
           wrapDragPaintRef.current = s
         }
         const height = cf
@@ -6721,14 +6717,14 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         resizeDimensionsRef.current = { width, height } // Persist on pointerup before React commits
         setResizeDimensions({ width, height }) // Live hug
       } else {
-        fitFreeWrapScale(col, visualW) // Glyphs fit between the lines — frame size stays
+        fitFreeWrapScale(col) // Reflow at the frozen text size — frame size stays
         if (hugRaf) cancelAnimationFrame(hugRaf) // Only the latest column needs a post-layout measure
         hugRaf = requestAnimationFrame(() => {
           hugRaf = 0 // This follow-up has run
           if (!wrapLineDraggingRef.current) return // Release already settled
           const column = wrapColWidthRef.current // Column the move stored
           if (column == null) return // Wrap was cleared
-          fitFreeWrapScale(column, liveVisualW) // Second measure after the browser wraps the line
+          fitFreeWrapScale(column) // Second measure after the browser wraps the line
         })
       }
       // Lines follow the pointer. The layout column stops at the longest word, so a stale word box must not win.
@@ -7700,7 +7696,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // Constant screen size for selection chrome via live CSS `--tt-board-zoom`.
   // React still uses frameUiScale for gutters / stack lines (updates after settle).
   const frameUiScale = screenChromeScale
-  const frameLineW = Math.max(0.25, frameUiScale) // Shape select stroke (square ring uses CSS var)
+  const frameLineW = Math.max(0.25, frameUiScale) // Shape select stroke — same screen thickness as the square ring
   const wrapActive =
     isBlock && frameTextWrap && isUserResized && !!resizeDimensions // Soft-wrap in a fixed width — stays on while board preview is open so wrap +'s still work
   const wrapUnlocked = wrapActive && frameUnlocked // Unlocked wrap: fixed width + free/clip height
@@ -9435,18 +9431,30 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   )
   // Same radius as idle (0 = square) — preview must not change the fill (adjust ring stays square)
   const paintedFrameRadius = frameShape ? 0 : frameCornerRadius
+  // Slight lift under any painted fill — transparent frames stay flat on the board
+  const frameFillDropShadow = isFillTransparent
+    ? undefined // See-through fill has nothing to lift
+    : resolvedTheme === 'dark'
+      ? '0 1px 3px rgb(0 0 0 / 0.4)' // Near-black board — a 5% shadow disappears
+      : '0 1px 2px rgb(0 0 0 / 0.12)' // Soft lift on the light board
   const fillShellBorderShadow = (() => {
-    if (frameShape || isContentRotated) return undefined
-    // Blue adjust / drag ring already outlines the frame — skip empty grey so it doesn’t read as an inner border
-    if (showAdjustFrame || showDragBorderOnly) {
-      if (!paintBorderOnFillShell) return undefined
-      return `inset 0 0 0 ${FRAME_BORDER_WEIGHT}px ${resolvedBorderColor}` // Keep user-set stroke on the fill shell
+    // Silhouette uses SVG drop-shadow — a rect shadow would box the axis-aligned bounds
+    const drop = frameShape ? undefined : frameFillDropShadow
+    let inset: string | undefined // User stroke / empty grey, painted on the fill
+    if (!frameShape && !isContentRotated) {
+      // Blue adjust / drag ring already outlines the frame — skip empty grey so it doesn’t read as an inner border
+      if (showAdjustFrame || showDragBorderOnly) {
+        if (paintBorderOnFillShell) {
+          inset = `inset 0 0 0 ${FRAME_BORDER_WEIGHT}px ${resolvedBorderColor}` // Keep user-set stroke on the fill shell
+        }
+      } else if (showEmptyFrameBorder) {
+        inset = `inset 0 0 0 1px ${emptyFrameBorderColor}` // Soft grey so an empty box is findable
+      } else if (paintBorderOnFillShell) {
+        inset = `inset 0 0 0 ${FRAME_BORDER_WEIGHT}px ${resolvedBorderColor}` // Custom border on the fill
+      }
     }
-    if (showEmptyFrameBorder) return `inset 0 0 0 1px ${emptyFrameBorderColor}`
-    if (paintBorderOnFillShell) {
-      return `inset 0 0 0 ${FRAME_BORDER_WEIGHT}px ${resolvedBorderColor}`
-    }
-    return undefined
+    const combined = [drop, inset].filter(Boolean).join(', ') // Drop outside, inset stroke inside
+    return combined || undefined
   })()
 
   return (
@@ -9496,8 +9504,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               : (data.borderColor || frameShape ? '' : 'border-transparent'), // Empty chrome → inset on fill; styled/shape → style
           isBookmarked
             ? 'shadow-[0_0_8px_rgba(250,204,21,0.6)] dark:shadow-[0_0_8px_rgba(250,204,21,0.4)]'
-            : isBorderNone || frameShape || isContentRotated || showEmptyFrameBorder
-              ? 'shadow-none' // Transparent / empty chrome / silhouette / rotated — no card shadow on outer
+            : isBlock || isFillTransparent || frameShape || isContentRotated
+              ? 'shadow-none' // Fill shell / silhouette owns the slight shadow; transparent stays flat
               : showClipPreview
                 ? 'shadow-md' // Soft lift while full clipped content is revealed
                 : 'shadow-sm',
@@ -9743,7 +9751,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           style={{
             inset: 0, // Frame area — the box the thread can attach to
             borderRadius: 0,
-            boxShadow: 'inset 0 0 0 var(--tt-frame-line-w, 1.4px) #3b82f6', // Same screen-constant stroke as the adjust ring
+            boxShadow: 'inset 0 0 0 var(--tt-frame-line-w, 1.4px) #3b82f6', // Screen-constant connection box
           }}
         />
       )}
@@ -9819,7 +9827,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         </>
       )}
 
-      {/* Stacked mates: line on each adjust-box side gap (independent trees per side) */}
+      {/* Stacked mates: gap mark on each adjust-box side (independent trees per side) */}
       {!dragging &&
         stackGapSides.map(({ side, groupId }) => (
           <FrameStackRevealLine
@@ -10269,6 +10277,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             fillOpacity={1}
             stroke={shapeSelectChrome ? '#3b82f6' : shapeStroke}
             strokeWidth={shapeSelectChrome ? frameLineW : shapeStrokeW}
+            style={
+              frameFillDropShadow
+                ? { filter: `drop-shadow(${frameFillDropShadow})` } // Follows the silhouette, not the box
+                : undefined
+            }
           />
         )}
         {/* Hover full-content preview: fill behind spilled blocks (frame box stays the saved size) */}
@@ -10566,7 +10579,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               coldReady={coldReady} // Snapshot exists → proximity alone must not mount a live editor
               deferredBox={deferredBox}
               contentPadLeft={isBlock ? BLOCK_FRAME_PAD_X : 0}
-              frameScale={frameScale} // Same ⋮⋮ strip as fit — free contain must not paint the grip larger than the adjust gutter
+              frameScale={frameScale} // Blue gutter stays on frameScale — contain must not narrow the adjust box
+              textScale={paintScale} // ⋮⋮ matches the CSS scale on the glyphs (frameScale × free contain)
               handleGutterFlow={handleGutterFlow}
               centerInShape={shapeCenterContent}
               enableCollab={
@@ -10651,7 +10665,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             />
           </div>
         )}
-        {selected && !groupMulti && hasBlockContent && !soleImageContent && !isDbFrame && !frameResizing && (() => { // Wrap lines + resize +'s: property frames too — the cell wraps on the same column as text
+        {selected && !groupMulti && (hasBlockContent || frameUnlocked) && !soleImageContent && !isDbFrame && !frameResizing && (() => { // Wrap lines + resize +'s: free empty frames too — fit/free toggle stays off until there is text
           const lineScale = wrapDragPaintRef.current ?? paintScale // Live paint while dragging — a press-only scale left the glyphs stale
           const padX = BLOCK_FRAME_PAD_X * lineScale // Same side gap as the block to the fill
           const padY = BLOCK_FRAME_PAD_Y * lineScale // Same T/B gap as the block

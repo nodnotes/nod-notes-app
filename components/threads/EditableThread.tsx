@@ -18,6 +18,7 @@ import {
   boardTipArrivalSide,
   clampArrowHead,
   getBoardTipBezier,
+  arrowTipOutsideFrame,
   getSmoothThreadBezier,
   threadArrowLength,
   threadTipCenter,
@@ -59,6 +60,7 @@ import {
   threadGapsForFrames,
   threadStrokePaths,
 } from '@/lib/threads/thread-path-geometry'
+import { stackedThreadArrow } from '@/lib/threads/stacked-thread-arrow' // Adjacent stacked frames: head only, centered in the gap
 
 /** Persistable thread payload stored in panel_edges.metadata + edge.data. */
 export type ThreadEdgeData = {
@@ -321,11 +323,15 @@ export function EditableThread({
   const tipPoint = targetNode?.type === 'threadTip' ? threadTipCenter(targetNode) : targetOrigin // Arrow tip
   const headSpan = Math.hypot(tipPoint.x - sourceOrigin.x, tipPoint.y - sourceOrigin.y) || 1 // Room before the head
   const head = clampArrowHead(threadArrowLength(strokeUser), headSpan) // Stroke stops this far short of the tip
+  const pathTarget =
+    targetNode?.type === 'threadTip'
+      ? targetOrigin // Free end — the arrow is the tip, nothing covers it
+      : arrowTipOutsideFrame(targetOrigin, toSide, head, headSpan) // Whole head sits outside the fill
   const obstacles = useStore((s) => snapshotFrameObstacles(s.nodeInternals)) // Shared frame boxes for this store snapshot
   const corridors = useStore((s) => snapshotThreadCorridors(s.nodeInternals, s.edges)) // Other unbent threads
   const spread = points.length === 0 ? threadSpread(id, corridors) : NO_SPREAD // Lane among threads that share this run
   const freeEnd = points.length === 0 && targetNode?.type === 'threadTip' // Dropped on the board
-  const routeTarget = freeEnd ? threadTipCenter(targetNode!) : targetOrigin // Tip center, else the frame side
+  const routeTarget = freeEnd ? threadTipCenter(targetNode!) : pathTarget // Tip center, else just outside the fill
   const arrivalSide = freeEnd
     ? boardTipArrivalSide(routeTarget.x - sourceOrigin.x, routeTarget.y - sourceOrigin.y) // Arrow points away from the source
     : toSide
@@ -357,7 +363,7 @@ export function EditableThread({
 
   // Route for editable knobs (user bends). Unbent Smooth uses getSmoothThreadBezier below —
   // Catmull stubs added S-curves; RF getBezierPath went flat on same-side snapped frames.
-  const routePoints = [sourceOrigin, ...points, targetOrigin]
+  const routePoints = [sourceOrigin, ...points, pathTarget] // Bent tips use the same outside point
   const unbentSmooth =
     points.length === 0 &&
     (algorithm === ThreadAlgorithm.BezierCatmullRom ||
@@ -391,8 +397,8 @@ export function EditableThread({
           sourceX: sourceOrigin.x, // Frame-edge attach, not the outer indicator
           sourceY: sourceOrigin.y,
           sourcePosition: fromSide, // Snapped side (top↔top when frames sit left/right)
-          targetX: targetOrigin.x,
-          targetY: targetOrigin.y,
+          targetX: pathTarget.x, // Just outside the fill so the head is not covered
+          targetY: pathTarget.y,
           targetPosition: toSide,
           head, // Stroke ends on the back of the arrow
         }),
@@ -437,7 +443,7 @@ export function EditableThread({
           sourceHandleId,
           targetHandleId,
           arrowHead: boardTip || unbentSmooth || detour ? head : 0, // Bent paths still run to the tip
-          pathOverride: detour?.path ?? smoothBezier?.path ?? null, // Gaps follow the stroke, including a lane shift
+          pathOverride: path, // Same stroke that paints, including the tip sitting outside the fill
         })
       : null
 
@@ -502,6 +508,35 @@ export function EditableThread({
     ? `calc(5 * var(--tt-thread-inv-zoom, 1)), calc(5 * var(--tt-thread-inv-zoom, 1))`
     : undefined
   const arrowId = `tt-thread-arrow-${id.replace(/[^A-Za-z0-9_-]/g, '')}` // Unique so selection can recolor this head
+  const stackedHeadLen = threadArrowLength(edgeWForHead) // Flow px — the viewport zoom scales this head with the board
+  const stackedHead = stackedThreadArrow(
+    sourceNode, // Source frame of this thread
+    targetNode,
+    zoom,
+    stackedHeadLen
+  )
+
+  if (stackedHead) {
+    return (
+      <>
+        <BaseEdge
+          id={id}
+          path={stackedHead.hitPath} // Selectable, but the shaft is not painted
+          interactionWidth={24}
+          style={{ ...restStyle, stroke: 'transparent', strokeWidth: 0 }}
+        />
+        <polyline
+          points={stackedHead.points} // Same closed head as other threads, centered between the adjust boxes
+          fill={stroke}
+          stroke={stroke}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          style={{ strokeWidth: Math.max(0.75, stackedHeadLen / 5) }} // Flow weight, so the head's stroke scales with zoom
+          pointerEvents="none"
+        />
+      </>
+    )
+  }
 
   return (
     <>

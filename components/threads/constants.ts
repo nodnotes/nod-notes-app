@@ -128,7 +128,7 @@ export const FRAME_SCREEN_CHROME_BOOST = 1.4
 
 /**
  * Flow-space multiplier for frame selection chrome widgets so they stay constant on screen:
- * connection indicators, resize dots + blue stroke, rotate/fit/wrap, and blue↔fill L/R gutters.
+ * connection indicators, resize dots + blue stroke, rotate/fit/wrap.
  * Pure 1/zoom (× boost). TipTap ⋮⋮ / add-lines use a separate √ comfort curve (text-relative).
  */
 export function frameScreenChromeScale(zoom: number): number {

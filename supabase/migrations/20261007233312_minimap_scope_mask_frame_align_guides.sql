@@ -1,0 +1,2 @@
+-- Minimap scope zoom (not board camera), min out-of-view mask, camera-following nodes; frame align guides; top-bar content shadow; stacked thread arrows.
+-- App/docs marker only; no DDL (frame metadata is JSONB). Remote DDL top: 20260924223511_board_changes_autosave.

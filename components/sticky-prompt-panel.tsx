@@ -12,6 +12,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useQuery, useQueryClient } from '@tanstack/react-query' // Invalidate path/nav after an inline rename
 import { useRouter } from 'next/navigation'
 import { replaceBoardUrl } from '@/lib/replace-board-url' // Empty `/board` rename mints a row without remounting
+import { watchTopBarContentShadow, type ShadowStrip } from '@/lib/top-bar-content-shadow' // Shadow only on the span where a non-board color is behind the bar
 import { syncBoardRenameToBlock } from '@/lib/blocks' // Keep the parent-map boardLink title in sync
 import { DEFAULT_BOARD_TITLE, boardTitleOrDefault } from '@/lib/board-title' // Same default as nav + / nested mint
 import {
@@ -674,6 +675,34 @@ function PathEllipsisMenu({
   )
 }
 
+// Overlap shadows live in the bar so their falloff paints on the board instead of under the bar.
+function TopBarOverlapShadow() {
+  const hostRef = useRef<HTMLDivElement>(null) // Finds the bar via closest
+  const [strips, setStrips] = useState<ShadowStrip[]>([]) // Bar-local runs
+  useLayoutEffect(() => {
+    const bar = hostRef.current?.closest('[data-edit-top-bar]') as HTMLElement | null
+    return watchTopBarContentShadow(bar, (next) => {
+      setStrips((prev) => {
+        if (prev.length === next.length && prev.every((strip, index) => JSON.stringify(strip) === JSON.stringify(next[index]))) return prev // Skip identical publishes
+        return next
+      })
+    })
+  }, [])
+  return (
+    <div ref={hostRef} data-top-bar-shadows aria-hidden>
+      {strips.map((strip, index) =>
+        strip.kind === 'stroke' ? (
+          <svg key={index} data-top-bar-shadow-stroke aria-hidden>
+            <path d={strip.d} strokeWidth={strip.width} /> {/* Fade follows this stroke, not a box beside it */}
+          </svg>
+        ) : (
+          <div key={index} data-top-bar-shadow-span style={{ left: strip.left, width: strip.width, height: strip.height }} /> // This line or fill only
+        ),
+      )}
+    </div>
+  )
+}
+
 export function EditPanel({ conversationId, projectId }: EditPanelProps) {
   const { activeEditor } = useEditorContext()
   const { openSidebar, scheduleCloseSidebar, toggleSidebar, isSidebarPinned, isMobileMode } = useSidebarContext()
@@ -859,20 +888,20 @@ export function EditPanel({ conversationId, projectId }: EditPanelProps) {
         <div
           data-edit-top-bar // Full map-column bar; toolbar tools center against this, not leftover flex space
           className={cn(
-            // Match React Flow board/main area background
+            // Match the board surface — overlap shadows are strips in [data-top-bar-shadows], not the full bar
             'relative bg-gray-50 dark:bg-[#0f0f0f] flex items-center gap-1 w-full overflow-visible'
           )}
           style={{
             // No rounded corners - fills map column width (chat sidebar is a sibling column)
             borderRadius: '0px',
             border: 'none',
-            boxShadow: 'none',
             height: `${panelHeight}px`, // Same height as input box (52px)
             paddingLeft: '0.5rem', // 8px left padding
             paddingRight: '0.5rem', // 8px right padding
             boxSizing: 'border-box', // Ensure padding is included in height
           }}
         >
+          <TopBarOverlapShadow /> {/* Same layer as the bar so the falloff is not hidden under it */}
           {/* Left chrome — menu + board path; no z-boost so absolute tools stay above if the path cap races */}
           <div data-top-bar-left data-path-ready={pathReady || !pathKey ? 'true' : undefined} className="relative flex items-center flex-shrink-0">
           {/* Menu icon — hover opens; click pins; above mobile scrim so close works on first tap */}

@@ -70,7 +70,9 @@ export function computePreviewMinimapGeometry(
   state: PreviewMinimapState,
   elementWidth: number,
   elementHeight: number,
-  offsetScale = 5
+  offsetScale = 5,
+  scopeZoom = 1, // Independent of host + nested cameras — 1 fits content
+  scopeCenter: { x: number; y: number } | null = null // Stable while zoomed in so drag follows the cursor
 ) {
   const zoom = state.transform[2]
   const viewBB = {
@@ -80,13 +82,14 @@ export function computePreviewMinimapGeometry(
     height: state.height / zoom,
   }
   const content = state.nodes.length > 0 ? previewNodesBounds(state.nodes) : null
-  return computeMinimapGeometry(viewBB, content, elementWidth, elementHeight, offsetScale)
+  return computeMinimapGeometry(
+    viewBB,
+    content,
+    elementWidth,
+    elementHeight,
+    offsetScale,
+    scopeZoom,
+    scopeCenter
+  )
 }
 
-export function computePreviewMinimapViewScale(
-  state: PreviewMinimapState,
-  elementWidth: number,
-  elementHeight: number
-): number {
-  return computePreviewMinimapGeometry(state, elementWidth, elementHeight).viewScale
-}

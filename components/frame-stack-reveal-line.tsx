@@ -1,13 +1,14 @@
 'use client'
 
-// Paired stack bars on the facing adjust-box sides of snap-linked frames.
+// One mark in the gap between snap-linked frames.
 // Each side (top/right/bottom/left) has its own stack tree.
-// • Visible when either frame on that gap is selected; always visible while mates are stacked
-// • Click → Open stack / directional Stack arrows / Lock
+// • Thread between the pair: the thread paints only its arrow head, centered in the gap
+// • No thread: a 45° rounded square in the thread-head color, same spot
+// • Click the head or the square → Open stack / directional Stack arrows / Lock
 // • First Stack sets lock for that group (snap alone does not lock)
 // • Hover when any mate is stacked → fast faded preview; click one to open just that frame
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useReactFlow, useStore } from 'reactflow'
 import { isBoardNavigating } from '@/lib/board-navigating'
@@ -26,10 +27,9 @@ import {
   frameAdjustScreenRect,
   rfAbsFromAdjustOrigin,
 } from '@/lib/frame-adjust-box'
-import {
-  stackLineMarksHorizontal,
-  stackLinePairScreenStyles,
-} from '@/lib/frame-stack-line'
+import { THREAD_DEFAULT_COLOR, THREAD_SELECTED_COLOR, frameScreenChromeScale } from '@/components/threads/constants' // Head color, and the connection-dot scale
+import { INDICATOR_OUTSET } from '@/components/threads/handle-ids' // Distance from the adjust edge to the connection-point center
+import { stackGapMarkPoint } from '@/lib/frame-stack-line' // Connection point, slid to stay between the frames
 import {
   collectNestedSatelliteIds,
   findOwningMateId,
@@ -47,12 +47,8 @@ import { absFlowPosition } from '@/components/use-block-group-drag'
 import { persistBlockPlacement } from '@/lib/blocks'
 import { cn } from '@/lib/utils'
 
-const HOVER_DWELL_MS = 100 // Fast preview on stack-line hover
-const FRAME_TO_LINE_HOVER_GRACE_MS = 450 // Time to cross the outside gap before hiding the bar
-/** Mate count above this uses a dotted line (dash-count encoding stops). */
-const STACK_LINE_DASH_CAP = 5
-const STACK_LINE_COLOR = '#3b82f6'
-const LINE_THICKNESS = 2 // Stroke width in CSS px (pill radius matches)
+const HOVER_DWELL_MS = 100 // Fast preview when the gap mark is hovered
+const GAP_HIT = 20 // Screen px — covers the thread head so the click opens the stack menu
 
 type FrameStackRevealLineProps = {
   nodeId: string // Frame this line sits on (inward side of the gap)
@@ -93,11 +89,10 @@ function entryExpanded(
   return findStackEntry(meta, groupId)?.entry.expanded === true
 }
 
-/** How many rounded marks to paint for this mate count (1 solid / N dashes / many dots). */
-function stackMarkCount(mateCount: number): number {
-  if (mateCount <= 1) return 1 // Solid = one full pill
-  if (mateCount > STACK_LINE_DASH_CAP) return 24 // Dense dotted run
-  return mateCount // One rounded dash per mate
+/** Degrees so a right-pointing arrow aims along this stack side. */
+function stackArrowDegrees(side: FrameStackSide, towardMate: boolean): number {
+  const base = side === 'right' ? 0 : side === 'left' ? 180 : side === 'bottom' ? 90 : -90 // SVG tip points right at 0°
+  return towardMate ? base : base + 180 // Flip when the thread arrives on this frame
 }
 
 /** Mate nodes in this side’s stack group (excludes host), sorted by stackIndex. */
@@ -191,14 +186,13 @@ function clearPreviewStyle(n: { style?: Record<string, unknown>; className?: str
   return { restStyle, className: className || undefined }
 }
 
-/** Edge line on the stack side of the host frame; stroke encodes mate count. */
+/** Gap mark on the outward side of this frame: thread head, or a diamond when unthreaded. */
 export function FrameStackRevealLine({
   nodeId,
   stackGroupId,
   stackSide,
-  frameUiScale = 1,
 }: FrameStackRevealLineProps) {
-  const { getNodes, setNodes } = useReactFlow()
+  const { getNodes, setNodes, flowToScreenPosition } = useReactFlow()
   const mateKeyRef = useRef('')
   const transformKeyRef = useRef('')
   // Re-render when stack mate expand/hidden/lock changes (RF v11: nodeInternals)
@@ -223,15 +217,67 @@ export function FrameStackRevealLine({
     if (isBoardNavigating() || isFrameDragging()) return transformKeyRef.current || key
     transformKeyRef.current = key
     return key
-  }) // Re-place the portaled line on pan/zoom (frozen mid-gesture)
+  }) // Re-place the portaled mark on pan/zoom (frozen mid-gesture)
+  const gapThreadRef = useRef('') // Last thread token so pan/drag does not rescan edges
+  const mateIdRef = useRef('') // Next outward mate, so a drag tick can read its live position
+  // Re-place the mark while a frame moves — the settled subscriptions freeze mid-drag
+  const dragPlaceKey = useStore((s) => {
+    if (!isFrameDragging()) return ''
+    const host = s.nodeInternals.get(nodeId)
+    const mate = mateIdRef.current ? s.nodeInternals.get(mateIdRef.current) : undefined
+    const hp = host?.positionAbsolute ?? host?.position
+    const mp = mate?.positionAbsolute ?? mate?.position
+    if (!hp) return ''
+    return `${hp.x.toFixed(1)},${hp.y.toFixed(1)},${host?.width ?? 0},${host?.height ?? 0}|${
+      mp ? `${mp.x.toFixed(1)},${mp.y.toFixed(1)},${mate?.width ?? 0},${mate?.height ?? 0}` : ''
+    }`
+  })
+  // "color|out|0" when a thread joins this frame to the next outward mate; "" when the gap is unthreaded
+  const gapThread = useStore((s) => {
+    if (isBoardNavigating() || isFrameDragging()) return gapThreadRef.current // Keep the last mark while the board moves
+    const host = s.nodeInternals.get(nodeId)
+    if (!host || host.type !== 'chatPanel') {
+      gapThreadRef.current = ''
+      return ''
+    }
+    const hostIdx = stackIndexInGroup(nodeStackMeta(host), stackGroupId) // This frame's place in the side tree
+    let nextId = ''
+    let nextIdx = Number.POSITIVE_INFINITY
+    s.nodeInternals.forEach((n) => {
+      if (n.id === nodeId || n.type !== 'chatPanel') return
+      const found = findStackEntry(nodeStackMeta(n), stackGroupId)
+      if (!found) return // Not in this side's tree
+      const idx = found.entry.anchor ? 0 : found.entry.index
+      if (idx <= hostIdx || idx >= nextIdx) return // Only the next mate further out
+      nextIdx = idx
+      nextId = n.id
+    })
+    if (!nextId) {
+      gapThreadRef.current = ''
+      return ''
+    }
+    const mate = s.nodeInternals.get(nextId)
+    let found = ''
+    for (const edge of s.edges) {
+      const toMate = edge.source === nodeId && edge.target === nextId // Thread leaves this frame toward the mate
+      const toHost = edge.target === nodeId && edge.source === nextId
+      if (!toMate && !toHost) continue
+      const data = edge.data as { strokeColor?: string } | undefined
+      const color = edge.selected
+        ? THREAD_SELECTED_COLOR // Same blue the thread head uses while selected
+        : data?.strokeColor || THREAD_DEFAULT_COLOR
+      const hidden = host.hidden === true || mate?.hidden === true // Hidden mate: the thread does not paint the centered head
+      found = `${color}|${toMate ? 'out' : 'in'}|${hidden ? 1 : 0}`
+      break
+    }
+    gapThreadRef.current = found
+    return found
+  })
   const [previewing, setPreviewing] = useState(false) // Hover-dwell preview active
   const [menuOpen, setMenuOpen] = useState(false) // Eye / Stack / Lock menu
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 }) // Screen coords for portal menu
-  const [hoveredFrameId, setHoveredFrameId] = useState<string | null>(null) // Portal needs live frame hover
-  const [hoveredLineKey, setHoveredLineKey] = useState<'inner' | 'outer' | null>(null) // Keep bar alive across gap
   const dwellRef = useRef<number | null>(null)
   const endPreviewRef = useRef<number | null>(null) // Delayed dismiss so pointer can cross gap → mate
-  const frameHoverClearRef = useRef<number | null>(null) // Grace from frame border to portaled bar
   const previewingRef = useRef(false)
   previewingRef.current = previewing
   const mateIdsRef = useRef<Set<string>>(new Set()) // Live mate ids for preview-zone hit tests
@@ -258,47 +304,9 @@ export function FrameStackRevealLine({
     () => () => {
       clearDwell()
       clearEndPreview()
-      if (frameHoverClearRef.current != null) window.clearTimeout(frameHoverClearRef.current)
     },
     [clearDwell, clearEndPreview]
   )
-
-  useEffect(() => {
-    const frameIdAt = (target: EventTarget | null): string | null => {
-      if (!(target instanceof Element)) return null
-      return target.closest('.react-flow__node[data-id]')?.getAttribute('data-id') ?? null
-    }
-    const clearPending = () => {
-      if (frameHoverClearRef.current == null) return
-      window.clearTimeout(frameHoverClearRef.current)
-      frameHoverClearRef.current = null
-    }
-    const onPointerOver = (event: PointerEvent) => {
-      const id = frameIdAt(event.target)
-      if (!id) return
-      clearPending()
-      setHoveredFrameId(id)
-    }
-    const onPointerOut = (event: PointerEvent) => {
-      const nextId = frameIdAt(event.relatedTarget)
-      clearPending()
-      if (nextId) {
-        setHoveredFrameId(nextId)
-        return
-      }
-      frameHoverClearRef.current = window.setTimeout(() => {
-        setHoveredFrameId(null)
-        frameHoverClearRef.current = null
-      }, FRAME_TO_LINE_HOVER_GRACE_MS)
-    }
-    document.addEventListener('pointerover', onPointerOver)
-    document.addEventListener('pointerout', onPointerOut)
-    return () => {
-      clearPending()
-      document.removeEventListener('pointerover', onPointerOver)
-      document.removeEventListener('pointerout', onPointerOut)
-    }
-  }, [])
 
   /** Place mates at expand layout (visible). `expanded` = full open vs faded preview.
    *  Nested side-tree satellites (e.g. C on A’s bottom) park with their owning mate.
@@ -1012,8 +1020,9 @@ export function FrameStackRevealLine({
     }
   }, [menuOpen])
 
-  // Derive mate state after hooks (mateStateKey forces refresh)
+  // Derive mate state after hooks (mateStateKey / dragPlaceKey force refresh)
   void mateStateKey
+  void dragPlaceKey
   const mates = collectMates(getNodes, nodeId, stackGroupId)
   const nestedForLine = collectNestedSatelliteIds(
     getNodes(),
@@ -1143,35 +1152,30 @@ export function FrameStackRevealLine({
     .filter((n) => stackIndexOf(n, stackGroupId) > myIndex)
     .sort((a, b) => stackIndexOf(a, stackGroupId) - stackIndexOf(b, stackGroupId))
   const nextOutId = outwardMates[0]?.id as string | undefined
-  // Count nested satellites of outward mates (C under A) in the line encoding
-  const outwardNestedCount = collectNestedSatelliteIds(
-    getNodes(),
-    outwardMates.map((n) => n.id),
-    [stackGroupId]
-  ).length
-  const totalOutCount = outwardMates.length + outwardNestedCount
-  const markCount = stackMarkCount(Math.max(1, totalOutCount))
-  const isDotted = totalOutCount > STACK_LINE_DASH_CAP
-  const gapPct = isDotted ? undefined : markCount <= 1 ? 0 : `${100 / (markCount * 4)}%`
+  mateIdRef.current = nextOutId || '' // Drag ticks read this without scanning every frame
   const zoom = Number(String(viewportKey).split(',')[2]) || 1
   const nextOutNode = nextOutId ? getNodes().find((n) => n.id === nextOutId) : undefined
-  const hostLineActive =
-    !!hostNode?.selected || hoveredFrameId === nodeId || hoveredLineKey === 'inner'
-  const outerLineActive =
-    !!nextOutNode?.selected || hoveredFrameId === nextOutId || hoveredLineKey === 'outer'
-  // Each bar belongs to its own frame: no selection/hover on that frame means no bar.
-  const showLine = hostLineActive || outerLineActive || menuOpen
-  const innerRect = showLine ? frameAdjustScreenRect(nodeId, hostNode, zoom) : null
+  const dragging = isFrameDragging()
+  // Store positions are current mid-drag; the DOM rect still shows the previous frame
+  const flowScreen = (box: { x: number; y: number; width: number; height: number }) => {
+    const origin = flowToScreenPosition({ x: box.x, y: box.y }) // Client px of the adjust-box origin
+    const far = flowToScreenPosition({ x: box.x + box.width, y: box.y + box.height })
+    return { left: origin.x, top: origin.y, width: far.x - origin.x, height: far.y - origin.y }
+  }
+  const live = getNodes()
+  const innerRect = dragging && hostNode
+    ? flowScreen(frameAdjustFlowBox(hostNode, live, zoom))
+    : frameAdjustScreenRect(nodeId, hostNode, zoom)
   const outerDomRect =
-    showLine && nextOutId
-      ? frameAdjustScreenRect(nextOutId, nextOutNode, zoom)
-      : null
-  let outerRect: { left: number; top: number; width: number; height: number } | null =
-    outerDomRect
+    dragging && nextOutNode && !nextOutNode.hidden
+      ? flowScreen(frameAdjustFlowBox(nextOutNode, live, zoom))
+      : nextOutId
+        ? frameAdjustScreenRect(nextOutId, nextOutNode, zoom)
+        : null
+  let outerRect: { left: number; top: number; width: number; height: number } | null = outerDomRect
   // A collapsed mate has no mounted RF DOM node. Simulate its adjacent parked adjust box from
-  // flow geometry so the stack line remains visible beside the host while the mate is hidden.
+  // flow geometry so the mark stays in the gap while the mate is hidden.
   if (!outerRect && innerRect && hostNode && nextOutNode) {
-    const live = getNodes()
     const parkedAbs = stackExpandRfAbs(hostNode, live, stackSide, nextOutNode, 0, [], zoom)
     const hostAdjust = frameAdjustFlowBox(hostNode, live, zoom)
     const parkedAdjust = frameAdjustFlowBoxAt(nextOutNode, parkedAbs, zoom)
@@ -1182,13 +1186,24 @@ export function FrameStackRevealLine({
       height: parkedAdjust.height * zoom,
     }
   }
-  if (!showLine || !innerRect || !outerRect || typeof document === 'undefined') return null
-  const linePair = stackLinePairScreenStyles(innerRect, outerRect, stackSide, zoom, frameUiScale)
-  const lineBoxes: Array<{ key: 'inner' | 'outer'; style: CSSProperties }> = []
-  if (hostLineActive) lineBoxes.push({ key: 'inner', style: linePair.inner })
-  if (outerDomRect && outerLineActive) lineBoxes.push({ key: 'outer', style: linePair.outer })
-  const stroke = LINE_THICKNESS * zoom // Match former in-node thickness (viewport-scaled)
-  const marksHorizontal = stackLineMarksHorizontal(stackSide)
+  if (!innerRect || !outerRect || typeof document === 'undefined') return null
+  const blueIsMate = !!nextOutNode?.selected && !hostNode?.selected // Measure from the frame that shows the blue ring
+  const anchorRect = blueIsMate ? outerRect : innerRect
+  const otherRect = blueIsMate ? innerRect : outerRect
+  const outset = INDICATOR_OUTSET * frameScreenChromeScale(zoom) * Math.max(0.01, zoom) // Screen px — same as the blue connection dots
+  const center = stackGapMarkPoint(
+    { x: anchorRect.left, y: anchorRect.top, width: anchorRect.width, height: anchorRect.height },
+    { x: otherRect.left, y: otherRect.top, width: otherRect.width, height: otherRect.height },
+    stackSide,
+    outset
+  ) // Connection point on the blue box, kept between the frames while dragging
+  const glyph = 8 * Math.max(0.01, zoom) // 8 flow px — the diamond scales with the board, not a fixed screen size
+  const hit = Math.max(GAP_HIT, glyph * Math.SQRT2) // Cover the rotated square, and stay easy to click when zoomed out
+  const [threadColor, threadDir, threadHidden] = gapThread.split('|') // Parsed thread token from the store
+  const threaded = threadColor.length > 0 // A thread already joins this pair
+  const paintOwnHead = threaded && threadHidden === '1' // Visible threads paint their own centered head
+  const glyphColor = threaded ? threadColor : THREAD_DEFAULT_COLOR // Diamond uses the idle thread-head gray
+  const arrowDeg = stackArrowDegrees(stackSide, threadDir !== 'in') // Head aims at the thread's target
 
   // Arrow toward this frame (inward) vs toward the next mate (outward)
   const InwardIcon =
@@ -1213,70 +1228,57 @@ export function FrameStackRevealLine({
   return (
     <>
       {createPortal(
-        <>
-          {lineBoxes.map((lineBox) => (
-            <button
-              key={lineBox.key}
-              type="button"
-              data-tt-stack-reveal
-              className={cn(
-                'nodrag nopan flex cursor-pointer items-center justify-center border-0 p-0',
-                'opacity-80 hover:opacity-100'
-              )}
-              style={{
-                ...lineBox.style,
-                background: 'transparent',
-              }}
-              title="Stack line"
-              aria-label={`Stack line menu (${lineBox.key} frame)`}
-              aria-expanded={menuOpen}
-              onMouseEnter={() => {
-                if (frameHoverClearRef.current != null) {
-                  window.clearTimeout(frameHoverClearRef.current)
-                  frameHoverClearRef.current = null
-                }
-                setHoveredLineKey(lineBox.key)
-                onEnter()
-              }}
-              onMouseLeave={() => {
-                setHoveredLineKey(null)
-                onLinePointerLeave()
-              }}
-              onClick={onClickLine}
-              onWheel={onWheelLine}
+        <button
+          type="button"
+          data-tt-stack-reveal
+          className="nodrag nopan flex cursor-pointer items-center justify-center border-0 bg-transparent p-0"
+          style={{
+            position: 'fixed', // Screen space — the mark is portaled outside the zoomed board
+            left: center.x - hit / 2, // Center the hit pad on the gap
+            top: center.y - hit / 2,
+            width: hit,
+            height: hit,
+            zIndex: 40, // Above the thread head so this click opens the stack menu
+          }}
+          title="Stack"
+          aria-label="Stack menu"
+          aria-expanded={menuOpen}
+          onMouseDown={(e) => e.stopPropagation()} // Do not start a frame drag or select the thread
+          onMouseEnter={onEnter}
+          onMouseLeave={onLinePointerLeave}
+          onClick={onClickLine}
+          onWheel={onWheelLine}
+        >
+          {paintOwnHead ? (
+            <svg
+              width={glyph * 2} // Same flow size as the diamond, scaled by the board zoom
+              height={glyph * 2}
+              viewBox="-8 -8 16 16"
+              aria-hidden
+              style={{ transform: `rotate(${arrowDeg}deg)` }} // Same closed head as a thread, aimed at the target
             >
-              <span
-                className="pointer-events-none flex h-full w-full"
-                style={{
-                  flexDirection: marksHorizontal ? 'row' : 'column',
-                  alignItems: 'center',
-                  justifyContent: isDotted ? 'space-between' : 'stretch',
-                  gap: gapPct,
-                  height: marksHorizontal ? stroke : '100%',
-                  width: marksHorizontal ? '100%' : stroke,
-                  margin: marksHorizontal ? undefined : '0 auto',
-                }}
-              >
-                {Array.from({ length: markCount }, (_, i) => (
-                  <span
-                    key={i}
-                    aria-hidden
-                    style={{
-                      flex: isDotted ? '0 0 auto' : '1 1 0',
-                      ...(isDotted
-                        ? { width: stroke, height: stroke }
-                        : marksHorizontal
-                          ? { height: stroke, minWidth: stroke }
-                          : { width: stroke, minHeight: stroke }),
-                      background: STACK_LINE_COLOR,
-                      borderRadius: 9999,
-                    }}
-                  />
-                ))}
-              </span>
-            </button>
-          ))}
-        </>,
+              <polyline
+                points="-5,-4 0,0 -5,4 -5,-4" // Closed arrow, tip at the origin
+                fill={glyphColor}
+                stroke={glyphColor}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                strokeWidth="1"
+              />
+            </svg>
+          ) : threaded ? null : (
+            <span
+              aria-hidden
+              style={{
+                width: glyph, // Body of the thread head, before the 45° turn
+                height: glyph,
+                background: glyphColor, // Idle thread-head gray
+                borderRadius: glyph / 4, // Rounded corners, then turned into a diamond
+                transform: 'rotate(45deg)',
+              }}
+            />
+          )}
+        </button>,
         document.body
       )}
 

@@ -8,10 +8,10 @@ import { absFlowPosition, nodeFlowSize } from '@/components/use-block-group-drag
 export const GRIP_COL_W = 14
 /** Hug / min-width fallback for the ⋮⋮ column (slightly above grip). */
 export const BLOCK_HANDLE_GUTTER_W = 20
-/** Nominal air on each side of the ⋮⋮ at 100% zoom (grip↔fill and grip↔blue-side). */
-export const GRIP_SIDE_PAD_SCREEN = 3
-/** Nominal blue↔gutter air at 100% zoom. */
-export const ADJUST_CONTENT_GAP_X = 3
+/** Air each side of the ⋮⋮ inside the blue↔fill strip (board px at frameScale 1). */
+export const GRIP_SIDE_PAD_SCREEN = 1
+/** Extra blue↔fill air, split evenly so the ⋮⋮ stays on the strip midpoint. */
+export const ADJUST_CONTENT_GAP_X = 1
 export const ADJUST_CONTENT_GAP_Y = 6 // T/B band air when no property / connections strip
 export const CONNECTIONS_ROW_PAD = 4 // Air above and below the 14px connections mark
 export const CONNECTIONS_GROUP_H = 14 + CONNECTIONS_ROW_PAD * 2 // One chrome row — top gap copies this when connections show
@@ -43,18 +43,18 @@ export function gripComfortFlow(zoom: number, frameScale: number, nominalPx: num
 
 /**
  * Flow width of the ⋮⋮ column = painted grip + side pads (grip↔fill and grip↔outer).
- * Pads track grip chrome so zoomed-out gutters don’t look oversized.
+ * Board px × frameScale only — camera zoom must not change the adjust-box width.
  */
-export function handleGutterFlowPx(zoom: number, frameScale = 1): number {
-  const fs = Math.max(0.15, frameScale)
-  const chrome = blockGripChromeScale(zoom, fs)
-  const gripFlow = GRIP_COL_W * chrome * fs
-  return gripFlow + 2 * GRIP_SIDE_PAD_SCREEN * chrome * fs
+export function handleGutterFlowPx(_zoom: number, frameScale = 1): number {
+  const fs = Math.max(0.15, frameScale) // Text scale, not the camera
+  const gripFlow = GRIP_COL_W * fs // ⋮⋮ column in board px
+  return gripFlow + 2 * GRIP_SIDE_PAD_SCREEN * fs // Air on both sides, same board px
 }
 
-/** Blue↔gutter air — same comfort curve as the ⋮⋮ column. */
-export function adjustGapFlowPx(zoom: number, frameScale = 1): number {
-  return gripComfortFlow(zoom, frameScale, ADJUST_CONTENT_GAP_X)
+/** Blue↔gutter air in board px. Camera zoom does not change it. */
+export function adjustGapFlowPx(_zoom: number, frameScale = 1): number {
+  const fs = Math.max(0.15, frameScale) // Same text scale as the column
+  return ADJUST_CONTENT_GAP_X * fs // Fixed board width for the blue↔grip gap
 }
 
 /** Blue↔fill air on T/B when the property / connections strip is absent. */
@@ -103,9 +103,9 @@ export function selectedAdjustChromeY(opts: {
   return { yTop, yBottom } // Pads the blue box uses above / below the fill
 }
 
-/** Full L/R pad: [blue][air][pad][grip][pad][fill] — small gaps on both sides of the handle. */
+/** Full L/R pad. ⋮⋮ is centered in this strip. Width is board px × frameScale, not camera zoom. */
 export function adjustChromeXFlow(zoom: number, frameScale = 1): number {
-  return handleGutterFlowPx(zoom, frameScale) + adjustGapFlowPx(zoom, frameScale)
+  return handleGutterFlowPx(zoom, frameScale) + adjustGapFlowPx(zoom, frameScale) // Both ignore zoom
 }
 
 export type FlowBox = { x: number; y: number; width: number; height: number }
@@ -142,11 +142,16 @@ export function nominalAdjustChromeInsets(
   const band = Math.round(CONNECTIONS_GROUP_H * fs)
   const gapY = Math.round(adjustGapYFlow(zoom, fs)) // Blue↔fill air when no strip
   const footer = isDatabase ? Math.round(DB_ROWS_REVEAL_FOOTER_H * fs) : 0
-  // No property row above the fill. DB frames still keep a top band so the blue edge isn't flush.
-  const yTop = isDatabase ? Math.max(gapY, band) : 0
-  // Bottom adjust band (footer + connections) — snap/stack must clear it
-  const yBottom = (meta.notionConnected === true ? band : 0) + footer
-  return { x, yTop, yBottom }
+  // Same pads as the painted blue box (selectedAdjustChromeY). Snap is adjust-box to adjust-box.
+  const pads = selectedAdjustChromeY({
+    gapY, // Air when there is no property / connections row
+    rowH: band, // One connections row
+    propH: 0, // Property icons live in the fill, not a top strip
+    connH: meta.notionConnected === true ? band : 0, // Notion mark sits in the bottom band
+    footerH: footer, // DB `+# rows` grows the bottom only
+    dbTopBand: isDatabase, // DB top stays a full band so the blue edge is not flush
+  })
+  return { x, yTop: pads.yTop, yBottom: pads.yBottom }
 }
 
 /** Adjust-box width/height in flow px (selected RF outer box already includes chrome). */

@@ -1,9 +1,10 @@
 # Remote Supabase migration/version snapshot
 # project_ref=yhsyhtnnklpkfcpydbst
 # project_name=Nod Notes
-# snapped_at=2026-10-04T18:05:41Z
+# snapped_at=2026-10-07T23:33:21Z
 # postgres=17.6.1.052 gotrue=v2.196.0 rest=v14.5 storage=v1.73.1
 # local_ddl=20260924222048_board_changes + 20260924223507_board_changes_autosave (remote 20260924222109 / 20260924223511)
+# local_marker=20261007233312_minimap_scope_mask_frame_align_guides
 # production=https://nodnotes.com
 # Remote applied (via Supabase Management API on nod-notes):
 # 20251124231547 create_saas_schema
@@ -262,3 +263,4 @@
 20261003232506_wrap_shrink_fit_light_blue_edge.sql
 20261003235840_frame_content_adjust_checkpoint.sql
 20261004180541_thread_painted_fill_property_caret_notion_frame.sql
+20261007233312_minimap_scope_mask_frame_align_guides.sql

@@ -54,6 +54,40 @@ export function adjustExitPointScreen(
   }
 }
 
+type AxisBox = { x: number; y: number; width: number; height: number }
+
+/**
+ * Stack mark: the simulated connection point on the anchor's facing side
+ * (same outset as the blue dot), slid along that edge so it stays between the frames.
+ */
+export function stackGapMarkPoint(
+  anchor: AxisBox, // Adjust box the connection point belongs to
+  other: AxisBox, // The frame on the other side of the gap
+  stackSide: FrameStackSide,
+  outset: number // Distance from the adjust edge to the connection-point center, in this box's space
+): { x: number; y: number } {
+  const anchorRect = { left: anchor.x, top: anchor.y, width: anchor.width, height: anchor.height } // facingStackSide speaks in screen rects
+  const otherRect = { left: other.x, top: other.y, width: other.width, height: other.height }
+  const facing = facingStackSide(anchorRect, otherRect, stackSide) // Side of the anchor that looks at the other frame
+  const exit = adjustExitPointScreen(anchorRect, facing, outset) // Same spot as the blue connection dot
+  if (stackLineMarksHorizontal(stackSide)) {
+    const left = Math.max(anchor.x, other.x) // Shared horizontal run
+    const right = Math.min(anchor.x + anchor.width, other.x + other.width)
+    const x =
+      left < right
+        ? (left + right) / 2 // Between the frames, not at the middle of a longer edge
+        : (anchor.x + anchor.width / 2 + other.x + other.width / 2) / 2
+    return { x, y: exit.y }
+  }
+  const top = Math.max(anchor.y, other.y)
+  const bot = Math.min(anchor.y + anchor.height, other.y + other.height)
+  const y =
+    top < bot
+      ? (top + bot) / 2
+      : (anchor.y + anchor.height / 2 + other.y + other.height / 2) / 2
+  return { x: exit.x, y }
+}
+
 /** True when the bar runs left↔right (top/bottom stacks); false = vertical bar in L/R gap. */
 export function stackLineMarksHorizontal(stackSide: FrameStackSide): boolean {
   return stackSide === 'top' || stackSide === 'bottom'

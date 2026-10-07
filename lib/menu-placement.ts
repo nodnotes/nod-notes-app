@@ -200,7 +200,7 @@ export function getMenuHandleRects(exclude?: Element | null): MenuRect[] {
     if (r.width < 1 || r.height < 1) return // Invisible
     out.push(boxFromDom(r)) // Keep
   }
-  document.querySelectorAll('[data-tt-block-handle], [data-tt-ibar-grip]').forEach(push) // Frame ⋮⋮ + I-bar grip
+  document.querySelectorAll('[data-tt-block-handle], [data-tt-ibar-grip], [data-tt-ibar-plus]').forEach(push) // Frame ⋮⋮ + I-bar grip + I-bar +
   return out
 }
 

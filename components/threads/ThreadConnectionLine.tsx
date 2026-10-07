@@ -1,5 +1,6 @@
 import { Position, useStore, type Node } from 'reactflow' // Snap target + frame boxes
 import {
+  arrowTipOutsideFrame,
   boardTipArrivalSide,
   clampArrowHead,
   getBoardTipBezier,
@@ -152,6 +153,10 @@ export function ThreadConnectionLine({
   ) // Snapped frame, when the pointer is on a connection point
   const aimedId = floatEnds?.targetId ?? snapId ?? frameIdNear(boxes, sourceId, tx, ty) // Don't route around the frame being joined
   const arrival = floatEnds?.toSide ?? frameSide ?? boardTipArrivalSide(tx - sx, ty - sy) // Free end arrives traveling away
+  const onFrame = Boolean(floatEnds || snapId) // Tip is a frame connection point, not the empty board
+  const frameTip = onFrame ? arrowTipOutsideFrame({ x: tx, y: ty }, arrival, head, previewSpan) : null // Whole head sits outside the fill
+  const tipX = frameTip?.x ?? tx // Preview arrow lands here
+  const tipY = frameTip?.y ?? ty
   const settled = useStore((s) => snapshotThreadCorridors(s.nodeInternals, s.edges)) // Threads already on the board
   const previewSpread = spreadAlongside(
     { id: '__preview__', source: { x: sx, y: sy }, target: { x: tx, y: ty } }, // This drag's chord
@@ -159,7 +164,7 @@ export function ThreadConnectionLine({
   ) // A free lane beside those strokes
   const detour = routeThreadAroundFrames({
     source: { x: sx, y: sy }, // Connection point the drag leaves
-    target: { x: tx, y: ty }, // Closest point, snapped point, or pointer
+    target: { x: tipX, y: tipY }, // Outside the fill when the tip meets a frame
     fromSide: leave, // Leave along that side
     toSide: arrival, // Into the aimed side, or away across empty board
     sourceId: sourceId ?? '', // Not an obstacle
@@ -182,8 +187,8 @@ export function ThreadConnectionLine({
           sourceX: sx, // Connection point the drag leaves
           sourceY: sy,
           sourcePosition: leave, // Unused by the straight ray; kept for the shared helper
-          targetX: tx, // Closest point, snapped point, or pointer
-          targetY: ty,
+          targetX: tipX, // Outside the fill when the tip meets a frame
+          targetY: tipY,
           algorithm, // Straight line — other frames stay in the way
           head, // Stroke meets the back of the preview arrow
         })
@@ -192,8 +197,8 @@ export function ThreadConnectionLine({
             sourceX: sx, // Connection point the drag leaves
             sourceY: sy,
             sourcePosition: leave, // Leave along that side
-            targetX: tx, // Closest point or snapped point
-            targetY: ty,
+            targetX: tipX, // Outside the fill when the tip meets a frame
+            targetY: tipY,
             targetPosition: arrival, // Left side → arrow points right
             head, // Stroke meets the back of the preview arrow
           })
@@ -201,8 +206,8 @@ export function ThreadConnectionLine({
             sourceX: sx, // Empty board — connection point is the center
             sourceY: sy,
             sourcePosition: leave, // Leave outward along that side
-            targetX: tx, // Pointer
-            targetY: ty,
+            targetX: tipX, // Pointer, or just outside the fill
+            targetY: tipY,
             algorithm, // Smooth curve, sharp elbows, or a straight ray
             head, // Stroke meets the back of the preview arrow
           })
