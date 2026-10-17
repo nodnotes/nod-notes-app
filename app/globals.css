@@ -1461,6 +1461,31 @@ span[data-added="true"] {
     overflow: visible !important;
   }
 
+  /* Stack peek (hover mark): fade frame in/out at restoreAbs — 80ms matches EditableThread */
+  @keyframes tt-stack-preview-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 0.72;
+    }
+  }
+  @keyframes tt-stack-preview-out {
+    from {
+      opacity: 0.72;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+  .react-flow__node.tt-stack-preview:not(.tt-stack-preview-out) {
+    animation: tt-stack-preview-in 80ms ease-out forwards;
+  }
+  .react-flow__node.tt-stack-preview-out {
+    animation: tt-stack-preview-out 80ms ease-in forwards;
+    pointer-events: none !important;
+  }
+
   /* Animated flowing dotted edges - dashes flow along the path like Supabase schema visualizer */
   .react-flow__edge-path[style*="animation"] {
     animation: flow-dash 1.5s linear infinite !important;
@@ -2014,6 +2039,44 @@ span[data-added="true"] {
     transform: translate(-50%, -50%) scale(var(--tt-frame-ui-scale, 1.4)) !important;
   }
   [data-panel-container='true'] > [data-tt-connection-indicator='bottom'] {
+    bottom: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    left: 50% !important;
+    right: auto !important;
+    top: auto !important;
+    transform: translate(-50%, 50%) scale(var(--tt-frame-ui-scale, 1.4)) !important;
+  }
+
+  /* Stack mark — rounded triangle; slightly larger than 10px discs, same scale(ui) */
+  [data-panel-container='true'] > [data-tt-stack-reveal] {
+    width: 13px !important;
+    height: 13px !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    transform-origin: center center !important;
+  }
+  [data-panel-container='true'] > [data-tt-stack-reveal='left'] {
+    left: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    top: 50% !important;
+    right: auto !important;
+    bottom: auto !important;
+    transform: translate(-50%, -50%) scale(var(--tt-frame-ui-scale, 1.4)) !important;
+  }
+  [data-panel-container='true'] > [data-tt-stack-reveal='right'] {
+    right: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    top: 50% !important;
+    left: auto !important;
+    bottom: auto !important;
+    transform: translate(50%, -50%) scale(var(--tt-frame-ui-scale, 1.4)) !important;
+  }
+  [data-panel-container='true'] > [data-tt-stack-reveal='top'] {
+    top: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
+    left: 50% !important;
+    right: auto !important;
+    bottom: auto !important;
+    transform: translate(-50%, -50%) scale(var(--tt-frame-ui-scale, 1.4)) !important;
+  }
+  [data-panel-container='true'] > [data-tt-stack-reveal='bottom'] {
     bottom: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;
     left: 50% !important;
     right: auto !important;

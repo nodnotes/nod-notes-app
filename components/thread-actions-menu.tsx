@@ -6,6 +6,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react' // Escape c
 import {
   ChevronRight,
   Copy,
+  Eye,
   Info,
   Link2,
   Lock,
@@ -17,6 +18,10 @@ import {
   Upload,
   Spline,
   Minus,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react' // Row icons matching FigJam-style action list
 import { Button } from '@/components/ui/button' // Ghost row buttons
 import { cn } from '@/lib/utils' // Class merge
@@ -44,6 +49,13 @@ export type ThreadActionId =
   | 'thickness2'
   | 'thickness3'
   | 'thickness4'
+  | 'stackOpen'
+  | 'stackUnderSource'
+  | 'stackUnderTarget'
+  | 'stackLock'
+  | 'stackUnlock'
+
+export type ThreadStackMenuSide = 'left' | 'right' | 'top' | 'bottom'
 
 export type ThreadActionsMenuProps = {
   x: number // Pane-relative screen x (click point)
@@ -53,6 +65,11 @@ export type ThreadActionsMenuProps = {
   currentStyle?: 'smooth' | 'sharp' | 'linear' // Checkmark in Style → path style
   currentStrokeWidth?: number // Checkmark in Thickness flyout (1–4)
   locked?: boolean // Locked thread: connection points stay, menu offers Unlock
+  /** Frame–frame only: show Open stack / Stack under / Lock frames */
+  frameStack?: {
+    stackSide: ThreadStackMenuSide // Side of source that faces target
+    pairLocked: boolean // snapLockedGroupIds on the pair
+  } | null
   onAction: (action: ThreadActionId) => void // Parent wires delete / insert / style
   onClose: () => void // Dismiss on Escape / outside
   edgeId?: string // Clicked thread RF id — avoid its path even before .selected
@@ -76,6 +93,22 @@ type RowDef =
   | { kind: 'separator' }
 
 /** Notion-style floating menu for a selected thread (RF edge). */
+/** Icon aiming along stackSide toward the mate (outward from source). */
+function OutwardStackIcon({ side }: { side: ThreadStackMenuSide }) {
+  if (side === 'right') return <ArrowRight className="h-4 w-4" />
+  if (side === 'left') return <ArrowLeft className="h-4 w-4" />
+  if (side === 'bottom') return <ArrowDown className="h-4 w-4" />
+  return <ArrowUp className="h-4 w-4" />
+}
+
+/** Icon aiming toward source (stack under source — pack sits on target’s side). */
+function InwardStackIcon({ side }: { side: ThreadStackMenuSide }) {
+  if (side === 'right') return <ArrowLeft className="h-4 w-4" />
+  if (side === 'left') return <ArrowRight className="h-4 w-4" />
+  if (side === 'bottom') return <ArrowUp className="h-4 w-4" />
+  return <ArrowDown className="h-4 w-4" />
+}
+
 export function ThreadActionsMenu({
   x,
   y,
@@ -84,6 +117,7 @@ export function ThreadActionsMenu({
   currentStyle = 'smooth',
   currentStrokeWidth = 2,
   locked = false,
+  frameStack = null,
   onAction,
   onClose,
   edgeId,
@@ -198,6 +232,40 @@ export function ThreadActionsMenu({
       label: 'Insert frame',
       icon: <Plus className="h-4 w-4" />,
     },
+    // Frame–frame: stack pair actions (same behaviors as the old gap mark menu)
+    ...(frameStack
+      ? ([
+          { kind: 'separator' as const },
+          {
+            kind: 'action' as const,
+            id: 'stackOpen' as const,
+            label: 'Open stack',
+            icon: <Eye className="h-4 w-4" />,
+          },
+          {
+            kind: 'action' as const,
+            id: 'stackUnderSource' as const,
+            label: 'Stack under source',
+            icon: <InwardStackIcon side={frameStack.stackSide} />,
+          },
+          {
+            kind: 'action' as const,
+            id: 'stackUnderTarget' as const,
+            label: 'Stack under target',
+            icon: <OutwardStackIcon side={frameStack.stackSide} />,
+          },
+          {
+            kind: 'action' as const,
+            id: (frameStack.pairLocked ? 'stackUnlock' : 'stackLock') as ThreadActionId,
+            label: frameStack.pairLocked ? 'Unlock frames' : 'Lock frames',
+            icon: frameStack.pairLocked ? (
+              <Unlock className="h-4 w-4" />
+            ) : (
+              <Lock className="h-4 w-4" />
+            ),
+          },
+        ] satisfies RowDef[])
+      : []),
     { kind: 'separator' },
     {
       kind: 'action',

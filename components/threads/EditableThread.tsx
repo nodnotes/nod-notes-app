@@ -60,8 +60,6 @@ import {
   threadGapsForFrames,
   threadStrokePaths,
 } from '@/lib/threads/thread-path-geometry'
-import { stackedThreadArrow } from '@/lib/threads/stacked-thread-arrow' // Adjacent stacked frames: head only, centered in the gap
-
 /** Persistable thread payload stored in panel_edges.metadata + edge.data. */
 export type ThreadEdgeData = {
   algorithm?: ThreadAlgorithm // Path math (default BezierCatmullRom)
@@ -172,6 +170,34 @@ export function EditableThread({
   // Live node boxes — path attaches here even if RF's handle coords are still on an indicator
   const sourceNode = useStore((s) => s.nodeInternals.get(source))
   const targetNode = useStore((s) => s.nodeInternals.get(target))
+  // Booleans so Open stack (hidden → false) always re-renders the shaft
+  const sourceHidden = useStore((s) => s.nodeInternals.get(source)?.hidden === true)
+  const targetHidden = useStore((s) => s.nodeInternals.get(target)?.hidden === true)
+  // Hover stack peek — fade thread with the frame (in / out anim)
+  const stackPeekPhase = useStore((s) => {
+    const classes = [source, target].map((id) => s.nodeInternals.get(id)?.className)
+    const has = (token: string) =>
+      classes.some((c) => typeof c === 'string' && c.split(/\s+/).includes(token))
+    if (has('tt-stack-preview-out')) return 'out' as const // Fading away
+    if (has('tt-stack-preview')) return 'in' as const // Peeking at restoreAbs
+    return 'off' as const
+  })
+  // Mount at 0 then ease to 0.72 so the shaft does not pop in with the frame
+  const [peekStrokeOp, setPeekStrokeOp] = useState(() =>
+    stackPeekPhase === 'in' || stackPeekPhase === 'out' ? 0 : 1
+  )
+  useLayoutEffect(() => {
+    if (stackPeekPhase === 'out') {
+      setPeekStrokeOp(0)
+      return
+    }
+    if (stackPeekPhase === 'in') {
+      setPeekStrokeOp(0)
+      const id = requestAnimationFrame(() => setPeekStrokeOp(0.72))
+      return () => cancelAnimationFrame(id)
+    }
+    setPeekStrokeOp(1)
+  }, [stackPeekPhase])
 
   const sourceSide = sideFromHandleId(sourceHandleId, sourcePosition)
   const targetSide = sideFromHandleId(targetHandleId, targetPosition)
@@ -494,6 +520,8 @@ export function EditableThread({
     selected
       ? THREAD_SELECTED_COLOR // Selection always reads Miro blue
       : data?.strokeColor || (style?.stroke as string) || THREAD_DEFAULT_COLOR // Custom → style → gray
+  // Match `.tt-stack-preview` / `-out` (80ms) — CSS on the frame; edge uses the same timing
+  const strokeOpacity = stackPeekPhase === 'off' ? 1 : peekStrokeOp
 
   // Gap slices only (on-thread frames) — one path each, same `--tt-edge-w`
   const strokePaths =
@@ -508,34 +536,9 @@ export function EditableThread({
     ? `calc(5 * var(--tt-thread-inv-zoom, 1)), calc(5 * var(--tt-thread-inv-zoom, 1))`
     : undefined
   const arrowId = `tt-thread-arrow-${id.replace(/[^A-Za-z0-9_-]/g, '')}` // Unique so selection can recolor this head
-  const stackedHeadLen = threadArrowLength(edgeWForHead) // Flow px — the viewport zoom scales this head with the board
-  const stackedHead = stackedThreadArrow(
-    sourceNode, // Source frame of this thread
-    targetNode,
-    zoom,
-    stackedHeadLen
-  )
-
-  if (stackedHead) {
-    return (
-      <>
-        <BaseEdge
-          id={id}
-          path={stackedHead.hitPath} // Selectable, but the shaft is not painted
-          interactionWidth={24}
-          style={{ ...restStyle, stroke: 'transparent', strokeWidth: 0 }}
-        />
-        <polyline
-          points={stackedHead.points} // Same closed head as other threads, centered between the adjust boxes
-          fill={stroke}
-          stroke={stroke}
-          strokeLinejoin="round"
-          strokeLinecap="round"
-          style={{ strokeWidth: Math.max(0.75, stackedHeadLen / 5) }} // Flow weight, so the head's stroke scales with zoom
-          pointerEvents="none"
-        />
-      </>
-    )
+  // Stack under: hide shaft — FrameStackRevealLine keeps the sim-point arrow. Open stack: full thread.
+  if (sourceHidden || targetHidden) {
+    return null
   }
 
   return (
@@ -556,7 +559,13 @@ export function EditableThread({
             points="-5,-4 0,0 -5,4 -5,-4" // Closed arrow
             strokeLinecap="round"
             strokeLinejoin="round"
-            style={{ stroke, fill: stroke, strokeWidth: 1 }} // Blue when the thread is selected
+            style={{
+              stroke,
+              fill: stroke,
+              strokeWidth: 1,
+              opacity: strokeOpacity,
+              transition: 'opacity 80ms ease', // Sync with stack peek frame anim
+            }}
           />
         </marker>
       </defs>
@@ -571,6 +580,8 @@ export function EditableThread({
           style={{
             ...restStyle,
             stroke,
+            opacity: strokeOpacity, // Peek in 0.72 / out 0 / idle 1
+            transition: 'opacity 80ms ease', // Same as `.tt-stack-preview` keyframes
             ['--tt-edge-w' as string]: String(edgeW), // Unitless flow weight; CSS × 1px × inv-zoom
             strokeDasharray: dash,
           }}

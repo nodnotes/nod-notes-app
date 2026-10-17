@@ -10,10 +10,11 @@
 // `--tt-adjust-pad-x`. Upright frames cancel that pad with negative margins (RF XY stays
 // the fill origin). Rotated frames still re-glue RF XY by half the AABB delta.
 
-import { threadInvZoom } from '@/components/threads/constants' // Stroke/arrow zoom — softer than 1/zoom when zoomed out
-
-/** Keep in sync with FRAME_SCREEN_CHROME_BOOST in threads/constants. */
-const CHROME_BOOST = 1.4
+import {
+  FRAME_SCREEN_CHROME_BOOST,
+  frameScreenChromeScale,
+  threadInvZoom,
+} from '@/components/threads/constants' // Stroke/arrow zoom + capped handle/dot scale
 
 let raf = 0
 let reader: (() => { zoom: number; root: HTMLElement | null }) | null = null
@@ -76,7 +77,7 @@ export function readViewportZoom(root?: HTMLElement | null): number {
 function writeChromeVars(el: HTMLElement, z: number, ui: number): void {
   el.style.setProperty('--tt-board-zoom', String(z))
   el.style.setProperty('--tt-thread-inv-zoom', String(threadInvZoom(z))) // Zoom-out grows slower than 1/zoom
-  el.style.setProperty('--tt-frame-chrome-boost', String(CHROME_BOOST))
+  el.style.setProperty('--tt-frame-chrome-boost', String(FRAME_SCREEN_CHROME_BOOST))
   el.style.setProperty('--tt-frame-ui-scale', String(ui))
   // Line stroke stays flow-scaled (large surface). Dots use fixed local paint + scale(ui).
   el.style.setProperty('--tt-frame-line-w', `${ui}px`)
@@ -225,7 +226,7 @@ function stampChromeElements(node: HTMLElement, ui: number, zoom: number): void 
 export function applyFrameChromeZoom(zoom: number, root?: HTMLElement | null): void {
   const z = Math.max(0.01, zoom)
   setLiveZoom(z) // React gutters / ⋮⋮ subscribe here
-  const ui = CHROME_BOOST / z
+  const ui = frameScreenChromeScale(z) // Capped — handles/dots stop growing on zoom-out
   const zoomKey = z.toFixed(6)
   const flow =
     root ||

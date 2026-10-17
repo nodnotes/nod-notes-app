@@ -1,5 +1,3 @@
-import { getBoundsOfRects } from '@reactflow/core'
-
 /** Flow-space AABB used by minimap viewBox math. */
 export type MinimapFlowRect = {
   x: number
@@ -8,7 +6,7 @@ export type MinimapFlowRect = {
   height: number
 }
 
-/** Independent of board camera — 1 fits content; higher zooms into the map. */
+/** Independent of board camera — 1 fits the board view; higher zooms into the map. */
 export const MINIMAP_SCOPE_ZOOM = { min: 0.25, max: 8 } as const
 
 /**
@@ -18,16 +16,138 @@ export const MINIMAP_SCOPE_ZOOM = { min: 0.25, max: 8 } as const
  */
 export const MINIMAP_MASK_MIN_CSS_PX = 8
 
+/**
+ * Floor board gap (flow px) when content is tiny — roomy padding for 200% / pan enclosure.
+ * Larger than the expand gap so the default board is not tight to content.
+ */
+export const BOARD_BOUNDS_GAP_DEFAULT = 96
+
+/**
+ * Live board air as a fraction of content size on that axis — bigger content → bigger gap.
+ * Fixed 96 was glued to large frames at 200%; 0.5 → content is ~half the padded box.
+ */
+export const BOARD_BOUNDS_GAP_RATIO = 0.5
+
+/**
+ * Tight gap when bounds only need to clear newly placed content (keep in view).
+ * Do not use for the default board / 200% stop.
+ */
+export const BOARD_BOUNDS_GAP_EXPAND = 8
+
+/**
+ * Minimum board size as a multiple of the pane (same aspect).
+ * Must be > 1 so live 200% (fit board) is zoomed out past 100% (scale 1).
+ * 10 → roomy default; 200% lands at scale 0.1 on a content-small / empty board.
+ * (5 felt tight — content still filled too much of the view at max zoom-out.)
+ */
+export const BOARD_BOUNDS_MIN_PANE_SCALE = 10
+
+/** @deprecated Prefer `BOARD_BOUNDS_GAP_DEFAULT` — was the single shared gap. */
+export const MINIMAP_CONTENT_GAP_FLOW = BOARD_BOUNDS_GAP_DEFAULT
+
+/**
+ * Per-axis board gap from content size — floor at DEFAULT; grows with the object.
+ */
+export function boardBoundsGapForAxis(contentPx: number): number {
+  return Math.max(BOARD_BOUNDS_GAP_DEFAULT, Math.max(0, contentPx) * BOARD_BOUNDS_GAP_RATIO)
+}
+
 /** Keep scope zoom inside the scrub band. */
 export function clampMinimapScopeZoom(z: number) {
   return Math.max(MINIMAP_SCOPE_ZOOM.min, Math.min(MINIMAP_SCOPE_ZOOM.max, z))
 }
 
+/** Auto mode sizes the board-view hole to this fraction of the minimap (limiting axis). */
+export const MINIMAP_AUTO_VIEW_FRACTION = 0.5
+
+/** Axis-aligned intersection; null when the rects miss. */
+export function rectIntersection(
+  a: MinimapFlowRect,
+  b: MinimapFlowRect
+): MinimapFlowRect | null {
+  const x1 = Math.max(a.x, b.x)
+  const y1 = Math.max(a.y, b.y)
+  const x2 = Math.min(a.x + a.width, b.x + b.width)
+  const y2 = Math.min(a.y + a.height, b.y + b.height)
+  if (x2 <= x1 || y2 <= y1) return null
+  return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 }
+}
+
 /**
- * Evenodd hole for the out-of-view mask.
- * Uses the true camera when it leaves room for the dimmed band; when the viewport
- * would swallow the minimap, shrinks the hole (centered on the camera) so at least
- * `minMaskCssPx` of mask stays on each side at every board zoom / nav.
+ * Default board bounds: content + size-based gap (or a fixed `gap`), then at least
+ * `BOARD_BOUNDS_MIN_PANE_SCALE`× the pane with pane aspect — roomy enclosure, and 200%
+ * fit is zoomed out past 100%. Pass `BOARD_BOUNDS_GAP_EXPAND` only for a tight clear
+ * around new content. Empty boards fall back to the min pane-multiple board.
+ * `gap` omitted/`null` → per-axis `boardBoundsGapForAxis` (bigger content → bigger air).
+ */
+export function minimapBoardBounds(
+  content: MinimapFlowRect | null,
+  view: MinimapFlowRect, // Pane (or camera) — empty fallback + minimum board size
+  gap: number | null = null // null = size-based; number = uniform (expand / overrides)
+): MinimapFlowRect {
+  // No content → still use the roomy min board so default 200% is zoomed out
+  if (!content || content.width <= 0 || content.height <= 0) {
+    content = { x: 0, y: 0, width: 1, height: 1 } // Tiny seed at origin → expands to min pane scale
+  }
+  // Fixed gap (expand) or per-axis air that grows with the content
+  const gapX = gap != null ? gap : boardBoundsGapForAxis(content.width)
+  const gapY = gap != null ? gap : boardBoundsGapForAxis(content.height)
+  const padW = content.width + gapX * 2 // Content + left/right air
+  const padH = content.height + gapY * 2 // Content + top/bottom air
+  const padX = content.x - gapX
+  const padY = content.y - gapY
+  // ≥ min× pane so 200% is a roomy zoom-out
+  const minW = view.width > 0 ? view.width * BOARD_BOUNDS_MIN_PANE_SCALE : padW
+  const minH = view.height > 0 ? view.height * BOARD_BOUNDS_MIN_PANE_SCALE : padH
+  let outW = Math.max(padW, minW)
+  let outH = Math.max(padH, minH)
+  // Match pane aspect so 200% fit has even air (grow the short side)
+  if (view.width > 0 && view.height > 0) {
+    const aspect = view.width / view.height
+    if (outW / outH < aspect) outW = outH * aspect
+    else outH = outW / aspect
+  }
+  // Keep the padded content centered in the expanded board
+  return {
+    x: padX + padW / 2 - outW / 2,
+    y: padY + padH / 2 - outH / 2,
+    width: outW,
+    height: outH,
+  }
+}
+
+/**
+ * Auto minimap scope so the current board view covers ~50% of the SVG (limiting axis).
+ * Frames the live camera (not content). Manual wheel overrides until the next board zoom.
+ */
+export function minimapScopeForHalfView(
+  viewBB: MinimapFlowRect,
+  _content: MinimapFlowRect | null,
+  elementWidth: number,
+  elementHeight: number,
+  offsetScale = 5,
+  targetFraction = MINIMAP_AUTO_VIEW_FRACTION
+): number {
+  const boundingRect = minimapBoundingRect(null, viewBB) // Full board view
+  if (boundingRect.width <= 0 || boundingRect.height <= 0) return 1
+  if (viewBB.width <= 0 || viewBB.height <= 0) return 1
+  const fitScale = Math.max(
+    boundingRect.width / Math.max(elementWidth, 1),
+    boundingRect.height / Math.max(elementHeight, 1)
+  ) // Flow units per CSS px at view-fit (scope 1)
+  // Same padding factor computeMinimapGeometry uses at scope 1
+  const frameW = fitScale * (elementWidth + 2 * offsetScale)
+  const frameH = fitScale * (elementHeight + 2 * offsetScale)
+  const frac = Math.max(viewBB.width / frameW, viewBB.height / frameH) // Hole share at scope 1
+  if (!(frac > 0) || !Number.isFinite(frac)) return 1
+  // Hole share scales with scope → pick scope so the share lands on the target
+  return clampMinimapScopeZoom(targetFraction / frac)
+}
+
+/**
+ * Evenodd hole for the out-of-view mask = the full board camera (`viewBB`).
+ * Never clipped to content — the square matches what the pane actually shows.
+ * A min dimmed band still stays when the camera would fill the SVG.
  */
 export function minimapViewportMaskRect(
   viewBB: MinimapFlowRect,
@@ -35,16 +155,20 @@ export function minimapViewportMaskRect(
   viewScale: number, // Flow units per CSS px on the minimap
   minMaskCssPx = MINIMAP_MASK_MIN_CSS_PX
 ): MinimapFlowRect {
+  const hole = viewBB // Full board view — not content
   const pad = minMaskCssPx * Math.max(viewScale, 1e-6) // Flow inset that must stay dimmed
   const maxW = Math.max(0, frame.width - pad * 2)
   const maxH = Math.max(0, frame.height - pad * 2)
-  const width = Math.min(viewBB.width, maxW) // Never larger than the inset frame
-  const height = Math.min(viewBB.height, maxH)
-  const cx = viewBB.x + viewBB.width / 2
-  const cy = viewBB.y + viewBB.height / 2
-  // Keep the hole on-camera, then clamp inside the frame inset so the mask band is even
-  let x = cx - width / 2
-  let y = cy - height / 2
+  // Uniform scale when the camera is larger than the inset frame — keep true view aspect
+  const fit =
+    hole.width > maxW || hole.height > maxH
+      ? Math.min(maxW / Math.max(hole.width, 1e-6), maxH / Math.max(hole.height, 1e-6), 1)
+      : 1
+  const width = hole.width * fit
+  const height = hole.height * fit
+  // Keep the hole on the camera center, then clamp inside the frame inset
+  let x = hole.x + (hole.width - width) / 2
+  let y = hole.y + (hole.height - height) / 2
   const minX = frame.x + pad
   const minY = frame.y + pad
   const maxX = frame.x + frame.width - pad - width
@@ -57,31 +181,21 @@ export function minimapViewportMaskRect(
 }
 
 /**
- * World rect the minimap frames against.
- *
- * When the camera is zoomed in past content-fit, frame by the viewport so nodes pan
- * with the board. When zoomed out, union content ∪ view so frames stay on the map
- * and the out-of-view mask can still show a min band. Empty boards use the camera.
+ * World rect the minimap frames against = the live board camera (full board view).
+ * Content is ignored — the map follows what the pane shows, not the content AABB.
  */
 export function minimapBoundingRect(
-  content: MinimapFlowRect | null,
+  _content: MinimapFlowRect | null,
   view: MinimapFlowRect
 ): MinimapFlowRect {
-  if (!content || content.width <= 0 || content.height <= 0) return view
-  // Zoomed in past content-fit — follow the camera so nodes pan / grow with zoom
-  if (content.width > view.width || content.height > view.height) {
-    return view
-  }
-  // Zoomed out to/past fit — union grows with the view
-  return getBoundsOfRects(content, view)
+  return view
 }
 
 /**
  * Full minimap SVG geometry (viewBox + mask), shared by board + preview minimaps.
  *
- * `scopeCenter` anchors independent minimap scope zoom. Pass the live viewport center
- * so nodes keep panning with the board; freeze it only for the duration of a minimap
- * drag (CSS→flow math must not chase the camera mid-gesture).
+ * Frames the live board camera (full board view), not content. Scope zooms the
+ * minimap around that camera; the mask hole is the same viewBB.
  */
 export function computeMinimapGeometry(
   viewBB: MinimapFlowRect,
@@ -89,31 +203,24 @@ export function computeMinimapGeometry(
   elementWidth: number,
   elementHeight: number,
   offsetScale = 5,
-  scopeZoom = 1, // 1 = framing fit; >1 closer look; <1 more padding — not board zoom
-  scopeCenter: { x: number; y: number } | null = null // Anchor while scopeZoom > 1 (live or drag-frozen)
+  scopeZoom = 1 // 1 = framing fit; >1 closer look; <1 more padding — not board zoom
 ) {
-  const boundingRect = minimapBoundingRect(content, viewBB)
-  const scaledWidth = boundingRect.width / elementWidth
-  const scaledHeight = boundingRect.height / elementHeight
-  const fitScale = Math.max(scaledWidth, scaledHeight) // Flow units per CSS px at framing fit
+  const boundingRect = minimapBoundingRect(content, viewBB) // Full board view
+  const scaledWidth = boundingRect.width / Math.max(elementWidth, 1)
+  const scaledHeight = boundingRect.height / Math.max(elementHeight, 1)
+  const fitScale = Math.max(scaledWidth, scaledHeight) // Flow units per CSS px at view-fit
   const safeScope = Math.max(scopeZoom, 1e-6) // Avoid divide-by-zero from a bad scrub
   const viewScale = fitScale / safeScope // Higher scope → smaller viewBox → frames look larger
   const viewWidth = viewScale * elementWidth
   const viewHeight = viewScale * elementHeight
   const offset = offsetScale * viewScale
-  // Scope zoom: follow caller center (usually the camera). Else center the framed world.
-  const anchorX =
-    safeScope > 1 && scopeCenter
-      ? scopeCenter.x
-      : boundingRect.x + boundingRect.width / 2
-  const anchorY =
-    safeScope > 1 && scopeCenter
-      ? scopeCenter.y
-      : boundingRect.y + boundingRect.height / 2
-  const x = anchorX - viewWidth / 2 - offset
-  const y = anchorY - viewHeight / 2 - offset
   const width = viewWidth + offset * 2
   const height = viewHeight + offset * 2
+  // Always center on the board camera so pan updates the map with the view
+  const anchorX = viewBB.x + viewBB.width / 2
+  const anchorY = viewBB.y + viewBB.height / 2
+  const x = anchorX - width / 2
+  const y = anchorY - height / 2
   return {
     viewBB,
     boundingRect,

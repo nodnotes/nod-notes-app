@@ -1,0 +1,2 @@
+-- Board 200% is live fit of content bounds; edge align (magnetize) stays separate from stack; stack/open/lock live on the thread menu between frames.
+-- App/docs marker only; no DDL (frame metadata is JSONB). Remote DDL top: 20260924223511_board_changes_autosave.

@@ -3,11 +3,42 @@
 
 import type { CSSProperties } from 'react'
 import { INDICATOR_OUTSET } from '@/components/threads/handle-ids'
+import {
+  FRAME_SCREEN_CHROME_BOOST,
+  frameScreenChromeScale,
+} from '@/components/threads/constants'
 import type { FrameStackSide } from '@/lib/frame-side-stacks'
 
 type RectLike = { left: number; top: number; width: number; height: number }
 
 const PARALLEL_INSET = 0.08 // Match legacy 8% inset on the long axis
+
+/**
+ * Flow-space outset for stacked facing connection points — same as live `--tt-frame-ui-scale` dots.
+ * Capped chrome scale so zoom-out does not swell past 100%.
+ */
+export function stackConnectionOutsetFlow(zoom: number): number {
+  return INDICATOR_OUTSET * frameScreenChromeScale(zoom)
+}
+
+/** @deprecated Prefer stackConnectionOutsetFlow(zoom) — kept for touch pad / zoom-1 callers. */
+export const STACK_CONNECTION_OUTSET_FLOW = INDICATOR_OUTSET * FRAME_SCREEN_CHROME_BOOST
+
+/**
+ * Flow gap between stacked adjust boxes = 2× live connection-point outset.
+ * Facing sim points then land on the exact same mid-gap spot (the stack square).
+ */
+export function stackLineGapFlow(zoom: number): number {
+  return 2 * stackConnectionOutsetFlow(zoom)
+}
+
+/** Nominal gap at 100% zoom (layers touch pad, SNAP_ARM floor). */
+export const STACK_LINE_GAP = 2 * STACK_CONNECTION_OUTSET_FLOW
+
+/** Screen-px outset — flow outset × zoom. */
+export function stackConnectionOutsetScreen(zoom: number): number {
+  return stackConnectionOutsetFlow(zoom) * Math.max(0.01, zoom)
+}
 
 export function oppositeStackSide(side: FrameStackSide): FrameStackSide {
   if (side === 'right') return 'left'
@@ -56,36 +87,48 @@ export function adjustExitPointScreen(
 
 type AxisBox = { x: number; y: number; width: number; height: number }
 
+/** Chrome insets so the parallel axis matches fill-mid sim connection points (not adjust mid). */
+export type StackChromePads = { x: number; yTop: number; yBottom: number }
+
+/** Facing sim connection point — adjust edge ± outset, fill-mid on the parallel axis (matches CSS dots). */
+export function facingConnectionExitFlow(
+  box: AxisBox,
+  side: FrameStackSide,
+  outset: number,
+  chrome: StackChromePads
+): { x: number; y: number } {
+  const fillCx = box.x + chrome.x + (box.width - 2 * chrome.x) / 2 // Same mid as left/right CSS dots
+  const fillCy = box.y + chrome.yTop + (box.height - chrome.yTop - chrome.yBottom) / 2
+  switch (side) {
+    case 'left':
+      return { x: box.x - outset, y: fillCy }
+    case 'right':
+      return { x: box.x + box.width + outset, y: fillCy }
+    case 'top':
+      return { x: fillCx, y: box.y - outset }
+    default:
+      return { x: fillCx, y: box.y + box.height + outset }
+  }
+}
+
 /**
- * Stack mark: the simulated connection point on the anchor's facing side
- * (same outset as the blue dot), slid along that edge so it stays between the frames.
+ * Shared stack snap point: both frames’ facing simulated connection points meet here
+ * when the gap is `stackLineGapFlow` and snap aligned fill mids. Midpoint of the two exits.
  */
 export function stackGapMarkPoint(
-  anchor: AxisBox, // Adjust box the connection point belongs to
-  other: AxisBox, // The frame on the other side of the gap
+  anchor: AxisBox, // One adjust box
+  other: AxisBox, // Mate adjust box across the gap
   stackSide: FrameStackSide,
-  outset: number // Distance from the adjust edge to the connection-point center, in this box's space
+  outset: number, // Distance from each adjust edge to its connection-point center
+  anchorChrome: StackChromePads = { x: 0, yTop: 0, yBottom: 0 },
+  otherChrome: StackChromePads = { x: 0, yTop: 0, yBottom: 0 }
 ): { x: number; y: number } {
-  const anchorRect = { left: anchor.x, top: anchor.y, width: anchor.width, height: anchor.height } // facingStackSide speaks in screen rects
+  const anchorRect = { left: anchor.x, top: anchor.y, width: anchor.width, height: anchor.height }
   const otherRect = { left: other.x, top: other.y, width: other.width, height: other.height }
-  const facing = facingStackSide(anchorRect, otherRect, stackSide) // Side of the anchor that looks at the other frame
-  const exit = adjustExitPointScreen(anchorRect, facing, outset) // Same spot as the blue connection dot
-  if (stackLineMarksHorizontal(stackSide)) {
-    const left = Math.max(anchor.x, other.x) // Shared horizontal run
-    const right = Math.min(anchor.x + anchor.width, other.x + other.width)
-    const x =
-      left < right
-        ? (left + right) / 2 // Between the frames, not at the middle of a longer edge
-        : (anchor.x + anchor.width / 2 + other.x + other.width / 2) / 2
-    return { x, y: exit.y }
-  }
-  const top = Math.max(anchor.y, other.y)
-  const bot = Math.min(anchor.y + anchor.height, other.y + other.height)
-  const y =
-    top < bot
-      ? (top + bot) / 2
-      : (anchor.y + anchor.height / 2 + other.y + other.height / 2) / 2
-  return { x: exit.x, y }
+  const facing = facingStackSide(anchorRect, otherRect, stackSide) // Anchor side that looks at the mate
+  const a = facingConnectionExitFlow(anchor, facing, outset, anchorChrome)
+  const b = facingConnectionExitFlow(other, oppositeStackSide(facing), outset, otherChrome)
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } // Identical when snapped; else mid-gap
 }
 
 /** True when the bar runs left↔right (top/bottom stacks); false = vertical bar in L/R gap. */

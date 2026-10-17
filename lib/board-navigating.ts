@@ -1,4 +1,8 @@
-import { threadInvZoom } from '@/components/threads/constants' // Stroke/arrow zoom — softer than 1/zoom when zoomed out
+import {
+  FRAME_SCREEN_CHROME_BOOST,
+  frameScreenChromeScale,
+  threadInvZoom,
+} from '@/components/threads/constants' // Stroke/arrow zoom + capped handle/dot scale
 
 // Board pan/pinch in progress. Freeze React zoom selectors so chrome/threads don’t
 // re-render every tick — the RF viewport CSS transform still tracks fingers live.
@@ -19,8 +23,6 @@ const listeners = new Set<() => void>() // DB live / other subscribers
 const NAV_CLASS = 'tt-board-navigating'
 const NAV_WATCHDOG_MS = 1200 // Re-armed per move tick; only fires when a gesture dies silently
 
-/** Keep in sync with FRAME_SCREEN_CHROME_BOOST in threads/constants. */
-const CHROME_BOOST = 1.4
 let lastZoomCss = '' // Skip redundant style writes mid-pinch
 let zoomCssRaf = 0 // rAF pump while navigating — live chrome without React
 let zoomCssReader: (() => { zoom: number; el: HTMLElement | null }) | null = null
@@ -49,12 +51,12 @@ function applyZoomCss(el: HTMLElement, zoom: number): void {
   const next = String(z)
   if (next === lastZoomCss && el.style.getPropertyValue('--tt-board-zoom') === next) return
   lastZoomCss = next
-  const ui = CHROME_BOOST / z // Same as frameScreenChromeScale
+  const ui = frameScreenChromeScale(z) // Capped — handles/dots stop growing on zoom-out
   const inv = threadInvZoom(z) // Softer than 1/z when zoomed out so threads don't swell
   // Concrete values — avoid relying on stylesheet calc() recalculating during compositor zoom
   el.style.setProperty('--tt-board-zoom', next)
   el.style.setProperty('--tt-thread-inv-zoom', String(inv)) // Thread stroke: width * inv → screen-constant
-  el.style.setProperty('--tt-frame-chrome-boost', String(CHROME_BOOST))
+  el.style.setProperty('--tt-frame-chrome-boost', String(FRAME_SCREEN_CHROME_BOOST))
   el.style.setProperty('--tt-frame-ui-scale', String(ui))
   el.style.setProperty('--tt-frame-line-w', `${1 * ui}px`)
   el.style.setProperty('--tt-frame-line-hit', `${5 * ui}px`)

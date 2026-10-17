@@ -17,7 +17,9 @@ type LayersTouchingSnapshot = {
   seedKey: string // Selection signature — skip redundant republish
 }
 
-const TOUCH_PAD = 12 // Flow px — matches edge-snap stack gap so snapped frames count as touching
+import { STACK_LINE_GAP } from '@/lib/frame-stack-line' // Same mid-gap lane as edge-snap
+
+const TOUCH_PAD = STACK_LINE_GAP // Flow px — snapped frames (2× connection-point outset) still count as touching
 
 type Listener = () => void
 const listeners = new Set<Listener>()

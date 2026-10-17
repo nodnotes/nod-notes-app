@@ -27,6 +27,12 @@ import {
   MAX_TIP_DIAMETER_PX,
   MIN_TIP_DIAMETER_PX,
 } from '@/components/freehand/path' // Tip thickness bar range + defaults
+import {
+  readEdgeSnapEnabled,
+  readGuideSnapEnabled,
+  writeEdgeSnapEnabled,
+  writeGuideSnapEnabled,
+} from '@/lib/frame-edge-snap-prefs' // More → Snap toggles
 
 interface ReactFlowContextType {
   reactFlowInstance: ReactFlowInstance | null
@@ -111,8 +117,10 @@ interface ReactFlowContextType {
   registerMapUndoRedo: (fns: { undo: () => void; redo: () => void; canUndo: boolean; canRedo: boolean }) => void // Register undo/redo from BoardFlow
   getMapTakeSnapshot: () => (() => void) | undefined // Getter for takeSnapshot function
   registerMapTakeSnapshot: (fn: () => void) => void // Register takeSnapshot from BoardFlow
-  snapEnabled: boolean // Snap to grid/helper lines enabled state
-  setSnapEnabled: (enabled: boolean) => void // Function to set snap enabled state
+  snapEnabled: boolean // Snap to helper-line guides while dragging
+  setSnapEnabled: (enabled: boolean) => void // Persist + set guide snap (More → Snap)
+  edgeSnapEnabled: boolean // Magnetize frames to neighboring adjust-box edges
+  setEdgeSnapEnabled: (enabled: boolean) => void // Persist + set frame edge snap
 }
 
 const ReactFlowContext = createContext<ReactFlowContextType | undefined>(undefined)
@@ -382,8 +390,21 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
   const [highlighterPalette, setHighlighterPaletteState] = useState<string[]>(DEFAULT_HIGHLIGHTER_PALETTE)
   const [highlighterColorIndex, setHighlighterColorIndexState] = useState(0) // Selected highlighter slot
   const [drawShape, setDrawShape] = useState<'rectangle' | 'circle' | 'line' | 'arrow' | 'round-rectangle' | 'hexagon' | 'diamond' | 'arrow-rectangle' | 'cylinder' | 'triangle' | 'parallelogram' | 'plus'>('rectangle') // Current shape (default: rectangle)
-  const [snapEnabled, setSnapEnabled] = useState<boolean>(false) // Snap to grid/helper lines enabled state (default: disabled)
-  
+  const [snapEnabled, setSnapEnabledState] = useState<boolean>(false) // Guide snap; hydrate before paint
+  const [edgeSnapEnabled, setEdgeSnapEnabledState] = useState<boolean>(true) // Frame edge magnetize; hydrate before paint
+
+  /** Guide snap (helper lines) — More → Snap → Snap to guides. */
+  const setSnapEnabled = useCallback((enabled: boolean) => {
+    writeGuideSnapEnabled(enabled)
+    setSnapEnabledState(enabled)
+  }, [])
+
+  /** Frame edge magnetize — More → Snap → Snap to frames. */
+  const setEdgeSnapEnabled = useCallback((enabled: boolean) => {
+    writeEdgeSnapEnabled(enabled)
+    setEdgeSnapEnabledState(enabled)
+  }, [])
+
   // Undo/Redo state for map actions - stored in refs to avoid re-renders
   // Functions are registered from BoardFlow where the useUndoRedo hook runs inside ReactFlowProvider
   const mapUndoRedoRef = useRef<{ undo: () => void; redo: () => void; canUndo: boolean; canRedo: boolean }>({
@@ -579,8 +600,10 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
     highlighterPalette[clampPaletteIndex(highlighterColorIndex, highlighterPalette.length)] ||
     DEFAULT_HIGHLIGHTER_PALETTE[0]
 
-  // Restore pill + Draw tool before first paint (skip embed — no toolbar, must not arm Freehand)
+  // Restore pill + Draw tool + Snap prefs before first paint (skip embed — no toolbar, must not arm Freehand)
   useLayoutEffect(() => {
+    setSnapEnabledState(readGuideSnapEnabled()) // More → Snap → guides (also used outside Draw)
+    setEdgeSnapEnabledState(readEdgeSnapEnabled()) // More → Snap → frames
     if (pathname?.startsWith('/embed/')) return // Nested preview iframe stays selection-only
     setEraserModeState(getStoredEraserMode()) // Stroke / spot from last session
     setSmartDrawState(getStoredSmartDraw()) // Smart toggle beside Pen
@@ -1593,7 +1616,7 @@ export function ReactFlowContextProvider({ children, conversationId, projectId }
   }, [])
 
   return (
-    <ReactFlowContext.Provider value={{ reactFlowInstance, setReactFlowInstance, getSetNodes, registerSetNodes, isLocked, setIsLocked, layoutMode, setLayoutMode, isDeterministicMapping, setIsDeterministicMapping, panelWidth, setPanelWidth, isPromptBoxCentered, setIsPromptBoxCentered, lineStyle, setLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, setEditMenuPillMode, viewMode, boardRule, setBoardRule, boardStyle, setBoardStyle, boardFont, setBoardFont, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, setClickedEdge, flashcardMode, setFlashcardMode, selectedTag, setSelectedTag: toggleSelectedTag, isDrawing, setIsDrawing, drawTool, setDrawTool, smartDraw, setSmartDraw, eraserMode, setEraserMode, drawTipSize, setDrawTipSize, drawTipZoomLocked, setDrawTipZoomLocked, eraserTipSize, setEraserTipSize, eraserTipZoomLocked, setEraserTipZoomLocked, pencilPalette, pencilColorIndex, setPencilColorIndex, setPencilColorAt, addPencilColor, removePencilColor, highlighterPalette, highlighterColorIndex, setHighlighterColorIndex, setHighlighterColorAt, addHighlighterColor, removeHighlighterColor, pencilColor, highlighterColor, drawShape, setDrawShape, mapUndo, mapRedo, canMapUndo: mapUndoRedoState.canUndo, canMapRedo: mapUndoRedoState.canRedo, registerMapUndoRedo, getMapTakeSnapshot, registerMapTakeSnapshot, snapEnabled, setSnapEnabled }}>
+    <ReactFlowContext.Provider value={{ reactFlowInstance, setReactFlowInstance, getSetNodes, registerSetNodes, isLocked, setIsLocked, layoutMode, setLayoutMode, isDeterministicMapping, setIsDeterministicMapping, panelWidth, setPanelWidth, isPromptBoxCentered, setIsPromptBoxCentered, lineStyle, setLineStyle, arrowDirection, setArrowDirection, editMenuPillMode, setEditMenuPillMode, viewMode, boardRule, setBoardRule, boardStyle, setBoardStyle, boardFont, setBoardFont, fillColor, setFillColor, borderColor, setBorderColor, borderWeight, setBorderWeight, borderStyle, setBorderStyle, clickedEdge, setClickedEdge, flashcardMode, setFlashcardMode, selectedTag, setSelectedTag: toggleSelectedTag, isDrawing, setIsDrawing, drawTool, setDrawTool, smartDraw, setSmartDraw, eraserMode, setEraserMode, drawTipSize, setDrawTipSize, drawTipZoomLocked, setDrawTipZoomLocked, eraserTipSize, setEraserTipSize, eraserTipZoomLocked, setEraserTipZoomLocked, pencilPalette, pencilColorIndex, setPencilColorIndex, setPencilColorAt, addPencilColor, removePencilColor, highlighterPalette, highlighterColorIndex, setHighlighterColorIndex, setHighlighterColorAt, addHighlighterColor, removeHighlighterColor, pencilColor, highlighterColor, drawShape, setDrawShape, mapUndo, mapRedo, canMapUndo: mapUndoRedoState.canUndo, canMapRedo: mapUndoRedoState.canRedo, registerMapUndoRedo, getMapTakeSnapshot, registerMapTakeSnapshot, snapEnabled, setSnapEnabled, edgeSnapEnabled, setEdgeSnapEnabled }}>
       {children}
     </ReactFlowContext.Provider>
   )
@@ -1603,7 +1626,7 @@ export function useReactFlowContext() {
   const context = useContext(ReactFlowContext)
   if (context === undefined) {
     // Return null values if context is not available (graceful degradation)
-    return { reactFlowInstance: null, setReactFlowInstance: () => { }, getSetNodes: () => undefined, registerSetNodes: () => { }, isLocked: false, setIsLocked: () => { }, layoutMode: 'auto' as const, setLayoutMode: () => { }, isDeterministicMapping: false, setIsDeterministicMapping: () => { }, panelWidth: 768, setPanelWidth: () => { }, isPromptBoxCentered: false, setIsPromptBoxCentered: () => { }, lineStyle: 'solid' as const, setLineStyle: () => { }, arrowDirection: 'down' as const, setArrowDirection: () => { }, editMenuPillMode: 'home' as const, setEditMenuPillMode: () => { }, viewMode: 'canvas' as const, boardRule: 'college' as const, setBoardRule: () => { }, boardStyle: 'dotted' as const, setBoardStyle: () => { }, boardFont: 'default' as const, setBoardFont: () => { }, fillColor: '', setFillColor: () => { }, borderColor: '', setBorderColor: () => { }, borderWeight: 1, setBorderWeight: () => { }, borderStyle: 'solid' as const, setBorderStyle: () => { }, clickedEdge: null, setClickedEdge: () => { }, flashcardMode: null, setFlashcardMode: () => { }, selectedTag: null, setSelectedTag: () => { }, isDrawing: false, setIsDrawing: () => { }, drawTool: null, setDrawTool: () => { }, smartDraw: false, setSmartDraw: () => { }, eraserMode: 'stroke' as const, setEraserMode: () => { }, drawTipSize: 12, setDrawTipSize: () => { }, drawTipZoomLocked: true, setDrawTipZoomLocked: () => { }, eraserTipSize: 28, setEraserTipSize: () => { }, eraserTipZoomLocked: true, setEraserTipZoomLocked: () => { }, pencilPalette: DEFAULT_PENCIL_PALETTE, pencilColorIndex: 0, setPencilColorIndex: () => { }, setPencilColorAt: () => { }, addPencilColor: () => { }, removePencilColor: () => { }, highlighterPalette: DEFAULT_HIGHLIGHTER_PALETTE, highlighterColorIndex: 0, setHighlighterColorIndex: () => { }, setHighlighterColorAt: () => { }, addHighlighterColor: () => { }, removeHighlighterColor: () => { }, pencilColor: DEFAULT_PENCIL_PALETTE[0], highlighterColor: DEFAULT_HIGHLIGHTER_PALETTE[0], drawShape: 'rectangle' as const, setDrawShape: () => { }, mapUndo: () => { }, mapRedo: () => { }, canMapUndo: false, canMapRedo: false, registerMapUndoRedo: () => { }, getMapTakeSnapshot: () => undefined, registerMapTakeSnapshot: () => { }, snapEnabled: false, setSnapEnabled: () => { } }
+    return { reactFlowInstance: null, setReactFlowInstance: () => { }, getSetNodes: () => undefined, registerSetNodes: () => { }, isLocked: false, setIsLocked: () => { }, layoutMode: 'auto' as const, setLayoutMode: () => { }, isDeterministicMapping: false, setIsDeterministicMapping: () => { }, panelWidth: 768, setPanelWidth: () => { }, isPromptBoxCentered: false, setIsPromptBoxCentered: () => { }, lineStyle: 'solid' as const, setLineStyle: () => { }, arrowDirection: 'down' as const, setArrowDirection: () => { }, editMenuPillMode: 'home' as const, setEditMenuPillMode: () => { }, viewMode: 'canvas' as const, boardRule: 'college' as const, setBoardRule: () => { }, boardStyle: 'dotted' as const, setBoardStyle: () => { }, boardFont: 'default' as const, setBoardFont: () => { }, fillColor: '', setFillColor: () => { }, borderColor: '', setBorderColor: () => { }, borderWeight: 1, setBorderWeight: () => { }, borderStyle: 'solid' as const, setBorderStyle: () => { }, clickedEdge: null, setClickedEdge: () => { }, flashcardMode: null, setFlashcardMode: () => { }, selectedTag: null, setSelectedTag: () => { }, isDrawing: false, setIsDrawing: () => { }, drawTool: null, setDrawTool: () => { }, smartDraw: false, setSmartDraw: () => { }, eraserMode: 'stroke' as const, setEraserMode: () => { }, drawTipSize: 12, setDrawTipSize: () => { }, drawTipZoomLocked: true, setDrawTipZoomLocked: () => { }, eraserTipSize: 28, setEraserTipSize: () => { }, eraserTipZoomLocked: true, setEraserTipZoomLocked: () => { }, pencilPalette: DEFAULT_PENCIL_PALETTE, pencilColorIndex: 0, setPencilColorIndex: () => { }, setPencilColorAt: () => { }, addPencilColor: () => { }, removePencilColor: () => { }, highlighterPalette: DEFAULT_HIGHLIGHTER_PALETTE, highlighterColorIndex: 0, setHighlighterColorIndex: () => { }, setHighlighterColorAt: () => { }, addHighlighterColor: () => { }, removeHighlighterColor: () => { }, pencilColor: DEFAULT_PENCIL_PALETTE[0], highlighterColor: DEFAULT_HIGHLIGHTER_PALETTE[0], drawShape: 'rectangle' as const, setDrawShape: () => { }, mapUndo: () => { }, mapRedo: () => { }, canMapUndo: false, canMapRedo: false, registerMapUndoRedo: () => { }, getMapTakeSnapshot: () => undefined, registerMapTakeSnapshot: () => { }, snapEnabled: false, setSnapEnabled: () => { }, edgeSnapEnabled: true, setEdgeSnapEnabled: () => { } }
   }
   return context
 }

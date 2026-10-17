@@ -8,6 +8,7 @@ import {
   clampMinimapScopeZoom,
   minimapClientToFlow,
   minimapGrabbedViewOrigin,
+  minimapScopeForHalfView,
   minimapViewportMaskRect,
   readMinimapViewBox,
   type MinimapFlowRect,
@@ -54,35 +55,59 @@ export function PreviewMinimap({
   } | null>(null)
   const onPanRef = useRef(onPan)
   onPanRef.current = onPan
-  const [scopeZoom, setScopeZoom] = useState(1) // Minimap framing only — never the host board
-  const scopeZoomRef = useRef(1) // Wheel handler must not close over a stale scope
-  scopeZoomRef.current = scopeZoom
-  // Freeze only while minimap-dragging; otherwise follow the nested camera so nodes pan
-  const dragScopeCenterRef = useRef<{ x: number; y: number } | null>(null)
-  const [dragEpoch, setDragEpoch] = useState(0) // Re-render when drag ends so live center resumes
+  // Auto = follow nested board zoom; manual = wheel until the nested camera zooms again
+  const [scopeMode, setScopeMode] = useState<'auto' | 'manual'>('auto')
+  const [manualScopeZoom, setManualScopeZoom] = useState(1)
+  const scopeModeRef = useRef(scopeMode)
+  scopeModeRef.current = scopeMode
+  const scopeZoomRef = useRef(1) // Wheel scrub starts from the live effective scope
+  // Freeze auto scope for the whole minimap drag so half-view does not rescale mid-gesture
+  const dragScopeZoomRef = useRef<number | null>(null)
+  const [dragEpoch, setDragEpoch] = useState(0) // Re-render when drag ends so auto scope resumes
 
   const zoom = state.transform[2] || 1
-  const liveScopeCenter =
-    scopeZoom > 1
-      ? {
-          x: -state.transform[0] / zoom + state.width / zoom / 2,
-          y: -state.transform[1] / zoom + state.height / zoom / 2,
-        }
+  const prevBoardZoomRef = useRef(zoom)
+  // Nested board zoom drops a manual override
+  useEffect(() => {
+    if (Math.abs(prevBoardZoomRef.current - zoom) < 1e-6) return
+    prevBoardZoomRef.current = zoom
+    if (scopeModeRef.current === 'manual') setScopeMode('auto')
+  }, [zoom])
+
+  const viewBB = {
+    x: -state.transform[0] / zoom,
+    y: -state.transform[1] / zoom,
+    width: state.width / zoom,
+    height: state.height / zoom,
+  }
+  const content =
+    state.nodes.length > 0
+      ? (() => {
+          let minX = Infinity
+          let minY = Infinity
+          let maxX = -Infinity
+          let maxY = -Infinity
+          for (const n of state.nodes) {
+            minX = Math.min(minX, n.x)
+            minY = Math.min(minY, n.y)
+            maxX = Math.max(maxX, n.x + n.width)
+            maxY = Math.max(maxY, n.y + n.height)
+          }
+          return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+        })()
       : null
+  const liveAutoScope = minimapScopeForHalfView(viewBB, content, width, height, 5)
+  const scopeZoom =
+    dragScopeZoomRef.current ??
+    (scopeMode === 'manual' ? manualScopeZoom : liveAutoScope)
+  scopeZoomRef.current = scopeZoom
+
   const geometry = useMemo(
-    () =>
-      computePreviewMinimapGeometry(
-        state,
-        width,
-        height,
-        5,
-        scopeZoom,
-        dragScopeCenterRef.current ?? liveScopeCenter
-      ),
-    // dragEpoch bumps after drag so the frozen ref is dropped from geometry
-    [state, width, height, scopeZoom, liveScopeCenter, dragEpoch]
+    () => computePreviewMinimapGeometry(state, width, height, 5, scopeZoom),
+    // dragEpoch bumps after drag so the frozen scope ref is dropped
+    [state, width, height, scopeZoom, dragEpoch]
   )
-  // Hole leaves a min dimmed band so out-of-view mask stays visible when zoomed out
+  // Hole = full board camera (same as BoardMiniMap)
   const maskRect = useMemo(
     () =>
       minimapViewportMaskRect(
@@ -90,7 +115,14 @@ export function PreviewMinimap({
         { x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height },
         geometry.viewScale
       ),
-    [geometry.viewBB, geometry.x, geometry.y, geometry.width, geometry.height, geometry.viewScale]
+    [
+      geometry.viewBB,
+      geometry.x,
+      geometry.y,
+      geometry.width,
+      geometry.height,
+      geometry.viewScale,
+    ]
   )
   transformRef.current = state.transform
 
@@ -129,10 +161,7 @@ export function PreviewMinimap({
         zoom, // Pin zoom so the drag cannot rescale
         viewBox,
       }
-      dragScopeCenterRef.current = {
-        x: viewBox.x + viewBox.width / 2,
-        y: viewBox.y + viewBox.height / 2,
-      }
+      dragScopeZoomRef.current = scopeZoomRef.current // Hold auto half-view scale still for the drag
     }
 
     const panHandler = (event: { sourceEvent?: Event }) => {
@@ -161,7 +190,8 @@ export function PreviewMinimap({
         zoomStep
       const next = clampMinimapScopeZoom(scopeZoomRef.current * Math.pow(2, pinchDelta))
       scopeZoomRef.current = next
-      setScopeZoom(next) // liveScopeCenter tracks the nested camera while scopeZoom > 1
+      setManualScopeZoom(next) // Stick until the next nested board zoom
+      setScopeMode('manual')
     }
 
     const zoomAndPanHandler = zoom<SVGSVGElement, unknown>()
@@ -170,8 +200,8 @@ export function PreviewMinimap({
       zoomAndPanHandler.on('zoom', panHandler)
       zoomAndPanHandler.on('end', () => {
         grabRef.current = null
-        dragScopeCenterRef.current = null
-        setDragEpoch((n) => n + 1) // Resume following the camera
+        dragScopeZoomRef.current = null // Resume auto half-view from the landed camera
+        setDragEpoch((n) => n + 1)
       })
     }
     if (zoomable) zoomAndPanHandler.on('zoom.wheel', scopeHandler)

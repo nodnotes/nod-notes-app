@@ -28,7 +28,7 @@ import {
   syncBoardZoomCss,
   touchBoardNavigating,
 } from '@/lib/board-navigating'
-import { clampBoardZoom } from '@/lib/board-extent'
+import { clampBoardZoom, clampViewportAgainstStore } from '@/lib/board-extent'
 import { writeStoredBoardRotation } from '@/lib/board-rotation-persist' // Heading hits localStorage in the same turn as the twist
 
 const CHROME_SEL =
@@ -129,19 +129,27 @@ export function BoardRotationProvider({
     scrollModeRef.current = on // Phone two-finger reads this every move
   }, [])
 
+  /** setViewport skips translateExtent — clamp so two-finger pan can't leave the board. */
+  const setClampedViewport = useCallback(
+    (next: { x: number; y: number; zoom: number }) => {
+      instance.setViewport(clampViewportAgainstStore(next, storeApi.getState()))
+    },
+    [instance, storeApi]
+  )
+
   const applyAroundPanePoint = useCallback(
     (nextDeg: number, paneX: number, paneY: number, nextZoom?: number) => {
       const heading = normalizeDeg(nextDeg) // Slider / icon / twist pass already-snapped values
       const vp = instance.getViewport()
       const zoom = nextZoom ?? vp.zoom
       const next = viewportKeepingPanePoint(paneX, paneY, vp, rotationRef.current, heading, zoom)
-      instance.setViewport(next) // New T so the pivot flow point stays under the finger
+      setClampedViewport(next) // New T so the pivot flow point stays under the finger
       rotationRef.current = heading
       if (persistRef.current) boardRotationRef.current = heading // Host drag / marquee readers
       setRotation(heading)
       rememberHeading(heading) // Slider, scrub, and reset — stored before the next paint
     },
-    [instance]
+    [setClampedViewport]
   )
 
   const setRotationAroundViewCenter = useCallback(
@@ -245,7 +253,7 @@ export function BoardRotationProvider({
           return
         }
         const vp = instance.getViewport()
-        instance.setViewport({ x: vp.x + vx * dt, y: vp.y + vy * dt, zoom: vp.zoom })
+        setClampedViewport({ x: vp.x + vx * dt, y: vp.y + vy * dt, zoom: vp.zoom })
         inertiaRaf = requestAnimationFrame(step)
       }
       inertiaRaf = requestAnimationFrame(step)
@@ -265,13 +273,14 @@ export function BoardRotationProvider({
           return
         }
         const vp = instance.getViewport()
-        const nextZoom = clampBoardZoom(vp.zoom * Math.pow(2, vz * dt))
+        const { minZoom, maxZoom } = storeApi.getState() // Live 200% floor from board bounds
+        const nextZoom = clampBoardZoom(vp.zoom * Math.pow(2, vz * dt), { minZoom, maxZoom })
         if (nextZoom === vp.zoom) {
           inertiaRaf = 0
           return
         }
         const next = viewportKeepingPanePoint(paneX, paneY, vp, rotationRef.current, rotationRef.current, nextZoom)
-        instance.setViewport(next)
+        setClampedViewport(next)
         inertiaRaf = requestAnimationFrame(step)
       }
       inertiaRaf = requestAnimationFrame(step)
@@ -282,7 +291,7 @@ export function BoardRotationProvider({
       const { heading, stuckAtZero } = twistSnapHeading(raw, rotationRef.current, g.stuckAtZero)
       g.stuckAtZero = stuckAtZero
       const next = viewportKeepingPanePoint(paneX, paneY, vp, rotationRef.current, heading, zoom)
-      instance.setViewport(next)
+      setClampedViewport(next)
       syncBoardZoomCss(next.zoom, storeApi.getState().domNode) // Screen-constant chrome mid-pinch
       if (heading === rotationRef.current) return // Pan/zoom only — skip a React render every frame
       rotationRef.current = heading
@@ -336,7 +345,8 @@ export function BoardRotationProvider({
       const angle = Math.atan2(dy, dx)
       const dDeg = ((angle - pinch.startAngle) * 180) / Math.PI
       const pinchZoom = pinch.startZoom * (dist / pinch.startDist) // Spread/pinch distance
-      const nextZoom = clampBoardZoom(pinchZoom * Math.pow(2, pinch.swipeLog))
+      const { minZoom, maxZoom } = storeApi.getState() // Live 200% floor from board bounds
+      const nextZoom = clampBoardZoom(pinchZoom * Math.pow(2, pinch.swipeLog), { minZoom, maxZoom })
       applyTwist(dDeg, dist / pinch.startDist, paneX, paneY, nextZoom, pinch, panned)
     }
 
@@ -497,7 +507,8 @@ export function BoardRotationProvider({
       const cx = typeof ge.clientX === 'number' && ge.clientX !== 0 ? ge.clientX : lastX
       const cy = typeof ge.clientY === 'number' && ge.clientY !== 0 ? ge.clientY : lastY
       const scale = ge.scale || 1
-      const nextZoom = clampBoardZoom(safari.startZoom * scale)
+      const { minZoom, maxZoom } = storeApi.getState() // Live 200% floor from board bounds
+      const nextZoom = clampBoardZoom(safari.startZoom * scale, { minZoom, maxZoom })
       applyTwist(ge.rotation || 0, scale, cx - rect.left, cy - rect.top, nextZoom, safari, vp)
     }
     const onGestureEnd = () => {
@@ -579,7 +590,7 @@ export function BoardRotationProvider({
         t.removeEventListener('touchcancel', onTouchEnd as EventListener, true)
       }
     }
-  }, [instance, applyAroundPanePoint, domNode])
+  }, [instance, applyAroundPanePoint, setClampedViewport, domNode])
 
   const value = useMemo(
     () => ({

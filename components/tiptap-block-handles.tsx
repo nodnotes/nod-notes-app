@@ -10,7 +10,7 @@ import { GripVertical } from 'lucide-react' // ⋮⋮ grip; between-block add is
 import { useReactFlow } from 'reactflow' // Nested RF for chat stubs; board extract prefers context instance
 import { useReactFlowContext } from '@/components/react-flow-context' // Real board screenToFlowPosition from chat
 import { useLiveBoardZoom } from '@/lib/use-live-board-zoom' // Viewport-CSS zoom (store can lag)
-import { adjustChromeXFlow, blockGripChromeScale } from '@/lib/frame-adjust-box' // L/R pad is board-fixed; ⋮⋮ still uses the √ curve
+import { adjustChromeXFlow, blockGripChromeScale } from '@/lib/frame-adjust-box' // Strip fallback + √ ⋮⋮ comfort
 import { frameScreenChromeScale } from '@/components/threads/constants' // Inset blue stroke stays ~1.4px on screen
 import { useQueryClient } from '@tanstack/react-query' // Refresh panels after extract-to-card
 import { createClient } from '@/lib/supabase/client' // Persist a new map card from a dragged line
@@ -1780,24 +1780,29 @@ export function TipTapBlockHandles({
     container && fill && fill !== container
       ? screenToLocal(container, fill.getBoundingClientRect().left, fill.getBoundingClientRect().top).x
       : 0 // Same box as the grips — no extra shift
-  // Same rounded pad the panel paints as paddingLeft (grip column + blue air).
+  // Prefer host pad (panel paddingLeft). Fall back so grips still park if chrome is briefly 0.
   const stripLocal =
-    fill && handleGutterFlow > 0
-      ? Math.round(adjustChromeXFlow(rfZoom || 1, contentCssScale)) / hostScale
-      : handleGutterFlow > 0
-        ? handleGutterFlow / hostScale
+    handleGutterFlow > 0
+      ? handleGutterFlow / hostScale
+      : fill
+        ? Math.round(adjustChromeXFlow(rfZoom || 1, contentCssScale)) / hostScale
         : HANDLE_GUTTER
   // Inset ring width in this host's px. Chat has no blue ring, so its stroke is 0.
   const strokeLocal = fill ? frameScreenChromeScale(rfZoom || 1) / hostScale : 0
-  const clearLocal = Math.max(0, stripLocal - strokeLocal) // Gap from the stroke's inner edge to the fill
+  // Keep enough clear gap to park a grip when zoom-out stroke would collapse the strip.
+  const clearLocal = Math.max(GRIP_W, stripLocal - strokeLocal)
   const padLocal = fill ? 0 : contentPadLeft // Chat host only — fill origin is already the peach edge
   // Box left so the unscaled GRIP_W center (and the scaled visual) lands in that clear gap.
   const gutterCenterLeft = fillLeftLocal - padLocal - clearLocal / 2 - GRIP_W / 2
   // Glyph scale, not the blue-gutter scale. Free contain shrinks text below frameScale.
   const glyphScale = Math.max(0.01, textScale ?? contentCssScale)
-  // √ curve tempers growth when text is large; below 1 it rides, then glyphScale shrinks with the text.
-  const gripChromeScale =
-    blockGripChromeScale(rfZoom || 1, glyphScale) * (fill ? glyphScale / hostScale : 1)
+  // Content √ comfort only — fill already rides the RF viewport, so including rfZoom
+  // counter-scaled ⋮⋮ during pinch (size jumped on zoom). Chat has no viewport ride.
+  const gripChromeScale = Math.max(
+    0.35,
+    blockGripChromeScale(fill ? 1 : rfZoom || 1, glyphScale) *
+      (fill ? glyphScale / hostScale : 1)
+  )
   const gripLayouts = new Map<string | number, HandleLayout>() // keyed by block.from (headers = named keys)
   if (container) {
     for (const b of selection) {

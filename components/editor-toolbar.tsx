@@ -85,11 +85,8 @@ import {
   sharedStackGroupId,
   selectionIsStacked,
   unlinkSelectedStack,
-  collapseSelectedStack,
-  expandSelectedStack,
   type StackTogglePatch,
-} from '@/components/use-frame-nest-stack-drag' // Magnet pack + stack/unstack
-import { setSideStackEntry } from '@/lib/frame-side-stacks' // Stamp stack line link without lock
+} from '@/components/use-frame-nest-stack-drag' // Magnet align-pack + unlink
 import { absFlowPosition, nodeFlowSize } from '@/components/use-block-group-drag' // Absolute box for Tidy up
 import { tidyUpBoxes } from '@/lib/tidy-up' // Canva-style even gaps + row/column grid
 import { persistBlockPlacement } from '@/lib/blocks' // Save tidied flow position
@@ -1086,7 +1083,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     refreshLockUi()
   }
 
-  // Thread layout magnet: toggle pack/unlink (does not change alignment)
+  // Layout magnet: pack at natural gap (align only) — no sideStacks; stack is thread-menu only
   const handleSnapFramesTogether = () => {
     if (!reactFlowInstance) return
     const selected = getSelectedFrames()
@@ -1095,7 +1092,7 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     getMapTakeSnapshot()?.()
     const live = reactFlowInstance.getNodes()
     if (sharedStackGroupId(selected)) {
-      applyStackPatches(unlinkSelectedStack(selected, live)) // Magnet off: drop the link
+      applyStackPatches(unlinkSelectedStack(selected, live)) // Drop a thread-pair / legacy link
       return
     }
     const packed = packSelectedFramesTogether(
@@ -1112,16 +1109,8 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
         const p = byId.get(n.id)
         if (!p) return n
         const pm = n.data?.promptMessage
-        if (!pm) return { ...n, position: p.position } // RF only
-        let metadata = { ...(pm.metadata || {}), position: p.abs } as Record<string, unknown>
-        if (p.stack) {
-          metadata = setSideStackEntry(metadata, p.stack.side, {
-            groupId: p.stack.groupId,
-            index: p.stack.index,
-            ...(p.stack.anchor ? { anchor: true } : {}),
-            expanded: true, // Stay visible — stack line only, no collapse / lock
-          })
-        }
+        if (!pm) return { ...n, position: p.position, hidden: false }
+        const metadata = { ...(pm.metadata || {}), position: p.abs } as Record<string, unknown>
         return {
           ...n,
           position: p.position,
@@ -1140,39 +1129,23 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
           .eq('id', p.messageId)
           .maybeSingle()
         if (!row) continue
-        let next: Record<string, unknown> = {
+        const next: Record<string, unknown> = {
           ...((row.metadata as Record<string, unknown>) || {}),
           isBlock: true,
           position: p.abs,
         }
-        if (p.stack) {
-          next = setSideStackEntry(next, p.stack.side, {
-            groupId: p.stack.groupId,
-            index: p.stack.index,
-            ...(p.stack.anchor ? { anchor: true } : {}),
-            expanded: true, // Persist the line link; do not lock
-          })
-        }
         await supabaseClient.from('messages').update({ metadata: next }).eq('id', p.messageId)
+        await persistBlockPlacement(supabaseClient, {
+          messageId: p.messageId,
+          position: p.abs,
+        })
       }
-    })().catch((err) => console.error('Failed to persist snap-together:', err))
+    })().catch((err) => console.error('Failed to persist frame align:', err))
     refreshLockUi()
   }
 
-  // Thread layout collapse: stack / unstack selected frames (does not change direction)
-  const handleStackFramesTogether = () => {
-    if (!reactFlowInstance) return
-    const selected = getSelectedFrames()
-    if (selected.length === 0) return
-    if (selected.length < 2 && !selectionIsStacked(selected, reactFlowInstance.getNodes())) return // Unstack is allowed from a lone stacked host
-    getMapTakeSnapshot()?.()
-    const live = reactFlowInstance.getNodes()
-    if (selectionIsStacked(selected, live)) {
-      applyStackPatches(expandSelectedStack(selected, live, arrowDirection)) // Unstack → pre-stack arrangement
-      return
-    }
-    applyStackPatches(collapseSelectedStack(selected, live, arrowDirection, live)) // Collapse in place — magnet is the pack
-  }
+  // Stack/unstack moved to the thread menu (frame–frame threads only)
+  const handleStackFramesTogether = () => {}
 
   // Tidy up: even the gaps and line the selection into a row, column, or grid
   const handleTidyUp = () => {
@@ -1263,66 +1236,67 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
     return () => cancelAnimationFrame(id)
   }, [boardSearchOpen])
 
-  // Update panel styling when fillColor, borderColor, borderStyle, or borderWeight changes
-  // Apply to selected panels or panels connected to selected edge
-  // Also save to database (message metadata)
+  // Live thread pick — read on color change only (never re-apply on select alone)
+  const clickedEdgeRef = useRef(clickedEdge)
+  clickedEdgeRef.current = clickedEdge
+  // First paint has empty toolbar defaults; skip so we don't wipe existing frame fills
+  const skipToolbarStyleApplyRef = useRef(true)
+
+  // Push fill/border only when the user changes toolbar style — not when a thread is selected.
+  // Selecting a thread used to re-run this with fillColor '' and clear both endpoint frames (and DB).
   useEffect(() => {
-    if (!reactFlowInstance) return
-
-    const nodes = reactFlowInstance.getNodes()
-    const edges = reactFlowInstance.getEdges()
-
-    // Determine which panels to update
-    const panelsToUpdate = new Set<string>()
-
-    // First, check for selected panels
-    const selectedNodes = nodes.filter(node => node.selected)
-    selectedNodes.forEach(node => panelsToUpdate.add(node.id))
-
-    // Second, check for panels connected to selected edge
-    if (clickedEdge) {
-      // Find panels directly connected to the edge (source and target)
-      panelsToUpdate.add(clickedEdge.source)
-      panelsToUpdate.add(clickedEdge.target)
+    if (!reactFlowInstance) return // No board yet
+    if (skipToolbarStyleApplyRef.current) {
+      skipToolbarStyleApplyRef.current = false // Armed for the next real style edit
+      return
     }
 
-    // If no panels to update, don't do anything
-    if (panelsToUpdate.size === 0) return
+    const nodes = reactFlowInstance.getNodes() // Snapshot for id → message lookup
+    const panelsToUpdate = new Set<string>() // Frames that should get the new style
 
-    // Update panels with new styling
+    nodes.filter((node) => node.selected).forEach((node) => panelsToUpdate.add(node.id)) // Selected frames
+
+    const edge = clickedEdgeRef.current // Thread menu pick at style-change time
+    if (edge) {
+      panelsToUpdate.add(edge.source) // Color both ends when editing with a thread selected
+      panelsToUpdate.add(edge.target)
+    }
+
+    if (panelsToUpdate.size === 0) return // Nothing to paint
+
     reactFlowInstance.setNodes((currentNodes) =>
       currentNodes.map((node) => {
-        if (panelsToUpdate.has(node.id)) {
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              fillColor: fillColor, // Update fill color
-              borderColor: borderColor, // Update border color
-              borderStyle: borderStyle, // Update border style
-              borderWeight: borderWeight ? `${borderWeight}px` : undefined, // Update border weight (convert number to string)
-            },
-          }
+        if (!panelsToUpdate.has(node.id)) return node
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            fillColor, // Toolbar fill → frame
+            borderColor, // Toolbar border → frame
+            borderStyle, // solid / dashed / …
+            borderWeight: borderWeight ? `${borderWeight}px` : undefined, // px string for metadata
+          },
         }
-        return node
       })
     )
 
-    // Save panel styling to database (message metadata) for each updated panel
     const saveStylingToDatabase = async () => {
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
       if (!user) return
 
       for (const nodeId of panelsToUpdate) {
-        const node = nodes.find(n => n.id === nodeId)
+        const node = nodes.find((n) => n.id === nodeId)
         if (!node || !('promptMessage' in node.data)) continue
 
-        const panelData = node.data as { promptMessage?: { id: string; metadata?: Record<string, any> } }
+        const panelData = node.data as {
+          promptMessage?: { id: string; metadata?: Record<string, any> }
+        }
         const messageId = panelData.promptMessage?.id
         if (!messageId) continue
 
-        // Get existing metadata
         const { data: message, error: fetchError } = await supabase
           .from('messages')
           .select('metadata')
@@ -1335,11 +1309,9 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
         }
 
         const existingMetadata = (message?.metadata as Record<string, any>) || {}
-
-        // Update metadata with new styling (only include if value is set)
         const updatedMetadata: Record<string, any> = { ...existingMetadata }
         if (fillColor !== undefined) {
-          updatedMetadata.fillColor = fillColor || null // Store null for empty string (transparent)
+          updatedMetadata.fillColor = fillColor || null // Empty toolbar = transparent
         }
         if (borderColor !== undefined) {
           updatedMetadata.borderColor = borderColor || null
@@ -1351,7 +1323,6 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
           updatedMetadata.borderWeight = borderWeight ? `${borderWeight}px` : null
         }
 
-        // Save to database
         const { error: updateError } = await supabase
           .from('messages')
           .update({ metadata: updatedMetadata })
@@ -1363,10 +1334,10 @@ export function EditorToolbar({ editor, conversationId }: EditorToolbarProps) {
       }
     }
 
-    // Save to database (debounced to avoid too many updates)
-    const timeoutId = setTimeout(saveStylingToDatabase, 500)
+    const timeoutId = setTimeout(saveStylingToDatabase, 500) // Debounce DB writes
     return () => clearTimeout(timeoutId)
-  }, [fillColor, borderColor, borderStyle, borderWeight, clickedEdge, reactFlowInstance])
+    // clickedEdge is read via ref — selecting a thread must not re-apply empty defaults
+  }, [fillColor, borderColor, borderStyle, borderWeight, reactFlowInstance])
 
   // Close leftover Filter/Capture/… menus when switching Actions / Layout / Draw / View
   useEffect(() => {

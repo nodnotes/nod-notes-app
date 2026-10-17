@@ -2,7 +2,7 @@
 
 // Zoom % control for the bottom nav menu (moved from the top-bar editor toolbar)
 import { useEffect, useRef, useState } from 'react'
-import { useReactFlow, useStore } from 'reactflow'
+import { getNodesBounds, useReactFlow, useStore } from 'reactflow'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -12,14 +12,38 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { BOARD_ZOOM_HARD, navPercentToZoom, zoomToNavPercent, zoomToNavPercentExact } from '@/lib/board-extent' // 50% zoom-in … 100% default … 200% zoom-out
+import {
+  BOARD_ZOOM_HARD,
+  clampViewportAgainstStore,
+  getBoardZoom200,
+  navPercentToZoom,
+  zoomToNavPercent,
+  zoomToNavPercentExact,
+  type BoardTranslateExtent,
+} from '@/lib/board-extent' // 50% … 100% (scale 1) … live 200% (fit board bounds)
 import { cn } from '@/lib/utils'
+
+/** Same filter as the minimap — measured frames only. */
+function isBoardBoundNode(n: { hidden?: boolean; width?: number | null; height?: number | null; type?: string }) {
+  return (
+    !n.hidden &&
+    !!n.width &&
+    !!n.height &&
+    n.type !== 'frameShimmer' &&
+    n.type !== 'placeholder'
+  )
+}
 
 export function NavZoomControl({ className }: { className?: string }) {
   const reactFlowInstance = useReactFlow() // RF instance for get/set viewport
-  const minZoom = useStore((s) => s.minZoom) // Smallest scale: 200% max zoom-out
+  const minZoom = useStore((s) => s.minZoom) // Smallest scale: live 200% (fit board bounds)
   const maxZoom = useStore((s) => s.maxZoom) // Largest scale: 50% max zoom-in
-  const [zoom, setZoom] = useState(1) // Current scale (1 = 100% default view)
+  const paneW = useStore((s) => s.width) // Pane CSS width for fit-200%
+  const paneH = useStore((s) => s.height) // Pane CSS height for fit-200%
+  const translateExtent = useStore((s) => s.translateExtent as BoardTranslateExtent) // Pan enclosure
+  const nodeOrigin = useStore((s) => s.nodeOrigin) // Needed for getNodesBounds
+  const [zoom, setZoom] = useState(1) // Current scale
+  const [z200, setZ200] = useState(1) // Live 200% = fit current board bounds
   const [isEditingZoom, setIsEditingZoom] = useState(false) // Inline % edit active
   const [zoomEditValue, setZoomEditValue] = useState('100') // Draft string while editing
   const zoomInputRef = useRef<HTMLInputElement>(null) // Focus target for inline edit
@@ -33,34 +57,60 @@ export function NavZoomControl({ className }: { className?: string }) {
     dragging: boolean
   } | null>(null)
   const suppressMenuOpenRef = useRef(false) // Block preset menu after a scrub gesture
+  const z200Ref = useRef(1) // Scrub/handlers read the latest fit reference without stale closes
 
-  // Keep display in sync with viewport; snap near scale 1 to the 100% default
+  /** Content AABB → board bounds (content + gap) → fit zoom labeled 200%. */
+  const readZ200 = () => {
+    const nodes = reactFlowInstance.getNodes().filter(isBoardBoundNode)
+    const content = nodes.length > 0 ? getNodesBounds(nodes, nodeOrigin) : null
+    return getBoardZoom200(content, paneW, paneH)
+  }
+
+  /** Zoom in place — keep the flow point under the pane center; clamp into board bounds. */
+  const setZoomKeepingView = (nextZoom: number, opts?: { duration?: number }) => {
+    if (!(paneW > 0) || !(paneH > 0)) {
+      reactFlowInstance.zoomTo(nextZoom) // Pane not measured yet — d3 zoom only
+      return
+    }
+    const vp = reactFlowInstance.getViewport()
+    const z0 = vp.zoom > 0 ? vp.zoom : 1
+    const cx = (paneW / 2 - vp.x) / z0 // Current view center in flow space
+    const cy = (paneH / 2 - vp.y) / z0
+    const next = {
+      x: paneW / 2 - cx * nextZoom,
+      y: paneH / 2 - cy * nextZoom,
+      zoom: nextZoom,
+    }
+    reactFlowInstance.setViewport(
+      clampViewportAgainstStore(next, { translateExtent, width: paneW, height: paneH }),
+      opts?.duration != null ? { duration: opts.duration } : undefined
+    )
+  }
+
+  // Keep % label in sync — do not soft-snap here (that fought zoom-in near 200%)
   useEffect(() => {
     const updateZoom = () => {
-      if (isEditingZoom || isDraggingZoom) return // Don't overwrite while typing or scrubbing
+      const fit = readZ200()
+      z200Ref.current = fit.zoom
+      setZ200(fit.zoom)
+      if (isEditingZoom || isDraggingZoom) return
       const currentZoom = reactFlowInstance.getViewport().zoom
-      if (currentZoom >= 0.98 && currentZoom <= 1.02 && currentZoom !== 1) {
-        const viewport = reactFlowInstance.getViewport()
-        reactFlowInstance.setViewport({ ...viewport, zoom: 1 })
-        setZoom(1)
-        setZoomEditValue(String(zoomToNavPercent(1))) // Scale 1 is 100% (the default view)
-      } else {
-        setZoom(currentZoom)
-        setZoomEditValue(String(zoomToNavPercent(currentZoom))) // 50% zoom-in … 200% zoom-out
-      }
+      setZoom(currentZoom)
+      setZoomEditValue(String(zoomToNavPercent(currentZoom, fit.zoom)))
     }
     updateZoom()
     const interval = setInterval(updateZoom, 100)
     return () => clearInterval(interval)
-  }, [reactFlowInstance, isEditingZoom, isDraggingZoom])
+  }, [reactFlowInstance, isEditingZoom, isDraggingZoom, paneW, paneH, nodeOrigin])
 
-  // Apply zoom centered on the map (same feel as wheel zoom)
+  // Scrub: RF zoomTo (d3 constrain); soft-snap onto the 200% floor only (never block zoom-in)
   const applyScrubZoom = (rawZoom: number) => {
-    let next = Math.max(minZoom, Math.min(maxZoom, rawZoom)) // Honor live board zoom range
-    if (next >= 0.98 && next <= 1.02) next = 1 // Soft snap to the 100% default (scale 1)
+    const ref = z200Ref.current
+    let next = Math.max(minZoom, Math.min(maxZoom, rawZoom))
+    if (ref > 0 && next <= ref * 1.01) next = ref // At/under floor → stick to 200%
     reactFlowInstance.zoomTo(next)
     setZoom(next)
-    setZoomEditValue(String(zoomToNavPercent(next))) // Label follows the signed nav percent
+    setZoomEditValue(String(zoomToNavPercent(next, ref)))
   }
 
   const handleZoomPointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
@@ -86,8 +136,9 @@ export function NavZoomControl({ className }: { className?: string }) {
       e.currentTarget.setPointerCapture(e.pointerId) // Capture only once scrubbing starts
     }
     // Drag up (negative dy) → zoom in (percent falls). Drag down → zoom out, stopping at 200%.
-    const startPct = zoomToNavPercentExact(drag.startZoom) // Unrounded so the crossing at 100% doesn't jump
-    applyScrubZoom(navPercentToZoom(startPct + dy * 0.5))
+    const ref = z200Ref.current
+    const startPct = zoomToNavPercentExact(drag.startZoom, ref)
+    applyScrubZoom(navPercentToZoom(startPct + dy * 0.5, ref))
   }
 
   const handleZoomPointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
@@ -106,33 +157,76 @@ export function NavZoomControl({ className }: { className?: string }) {
   const handleZoomInputFocus = () => {
     setIsEditingZoom(true) // Swap button for input
     setMenuOpen(false) // Close presets while editing
-    setZoomEditValue(String(zoomToNavPercent(zoom))) // 50% in … 200% out
+    setZoomEditValue(String(zoomToNavPercent(zoom, z200Ref.current)))
     setTimeout(() => zoomInputRef.current?.select(), 0)
+  }
+
+  /** 200% → zoom out to meet board bounds; keep current view center (do not jump to content). */
+  const goTo200 = () => {
+    const fit = readZ200()
+    z200Ref.current = fit.zoom
+    setZ200(fit.zoom)
+    window.dispatchEvent(new CustomEvent('fit-view-start'))
+    setZoomKeepingView(fit.zoom, { duration: 300 })
+    setTimeout(() => {
+      setZoom(fit.zoom)
+      setZoomEditValue(String(zoomToNavPercent(fit.zoom, fit.zoom)))
+      window.dispatchEvent(new CustomEvent('fit-view-end'))
+    }, 350)
+  }
+
+  /** 100% → default scale 1 (not past the live 200% floor). */
+  const goTo100 = () => {
+    const fit = readZ200()
+    z200Ref.current = fit.zoom
+    setZ200(fit.zoom)
+    const zMid = Math.max(fit.zoom, 1)
+    setZoomKeepingView(zMid, { duration: 300 })
+    setTimeout(() => {
+      setZoom(zMid)
+      setZoomEditValue(String(zoomToNavPercent(zMid, fit.zoom)))
+    }, 350)
   }
 
   const handleZoomInputBlur = () => {
     setIsEditingZoom(false)
     const numericValue = parseFloat(zoomEditValue)
+    const ref = z200Ref.current
     if (!isNaN(numericValue)) {
-      const newZoom = Math.max(minZoom, Math.min(maxZoom, navPercentToZoom(numericValue))) // 50% zoom-in … 200% zoom-out
-      const viewport = reactFlowInstance.getViewport()
-      reactFlowInstance.setViewport({ ...viewport, zoom: newZoom })
+      if (numericValue === 200) {
+        goTo200() // Typed 200% → meet board bounds
+        return
+      }
+      if (numericValue === 100) {
+        goTo100() // Typed 100% → scale 1
+        return
+      }
+      const newZoom = Math.max(minZoom, Math.min(maxZoom, navPercentToZoom(numericValue, ref)))
+      setZoomKeepingView(newZoom)
       setZoom(newZoom)
-      setZoomEditValue(String(zoomToNavPercent(newZoom)))
+      setZoomEditValue(String(zoomToNavPercent(newZoom, ref)))
     } else {
-      setZoomEditValue(String(zoomToNavPercent(zoom))) // Revert invalid
+      setZoomEditValue(String(zoomToNavPercent(zoom, ref)))
     }
   }
 
   const handleZoomInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') zoomInputRef.current?.blur()
     if (e.key === 'Escape') {
-      setZoomEditValue(String(zoomToNavPercent(zoom)))
+      setZoomEditValue(String(zoomToNavPercent(zoom, z200Ref.current)))
       zoomInputRef.current?.blur()
     }
   }
 
-  const handleZoomChange = (zoomValue: number | 'fit') => {
+  const handleZoomChange = (zoomValue: number | 'fit' | '100' | '200') => {
+    if (zoomValue === '200') {
+      goTo200()
+      return
+    }
+    if (zoomValue === '100') {
+      goTo100()
+      return
+    }
     if (zoomValue === 'fit') {
       // Fit content into the map, accounting for top bar + prompt box
       const topBar = document.querySelector('[class*="bg-white"][class*="shadow-sm"][class*="border-b"]') as HTMLElement
@@ -183,7 +277,7 @@ export function NavZoomControl({ className }: { className?: string }) {
       const availableWidth = reactFlowWidth * (1 - uiPadding * 2)
       const availableHeight = reactFlowHeight * (1 - uiPadding * 2)
       let calculatedZoom = Math.min(availableWidth / contentWidth, availableHeight / contentHeight)
-      calculatedZoom = Math.max(BOARD_ZOOM_HARD.minZoom, Math.min(BOARD_ZOOM_HARD.maxZoom, calculatedZoom)) // 200% out … 50% in
+      calculatedZoom = Math.max(BOARD_ZOOM_HARD.minZoom, Math.min(BOARD_ZOOM_HARD.maxZoom, calculatedZoom))
       const targetViewportY = reactFlowHeight / 2 - contentCenterY * calculatedZoom
 
       window.dispatchEvent(new CustomEvent('fit-view-start'))
@@ -209,13 +303,13 @@ export function NavZoomControl({ className }: { className?: string }) {
         })
       })
     } else {
-      let finalZoom = zoomValue
-      if (zoomValue >= 0.98 && zoomValue <= 1.02) finalZoom = 1 // Snap near max zoom-in (scale 1)
-      const viewport = reactFlowInstance.getViewport()
-      reactFlowInstance.setViewport(
-        { x: viewport.x, y: viewport.y, zoom: finalZoom },
-        finalZoom !== zoomValue ? { duration: 150 } : undefined
-      )
+      const ref = z200Ref.current
+      const ratio = ref > 0 ? zoomValue / ref : 1
+      if (ratio >= 0.98 && ratio <= 1.02) {
+        goTo200() // Near 200% preset → meet board bounds
+        return
+      }
+      setZoomKeepingView(zoomValue) // Presets keep the current view center
     }
     setTimeout(() => setZoom(reactFlowInstance.getViewport().zoom), 10)
   }
@@ -284,7 +378,7 @@ export function NavZoomControl({ className }: { className?: string }) {
         >
           {/* Grow with digit count (50% in → 200% out); tabular so width doesn’t jump mid-scrub */}
           <span className="inline-block text-center tabular-nums whitespace-nowrap">
-            {zoomToNavPercent(zoom)}%
+            {zoomToNavPercent(zoom, z200)}%
           </span>
         </Button>
       </DropdownMenuTrigger>
@@ -304,14 +398,21 @@ export function NavZoomControl({ className }: { className?: string }) {
         {/* Menu opens upward: top = zoom in (50%), bottom = max zoom out (200%). */}
         {[50, 75, 100, 150, 200]
           .filter((p) => {
-            const z = navPercentToZoom(p) // Preset is a nav percent, not a raw scale
+            if (p === 200 || p === 100) return true // Always offer default + live fit-to-bounds
+            const z = navPercentToZoom(p, z200)
             return z >= minZoom - 1e-6 && z <= maxZoom + 1e-6
           })
           .map((p) => (
           <DropdownMenuItem
             key={p}
-            onClick={() => handleZoomChange(navPercentToZoom(p))}
-            className={cn(Math.abs(zoomToNavPercent(zoom) - p) < 0.5 && 'bg-gray-100 dark:bg-gray-800')}
+            onClick={() =>
+              p === 200
+                ? handleZoomChange('200')
+                : p === 100
+                  ? handleZoomChange('100')
+                  : handleZoomChange(navPercentToZoom(p, z200))
+            }
+            className={cn(Math.abs(zoomToNavPercent(zoom, z200) - p) < 0.5 && 'bg-gray-100 dark:bg-gray-800')}
           >
             {p}%
           </DropdownMenuItem>

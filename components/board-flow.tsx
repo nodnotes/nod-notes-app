@@ -16,8 +16,10 @@ import ReactFlow, {
   ConnectionLineType,
   BaseEdge,
   getSmoothStepPath,
+  getNodesBounds,
 } from 'reactflow'
 import type { Node, Edge, EdgeChange, EdgeProps } from 'reactflow' // Types only — value `Node` is undefined and shadows DOM Node
+import { zoomIdentity } from 'd3-zoom' // Snap camera up when live 200% floor rises
 import 'reactflow/dist/style.css'
 import '@/components/threads/thread-view-stroke.css' // After RF — screen-constant stroke (RF sets width:1)
 import { ChatPanelNode } from './chat-panel-node' // Eager: next/dynamic breaks RF nodeTypes + left frames blank forever
@@ -191,13 +193,21 @@ import { transformHtmlToBlockType } from '@/lib/blocks/turn-into' // Seed empty-
 import { boardTitleOrDefault, DEFAULT_BOARD_TITLE } from '@/lib/board-title' // Empty board names start as New board
 import { propertyBlockHtml } from '@/lib/tiptap/property-block' // I-bar Turn into → Property seeds icon + Empty cell
 import { absFlowPosition, nodeFlowSize, useBlockGroupDrag } from './use-block-group-drag' // Drag attach/detach between groups / page
-import { useFrameNestStackDrag, isStackCollapsedMeta } from './use-frame-nest-stack-drag' // Edge-snap → stack reveal
+import { useFrameNestStackDrag, isStackCollapsedMeta } from './use-frame-nest-stack-drag' // Edge-snap align + thread-pair rigid drag
+import {
+  threadConnectsTwoFrames,
+  threadStackArrowSide,
+  isThreadPairStackLocked,
+  stackUnderThreadFrame,
+  openThreadStack,
+  toggleThreadStackLock,
+} from '@/lib/thread-frame-stack' // Thread-menu Open stack / Stack under / Lock frames
 import {
   isHiddenByLiveBoardFilter,
   frameShownByLiveBoardFilter, // Thread stays only when both frames pass
   getLiveBoardFilters,
 } from '@/lib/board-frame-filters' // Board Filter strip hides non-matches
-import { minStackIndex } from '@/lib/frame-side-stacks' // Per-side stack z-order
+import { minStackIndex, stripNonThreadStacks } from '@/lib/frame-side-stacks' // Thread-pair stack z-order + migrate
 import { FrameNestStackOverlay } from './frame-nest-stack-overlay' // Snap preview line on host edge
 import { IBarFlowAnchor } from './ibar-flow-anchor' // I-bar placement without BoardFlow pan/zoom re-renders
 import { placeFrameScale } from '@/lib/ibar-place-scale' // Zoom-compensated frameScale for board place
@@ -312,15 +322,23 @@ import { isPhoneLikeBoard, isHeavyFrame } from '@/lib/phone-frame-budget' // Pho
 import {
   BOARD_ZOOM_DEFAULT,
   BOARD_ZOOM_HARD,
+  BOARD_TRANSLATE_EXTENT_INFINITE,
+  applyBoardD3Constrain,
+  applyBoardZoomFloor,
+  boardTranslateExtent,
   expandSoftBounds,
   expandZoomRange,
+  getLiveBoardBounds,
   softBoundsFromNodes,
   softBoundsEqual,
+  translateExtentsEqual,
   zoomRangesEqual,
+  type BoardTranslateExtent,
   type BoardZoomRange,
   type SoftBoardBounds,
   clampBoardZoom,
-} from '@/lib/board-extent' // Infinite pan; grow zoom + soft world with content
+  clampViewportAgainstStore,
+} from '@/lib/board-extent' // Pan clamped to board bounds; 200% = fit those bounds
 
 interface Message {
   id: string
@@ -360,10 +378,18 @@ const BRAND_RIGHT = 12 // Inset from map column right edge
 /** Flow → frame top-left so the caret/⋮⋮ land on the I-bar (block chrome only). */
 const BLOCK_CREATE_OFFSET_X = 2 // contentFit BLOCK_FRAME_PAD_X (⋮⋮ lives outside the fill)
 const BLOCK_CREATE_OFFSET_Y = 2 // contentFit paddingTop only (legacy 20 assumed chat p-1 + extra)
-/** Empty hug seed — matches chat-panel BLOCK_LOCKED_MIN_W / BLOCK_MIN_FRAME_H (gutter 20 + ~3ch of 20px). */
-const BLOCK_PLACE_MIN_W = 51
-const BLOCK_PLACE_MIN_H = 25
-/** Place seeds must match one-line hug — do NOT floor at FRAME_RESIZE_MIN (40) or the blue box stays taller than the peach fill. */
+/** Empty hug seed — match chat-panel empty measure (pad + gutter + ~3ch + right inset). */
+const BLOCK_PLACE_PAD_X = 2 // contentFit BLOCK_FRAME_PAD_X
+const BLOCK_PLACE_GUTTER = 20 // BLOCK_HANDLE_GUTTER_W — ⋮⋮ column in the measure path when selected
+const BLOCK_PLACE_THREE_CH = 31 // ~3ch of 20px body text
+const BLOCK_PLACE_RIGHT_INSET = Math.max(BLOCK_PLACE_PAD_X, BLOCK_PLACE_PAD_X + 2) // padR vs padL+GRIP_ICON_INSET
+/** Same floor as chat-panel `FRAME_RESIZE_MIN` — place must not undershoot content/resize min (that jumped on corner-drag). */
+const BLOCK_PLACE_CONTENT_MIN = 40
+const BLOCK_PLACE_MIN_W = Math.max(
+  BLOCK_PLACE_CONTENT_MIN,
+  BLOCK_PLACE_PAD_X + BLOCK_PLACE_GUTTER + BLOCK_PLACE_THREE_CH + BLOCK_PLACE_RIGHT_INSET // 57 empty hug
+)
+const BLOCK_PLACE_MIN_H = BLOCK_PLACE_CONTENT_MIN // Match content min (was 25 one-line — smaller than resize floor)
 
 /** Metadata extras so a placed frame paints at ~100% screen size for the current zoom. */
 function placeScaleMetadata(zoom: number): {
@@ -375,8 +401,9 @@ function placeScaleMetadata(zoom: number): {
   return {
     frameScale: fs, // Locked CSS scale (needs resizeDimensions → isUserResized)
     resizeDimensions: {
-      width: Math.max(1, Math.round(BLOCK_PLACE_MIN_W * fs)), // Fit-to-text seed — no 40px empty pad
-      height: Math.max(1, Math.round(BLOCK_PLACE_MIN_H * fs)),
+      // × place scale, but never below content min in flow px (fs<1 used to shrink under the resize floor)
+      width: Math.max(BLOCK_PLACE_MIN_W, Math.round(BLOCK_PLACE_MIN_W * fs)),
+      height: Math.max(BLOCK_PLACE_MIN_H, Math.round(BLOCK_PLACE_MIN_H * fs)),
     },
   }
 }
@@ -888,16 +915,143 @@ function BoardFlowInner({
   const [focusedPanelIndex, setFocusedPanelIndex] = useState<number | null>(null) // Currently focused panel index in linear mode
   const [frameMountRecomputeKey, setFrameMountRecomputeKey] = useState(0) // Viewport defer: refresh near-frame set after pan
   const [paneSize, setPaneSize] = useState({ width: 1200, height: 800 }) // RF pane — flow bounds for mount prefetch
-  // Pan is already infinite (RF default translateExtent). Grow zoom limits + soft fit world with content.
+  // Live 200% zoom floor + pan clamped to default board bounds; soft AABB for fit helpers.
   const [zoomRange, setZoomRange] = useState<BoardZoomRange>(BOARD_ZOOM_DEFAULT)
   const zoomRangeRef = useRef(zoomRange)
   zoomRangeRef.current = zoomRange
+  const [translateExtent, setTranslateExtent] = useState<BoardTranslateExtent>(
+    BOARD_TRANSLATE_EXTENT_INFINITE
+  )
+  const translateExtentRef = useRef(translateExtent)
+  translateExtentRef.current = translateExtent
   const [softBounds, setSoftBounds] = useState<SoftBoardBounds>(() => softBoundsFromNodes([]))
   const softBoundsRef = useRef(softBounds)
   softBoundsRef.current = softBounds
-  void softBounds // Soft world AABB — expanded with content; fit/minimap consumers next
+  void softBounds // Soft world AABB — expanded with content; fit helpers next
 
-  /** Expand soft world + zoom range when a frame is placed, moved, or resized. */
+  /** Measured frames — width/height from RF box or style (pre-measure). */
+  const isBoardBoundNode = useCallback(
+    (n: {
+      hidden?: boolean
+      width?: number | null
+      height?: number | null
+      style?: { width?: number | string; height?: number | string }
+      type?: string
+    }) => {
+      if (n.hidden || n.type === 'frameShimmer' || n.type === 'placeholder') return false
+      const w =
+        typeof n.width === 'number'
+          ? n.width
+          : typeof n.style?.width === 'number'
+            ? n.style.width
+            : parseFloat(String(n.style?.width ?? '')) || 0
+      const h =
+        typeof n.height === 'number'
+          ? n.height
+          : typeof n.style?.height === 'number'
+            ? n.style.height
+            : parseFloat(String(n.style?.height ?? '')) || 0
+      return w > 0 && h > 0
+    },
+    []
+  )
+
+  // Filled after useStoreApi — sync applies extent to d3 immediately (setViewport skips constrain)
+  const rfStoreRef = useRef<ReturnType<typeof useStoreApi> | null>(null)
+
+  /** Live minZoom (200%) + translateExtent from board bounds; optionally raise maxZoom. */
+  const syncZoomFloorFromNodes = useCallback(
+    (list: typeof nodes, liveZoom?: number) => {
+      const store = rfStoreRef.current?.getState()
+      const paneW = store?.width || paneSize.width
+      const paneH = store?.height || paneSize.height
+      const measured = list.filter(isBoardBoundNode).map((n) => {
+        // Ensure getNodesBounds sees numeric box even when only style is set
+        if (typeof n.width === 'number' && typeof n.height === 'number') return n
+        const w =
+          typeof n.width === 'number'
+            ? n.width
+            : typeof n.style?.width === 'number'
+              ? n.style.width
+              : parseFloat(String(n.style?.width ?? '')) || 220
+        const h =
+          typeof n.height === 'number'
+            ? n.height
+            : typeof n.style?.height === 'number'
+              ? n.style.height
+              : parseFloat(String(n.style?.height ?? '')) || 72
+        return { ...n, width: w, height: h }
+      })
+      const content = measured.length > 0 ? getNodesBounds(measured) : null
+      const board = getLiveBoardBounds(content, paneW, paneH)
+      const nextExtent = boardTranslateExtent(board)
+      if (!translateExtentsEqual(translateExtentRef.current, nextExtent)) {
+        translateExtentRef.current = nextExtent
+        setTranslateExtent(nextExtent)
+        // Push into RF/d3 now — React prop update alone still leaves setViewport unconstrained
+        ;(store as { setTranslateExtent?: (e: BoardTranslateExtent) => void } | undefined)?.setTranslateExtent?.(
+          nextExtent
+        )
+      }
+      // d3 default constrain centers when view > board — that jumps onto a new frame at 100%
+      const d3Zoom = (
+        store as { d3Zoom?: Parameters<typeof applyBoardD3Constrain>[0] } | undefined
+      )?.d3Zoom
+      if (d3Zoom) applyBoardD3Constrain(d3Zoom)
+      let nextZoom = applyBoardZoomFloor(zoomRangeRef.current, content, paneW, paneH)
+      if (liveZoom != null || (content && content.width > 0)) {
+        nextZoom = expandZoomRange(nextZoom, {
+          liveZoom,
+          paneW,
+          paneH,
+          contentW: content?.width,
+          contentH: content?.height,
+        })
+      }
+      if (!zoomRangesEqual(zoomRangeRef.current, nextZoom)) {
+        zoomRangeRef.current = nextZoom
+        setZoomRange(nextZoom)
+      }
+      // Push scaleExtent now — React `minZoom` prop lags a frame; setViewport also skips it
+      const zoomApi = store as
+        | {
+            setMinZoom?: (z: number) => void
+            setMaxZoom?: (z: number) => void
+            transform?: [number, number, number]
+            d3Zoom?: { transform: (sel: unknown, t: unknown) => void }
+            d3Selection?: unknown
+            translateExtent: BoardTranslateExtent
+            width: number
+            height: number
+          }
+        | undefined
+      zoomApi?.setMinZoom?.(nextZoom.minZoom) // Live 200% floor into d3 + store
+      zoomApi?.setMaxZoom?.(nextZoom.maxZoom)
+      const liveZ = zoomApi?.transform?.[2]
+      // If camera is past the new 200% floor (content shrunk / first sync), snap up in place
+      if (
+        liveZ != null &&
+        liveZ < nextZoom.minZoom - 1e-9 &&
+        zoomApi.d3Zoom &&
+        zoomApi.d3Selection &&
+        paneW > 0 &&
+        paneH > 0
+      ) {
+        const [vx, vy] = zoomApi.transform!
+        const snapped = clampViewportAgainstStore(
+          { x: vx, y: vy, zoom: nextZoom.minZoom },
+          zoomApi
+        )
+        zoomApi.d3Zoom.transform(
+          zoomApi.d3Selection,
+          zoomIdentity.translate(snapped.x, snapped.y).scale(snapped.zoom) // Same as RF setViewport
+        )
+      }
+    },
+    [isBoardBoundNode, paneSize.width, paneSize.height]
+  )
+
+  /** Expand soft world + zoom/pan limits when a frame is placed, moved, or resized. */
   const absorbContentBox = useCallback(
     (box: { x: number; y: number; width: number; height: number }, liveZoom?: number) => {
       const nextBounds = expandSoftBounds(softBoundsRef.current, box)
@@ -905,20 +1059,15 @@ function BoardFlowInner({
         softBoundsRef.current = nextBounds
         setSoftBounds(nextBounds)
       }
-      const nextZoom = expandZoomRange(zoomRangeRef.current, {
-        liveZoom,
-        paneW: paneSize.width,
-        paneH: paneSize.height,
-        contentW: box.width,
-        contentH: box.height,
-      })
-      if (!zoomRangesEqual(zoomRangeRef.current, nextZoom)) {
-        zoomRangeRef.current = nextZoom
-        setZoomRange(nextZoom)
-      }
+      syncZoomFloorFromNodes(nodesRef.current, liveZoom)
     },
-    [paneSize.width, paneSize.height]
+    [syncZoomFloorFromNodes]
   )
+
+  // Pane resize → recompute live 200% floor + pan enclosure
+  useEffect(() => {
+    syncZoomFloorFromNodes(nodesRef.current)
+  }, [paneSize.width, paneSize.height, syncZoomFloorFromNodes])
 
   // Free-only nav UI — Linear toggle removed; coerce any 'linear' preference to canvas
   const setViewMode = (mode: 'linear' | 'canvas') => {
@@ -1269,6 +1418,26 @@ function BoardFlowInner({
 
   const reactFlowInstance = useReactFlow()
   const rfStore = useStoreApi() // Embed: force pane width/height when CSS % height collapses
+  rfStoreRef.current = rfStore // Pan/zoom sync + wheel clamp read live translateExtent from here
+
+  /** setViewport skips d3 constrain — always clamp to live board bounds + zoom band. */
+  const setClampedViewport = useCallback(
+    (next: { x: number; y: number; zoom: number }, options?: { duration?: number }) => {
+      const state = rfStore.getState()
+      const zoom = Math.min(state.maxZoom, Math.max(state.minZoom, next.zoom))
+      reactFlowInstance.setViewport(
+        clampViewportAgainstStore({ ...next, zoom }, state),
+        options
+      )
+    },
+    [reactFlowInstance, rfStore]
+  )
+
+  // Recompute pan enclosure when nodes mount/measure (extent stays infinite until then)
+  useEffect(() => {
+    syncZoomFloorFromNodes(nodes)
+  }, [nodes, syncZoomFloorFromNodes])
+
   // Culled frames never mount, so their connection points stay empty and the thread is omitted.
   useEffect(() => {
     const stamp = () => seedOffscreenThreadEnds(rfStore) // Runs after RF copies nodes into the store
@@ -1312,7 +1481,7 @@ function BoardFlowInner({
       updateNodeInternals(ids) // Same remeasure a frame reselect runs
     })
   }, [rfStore, updateNodeInternals])
-  const { setReactFlowInstance, registerSetNodes, isLocked, layoutMode, setLayoutMode, setIsDeterministicMapping, panelWidth: contextPanelWidth, isPromptBoxCentered, lineStyle, setLineStyle, arrowDirection, setArrowDirection, boardRule: contextBoardRule, boardStyle: contextBoardStyle, boardFont, clickedEdge: contextClickedEdge, setClickedEdge: setContextClickedEdge, fillColor, borderColor, borderWeight, borderStyle, flashcardMode, setFlashcardMode, selectedTag, setSelectedTag, isDrawing, setIsDrawing, drawTool, setDrawTool, drawShape, setDrawShape, setFillColor, setBorderColor, setBorderWeight, setBorderStyle, registerMapUndoRedo, registerMapTakeSnapshot, snapEnabled, setSnapEnabled } = useReactFlowContext()
+  const { setReactFlowInstance, registerSetNodes, isLocked, layoutMode, setLayoutMode, setIsDeterministicMapping, panelWidth: contextPanelWidth, isPromptBoxCentered, lineStyle, setLineStyle, arrowDirection, setArrowDirection, boardRule: contextBoardRule, boardStyle: contextBoardStyle, boardFont, clickedEdge: contextClickedEdge, setClickedEdge: setContextClickedEdge, fillColor, borderColor, borderWeight, borderStyle, flashcardMode, setFlashcardMode, selectedTag, setSelectedTag, isDrawing, setIsDrawing, drawTool, setDrawTool, drawShape, setDrawShape, setFillColor, setBorderColor, setBorderWeight, setBorderStyle, registerMapUndoRedo, registerMapTakeSnapshot, snapEnabled, setSnapEnabled, edgeSnapEnabled } = useReactFlowContext()
   const { rotation: boardRotation, setScrollMode, setRotationAroundViewCenter, adoptRotation } = useBoardRotation() // Subscribe so I-bar / overlays re-place when the camera twists
 
   const chatPanelCountRef = useRef(0) // Frame count is stable mid-drag — skip the O(n) scan per tick
@@ -3058,6 +3227,7 @@ function BoardFlowInner({
   // RF `fitView` is fitViewOnInit: it retries until a node exists. On empty `/board` or a
   // settled empty board that leaves fitViewOnInitDone=false, the first user-created frame
   // would zoom the camera — mark init-fit done and skip the prop so create keeps viewport.
+  const [blockInitFit, setBlockInitFit] = useState(false) // Latched after empty settle — create must not fitView
   useEffect(() => {
     if (embedded) return // Embeds one-shot fit in onInit / host commands only
     const emptySettled =
@@ -3066,6 +3236,7 @@ function BoardFlowInner({
     if (!rfStore.getState().fitViewOnInitDone) {
       rfStore.setState({ fitViewOnInitDone: true }) // Claim init so the next node add does not fit
     }
+    setBlockInitFit(true) // Keep fitView prop false after empty settle even when messages appear
   }, [embedded, conversationId, isMessagesPending, messages.length, rfStore])
 
   useEffect(() => {
@@ -3156,6 +3327,7 @@ function BoardFlowInner({
     setNodes,
     isLocked,
     takeSnapshot,
+    edgeSnapEnabled, // More → Snap → Snap to frames
     refetchMessages: () => {
       void refetchMessages()
     },
@@ -6122,33 +6294,53 @@ function BoardFlowInner({
             }
 
             // Load panel styling from message metadata (fillColor, borderColor, borderStyle, borderWeight)
-            const messageMetadata = message.metadata || {}
-            const stackIndex = minStackIndex(messageMetadata as Record<string, unknown>)
-            const savedLayerZ = layerZIndexFromMeta(messageMetadata as Record<string, unknown>) // Layers thumb order
+            const messageMetadata = stripNonThreadStacks({
+              ...((message.metadata || {}) as Record<string, unknown>),
+            })
+            const stackIndex = minStackIndex(messageMetadata)
+            const savedLayerZ = layerZIndexFromMeta(messageMetadata) // Layers thumb order
+            const promptForNode = { ...message, metadata: messageMetadata }
             const panelNode: Node<ChatPanelNodeData> = {
               id: nodeId,
               type: 'chatPanel',
               position: panelPosition,
               data: {
-                promptMessage: message, // Same user message for all panels
+                promptMessage: promptForNode, // Same user message for all panels
                 responseMessage: responseMessage, // Different response for each panel
                 conversationId: conversationId || '',
                 isResponseCollapsed: false, // Initialize collapse state
                 // Load panel styling from message metadata
                 // Normalize null to empty string for fillColor (transparent) and 'none' for borderStyle
-                fillColor: messageMetadata.fillColor === null ? '' : (messageMetadata.fillColor || undefined),
-                borderColor: messageMetadata.borderColor === null ? undefined : (messageMetadata.borderColor || undefined),
-                borderStyle: messageMetadata.borderStyle === null ? 'none' : (messageMetadata.borderStyle || undefined),
-                borderWeight: messageMetadata.borderWeight === null ? undefined : (messageMetadata.borderWeight || undefined),
+                fillColor:
+                  messageMetadata.fillColor === null
+                    ? ''
+                    : typeof messageMetadata.fillColor === 'string'
+                      ? messageMetadata.fillColor
+                      : undefined,
+                borderColor:
+                  typeof messageMetadata.borderColor === 'string'
+                    ? messageMetadata.borderColor
+                    : undefined,
+                borderStyle:
+                  messageMetadata.borderStyle === null
+                    ? 'none'
+                    : typeof messageMetadata.borderStyle === 'string'
+                      ? messageMetadata.borderStyle
+                      : undefined,
+                borderWeight:
+                  typeof messageMetadata.borderWeight === 'number' ||
+                  typeof messageMetadata.borderWeight === 'string'
+                    ? messageMetadata.borderWeight
+                    : undefined,
                 frameShape: parseFrameShape(messageMetadata.frameShape) ?? undefined,
               },
               draggable: !isLocked && messageMetadata.boardLocked !== true, // Global freeze or per-frame board pin
-              // Collapsed stack mates stay hidden until edge-line reveal; board filters hide non-matches
+              // Collapsed thread-stack mates stay hidden until Open stack; board filters hide non-matches
               hidden:
-                isStackCollapsedMeta(messageMetadata as Record<string, unknown>) ||
+                isStackCollapsedMeta(messageMetadata) ||
                 (messageMetadata.isBlock === true &&
                   isHiddenByLiveBoardFilter(
-                    messageMetadata as Record<string, unknown>,
+                    messageMetadata,
                     String(message.content || '')
                   )),
               zIndex: savedLayerZ ?? (stackIndex == null ? undefined : Math.max(0, 10 - stackIndex)),
@@ -6174,33 +6366,53 @@ function BoardFlowInner({
           console.log('🔄 BoardFlow: Creating panel for user message:', message.id, 'with response: none', isBlock ? '(block)' : '')
 
           // Load panel styling from message metadata (fillColor, borderColor, borderStyle, borderWeight)
-          const messageMetadata = message.metadata || {}
-          const stackIndex = minStackIndex(messageMetadata as Record<string, unknown>)
-          const savedLayerZ = layerZIndexFromMeta(messageMetadata as Record<string, unknown>) // Layers thumb order
+          const messageMetadata = stripNonThreadStacks({
+            ...((message.metadata || {}) as Record<string, unknown>),
+          })
+          const stackIndex = minStackIndex(messageMetadata)
+          const savedLayerZ = layerZIndexFromMeta(messageMetadata) // Layers thumb order
+          const promptForNode = { ...message, metadata: messageMetadata }
           const panelNode: Node<ChatPanelNodeData> = {
             id: baseNodeId,
             type: 'chatPanel',
             position: currentPos,
             data: {
-              promptMessage: message,
+              promptMessage: promptForNode,
               responseMessage: undefined, // No response yet (notes never have responses)
               conversationId: conversationId || '',
               isResponseCollapsed: false, // Initialize collapse state
               // Load panel styling from message metadata
               // Normalize null to empty string for fillColor (transparent) and 'none' for borderStyle
-              fillColor: messageMetadata.fillColor === null ? '' : (messageMetadata.fillColor || undefined),
-              borderColor: messageMetadata.borderColor === null ? undefined : (messageMetadata.borderColor || undefined),
-              borderStyle: messageMetadata.borderStyle === null ? 'none' : (messageMetadata.borderStyle || undefined),
-              borderWeight: messageMetadata.borderWeight === null ? undefined : (messageMetadata.borderWeight || undefined),
+              fillColor:
+                messageMetadata.fillColor === null
+                  ? ''
+                  : typeof messageMetadata.fillColor === 'string'
+                    ? messageMetadata.fillColor
+                    : undefined,
+              borderColor:
+                typeof messageMetadata.borderColor === 'string'
+                  ? messageMetadata.borderColor
+                  : undefined,
+              borderStyle:
+                messageMetadata.borderStyle === null
+                  ? 'none'
+                  : typeof messageMetadata.borderStyle === 'string'
+                    ? messageMetadata.borderStyle
+                    : undefined,
+              borderWeight:
+                typeof messageMetadata.borderWeight === 'number' ||
+                typeof messageMetadata.borderWeight === 'string'
+                  ? messageMetadata.borderWeight
+                  : undefined,
               frameShape: parseFrameShape(messageMetadata.frameShape) ?? undefined,
             },
             draggable: !isLocked && messageMetadata.boardLocked !== true, // Global freeze or per-frame board pin
-            // Collapsed stack mates stay hidden until edge-line reveal; board filters hide non-matches
+            // Collapsed thread-stack mates stay hidden until Open stack; board filters hide non-matches
             hidden:
-              isStackCollapsedMeta(messageMetadata as Record<string, unknown>) ||
+              isStackCollapsedMeta(messageMetadata) ||
               (messageMetadata.isBlock === true &&
                 isHiddenByLiveBoardFilter(
-                  messageMetadata as Record<string, unknown>,
+                  messageMetadata,
                   String(message.content || '')
                 )),
             zIndex: savedLayerZ ?? (stackIndex == null ? undefined : Math.max(0, 10 - stackIndex)),
@@ -6367,19 +6579,8 @@ function BoardFlowInner({
           softBoundsRef.current = rebuilt
           setSoftBounds(rebuilt)
         }
-        // Huge import / large frames → unlock enough zoom-out to frame the soft world
-        const worldW = rebuilt.maxX - rebuilt.minX
-        const worldH = rebuilt.maxY - rebuilt.minY
-        const nextZoom = expandZoomRange(zoomRangeRef.current, {
-          paneW: paneSize.width,
-          paneH: paneSize.height,
-          contentW: worldW,
-          contentH: worldH,
-        })
-        if (!zoomRangesEqual(zoomRangeRef.current, nextZoom)) {
-          zoomRangeRef.current = nextZoom
-          setZoomRange(nextZoom)
-        }
+        // Live 200% floor = fit content + gap; maxZoom may still rise for tiny frames
+        syncZoomFloorFromNodes(updatedCanvasNodes)
       }
       if (boardLoadPhaseRef.current === 'cold') {
         setBoardLoadPhase('reveal') // Same paint: shells fade out, real nodes/edges fade in
@@ -6421,7 +6622,7 @@ function BoardFlowInner({
       }
     // Update prevArrowDirectionRef after panel creation
     prevArrowDirectionRef.current = arrowDirection
-  }, [messagesKey, conversationId, messages.length, viewMode, setNodes, arrowDirection, nodes, takeSnapshot, absorbContentBox, paneSize.width, paneSize.height])
+  }, [messagesKey, conversationId, messages.length, viewMode, setNodes, arrowDirection, nodes, takeSnapshot, absorbContentBox, syncZoomFloorFromNodes, paneSize.width, paneSize.height])
 
   // Handle arrow direction change when panels are selected
   // Format selected panels relative to each other based on arrow direction
@@ -6820,9 +7021,9 @@ function BoardFlowInner({
         const factor = e.ctrlKey && isMac ? 10 : 1
         const pinchDelta =
           -e.deltaY * (e.deltaMode === 1 ? 0.05 : e.deltaMode ? 1 : 0.002) * factor
-        const nextZoom = clampBoardZoom(viewport.zoom * Math.pow(2, pinchDelta))
+        const nextZoom = clampBoardZoom(viewport.zoom * Math.pow(2, pinchDelta), zoomRangeRef.current) // Live 200% floor
         if (nextZoom === viewport.zoom) return
-        reactFlowInstance.setViewport(
+        setClampedViewport(
           viewportKeepingPanePoint(
             e.clientX - rect.left,
             e.clientY - rect.top,
@@ -6947,9 +7148,9 @@ function BoardFlowInner({
           const factor = e.ctrlKey && isMac ? 10 : 1
           const pinchDelta =
             -e.deltaY * (e.deltaMode === 1 ? 0.05 : e.deltaMode ? 1 : 0.002) * factor
-          const nextZoom = clampBoardZoom(viewport.zoom * Math.pow(2, pinchDelta))
+          const nextZoom = clampBoardZoom(viewport.zoom * Math.pow(2, pinchDelta), zoomRangeRef.current) // Live 200% floor
           if (nextZoom === viewport.zoom) return
-          reactFlowInstance.setViewport(
+          setClampedViewport(
             viewportKeepingPanePoint(
               e.clientX - rect.left,
               e.clientY - rect.top,
@@ -6969,7 +7170,7 @@ function BoardFlowInner({
         e.stopPropagation()
         if (!reactFlowInstance) return
         const viewport = reactFlowInstance.getViewport()
-        reactFlowInstance.setViewport({
+        setClampedViewport({
           x: viewport.x - e.deltaX,
           y: viewport.y - e.deltaY,
           zoom: viewport.zoom,
@@ -6993,9 +7194,9 @@ function BoardFlowInner({
         const factor = e.ctrlKey && isMac ? 10 : 1
         const pinchDelta =
           -e.deltaY * (e.deltaMode === 1 ? 0.05 : e.deltaMode ? 1 : 0.002) * factor
-        const nextZoom = clampBoardZoom(viewport.zoom * Math.pow(2, pinchDelta))
+        const nextZoom = clampBoardZoom(viewport.zoom * Math.pow(2, pinchDelta), zoomRangeRef.current) // Live 200% floor
         if (nextZoom === viewport.zoom) return
-        reactFlowInstance.setViewport(
+        setClampedViewport(
           viewportKeepingPanePoint(
             e.clientX - rect.left,
             e.clientY - rect.top,
@@ -7014,7 +7215,7 @@ function BoardFlowInner({
       e.stopPropagation()
 
       const viewport = reactFlowInstance.getViewport()
-      reactFlowInstance.setViewport({
+      setClampedViewport({
         x: viewport.x - e.deltaX,
         y: viewport.y - e.deltaY,
         zoom: viewport.zoom,
@@ -7029,7 +7230,7 @@ function BoardFlowInner({
       document.removeEventListener('wheel', handleWheel, { capture: true })
       if (settleTimer) clearTimeout(settleTimer) // Don't settle into an unmounted board
     }
-  }, [navScrollMode, viewMode, reactFlowInstance, getBottomScrollLimit, checkIfAtBottom, chronologicalPanels, focusedPanelIndex, centerPanelAbovePrompt, boardRotation, isDrawing, eraserArmed, embedded, hideMapChrome, rfStore])
+  }, [navScrollMode, viewMode, reactFlowInstance, getBottomScrollLimit, checkIfAtBottom, chronologicalPanels, focusedPanelIndex, centerPanelAbovePrompt, boardRotation, isDrawing, eraserArmed, embedded, hideMapChrome, rfStore, setClampedViewport])
 
   // Check if at bottom when viewport changes in linear mode
   // Don't run when nodes change due to selection - only run when nodes are added/removed or viewMode changes
@@ -10003,8 +10204,34 @@ function BoardFlowInner({
           })()
           return
         }
+        case 'stackOpen':
+        case 'stackUnderSource':
+        case 'stackUnderTarget':
+        case 'stackLock':
+        case 'stackUnlock': {
+          if (isLocked) return
+          if (!threadConnectsTwoFrames(clickedEdge, nodes)) return
+          const zoom = reactFlowInstance?.getViewport()?.zoom || 1
+          const ctx = {
+            edgeId: clickedEdge.id,
+            sourceId: clickedEdge.source,
+            targetId: clickedEdge.target,
+            getNodes: () => reactFlowInstance.getNodes(),
+            setNodes,
+            zoom,
+          }
+          takeSnapshot()
+          if (action === 'stackOpen') void openThreadStack(ctx)
+          else if (action === 'stackUnderSource')
+            void stackUnderThreadFrame(ctx, clickedEdge.source)
+          else if (action === 'stackUnderTarget')
+            void stackUnderThreadFrame(ctx, clickedEdge.target)
+          else void toggleThreadStackLock(ctx)
+          setClickedEdge(null)
+          return
+        }
         default:
-          // Stubs (copy / duplicate / lock / template / info…) — close for now
+          // Stubs (copy / duplicate / template / info…) — close for now
           setClickedEdge(null)
       }
     },
@@ -10015,6 +10242,8 @@ function BoardFlowInner({
       handleToggleEdgeStyle,
       patchClickedThreadData,
       isLocked,
+      reactFlowInstance,
+      setNodes,
       takeSnapshot,
       setEdges,
       conversationId,
@@ -10821,7 +11050,7 @@ function BoardFlowInner({
 
       // Zoom sticky + Cmd/Ctrl → pan (same flip as pane); homepage stays zoom-only
       if (alternate && zoomNav && !hideMapChrome) {
-        reactFlowInstance.setViewport({
+        setClampedViewport({
           x: viewport.x - e.deltaX,
           y: viewport.y - e.deltaY,
           zoom: viewport.zoom,
@@ -10845,20 +11074,21 @@ function BoardFlowInner({
       if (nextZoom === viewport.zoom) return
 
       // Keep the flow point under the cursor fixed while zooming (rotation-aware)
-      const next = viewportKeepingPanePoint(
-        e.clientX - rect.left,
-        e.clientY - rect.top,
-        viewport,
-        boardRotation,
-        boardRotation,
-        nextZoom
+      setClampedViewport(
+        viewportKeepingPanePoint(
+          e.clientX - rect.left,
+          e.clientY - rect.top,
+          viewport,
+          boardRotation,
+          boardRotation,
+          nextZoom
+        )
       )
-      reactFlowInstance.setViewport(next)
     }
 
     root.addEventListener('wheel', onWheel, { passive: false, capture: true })
     return () => root.removeEventListener('wheel', onWheel, { capture: true })
-  }, [reactFlowInstance, boardRotation, navScrollMode, zoomRange, hideMapChrome])
+  }, [reactFlowInstance, boardRotation, navScrollMode, zoomRange, hideMapChrome, setClampedViewport])
 
   return (
     <PhoneFrameDragProvider manualDragNodeId={phoneManualDragNodeId}>
@@ -11011,7 +11241,7 @@ function BoardFlowInner({
           }
           if (!isOnThreadNode(node)) {
             void onBlockGroupNodeDragStop(event, node) // Attach to group / detach onto the page + persist
-            void onFrameNestStackDragStop(event, node) // Link snap pair → stack line (no hide)
+            void onFrameNestStackDragStop(event, node) // Align park + persist position only
           }
           void onOnThreadDragStop(event, node)
 
@@ -11467,7 +11697,9 @@ function BoardFlowInner({
         defaultViewport={restoredViewport ?? { x: 0, y: 0, zoom: embedded ? 0.8 : 1 }}
         // Init-fit only while a contentful board is loading — empty / new-board create must not zoom.
         // A reload of this same board skips fit so the saved pan/zoom stays.
+        // `blockInitFit` stays true after an empty settle so minting the first frame cannot re-enable fit.
         fitView={
+          !blockInitFit &&
           !restoredViewport &&
           !embedded &&
           viewMode === 'canvas' &&
@@ -11489,6 +11721,9 @@ function BoardFlowInner({
           Math.abs(boardRotation) > 0.01 && 'tt-board-rotated' // React owns this class — a DOM toggle is wiped on the next render, so the saved heading never rotates the frames
         )}
         onInit={(instance) => {
+          // Wheel/pan use d3 constrain — replace default center-when-view>board before first gesture
+          const d3Zoom = rfStore.getState().d3Zoom as Parameters<typeof applyBoardD3Constrain>[0] | undefined
+          if (d3Zoom) applyBoardD3Constrain(d3Zoom)
           if (restoredViewport && !embedded) {
             rfStore.setState({ fitViewOnInit: false, fitViewOnInitDone: true }) // Beat a late node measure
             instance.setViewport(restoredViewport) // Same camera as before the reload
@@ -11519,8 +11754,9 @@ function BoardFlowInner({
         zoomOnScroll={previewLive && !navScrollMode && !isDrawing && !eraserArmed && !hideMapChrome}
         zoomOnPinch={previewLive && !isDrawing && !eraserArmed} // Homepage still pinches; plain wheel scrolls the page
         zoomOnDoubleClick={false}
-        minZoom={zoomRange.minZoom} // 200% max zoom-out (scale 0.01)
+        minZoom={zoomRange.minZoom} // 200% = fit board bounds
         maxZoom={zoomRange.maxZoom} // 50% max zoom-in (scale 2)
+        translateExtent={translateExtent} // Pan stops at default board bounds (min pane-multiple when empty)
         preventScrolling={!hideMapChrome} // Homepage previews let the marketing page scroll under the wheel
         autoPanOnNodeDrag={false}
         onlyRenderVisibleElements // Culled frames stay unmounted; seedOffscreenThreadEnds still draws their threads
@@ -11546,7 +11782,7 @@ function BoardFlowInner({
         }}
         onMove={(event, viewport) => {
           touchBoardNavigating(viewport.zoom) // Freeze React; CSS chrome tracks live zoom
-          // At a zoom extreme while gesturing → unlock further zoom so the board stays infinite in scale
+          // At max zoom-in while gesturing → unlock further zoom-in; min stays live 200% fit
           if (!embedded) {
             const nextZoom = expandZoomRange(zoomRangeRef.current, { liveZoom: viewport.zoom })
             if (!zoomRangesEqual(zoomRangeRef.current, nextZoom)) {
@@ -12589,6 +12825,25 @@ function BoardFlowInner({
             THREAD_DEFAULT_STROKE_WIDTH
           }
           locked={(clickedEdge.data as ThreadEdgeData | undefined)?.locked === true}
+          frameStack={
+            !isLocked && threadConnectsTwoFrames(clickedEdge, nodes)
+              ? {
+                  stackSide: threadStackArrowSide(
+                    clickedEdge,
+                    nodes,
+                    reactFlowInstance?.getViewport()?.zoom || 1
+                  ),
+                  pairLocked: isThreadPairStackLocked({
+                    edgeId: clickedEdge.id,
+                    sourceId: clickedEdge.source,
+                    targetId: clickedEdge.target,
+                    getNodes: () => nodes,
+                    setNodes,
+                    zoom: reactFlowInstance?.getViewport()?.zoom || 1,
+                  }),
+                }
+              : null
+          }
           onAction={handleThreadMenuAction}
           onClose={() => {
             setClickedEdge(null)

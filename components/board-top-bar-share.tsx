@@ -13,6 +13,7 @@ import {
   Grid3x3,
   Languages,
   Lock,
+  Magnet,
   Maximize2,
   MessageSquarePlus,
   MoreHorizontal,
@@ -123,7 +124,11 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
     setBoardRule: setHostBoardRule,
     boardStyle: hostBoardStyle,
     setBoardStyle: setHostBoardStyle,
-  } = useReactFlowContext() // Font + board background; selection for footer word count
+    snapEnabled,
+    setSnapEnabled,
+    edgeSnapEnabled,
+    setEdgeSnapEnabled,
+  } = useReactFlowContext() // Font + board background + Snap toggles; selection for footer word count
   const previewFocus = usePreviewFocus() // When nested preview chrome is selected, style that page
   const boardRule = previewFocus?.focusedBoardId ? previewFocus.boardRule : hostBoardRule
   const setBoardRule = previewFocus?.focusedBoardId ? previewFocus.setBoardRule : setHostBoardRule
@@ -312,6 +317,8 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
   const showFont = !q || matchesQuery('font default serif mono', q) // Keep font row unless search misses
   const showBoardStyle =
     !q || matchesQuery('board style rule wide college narrow none dotted lined grid', q) // Background rule + style submenu
+  const showSnap =
+    !q || matchesQuery('snap frames guides magnetize helper lines edge', q) // Frame edge + guide snap toggles
   const showFooter = !q // Metadata stays at the bottom when not filtering
   const showConnections =
     !q || matchesQuery('connections notion show connections', q) // Connections row + Show connections toggle
@@ -324,6 +331,7 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
     !q ||
     showFont ||
     showBoardStyle ||
+    showSnap ||
     showConnections ||
     showAiHighlightMenu ||
     showFavoriteMenu ||
@@ -478,6 +486,35 @@ export function BoardTopBarShare({ conversationId }: BoardTopBarShareProps) {
                         Grid
                       </DropdownMenuRadioItem>
                     </DropdownMenuRadioGroup>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              )}
+
+              {showSnap && (
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <Magnet className="h-4 w-4 mr-2" />
+                    Snap
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="w-52">
+                    <DropdownMenuItem
+                      onSelect={(e) => {
+                        e.preventDefault() // Keep submenu open while toggling
+                        setEdgeSnapEnabled(!edgeSnapEnabled)
+                      }}
+                    >
+                      Snap to frames
+                      <MenuToggle on={edgeSnapEnabled} />
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={(e) => {
+                        e.preventDefault() // Keep submenu open while toggling
+                        setSnapEnabled(!snapEnabled)
+                      }}
+                    >
+                      Snap to guides
+                      <MenuToggle on={snapEnabled} />
+                    </DropdownMenuItem>
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
               )}

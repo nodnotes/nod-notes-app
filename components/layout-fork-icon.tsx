@@ -1,6 +1,6 @@
 'use client' // Toolbar SVG — client so it can sit in the Layout dropdown
 
-import { Magnet, ChevronsDownUp, ChevronsUpDown } from 'lucide-react' // Magnet snap + stack/unstack
+import { Magnet } from 'lucide-react' // Align-pack magnet (stack is on the thread menu)
 import { DropdownMenuItem } from './ui/dropdown-menu' // Same chrome as the rest of the tool menus
 import { cn } from '@/lib/utils' // Merge selected / size classes
 
@@ -127,8 +127,20 @@ export function LayoutForkMenuItems({
     <div className="flex w-fit items-stretch"> {/* Two columns: align | direction */}
       <div className="flex flex-col"> {/* Magnet toggle on top, then alignment arrows */}
         <DropdownMenuItem
-          title={!canSnap ? 'Select 2+ frames to snap together' : snapActive ? 'Unlock snapped frames' : 'Snap and lock frames'}
-          aria-label={!canSnap ? 'Select 2+ frames to snap together' : snapActive ? 'Unlock snapped frames' : 'Snap and lock frames'}
+          title={
+            !canSnap
+              ? 'Select 2+ frames to align'
+              : snapActive
+                ? 'Unlink aligned frames'
+                : 'Align frames (pack at natural gap)'
+          }
+          aria-label={
+            !canSnap
+              ? 'Select 2+ frames to align'
+              : snapActive
+                ? 'Unlink aligned frames'
+                : 'Align frames'
+          }
           disabled={!canSnap}
           onSelect={(e) => {
             e.preventDefault() // Keep the menu open; do not steal the alignment pick
@@ -155,24 +167,7 @@ export function LayoutForkMenuItems({
         ))}
       </div>
       <div className="mx-0.5 w-px self-stretch bg-muted" aria-hidden="true" /> {/* Vertical split */}
-      <div className="flex flex-col"> {/* Stack/unstack toggle on top, then direction arrows */}
-        <DropdownMenuItem
-          title={!canStack ? 'Select 2+ frames to stack' : stackActive ? 'Unstack frames' : 'Stack frames'}
-          aria-label={!canStack ? 'Select 2+ frames to stack' : stackActive ? 'Unstack frames' : 'Stack frames'}
-          disabled={!canStack}
-          onSelect={(e) => {
-            e.preventDefault() // Keep the menu open; do not steal the direction pick
-            onStackFrames?.()
-          }}
-          className={cn(ITEM, stackActive && ITEM_ON, 'text-gray-500 dark:text-gray-400')}
-        >
-          {stackActive ? (
-            <ChevronsUpDown className="h-4 w-4" aria-hidden="true" /> // Stacked — click to expand
-          ) : (
-            <ChevronsDownUp className="h-4 w-4" aria-hidden="true" /> // Expanded — click to stack
-          )}
-        </DropdownMenuItem>
-        <div className={COL_RULE} aria-hidden="true" /> {/* Split stack toggle from direction arrows */}
+      <div className="flex flex-col"> {/* Direction arrows (stack is thread-menu only) */}
         {FORK_DIRS.map((next) => (
           <DropdownMenuItem
             key={next}

@@ -2,10 +2,15 @@
 // draws only the arrow head, centered in the gap between their adjust boxes.
 
 import type { Node } from 'reactflow'
-import { frameAdjustFlowBox, type FlowBox } from '@/lib/frame-adjust-box'
-import { stackGapMarkPoint } from '@/lib/frame-stack-line' // Same spot as the unthreaded diamond
-import { INDICATOR_OUTSET } from '@/components/threads/handle-ids' // Connection-point distance from the adjust edge
-import { frameScreenChromeScale } from '@/components/threads/constants' // Screen-constant, matching the blue dots
+import {
+  frameAdjustFlowBox,
+  nominalAdjustChromeInsets,
+  type FlowBox,
+} from '@/lib/frame-adjust-box'
+import {
+  stackConnectionOutsetFlow,
+  stackGapMarkPoint,
+} from '@/lib/frame-stack-line' // Shared snap of both facing sim connection points
 import {
   FRAME_STACK_SIDES,
   readSideStacks,
@@ -56,19 +61,29 @@ export function stackedThreadArrow(
 ): StackedThreadArrow | null {
   if (!source || !target) return null // Thread still connecting
   if (source.type !== 'chatPanel' || target.type !== 'chatPanel') return null // Drawings keep a full thread
-  if (source.hidden || target.hidden) return null // Collapsed mate has no gap to sit in
+  if (source.hidden || target.hidden) return null // Collapsed: EditableThread paints nothing; FrameStackRevealLine owns the arrow
   const side = adjacentStackSide(source, target)
   if (!side) return null
   const live = [source, target] // Root frames; parent lookup only needs these two
-  const src = frameAdjustFlowBox(source, live, zoom) // Blue box, including unselected chrome
+  const src = frameAdjustFlowBox(source, live, zoom) // Blue box — select-stable fill expand
   const tgt = frameAdjustFlowBox(target, live, zoom)
   const srcC = boxCenter(src)
   const tgtC = boxCenter(tgt)
-  const anchorNode = source.selected ? source : target // Blue ring when one frame is selected; otherwise the arrival frame
-  const anchor = anchorNode === source ? src : tgt
-  const other = anchor === src ? tgt : src
-  const outset = INDICATOR_OUTSET * frameScreenChromeScale(zoom) // Flow px — screen distance matches the blue dots
-  const at = stackGapMarkPoint(anchor, other, side, outset) // Connection point on the facing side, between the frames
+  const chromeOf = (n: Node) => {
+    const meta = frameMeta(n)
+    const content = (n.data as { promptMessage?: { content?: string } } | undefined)?.promptMessage
+      ?.content
+    const isDb = /data-type=["']databaseBlock["']/i.test(typeof content === 'string' ? content : '')
+    return nominalAdjustChromeInsets(meta, zoom, isDb) // Fill mid matches CSS connection dots
+  }
+  const at = stackGapMarkPoint(
+    src,
+    tgt,
+    side,
+    stackConnectionOutsetFlow(zoom),
+    chromeOf(source),
+    chromeOf(target)
+  ) // Shared snap of both facing points — order must not depend on selection
   let cx = at.x
   let cy = at.y
   let dx = 0

@@ -1,14 +1,22 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-10-07T23:33:21Z`
+- Snapped at: `2026-10-17T19:11:22Z`
 - Source: local `supabase/migrations/` + remote applied tops (plugin Supabase `list_migrations` on `yhsyhtnnklpkfcpydbst`) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `get_project`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
-- CLI: `supabase` `2.90.0`. A stray `---` in `.env.local` blocks every command until commented; with that line skipped, `migration list --linked` still fails (`42501` cannot alter `cli_login_postgres`). Remote list is from the Management API. cli-latest reports `v2.120.0`.
+- CLI: `supabase` `2.90.0`. A stray `---` in `.env.local` blocks every command until commented; with that line skipped, `migration list --linked` still fails (`42501` cannot alter `cli_login_postgres`). Remote list is from the Management API. cli-latest reports `v2.121.0`.
 - Remote applied tops out at `20260924223511_board_changes_autosave` (includes `20260924222109_board_changes`; local files `20260924222048` / `20260924223507`)
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20261017191122_board_camera_200_align_thread_stack.sql`.
+- **Board camera**: 200% is a live fit of current board bounds (size-based gap + pane multiple), not a fixed floor scale.
+- **Align vs stack**: dragging a frame near another’s adjust box magnetizes (align) without stacking; stack / open / lock live on the thread menu when a thread joins two frames.
+- **Nest stack / minimap / chrome**: nest-stack drag, thread-frame stack helpers, minimap geometry, and related board chrome updates.
+- Schema unchanged; remote DDL top remains `20260924223511_board_changes_autosave`.
+
+## Prior: Minimap scope / frame align guides
 
 - DDL: none. Marker `20261007233312_minimap_scope_mask_frame_align_guides.sql`.
 - **Minimap**: wheel zooms minimap scope (not the board); nodes follow the camera; drag freezes the viewBox so the grab stays under the cursor; out-of-view mask keeps an 8px band when zoomed out.

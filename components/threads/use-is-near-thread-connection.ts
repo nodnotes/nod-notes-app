@@ -53,8 +53,9 @@ function frameChromeInsets(
   content: string,
   zoom: number
 ): Chrome {
-  const fsRaw = meta.frameScale // Locked place-scale
-  const fs = typeof fsRaw === 'number' && Number.isFinite(fsRaw) ? Math.max(0.15, fsRaw) : 1
+  const rawFs = meta.frameScale
+  const fs =
+    typeof rawFs === 'number' && Number.isFinite(rawFs) ? Math.max(0.15, rawFs) : 1 // Match selected content-scaled chrome
   const x = Math.round(adjustChromeXFlow(zoom, fs)) // L/R gutter
   const gapY = Math.round(adjustGapYFlow(zoom, fs)) // Blue↔fill air
   const band = Math.round(CONNECTIONS_GROUP_H * fs) // Full strip height

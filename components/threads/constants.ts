@@ -127,11 +127,19 @@ export function threadComfortScale(zoom: number): number {
 export const FRAME_SCREEN_CHROME_BOOST = 1.4
 
 /**
- * Flow-space multiplier for frame selection chrome widgets so they stay constant on screen:
+ * Zoom-out floor for resize dots / simulated connection points / blue stroke.
+ * Below 100%, chrome rides the board (stops growing on screen). Above 100%, screen-constant.
+ */
+export const FRAME_CHROME_ZOOM_FLOOR = 1
+
+/**
+ * Flow-space multiplier for frame selection chrome widgets:
  * connection indicators, resize dots + blue stroke, rotate/fit/wrap.
- * Pure 1/zoom (× boost). TipTap ⋮⋮ / add-lines use a separate √ comfort curve (text-relative).
+ * Screen-constant when zoomed in; capped at 100% so zoom-out does not swell handles/dots
+ * (and stack marks stay mid-gap with `STACK_LINE_GAP` = 2× outset × boost).
+ * TipTap ⋮⋮ / add-lines use a separate √ comfort curve (text-relative).
  */
 export function frameScreenChromeScale(zoom: number): number {
   const z = Math.max(0.01, zoom) // Guard against 0 / negative store values
-  return FRAME_SCREEN_CHROME_BOOST / z // Screen px ≈ base × boost at every zoom
+  return FRAME_SCREEN_CHROME_BOOST / Math.max(z, FRAME_CHROME_ZOOM_FLOOR) // Cap growth on zoom-out
 }

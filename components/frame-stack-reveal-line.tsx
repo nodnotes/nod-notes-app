@@ -1,12 +1,11 @@
 'use client'
 
-// One mark in the gap between snap-linked frames.
+// Stack mark on the host’s facing sim connection point (same CSS slot as ConnectionIndicator).
 // Each side (top/right/bottom/left) has its own stack tree.
-// • Thread between the pair: the thread paints only its arrow head, centered in the gap
-// • No thread: a 45° rounded square in the thread-head color, same spot
-// • Click the head or the square → Open stack / directional Stack arrows / Lock
-// • First Stack sets lock for that group (snap alone does not lock)
-// • Hover when any mate is stacked → fast faded preview; click one to open just that frame
+// • Rounded blue triangle + white rim (sim-point paint language) — tip toward the mate
+// • In-frame absolute + --tt-frame-ui-scale — stays centered through pan/zoom like other sim-points
+// • Stack under does not lock — only Lock frames moves the pair together
+// • Hover stack mark → faded peek at restoreAbs; unhover hides unless mark clicked (menu) or opened
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -24,12 +23,9 @@ import {
   frameAdjustFlowBox,
   frameAdjustFlowBoxAt,
   frameAdjustFlowSize,
-  frameAdjustScreenRect,
   rfAbsFromAdjustOrigin,
 } from '@/lib/frame-adjust-box'
-import { THREAD_DEFAULT_COLOR, THREAD_SELECTED_COLOR, frameScreenChromeScale } from '@/components/threads/constants' // Head color, and the connection-dot scale
-import { INDICATOR_OUTSET } from '@/components/threads/handle-ids' // Distance from the adjust edge to the connection-point center
-import { stackGapMarkPoint } from '@/lib/frame-stack-line' // Connection point, slid to stay between the frames
+import { THREAD_DEFAULT_COLOR, THREAD_SELECTED_COLOR } from '@/components/threads/constants' // gapThread color token
 import {
   collectNestedSatelliteIds,
   findOwningMateId,
@@ -37,6 +33,7 @@ import {
   isGroupLocked,
   patchGroupEntry,
   readSideStacks,
+  readXY,
   rekeyGroupSide,
   setGroupLocked,
   setParentStackHidden,
@@ -48,7 +45,7 @@ import { persistBlockPlacement } from '@/lib/blocks'
 import { cn } from '@/lib/utils'
 
 const HOVER_DWELL_MS = 100 // Fast preview when the gap mark is hovered
-const GAP_HIT = 20 // Screen px — covers the thread head so the click opens the stack menu
+const PREVIEW_OUT_MS = 80 // Fade-out duration before hidden (match globals.css)
 
 type FrameStackRevealLineProps = {
   nodeId: string // Frame this line sits on (inward side of the gap)
@@ -89,10 +86,9 @@ function entryExpanded(
   return findStackEntry(meta, groupId)?.entry.expanded === true
 }
 
-/** Degrees so a right-pointing arrow aims along this stack side. */
-function stackArrowDegrees(side: FrameStackSide, towardMate: boolean): number {
-  const base = side === 'right' ? 0 : side === 'left' ? 180 : side === 'bottom' ? 90 : -90 // SVG tip points right at 0°
-  return towardMate ? base : base + 180 // Flip when the thread arrives on this frame
+/** Degrees so the triangle tip aims outward along this stack side (toward the mate). */
+function stackArrowDegrees(side: FrameStackSide): number {
+  return side === 'right' ? 0 : side === 'left' ? 180 : side === 'bottom' ? 90 : -90
 }
 
 /** Mate nodes in this side’s stack group (excludes host), sorted by stackIndex. */
@@ -181,7 +177,7 @@ function clearPreviewStyle(n: { style?: Record<string, unknown>; className?: str
   const { opacity: _o, ...restStyle } = (n.style || {}) as Record<string, unknown>
   const className = (n.className || '')
     .split(/\s+/)
-    .filter((c) => c && c !== 'tt-stack-preview')
+    .filter((c) => c && c !== 'tt-stack-preview' && c !== 'tt-stack-preview-out')
     .join(' ')
   return { restStyle, className: className || undefined }
 }
@@ -192,7 +188,7 @@ export function FrameStackRevealLine({
   stackGroupId,
   stackSide,
 }: FrameStackRevealLineProps) {
-  const { getNodes, setNodes, flowToScreenPosition } = useReactFlow()
+  const { getNodes, setNodes } = useReactFlow()
   const mateKeyRef = useRef('')
   const transformKeyRef = useRef('')
   // Re-render when stack mate expand/hidden/lock changes (RF v11: nodeInternals)
@@ -277,10 +273,15 @@ export function FrameStackRevealLine({
   const [menuOpen, setMenuOpen] = useState(false) // Eye / Stack / Lock menu
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 }) // Screen coords for portal menu
   const dwellRef = useRef<number | null>(null)
-  const endPreviewRef = useRef<number | null>(null) // Delayed dismiss so pointer can cross gap → mate
+  const endPreviewRef = useRef<number | null>(null) // Short delay so leave does not flicker
+  const previewOutTimerRef = useRef<number | null>(null) // Fade-out then commit hide
   const previewingRef = useRef(false)
   previewingRef.current = previewing
-  const mateIdsRef = useRef<Set<string>>(new Set()) // Live mate ids for preview-zone hit tests
+  const menuOpenRef = useRef(false) // Leave handlers must not dismiss while the menu is open
+  menuOpenRef.current = menuOpen
+  // Clicked the sim-point — keep peek until menu closes or Open stack / mate open commits
+  const previewPinnedRef = useRef(false)
+  const mateIdsRef = useRef<Set<string>>(new Set()) // Mate ids for click-to-open while peeking
   // Snapshot before hover preview so cancel can restore (e.g. one open, rest stacked)
   const prePreviewRef = useRef<
     { id: string; expanded: boolean; hidden: boolean }[] | null
@@ -300,12 +301,20 @@ export function FrameStackRevealLine({
     }
   }, [])
 
+  const clearPreviewOut = useCallback(() => {
+    if (previewOutTimerRef.current != null) {
+      window.clearTimeout(previewOutTimerRef.current)
+      previewOutTimerRef.current = null
+    }
+  }, [])
+
   useEffect(
     () => () => {
       clearDwell()
       clearEndPreview()
+      clearPreviewOut()
     },
-    [clearDwell, clearEndPreview]
+    [clearDwell, clearEndPreview, clearPreviewOut]
   )
 
   /** Place mates at expand layout (visible). `expanded` = full open vs faded preview.
@@ -335,20 +344,42 @@ export function FrameStackRevealLine({
       }
       const posById = new Map<string, { x: number; y: number }>()
       layoutMates.forEach((n, order) => {
-        // Full open of the whole stack: keep each mate’s live XY (collapse left them put).
-        // Preview / open-one still fans from the host so the hover/line chrome has somewhere to go.
-        const pos =
-          expanded && !onlyId
-            ? absFlowPosition(n, live)
-            : stackExpandRfAbs(host, live, stackSide, n, order, layoutMates.slice(0, order), zoom)
+        const stamped = findStackEntry(nodeStackMeta(n), stackGroupId)?.entry.restoreAbs
+        const wasCollapsed = n.hidden === true || !entryExpanded(nodeStackMeta(n), stackGroupId)
+        // Hover preview + full open: restoreAbs so the original thread geometry returns.
+        // Open-one still parks flush beside the host.
+        let pos: { x: number; y: number }
+        if (onlyId && expanded) {
+          pos = stackExpandRfAbs(host, live, stackSide, n, order, layoutMates.slice(0, order), zoom)
+        } else if (wasCollapsed && stamped) {
+          pos = stamped // Pre-stack XY — thread paints as before Stack under
+        } else if (expanded && !onlyId) {
+          pos = absFlowPosition(n, live) // Already open — keep live board spot
+        } else {
+          pos = stackExpandRfAbs(host, live, stackSide, n, order, layoutMates.slice(0, order), zoom) // No restoreAbs
+        }
         posById.set(n.id, pos)
       })
       // Nested satellites of the mates we’re showing (A’s bottom C, etc.)
       const showMateIds = layoutMates.map((n) => n.id)
       const nestedIds = collectNestedSatelliteIds(live, showMateIds, [stackGroupId])
+      // Prefer each satellite’s own restoreAbs on hover/open; else fan from its owning mate
+      for (const id of nestedIds) {
+        const sat = live.find((x) => x.id === id)
+        if (!sat) continue
+        const stamped = findStackEntry(nodeStackMeta(sat), stackGroupId)?.entry.restoreAbs
+        // Nested may store restore on another tree — also try parentStackRestoreAbs
+        const parentRestore = readXY(
+          (nodeStackMeta(sat) as { parentStackRestoreAbs?: unknown }).parentStackRestoreAbs
+        )
+        const wasCollapsed = sat.hidden === true
+        if (!onlyId && wasCollapsed && (stamped || parentRestore)) {
+          posById.set(id, stamped || parentRestore!)
+        }
+      }
       const nestedPos = layoutNestedFromMates(live, new Map(posById), stackGroupId, zoom)
       for (const [id, pos] of nestedPos) {
-        if (nestedIds.includes(id)) posById.set(id, pos)
+        if (nestedIds.includes(id) && !posById.has(id)) posById.set(id, pos) // Fill gaps only
       }
       // Hide other direct mates (+ their nested) when opening a single mate
       const hideMateIds = onlyId
@@ -406,28 +437,28 @@ export function FrameStackRevealLine({
             : m
           // Clear nested-hide marker while preview/open shows this satellite
           meta = setParentStackHidden(meta, null)
+          if (expanded && findStackEntry(meta, stackGroupId)) {
+            meta = setGroupLocked(meta, stackGroupId, false) // Full open → drag each frame alone
+          }
           meta = { ...meta, position: pos }
           const idx = indexById.get(n.id)
           if (typeof idx === 'number' && findStackEntry(meta, stackGroupId)) {
             meta = patchGroupEntry(meta, stackGroupId, { index: idx })
           }
+          const { restStyle: clearedStyle, className: baseClass } = clearPreviewStyle(
+            n as { style?: Record<string, unknown>; className?: string }
+          ) // Drop stale out-anim if re-hover mid fade
           return {
             ...n,
             position: pos,
             hidden: false,
             zIndex: expanded ? 3 : 2,
             style: {
-              ...(n.style || {}),
-              opacity: expanded ? 1 : 0.72,
+              ...clearedStyle,
+              ...(expanded ? { opacity: 1 } : {}), // Peek: CSS `.tt-stack-preview` animates opacity
               pointerEvents: 'all',
             },
-            className: cn(
-              (n.className || '')
-                .split(/\s+/)
-                .filter((c) => c && c !== 'tt-stack-preview')
-                .join(' '),
-              !expanded && 'tt-stack-preview'
-            ),
+            className: cn(baseClass, !expanded && 'tt-stack-preview'),
             data: {
               ...n.data,
               promptMessage: n.data?.promptMessage
@@ -441,10 +472,13 @@ export function FrameStackRevealLine({
     [getNodes, nodeId, setNodes, stackGroupId, stackSide, viewportKey]
   )
 
-  /** Stack under `keeperId` — that frame stays visible; others (+ nested side packs) hide. Locks this side’s group. */
+  /** Stack under `keeperId` — that frame stays visible; others (+ nested side packs) hide. Does not lock. */
   const actionStackUnder = useCallback(
     async (keeperId: string) => {
       setMenuOpen(false)
+      clearPreviewOut()
+      previewPinnedRef.current = false
+      prePreviewRef.current = null // Collapse is the new baseline
       setPreviewing(false)
       const live = getNodes()
       const group = collectGroup(getNodes, stackGroupId)
@@ -458,6 +492,11 @@ export function FrameStackRevealLine({
       const indexById = new Map<string, number>()
       indexById.set(keeperId, 0)
       others.forEach((n, i) => indexById.set(n.id, i + 1))
+      // Pre-collapse XY per mate — Open stack restores these so the thread looks as before
+      const restoreById = new Map<string, { x: number; y: number }>()
+      for (const n of others) {
+        restoreById.set(n.id, absFlowPosition(n, live))
+      }
 
       // Nested satellites of frames going under the keeper (hide with their owners)
       const hideNestedIds = collectNestedSatelliteIds(
@@ -483,9 +522,9 @@ export function FrameStackRevealLine({
                 groupId: stackGroupId,
                 index: indexById.get(n.id) ?? 99,
                 expanded: false,
+                ...(restoreById.get(n.id) ? { restoreAbs: restoreById.get(n.id) } : {}),
               }
               meta = rekeyGroupSide(m, stackGroupId, newSide, entry)
-              meta = setGroupLocked(meta, stackGroupId, true)
             }
             meta = setParentStackHidden(meta, stackGroupId)
             const { restStyle, className } = clearPreviewStyle(
@@ -516,7 +555,6 @@ export function FrameStackRevealLine({
               ...(isKeeper ? { anchor: true as const } : {}),
             }
             meta = rekeyGroupSide(m, stackGroupId, newSide, entry)
-            meta = setGroupLocked(meta, stackGroupId, true)
           }
           meta = setParentStackHidden(meta, null)
           const { restStyle, className } = clearPreviewStyle(
@@ -562,9 +600,9 @@ export function FrameStackRevealLine({
                 groupId: stackGroupId,
                 index: indexById.get(id) ?? 99,
                 expanded: false,
+                ...(restoreById.get(id) ? { restoreAbs: restoreById.get(id) } : {}),
               }
               meta = rekeyGroupSide(meta, stackGroupId, newSide, entry)
-              meta = setGroupLocked(meta, stackGroupId, true)
             }
             meta = setParentStackHidden(meta, stackGroupId)
           } else {
@@ -577,7 +615,6 @@ export function FrameStackRevealLine({
                 ...(isKeeper ? { anchor: true as const } : {}),
               }
               meta = rekeyGroupSide(meta, stackGroupId, newSide, entry)
-              meta = setGroupLocked(meta, stackGroupId, true)
             }
             meta = setParentStackHidden(meta, null)
           }
@@ -587,7 +624,7 @@ export function FrameStackRevealLine({
         console.error('Failed to stack frames:', err)
       }
     },
-    [getNodes, nodeId, setNodes, stackGroupId, stackSide]
+    [clearPreviewOut, getNodes, nodeId, setNodes, stackGroupId, stackSide]
   )
 
   /** Hide all mates (+ nested satellites) — keep current host. */
@@ -627,10 +664,11 @@ export function FrameStackRevealLine({
     )
   }, [getNodes, nodeId, setNodes, stackGroupId])
 
-  /** End hover preview — restore pre-preview open/stacked layout (not always hide-all). */
-  const endPreview = useCallback(() => {
+  /** After fade-out — restore pre-preview open/stacked layout. */
+  const commitEndPreview = useCallback(() => {
     const snap = prePreviewRef.current
     prePreviewRef.current = null
+    previewPinnedRef.current = false
     setPreviewing(false)
     if (!snap || snap.length === 0) {
       hideMates()
@@ -670,6 +708,30 @@ export function FrameStackRevealLine({
       })
     )
   }, [hideMates, setNodes, stackGroupId])
+
+  /** Fade peek out, then commit hide (unless re-hover cancels). */
+  const endPreview = useCallback(() => {
+    clearEndPreview()
+    clearPreviewOut()
+    previewPinnedRef.current = false
+    // Arm fade-out on every peeking frame (thread reads tt-stack-preview-out)
+    setNodes((nds) =>
+      nds.map((n) => {
+        const parts = (n.className || '').split(/\s+/).filter(Boolean)
+        if (!parts.includes('tt-stack-preview')) return n
+        if (parts.includes('tt-stack-preview-out')) return n
+        return {
+          ...n,
+          className: cn(...parts, 'tt-stack-preview-out'),
+          style: { ...(n.style || {}), pointerEvents: 'none' },
+        }
+      })
+    )
+    previewOutTimerRef.current = window.setTimeout(() => {
+      previewOutTimerRef.current = null
+      commitEndPreview()
+    }, PREVIEW_OUT_MS)
+  }, [clearEndPreview, clearPreviewOut, commitEndPreview, setNodes])
 
   const persistMatePatch = useCallback(
     async (
@@ -749,24 +811,30 @@ export function FrameStackRevealLine({
     [getNodes, nodeId, stackGroupId, stackSide, viewportKey]
   )
 
-  /** Eye — fully open all mates. */
+  /** Eye — fully open all mates at restoreAbs; unlock so each frame drags alone. */
   const actionShowAll = useCallback(async () => {
     setMenuOpen(false)
+    clearPreviewOut() // Do not finish a fade-out after we commit open
+    previewPinnedRef.current = false
+    prePreviewRef.current = null // Committed open — do not restore stacked hide
     setPreviewing(false)
     showMatesOut(true)
     try {
       await persistMatePatch((_order, pos, meta) => {
-        const next = patchGroupEntry(meta, stackGroupId, { expanded: true })
+        let next = patchGroupEntry(meta, stackGroupId, { expanded: true })
+        next = setGroupLocked(next, stackGroupId, false) // Lock frames is a separate action
         return { ...next, position: pos }
       })
     } catch (err) {
       console.error('Failed to show stacked frames:', err)
     }
-  }, [persistMatePatch, showMatesOut, stackGroupId])
+  }, [clearPreviewOut, persistMatePatch, showMatesOut, stackGroupId])
 
   /** Lock — toggle lock on this side’s group (drag moves that tree together). */
   const actionLock = useCallback(async () => {
     setMenuOpen(false)
+    previewPinnedRef.current = false
+    if (previewingRef.current) endPreview() // Lock keeps the stack collapsed — hide peek
     const live = getNodes()
     const hostMeta = nodeStackMeta(live.find((n) => n.id === nodeId) || {})
     const currentlyLocked = isGroupLocked(hostMeta, stackGroupId)
@@ -810,14 +878,17 @@ export function FrameStackRevealLine({
     } catch (err) {
       console.error('Failed to toggle snap-lock:', err)
     }
-  }, [getNodes, nodeId, setNodes, stackGroupId])
+  }, [endPreview, getNodes, nodeId, setNodes, stackGroupId])
 
   /** Fully open one mate from preview click — park it flush next to the host. */
   const openOneMate = useCallback(
     async (mateId: string) => {
+      previewPinnedRef.current = false
+      prePreviewRef.current = null // Committed — keep this mate out
       setPreviewing(false)
       clearDwell()
       clearEndPreview()
+      clearPreviewOut()
       showMatesOut(true, mateId)
       try {
         const live = getNodes()
@@ -915,6 +986,7 @@ export function FrameStackRevealLine({
     [
       clearDwell,
       clearEndPreview,
+      clearPreviewOut,
       getNodes,
       nodeId,
       showMatesOut,
@@ -924,32 +996,49 @@ export function FrameStackRevealLine({
     ]
   )
 
-  /** True if element is the stack line or a mate frame in this group. */
-  const isPreviewZoneEl = useCallback((el: Element | null) => {
+  /** Peek stays only while over the mark/menu — not while over a far restoreAbs mate. */
+  const isMarkOrMenuEl = useCallback((el: Element | null) => {
     if (!el) return false
-    if (el.closest?.('[data-tt-stack-reveal], [data-tt-stack-line-menu]')) return true
-    const rfNode = el.closest?.('.react-flow__node') as HTMLElement | null
-    if (!rfNode) return false
-    const id = rfNode.getAttribute('data-id')
-    return Boolean(id && mateIdsRef.current.has(id))
+    return Boolean(el.closest?.('[data-tt-stack-reveal], [data-tt-stack-line-menu]'))
   }, [])
 
+  /** Start fade-out once — do not reset on every pointermove (that kept the peek stuck). */
   const scheduleEndPreview = useCallback(() => {
-    clearEndPreview()
-    endPreviewRef.current = window.setTimeout(() => {
-      endPreviewRef.current = null
-      if (!previewingRef.current) return
-      endPreview()
-    }, 220) // Long enough to cross the snap gap onto a mate
-  }, [clearEndPreview, endPreview])
+    if (previewPinnedRef.current || menuOpenRef.current) return // Mark click / menu — keep peek
+    if (endPreviewRef.current != null || previewOutTimerRef.current != null) return // Already leaving
+    if (!previewingRef.current) return
+    endPreview() // Immediate — no post-hover delay
+  }, [endPreview])
 
-  // While previewing: keep open across line↔mate gap; click mate → open just that one
+  // While previewing: unhover mark → hide; click mate → open that frame
   useEffect(() => {
     if (!previewing) return
     const onPointerMove = (e: PointerEvent) => {
+      if (previewPinnedRef.current || menuOpenRef.current) return // Pinned by mark click
       const el = document.elementFromPoint(e.clientX, e.clientY)
-      if (isPreviewZoneEl(el)) clearEndPreview()
-      else scheduleEndPreview()
+      if (isMarkOrMenuEl(el)) {
+        clearEndPreview()
+        if (previewOutTimerRef.current != null) {
+          clearPreviewOut() // Cancel commit-hide
+          // Replay in-anim — peek was mid fade-out
+          setNodes((nds) =>
+            nds.map((n) => {
+              const parts = (n.className || '').split(/\s+/).filter(Boolean)
+              if (!parts.includes('tt-stack-preview-out')) return n
+              const { restStyle, className } = clearPreviewStyle(
+                n as { style?: Record<string, unknown>; className?: string }
+              )
+              return {
+                ...n,
+                style: { ...restStyle, pointerEvents: 'all' },
+                className: cn(className, 'tt-stack-preview'),
+              }
+            })
+          )
+        }
+        return
+      }
+      scheduleEndPreview() // First move off the mark starts fade; further moves are no-ops
     }
     const onPointerDown = (e: PointerEvent) => {
       const t = e.target as HTMLElement | null
@@ -957,12 +1046,14 @@ export function FrameStackRevealLine({
       if (t.closest?.('[data-tt-stack-reveal], [data-tt-stack-line-menu]')) return
       const rfNode = t.closest?.('.react-flow__node') as HTMLElement | null
       if (!rfNode) {
+        if (previewPinnedRef.current || menuOpenRef.current) return // Menu still up
         clearEndPreview()
         endPreview()
         return
       }
       const id = rfNode.getAttribute('data-id')
       if (!id || id === nodeId || !mateIdsRef.current.has(id)) {
+        if (previewPinnedRef.current || menuOpenRef.current) return
         clearEndPreview()
         endPreview()
         return
@@ -971,6 +1062,7 @@ export function FrameStackRevealLine({
       e.stopPropagation()
       e.preventDefault()
       clearEndPreview()
+      previewPinnedRef.current = false
       prePreviewRef.current = null // Commit — don't restore on cancel paths
       const live = getNodes()
       const mates = collectMates(getNodes, nodeId, stackGroupId)
@@ -991,26 +1083,33 @@ export function FrameStackRevealLine({
     }
   }, [
     clearEndPreview,
+    clearPreviewOut,
     endPreview,
     getNodes,
-    isPreviewZoneEl,
+    isMarkOrMenuEl,
     nodeId,
     openOneMate,
     previewing,
     scheduleEndPreview,
+    setNodes,
     stackGroupId,
   ])
 
-  // Close menu on outside click / Escape
+  // Close menu on outside click / Escape — also dismiss an uncommitted peek
   useEffect(() => {
     if (!menuOpen) return
+    const dismissMenu = () => {
+      setMenuOpen(false)
+      previewPinnedRef.current = false
+      if (previewingRef.current) endPreview() // Unhover-equivalent: hide unless they chose Open
+    }
     const onDown = (e: MouseEvent) => {
       const t = e.target as HTMLElement | null
       if (t?.closest?.('[data-tt-stack-line-menu], [data-tt-stack-reveal]')) return
-      setMenuOpen(false)
+      dismissMenu()
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenuOpen(false)
+      if (e.key === 'Escape') dismissMenu()
     }
     document.addEventListener('mousedown', onDown, true)
     document.addEventListener('keydown', onKey, true)
@@ -1018,7 +1117,7 @@ export function FrameStackRevealLine({
       document.removeEventListener('mousedown', onDown, true)
       document.removeEventListener('keydown', onKey, true)
     }
-  }, [menuOpen])
+  }, [endPreview, menuOpen])
 
   // Derive mate state after hooks (mateStateKey / dragPlaceKey force refresh)
   void mateStateKey
@@ -1046,11 +1145,27 @@ export function FrameStackRevealLine({
     isGroupLocked(nodeStackMeta(hostNode || {}), stackGroupId) ||
     mates.some((n) => isGroupLocked(nodeStackMeta(n), stackGroupId))
 
-  const onEnter = () => {
-    if (menuOpen) return
-    clearEndPreview()
-    if (previewingRef.current) return // Already showing preview — stay
-    // Start preview only when at least one mate is stacked/hidden
+  /** Snapshot + faded peek at restoreAbs (shared by hover dwell and mark click). */
+  const beginPreview = () => {
+    clearPreviewOut() // Cancel mid fade-out if the pointer returned
+    if (previewingRef.current) {
+      // Re-enter during out: strip out class and replay in-anim
+      setNodes((nds) =>
+        nds.map((n) => {
+          const parts = (n.className || '').split(/\s+/).filter(Boolean)
+          if (!parts.includes('tt-stack-preview-out')) return n
+          const { restStyle, className } = clearPreviewStyle(
+            n as { style?: Record<string, unknown>; className?: string }
+          )
+          return {
+            ...n,
+            style: { ...restStyle, pointerEvents: 'all' },
+            className: cn(className, 'tt-stack-preview'),
+          }
+        })
+      )
+      return true
+    }
     const live = collectMates(getNodes, nodeId, stackGroupId)
     const nested = collectNestedSatelliteIds(
       getNodes(),
@@ -1066,33 +1181,39 @@ export function FrameStackRevealLine({
       const n = getNodes().find((x) => x.id === id)
       return !n || n.hidden === true
     })
-    if (stacked.length === 0 && nestedStacked.length === 0) return
+    if (stacked.length === 0 && nestedStacked.length === 0) return false
+    const snapNodes = [
+      ...live,
+      ...nested.map((id) => getNodes().find((x) => x.id === id)).filter(Boolean),
+    ] as typeof live
+    prePreviewRef.current = snapNodes.map((n) => {
+      const m = nodeStackMeta(n)
+      return {
+        id: n.id,
+        expanded: entryExpanded(m, stackGroupId),
+        hidden: n.hidden === true,
+      }
+    })
+    setPreviewing(true)
+    showMatesOut(false) // Faded original frame + thread
+    return true
+  }
+
+  const onEnter = () => {
+    if (menuOpen) return
+    clearEndPreview()
+    if (previewingRef.current) return // Already showing preview — stay
     clearDwell()
     dwellRef.current = window.setTimeout(() => {
-      // Snapshot mates + nested so cancel restores which frames were open
-      const snapNodes = [
-        ...live,
-        ...nested
-          .map((id) => getNodes().find((x) => x.id === id))
-          .filter(Boolean),
-      ] as typeof live
-      prePreviewRef.current = snapNodes.map((n) => {
-        const m = nodeStackMeta(n)
-        return {
-          id: n.id,
-          expanded: entryExpanded(m, stackGroupId),
-          hidden: n.hidden === true,
-        }
-      })
-      setPreviewing(true)
-      showMatesOut(false) // Faded preview of all stacked mates + nested packs
+      beginPreview()
     }, HOVER_DWELL_MS)
   }
 
-  // Leaving the line: delay dismiss so pointer can reach a previewed mate across the gap
+  // Leaving the mark: hide peek unless the sim-point was clicked (menu pinned)
   const onLinePointerLeave = () => {
     clearDwell()
     if (!previewingRef.current) return
+    if (previewPinnedRef.current || menuOpenRef.current) return
     scheduleEndPreview()
   }
 
@@ -1101,16 +1222,22 @@ export function FrameStackRevealLine({
     e.preventDefault()
     clearDwell()
     clearEndPreview()
-    // End preview before opening menu
-    if (previewingRef.current) {
-      endPreview()
-    }
     const rect = e.currentTarget.getBoundingClientRect()
     setMenuPos({
       x: rect ? rect.left + rect.width / 2 : e.clientX,
       y: rect ? rect.top : e.clientY,
     })
-    setMenuOpen((o) => !o)
+    if (menuOpenRef.current) {
+      // Second click closes menu — hide uncommitted peek
+      previewPinnedRef.current = false
+      setMenuOpen(false)
+      if (previewingRef.current) endPreview()
+      return
+    }
+    // Mark click: pin peek so unhover does not hide while the menu is up
+    beginPreview()
+    previewPinnedRef.current = true
+    setMenuOpen(true)
   }
 
   const onWheelLine = (e: React.WheelEvent<HTMLButtonElement>) => {
@@ -1153,59 +1280,11 @@ export function FrameStackRevealLine({
     .sort((a, b) => stackIndexOf(a, stackGroupId) - stackIndexOf(b, stackGroupId))
   const nextOutId = outwardMates[0]?.id as string | undefined
   mateIdRef.current = nextOutId || '' // Drag ticks read this without scanning every frame
-  const zoom = Number(String(viewportKey).split(',')[2]) || 1
-  const nextOutNode = nextOutId ? getNodes().find((n) => n.id === nextOutId) : undefined
-  const dragging = isFrameDragging()
-  // Store positions are current mid-drag; the DOM rect still shows the previous frame
-  const flowScreen = (box: { x: number; y: number; width: number; height: number }) => {
-    const origin = flowToScreenPosition({ x: box.x, y: box.y }) // Client px of the adjust-box origin
-    const far = flowToScreenPosition({ x: box.x + box.width, y: box.y + box.height })
-    return { left: origin.x, top: origin.y, width: far.x - origin.x, height: far.y - origin.y }
-  }
-  const live = getNodes()
-  const innerRect = dragging && hostNode
-    ? flowScreen(frameAdjustFlowBox(hostNode, live, zoom))
-    : frameAdjustScreenRect(nodeId, hostNode, zoom)
-  const outerDomRect =
-    dragging && nextOutNode && !nextOutNode.hidden
-      ? flowScreen(frameAdjustFlowBox(nextOutNode, live, zoom))
-      : nextOutId
-        ? frameAdjustScreenRect(nextOutId, nextOutNode, zoom)
-        : null
-  let outerRect: { left: number; top: number; width: number; height: number } | null = outerDomRect
-  // A collapsed mate has no mounted RF DOM node. Simulate its adjacent parked adjust box from
-  // flow geometry so the mark stays in the gap while the mate is hidden.
-  if (!outerRect && innerRect && hostNode && nextOutNode) {
-    const parkedAbs = stackExpandRfAbs(hostNode, live, stackSide, nextOutNode, 0, [], zoom)
-    const hostAdjust = frameAdjustFlowBox(hostNode, live, zoom)
-    const parkedAdjust = frameAdjustFlowBoxAt(nextOutNode, parkedAbs, zoom)
-    outerRect = {
-      left: innerRect.left + (parkedAdjust.x - hostAdjust.x) * zoom,
-      top: innerRect.top + (parkedAdjust.y - hostAdjust.y) * zoom,
-      width: parkedAdjust.width * zoom,
-      height: parkedAdjust.height * zoom,
-    }
-  }
-  if (!innerRect || !outerRect || typeof document === 'undefined') return null
-  const blueIsMate = !!nextOutNode?.selected && !hostNode?.selected // Measure from the frame that shows the blue ring
-  const anchorRect = blueIsMate ? outerRect : innerRect
-  const otherRect = blueIsMate ? innerRect : outerRect
-  const outset = INDICATOR_OUTSET * frameScreenChromeScale(zoom) * Math.max(0.01, zoom) // Screen px — same as the blue connection dots
-  const center = stackGapMarkPoint(
-    { x: anchorRect.left, y: anchorRect.top, width: anchorRect.width, height: anchorRect.height },
-    { x: otherRect.left, y: otherRect.top, width: otherRect.width, height: otherRect.height },
-    stackSide,
-    outset
-  ) // Connection point on the blue box, kept between the frames while dragging
-  const glyph = 8 * Math.max(0.01, zoom) // 8 flow px — the diamond scales with the board, not a fixed screen size
-  const hit = Math.max(GAP_HIT, glyph * Math.SQRT2) // Cover the rotated square, and stay easy to click when zoomed out
-  const [threadColor, threadDir, threadHidden] = gapThread.split('|') // Parsed thread token from the store
-  const threaded = threadColor.length > 0 // A thread already joins this pair
-  const paintOwnHead = threaded && threadHidden === '1' // Visible threads paint their own centered head
-  const glyphColor = threaded ? threadColor : THREAD_DEFAULT_COLOR // Diamond uses the idle thread-head gray
-  const arrowDeg = stackArrowDegrees(stackSide, threadDir !== 'in') // Head aims at the thread's target
-
-  // Arrow toward this frame (inward) vs toward the next mate (outward)
+  void viewportKey // Still drives showMatesOut zoom; mark itself rides RF viewport via CSS
+  void dragPlaceKey // Re-render while a mate moves (preview / open)
+  void gapThread // Keeps store subscription warm for thread-pair peek / paint rules elsewhere
+  const arrowDeg = stackArrowDegrees(stackSide) // Tip toward the stacked mate
+  // Menu stack-direction icons (inward = under this frame, outward = under the mate)
   const InwardIcon =
     stackSide === 'right'
       ? ArrowLeft
@@ -1225,62 +1304,47 @@ export function FrameStackRevealLine({
   const stackBtnClass =
     'flex h-8 w-8 items-center justify-center rounded-md text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800'
 
+  // Rounded triangle in sim-point blue + white rim — same paint language as ConnectionIndicator
   return (
     <>
-      {createPortal(
-        <button
-          type="button"
-          data-tt-stack-reveal
-          className="nodrag nopan flex cursor-pointer items-center justify-center border-0 bg-transparent p-0"
-          style={{
-            position: 'fixed', // Screen space — the mark is portaled outside the zoomed board
-            left: center.x - hit / 2, // Center the hit pad on the gap
-            top: center.y - hit / 2,
-            width: hit,
-            height: hit,
-            zIndex: 40, // Above the thread head so this click opens the stack menu
-          }}
-          title="Stack"
-          aria-label="Stack menu"
-          aria-expanded={menuOpen}
-          onMouseDown={(e) => e.stopPropagation()} // Do not start a frame drag or select the thread
-          onMouseEnter={onEnter}
-          onMouseLeave={onLinePointerLeave}
-          onClick={onClickLine}
-          onWheel={onWheelLine}
+      <button
+        type="button"
+        data-tt-stack-reveal={stackSide}
+        className="nodrag nopan absolute z-[40] flex cursor-pointer items-center justify-center border-0 bg-transparent p-0 text-blue-500 hover:text-blue-600"
+        title="Stack"
+        aria-label="Stack menu"
+        aria-expanded={menuOpen}
+        onMouseDown={(e) => e.stopPropagation()} // Do not start a frame drag or select the thread
+        onMouseEnter={onEnter}
+        onMouseLeave={onLinePointerLeave}
+        onClick={onClickLine}
+        onWheel={onWheelLine}
+      >
+        <svg
+          width={13} // A step above 10px discs so the triangle still reads clearly
+          height={13}
+          viewBox="0 0 13 13"
+          aria-hidden
+          style={{ transform: `rotate(${arrowDeg}deg)`, overflow: 'visible' }}
         >
-          {paintOwnHead ? (
-            <svg
-              width={glyph * 2} // Same flow size as the diamond, scaled by the board zoom
-              height={glyph * 2}
-              viewBox="-8 -8 16 16"
-              aria-hidden
-              style={{ transform: `rotate(${arrowDeg}deg)` }} // Same closed head as a thread, aimed at the target
-            >
-              <polyline
-                points="-5,-4 0,0 -5,4 -5,-4" // Closed arrow, tip at the origin
-                fill={glyphColor}
-                stroke={glyphColor}
-                strokeLinejoin="round"
-                strokeLinecap="round"
-                strokeWidth="1"
-              />
-            </svg>
-          ) : threaded ? null : (
-            <span
-              aria-hidden
-              style={{
-                width: glyph, // Body of the thread head, before the 45° turn
-                height: glyph,
-                background: glyphColor, // Idle thread-head gray
-                borderRadius: glyph / 4, // Rounded corners, then turned into a diamond
-                transform: 'rotate(45deg)',
-              }}
-            />
-          )}
-        </button>,
-        document.body
-      )}
+          {/* Rounded tip + rear corners */}
+          <path
+            d="M 3.5 2.1
+               L 9.2 5.3
+               Q 11.5 6.5 9.2 7.7
+               L 3.5 10.9
+               Q 1.5 12 1.5 9.8
+               L 1.5 3.2
+               Q 1.5 1 3.5 2.1
+               Z"
+            fill="currentColor" // blue-500 / hover blue-600
+            stroke="#ffffff" // Same white rim as connection-indicator discs
+            strokeWidth={1.5}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+        </svg>
+      </button>
 
       {menuOpen &&
         typeof document !== 'undefined' &&

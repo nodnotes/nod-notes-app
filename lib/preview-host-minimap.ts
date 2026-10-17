@@ -71,8 +71,7 @@ export function computePreviewMinimapGeometry(
   elementWidth: number,
   elementHeight: number,
   offsetScale = 5,
-  scopeZoom = 1, // Independent of host + nested cameras — 1 fits content
-  scopeCenter: { x: number; y: number } | null = null // Stable while zoomed in so drag follows the cursor
+  scopeZoom = 1 // Independent of host + nested cameras — 1 fits the board view
 ) {
   const zoom = state.transform[2]
   const viewBB = {
@@ -88,8 +87,7 @@ export function computePreviewMinimapGeometry(
     elementWidth,
     elementHeight,
     offsetScale,
-    scopeZoom,
-    scopeCenter
+    scopeZoom
   )
 }
 

@@ -3,6 +3,10 @@
 
 import type { Node } from 'reactflow'
 import { absFlowPosition, nodeFlowSize } from '@/components/use-block-group-drag'
+import {
+  fillOriginFromFlowPosition,
+  readFrameChromePad,
+} from '@/lib/frame-chrome-offset' // Upright RF XY is fill; rotated selected uses pad
 
 /** TipTap ⋮⋮ layout width — gutter column tracks this × grip chrome × frameScale. */
 export const GRIP_COL_W = 14
@@ -11,8 +15,8 @@ export const BLOCK_HANDLE_GUTTER_W = 20
 /** Air each side of the ⋮⋮ inside the blue↔fill strip (board px at frameScale 1). */
 export const GRIP_SIDE_PAD_SCREEN = 1
 /** Extra blue↔fill air, split evenly so the ⋮⋮ stays on the strip midpoint. */
-export const ADJUST_CONTENT_GAP_X = 1
-export const ADJUST_CONTENT_GAP_Y = 6 // T/B band air when no property / connections strip
+export const ADJUST_CONTENT_GAP_X = 0 // Grip column already has side pads — no extra blue↔fill X
+export const ADJUST_CONTENT_GAP_Y = 2 // T/B band air when no property / connections strip
 export const CONNECTIONS_ROW_PAD = 4 // Air above and below the 14px connections mark
 export const CONNECTIONS_GROUP_H = 14 + CONNECTIONS_ROW_PAD * 2 // One chrome row — top gap copies this when connections show
 /** `+# rows — show more / show less` under a Notion DB table (py-1 + 11px). */
@@ -42,24 +46,32 @@ export function gripComfortFlow(zoom: number, frameScale: number, nominalPx: num
 }
 
 /**
+ * How much the blue↔fill strip grows with content scale.
+ * Linear × frameScale ballooned place-scale frames; √ keeps growth with content milder.
+ */
+export function adjustChromePadScale(frameScale = 1): number {
+  const fs = Math.max(0.15, frameScale)
+  return fs <= 1 ? fs : Math.sqrt(fs) // Below 1: ride shrink; above 1: ~√ growth
+}
+
+/**
  * Flow width of the ⋮⋮ column = painted grip + side pads (grip↔fill and grip↔outer).
- * Board px × frameScale only — camera zoom must not change the adjust-box width.
+ * Board px × √content scale — camera zoom must not change the adjust-box width.
  */
 export function handleGutterFlowPx(_zoom: number, frameScale = 1): number {
-  const fs = Math.max(0.15, frameScale) // Text scale, not the camera
+  const fs = adjustChromePadScale(frameScale) // Mild growth with content
   const gripFlow = GRIP_COL_W * fs // ⋮⋮ column in board px
   return gripFlow + 2 * GRIP_SIDE_PAD_SCREEN * fs // Air on both sides, same board px
 }
 
 /** Blue↔gutter air in board px. Camera zoom does not change it. */
 export function adjustGapFlowPx(_zoom: number, frameScale = 1): number {
-  const fs = Math.max(0.15, frameScale) // Same text scale as the column
-  return ADJUST_CONTENT_GAP_X * fs // Fixed board width for the blue↔grip gap
+  return ADJUST_CONTENT_GAP_X * adjustChromePadScale(frameScale) // Usually 0 — grip pads own the strip
 }
 
 /** Blue↔fill air on T/B when the property / connections strip is absent. */
-export function adjustGapYFlow(zoom: number, frameScale = 1): number {
-  return gripComfortFlow(zoom, frameScale, ADJUST_CONTENT_GAP_Y)
+export function adjustGapYFlow(_zoom: number, frameScale = 1): number {
+  return ADJUST_CONTENT_GAP_Y * adjustChromePadScale(frameScale) // Mild √ growth with content
 }
 
 /**
@@ -131,16 +143,16 @@ function metaFrameScale(meta: Record<string, unknown>): number {
   return typeof fs === 'number' && Number.isFinite(fs) ? Math.max(0.15, fs) : 1
 }
 
-/** Nominal adjust-box chrome (flow px) — gutter tracks grip size at this zoom/frameScale. */
+/** Nominal adjust-box chrome (flow px) — gutter + bands track frameScale like the selected paint. */
 export function nominalAdjustChromeInsets(
   meta: Record<string, unknown>,
   zoom: number,
   isDatabase = false // Notion DB frames reserve footer air under the fill
 ): AdjustChromeInsets {
   const fs = metaFrameScale(meta)
-  const x = Math.round(adjustChromeXFlow(zoom, fs))
+  const x = Math.round(adjustChromeXFlow(zoom, fs)) // Same content-scaled strip as ChatPanelNode
   const band = Math.round(CONNECTIONS_GROUP_H * fs)
-  const gapY = Math.round(adjustGapYFlow(zoom, fs)) // Blue↔fill air when no strip
+  const gapY = Math.round(adjustGapYFlow(zoom, fs)) // T/B air tracks content scale
   const footer = isDatabase ? Math.round(DB_ROWS_REVEAL_FOOTER_H * fs) : 0
   // Same pads as the painted blue box (selectedAdjustChromeY). Snap is adjust-box to adjust-box.
   const pads = selectedAdjustChromeY({
@@ -154,34 +166,91 @@ export function nominalAdjustChromeInsets(
   return { x, yTop: pads.yTop, yBottom: pads.yBottom }
 }
 
-/** Adjust-box width/height in flow px (selected RF outer box already includes chrome). */
+/** True when RF XY is the fill origin (chrome grows via negative margins, not frameChromePad). */
+function nodeIsUpright(node: Node): boolean {
+  const rot = nodeMeta(node).rotation
+  return typeof rot !== 'number' || Math.abs(rot) <= 0.5
+}
+
+/** Painted select chrome from the panel — present only once gutters/bands are mounted. */
+function readDomChromePads(nodeId: string): AdjustChromeInsets | null {
+  if (typeof document === 'undefined') return null
+  const panel = document.querySelector(
+    `.react-flow__node[data-id="${CSS.escape(nodeId)}"] [data-panel-container="true"]`
+  ) as HTMLElement | null
+  if (!panel) return null
+  const x = parseFloat(panel.getAttribute('data-tt-chrome-pad-x') || '') || 0
+  const yTop = parseFloat(panel.getAttribute('data-tt-chrome-pad-y-top') || '') || 0
+  const yBottom = parseFloat(panel.getAttribute('data-tt-chrome-pad-y-bottom') || '') || 0
+  if (x <= 0 && yTop <= 0 && yBottom <= 0) return null // Attrs absent — RF size is still fill-only
+  return { x, yTop, yBottom }
+}
+
+/** Fill size from the painted panel (border-box minus pads) — correct even while RF width lags. */
+function readDomFillSize(nodeId: string): { width: number; height: number } | null {
+  if (typeof document === 'undefined') return null
+  const panel = document.querySelector(
+    `.react-flow__node[data-id="${CSS.escape(nodeId)}"] [data-panel-container="true"]`
+  ) as HTMLElement | null
+  if (!panel) return null
+  const pads = readDomChromePads(nodeId)
+  if (!pads) return null
+  const w = panel.offsetWidth - pads.x * 2
+  const h = panel.offsetHeight - pads.yTop - pads.yBottom
+  if (w < 1 || h < 1) return null
+  return { width: w, height: h }
+}
+
+/** Saved fill size on the frame — used when selected RF size already includes chrome. */
+function metaFillSize(meta: Record<string, unknown>): { width: number; height: number } | null {
+  const dims = meta.resizeDimensions as { width?: unknown; height?: unknown } | undefined
+  if (!dims || typeof dims.width !== 'number' || typeof dims.height !== 'number') return null
+  if (dims.width < 1 || dims.height < 1) return null
+  return { width: dims.width, height: dims.height }
+}
+
+/**
+ * Always expand from the fill so select/deselect cannot move the blue box.
+ * Fill source must not branch on `selected` — that swapped RF size vs saved/dom and
+ * moved the stack square even when the frames stayed put.
+ */
+function adjustBoxFromRfAbs(
+  node: Node,
+  abs: { x: number; y: number },
+  size: { width: number; height: number },
+  zoom: number
+): FlowBox {
+  if (node.selected && !nodeIsUpright(node)) {
+    return { x: abs.x, y: abs.y, width: size.width, height: size.height } // Rotated AABB origin
+  }
+  const meta = nodeMeta(node)
+  const chrome = nominalAdjustChromeInsets(meta, zoom, nodeHasDatabaseBlock(node))
+  const fillOrigin = fillOriginFromFlowPosition(abs, readFrameChromePad(node.data))
+  const saved = metaFillSize(meta)
+  const domFill = readDomFillSize(node.id) // Only when chrome pads are painted
+  // Same order selected or not: saved fill → painted fill → RF size (fill when unselected / select race)
+  const fillW = saved?.width ?? domFill?.width ?? size.width
+  const fillH = saved?.height ?? domFill?.height ?? size.height
+  return {
+    x: fillOrigin.x - chrome.x,
+    y: fillOrigin.y - chrome.yTop,
+    width: fillW + chrome.x * 2,
+    height: fillH + chrome.yTop + chrome.yBottom,
+  }
+}
+
+/** Adjust-box width/height in flow px — same fill→chrome expand as `frameAdjustFlowBox`. */
 export function frameAdjustFlowSize(
   node: Node,
   zoom: number
 ): { width: number; height: number } {
-  const size = nodeFlowSize(node)
-  if (node.selected) return size
-  const chrome = nominalAdjustChromeInsets(nodeMeta(node), zoom, nodeHasDatabaseBlock(node))
-  return {
-    width: size.width + chrome.x * 2,
-    height: size.height + chrome.yTop + chrome.yBottom,
-  }
+  const box = adjustBoxFromRfAbs(node, { x: 0, y: 0 }, nodeFlowSize(node), zoom)
+  return { width: box.width, height: box.height }
 }
 
-/** Upright adjust-box in absolute flow space. */
+/** Upright adjust-box in absolute flow space — stable across select/deselect. */
 export function frameAdjustFlowBox(node: Node, live: Node[], zoom: number): FlowBox {
-  const abs = absFlowPosition(node, live)
-  const size = nodeFlowSize(node)
-  if (node.selected) {
-    return { x: abs.x, y: abs.y, width: size.width, height: size.height }
-  }
-  const chrome = nominalAdjustChromeInsets(nodeMeta(node), zoom, nodeHasDatabaseBlock(node))
-  return {
-    x: abs.x - chrome.x,
-    y: abs.y - chrome.yTop,
-    width: size.width + chrome.x * 2,
-    height: size.height + chrome.yTop + chrome.yBottom,
-  }
+  return adjustBoxFromRfAbs(node, absFlowPosition(node, live), nodeFlowSize(node), zoom)
 }
 
 /** RF absolute top-left from an adjust-box top-left. */
@@ -190,9 +259,9 @@ export function rfAbsFromAdjustOrigin(
   node: Node,
   zoom: number
 ): { x: number; y: number } {
-  if (node.selected) return adjustOrigin
+  if (node.selected && !nodeIsUpright(node)) return adjustOrigin // Rotated: RF is adjust AABB
   const chrome = nominalAdjustChromeInsets(nodeMeta(node), zoom, nodeHasDatabaseBlock(node))
-  return { x: adjustOrigin.x + chrome.x, y: adjustOrigin.y + chrome.yTop }
+  return { x: adjustOrigin.x + chrome.x, y: adjustOrigin.y + chrome.yTop } // Fill origin
 }
 
 /** Adjust box when the frame already sits at absolute flow `abs`. */
@@ -201,17 +270,7 @@ export function frameAdjustFlowBoxAt(
   abs: { x: number; y: number },
   zoom: number
 ): FlowBox {
-  const size = nodeFlowSize(node)
-  if (node.selected) {
-    return { x: abs.x, y: abs.y, width: size.width, height: size.height }
-  }
-  const chrome = nominalAdjustChromeInsets(nodeMeta(node), zoom, nodeHasDatabaseBlock(node))
-  return {
-    x: abs.x - chrome.x,
-    y: abs.y - chrome.yTop,
-    width: size.width + chrome.x * 2,
-    height: size.height + chrome.yTop + chrome.yBottom,
-  }
+  return adjustBoxFromRfAbs(node, abs, nodeFlowSize(node), zoom)
 }
 
 /** Screen rect of the upright adjust box (stack line portal). */
@@ -224,8 +283,13 @@ export function frameAdjustScreenRect(
     `.react-flow__node[data-id="${CSS.escape(nodeId)}"]`
   ) as HTMLElement | null
   if (!el) return null
+  if (node?.selected && nodeIsUpright(node)) {
+    // Panel negative margins hang past the RF wrapper — use the painted blue box
+    const panel = el.querySelector('[data-panel-container="true"]') as HTMLElement | null
+    if (panel) return panel.getBoundingClientRect()
+  }
   const rect = el.getBoundingClientRect()
-  if (!node || node.selected) return rect
+  if (!node || node.selected) return rect // Rotated selected: wrapper is the AABB
   const chrome = nominalAdjustChromeInsets(nodeMeta(node), zoom, nodeHasDatabaseBlock(node))
   const expandX = chrome.x * zoom
   const expandYTop = chrome.yTop * zoom

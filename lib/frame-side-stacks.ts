@@ -187,6 +187,29 @@ export function stripAllStacks(meta: Record<string, unknown>): Record<string, un
   return writeSideStacks(meta, {}, [])
 }
 
+/**
+ * Keep only thread-menu stack pairs (`thread:{edgeId}`).
+ * Drops legacy snap / layout-bar sideStacks so diamond trees do not revive on load.
+ */
+export function stripNonThreadStacks(meta: Record<string, unknown>): Record<string, unknown> {
+  const stacks = readSideStacks(meta)
+  const next: SideStacks = {}
+  for (const side of FRAME_STACK_SIDES) {
+    const e = stacks[side]
+    if (e?.groupId.startsWith('thread:')) next[side] = e
+  }
+  const locks = readLockedGroupIds(meta).filter((id) => id.startsWith('thread:'))
+  const cleaned = writeSideStacks(meta, next, locks)
+  // Drop nested-hide markers that pointed at removed snap groups
+  if (
+    typeof cleaned.parentStackHidden === 'string' &&
+    !cleaned.parentStackHidden.startsWith('thread:')
+  ) {
+    delete cleaned.parentStackHidden
+  }
+  return cleaned
+}
+
 /** Patch one group’s entry fields (expanded / index / anchor) on the side that holds it. */
 export function patchGroupEntry(
   meta: Record<string, unknown>,

@@ -25,6 +25,7 @@ import {
   computeMinimapGeometry,
   minimapClientToFlow,
   minimapGrabbedViewOrigin,
+  minimapScopeForHalfView,
   minimapViewportMaskRect,
   readMinimapViewBox,
   type MinimapFlowRect,
@@ -123,34 +124,52 @@ function BoardMiniMapInner({
     zoom: number
     viewBox: MinimapFlowRect
   } | null>(null)
-  const [scopeZoom, setScopeZoom] = useState(1) // Minimap framing only — never the board camera
-  const scopeZoomRef = useRef(1) // Wheel handler must not close over a stale scope
-  scopeZoomRef.current = scopeZoom
-  // Freeze only while minimap-dragging; otherwise follow the camera so nodes pan with the board
-  const dragScopeCenterRef = useRef<{ x: number; y: number } | null>(null)
-  const [, setDragEpoch] = useState(0) // Re-render when drag ends so live center resumes
+  // Auto = follow board zoom; manual = wheel on the minimap until the next board zoom
+  const [scopeMode, setScopeMode] = useState<'auto' | 'manual'>('auto')
+  const [manualScopeZoom, setManualScopeZoom] = useState(1)
+  const scopeModeRef = useRef(scopeMode)
+  scopeModeRef.current = scopeMode
+  const scopeZoomRef = useRef(1) // Wheel scrub starts from the live effective scope
+  // Freeze auto scope for the whole minimap drag so half-view does not rescale mid-gesture
+  const dragScopeZoomRef = useRef<number | null>(null)
+  const [, setDragEpoch] = useState(0) // Re-render when drag ends so auto scope resumes
   const { viewBB, content, rfId } = useStore(selectMinimapFrame, minimapFrameEq)
-  const viewBBRef = useRef(viewBB) // Wheel scope-in reads the live viewport center
-  viewBBRef.current = viewBB
+  const boardZoom = useStore((s) => s.transform[2]) // Board zoom drops manual override
+  const prevBoardZoomRef = useRef(boardZoom)
   const nodes = useStore(selectMinimapNodes, shallow)
   const nodeOrigin = useStore(selectNodeOrigin)
 
+  // Board zoom (pinch / Free nav / wheel on the map) drops a manual override
+  useEffect(() => {
+    if (Math.abs(prevBoardZoomRef.current - boardZoom) < 1e-6) return
+    prevBoardZoomRef.current = boardZoom
+    if (scopeModeRef.current === 'manual') setScopeMode('auto')
+  }, [boardZoom])
+
   const elementWidth = typeof style?.width === 'number' ? style.width : 196
   const elementHeight = typeof style?.height === 'number' ? style.height : 120
-  const liveScopeCenter =
-    scopeZoom > 1
-      ? { x: viewBB.x + viewBB.width / 2, y: viewBB.y + viewBB.height / 2 }
-      : null
+  const liveAutoScope = minimapScopeForHalfView(
+    viewBB,
+    content,
+    elementWidth,
+    elementHeight,
+    offsetScale
+  )
+  const scopeZoom =
+    dragScopeZoomRef.current ??
+    (scopeMode === 'manual' ? manualScopeZoom : liveAutoScope)
+  scopeZoomRef.current = scopeZoom
+
+  // Frame the live board camera (full board view) — not the content AABB
   const geometry = computeMinimapGeometry(
     viewBB,
     content,
     elementWidth,
     elementHeight,
     offsetScale,
-    scopeZoom,
-    dragScopeCenterRef.current ?? liveScopeCenter // Drag freeze wins; else track the camera
+    scopeZoom
   )
-  // Hole leaves a min dimmed band so out-of-view mask stays visible when zoomed out
+  // Hole = full board camera (same aspect / extent as the pane)
   const maskRect = minimapViewportMaskRect(
     geometry.viewBB,
     { x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height },
@@ -180,7 +199,8 @@ function BoardMiniMapInner({
         zoomStep
       const next = clampMinimapScopeZoom(scopeZoomRef.current * Math.pow(2, pinchDelta))
       scopeZoomRef.current = next
-      setScopeZoom(next) // liveScopeCenter tracks the camera while scopeZoom > 1
+      setManualScopeZoom(next) // Stick until the next board zoom
+      setScopeMode('manual')
     }
 
     // Prefer the drag-frozen viewBox so a mid-pan React paint cannot shift the mapping
@@ -215,11 +235,7 @@ function BoardMiniMapInner({
         zoom, // Drag must not change zoom
         viewBox, // Same CSS→flow space for the whole drag
       }
-      // Hold the painted center still so grab math is not fighting a chasing viewBox
-      dragScopeCenterRef.current = {
-        x: viewBox.x + viewBox.width / 2,
-        y: viewBox.y + viewBox.height / 2,
-      }
+      dragScopeZoomRef.current = scopeZoomRef.current // Hold auto half-view scale still for the drag
     }
 
     const panHandler = (event: { sourceEvent?: Event }) => {
@@ -260,7 +276,7 @@ function BoardMiniMapInner({
       zoomAndPanHandler.on('zoom', panHandler) // Keep that point under the pointer
       zoomAndPanHandler.on('end', () => {
         grabRef.current = null
-        dragScopeCenterRef.current = null // Resume following the camera after the drag
+        dragScopeZoomRef.current = null // Resume auto half-view from the landed camera
         setDragEpoch((n) => n + 1) // Ref clear alone would not re-render
       })
     }

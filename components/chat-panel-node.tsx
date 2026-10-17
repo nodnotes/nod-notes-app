@@ -49,7 +49,6 @@ import { useBoardCollab } from '@/lib/collab/board-collab-context' // Yjs frame 
 import { isIbarLiveCreate } from '@/lib/ibar-live-create' // In-session I-bar creates skip Yjs
 import { handleCaptureLinkPaste } from '@/lib/tiptap/capture-link-paste' // Paste capture URL → named link
 import { TipTapBlockHandles } from '@/components/tiptap-block-handles' // Per-content-block ⋮⋮ (Notion)
-import { FrameStackRevealLine } from '@/components/frame-stack-reveal-line' // Stack edge dashed line → reveal
 import { FrameShapeBackdrop } from '@/components/frame-shape-backdrop' // SVG silhouette behind TipTap
 import {
   frameShapeClipCss,
@@ -61,19 +60,24 @@ import {
   shapeContentFitScale, // Free-resize contain inside the silhouette
   type FrameShapeType,
 } from '@/lib/frame-shape' // Frame-as-shape parse + clip + rotation AABB
-import type { FrameStackSide } from '@/components/use-frame-nest-stack-drag'
 import {
   applySnapMateRelayout,
   isStackCollapsedMeta, // Collapsed stack mates stay hidden when a property reveals the frame
   persistSnapMateRelayout,
-} from '@/components/use-frame-nest-stack-drag' // Repark snap mates when AABB changes (rotation)
+} from '@/components/use-frame-nest-stack-drag' // Repark thread-stack mates when AABB changes (rotation)
 import { isHiddenByLiveBoardFilter } from '@/lib/board-frame-filters' // “Contains property” reads node HTML, not the editor
 import {
   FRAME_STACK_SIDES,
   readSideStacks,
-} from '@/lib/frame-side-stacks' // Per adjust-box side stack trees
+  type FrameStackSide,
+} from '@/lib/frame-side-stacks' // Thread-pair stack trees (menu-created)
+import { FrameStackRevealLine } from '@/components/frame-stack-reveal-line' // Stack under → mark at sim connection point
 import { findEditorBlockAtClientPoint } from '@/lib/tiptap/block-selection' // Click in frame padding → block (rotation-safe)
 import { useLiveBoardZoom } from '@/lib/use-live-board-zoom' // Viewport-CSS zoom (not lagging RF store)
+import {
+  IBAR_PLACE_SCALE_MIN,
+  maxContentScale,
+} from '@/lib/ibar-place-scale' // Fit + free share min content (1) and size-based max
 import {
   getLiveBoardZoom,
 } from '@/lib/frame-chrome-zoom' // Select-time pad + fill-origin for live rAF glue
@@ -209,10 +213,28 @@ function previewCardHeight(root: HTMLElement): number {
   const wrap = (embed.closest('.tt-board-link-embed') as HTMLElement | null) || embed // Includes pt/pb
   return Math.max(wrap.offsetHeight, PREVIEW_BLOCK_MIN_H)
 }
-/** Corner-drag floor — small but grab-able; grow stays unbounded (RF max = MAX_VALUE). */
+/** Corner-drag floor — small but grab-able; content grow caps via size-based gap. */
 const FRAME_RESIZE_MIN = 40
 /** Locked scale epsilon — avoid 0; no 0.15 floor (shrink matches grow). */
 const FRAME_SCALE_EPSILON = 0.001
+/** Clamp painted / lock scale into [floor, maxScale] — maxScale from maxContentScale(object). */
+function clampContentScale(
+  scale: number,
+  floor = FRAME_SCALE_EPSILON,
+  maxScale = Number.POSITIVE_INFINITY
+): number {
+  return Math.min(maxScale, Math.max(floor, scale)) // Never past the size-based ceiling
+}
+/** Unscaled object box for the grow gap (wrap column when wrapped). */
+function contentScaleObjectSize(
+  intrinsic: { width: number; height: number },
+  wrapCol: number | null | undefined
+): { width: number; height: number } {
+  return {
+    width: Math.max(1, wrapCol ?? intrinsic.width), // Wrap: fixed column is the object width
+    height: Math.max(1, intrinsic.height), // Height always from natural stack
+  }
+}
 /** Chat bubble with two centered text lines — Lucide MessageSquare body, not the 3 left-ragged lines. */
 function ReactionsChatIcon({ className }: { className?: string }) {
   return (
@@ -523,6 +545,15 @@ function measureNaturalContentWidth(contentFit: HTMLElement): number {
     }
     maxLine = Math.max(maxLine, rangeWidth(child)) // Longest real text line
   }
+  // Spaces-only / empty: Range width is 0 (trailing whitespace has no glyph box), so hug would
+  // collapse below the empty one-line floor — same ~3ch as emptyLineHug / place seed.
+  if (maxLine < BLOCK_THREE_CHARS_W) {
+    const plain = (pm.textContent || '') // TipTap body text (atoms handled above)
+      .replace(/\u00a0/g, ' ') // NBSP from the editor DOM
+      .replace(/\s+/g, ' ') // Collapse runs
+      .trim() // Spaces-only → empty (matches isBlockContentEmpty)
+    if (!plain) maxLine = BLOCK_THREE_CHARS_W // Keep the empty fit-to-text column
+  }
   // Right margin: equal to padL when there is no ⋮⋮ gutter (gutter lives in select chrome).
   // With an in-fill gutter, mirror frame-left→⋮⋮ icon. Honor live paddingRight.
   const padR = parseFloat(cs.paddingRight) || 0
@@ -762,7 +793,7 @@ function scaledFrameSize(
   }
 }
 
-/** Free-resize contain. Cap 1 unless allowGrow — wrap uses allowGrow so text can pass fit-to-text and shrink with no floor. */
+/** Free-resize contain. Cap 1 unless allowGrow — wrap/+ may pass fit-to-text up to maxPaintScale. */
 function freeContentFitScale(
   boxW: number, // Frame inner width
   boxH: number, // Frame inner height
@@ -770,11 +801,16 @@ function freeContentFitScale(
   contentH: number, // Natural visual height
   shape?: FrameShapeType | null, // Silhouette — contain inside its outline, not the bounding rect
   allowGrow = false, // Plus-box drag — scale past the last fit-to-text size
+  baseScale = 1, // Current frameScale — grow contain stops so paint ≤ maxPaintScale
+  maxPaintScale?: number, // Size-based ceiling from maxContentScale(object)
 ): number {
   if (contentW < 1 || contentH < 1) return 1 // Nothing to fit
   const fit = Math.min(boxW / contentW, boxH / contentH) // Uniform contain — may be above 1
   if (shape && !(allowGrow && fit > 1)) return shapeContentFitScale(shape, boxW, boxH, contentW, contentH) // Shrink inside the silhouette; grow uses the box
-  return allowGrow ? fit : Math.min(1, fit) // Wrap / plus box may pass fit-to-text; otherwise stop at 1
+  if (!allowGrow) return Math.min(1, fit) // Default free: shrink only, never past fit-to-text
+  if (maxPaintScale == null || !(maxPaintScale > 0)) return fit // No ceiling supplied — uncapped grow
+  const growCap = maxPaintScale / Math.max(FRAME_SCALE_EPSILON, baseScale) // paint = base × contain ≤ max
+  return Math.min(fit, growCap) // +'s / wrap may grow, but not past the size-based max
 }
 
 /** Sync first-paint scale from place/persist metadata (async loadResizeState is too late for I-bar type). */
@@ -3492,6 +3528,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const wrapShiftPosRef = useRef<{ x: number; y: number } | null>(null) // Fit left/center wrap drag: moved RF XY to persist on release
   const wrapDragPaintRef = useRef<number | null>(null) // Paint scale frozen at wrap-line press — contain-fit must not remap the bar
   const freeFitScaleRef = useRef(1) // Last settled contain-fit — reused for the whole wrap-line drag
+  const freeNowrapIntrinsicWRef = useRef<number | null>(null) // Prior unscaled width — free nowrap typing grows the box from this
   const nowrapCapRef = useRef<number | null>(null) // Column where this drag turns wrap off — light blue from there
   const paintScaleRef = useRef(1) // Live CSS scale so wrap-line drag converts fill X → unscaled col
   const frameAlignXRef = useRef(frameAlignX) // Wrap-line drag — fit-to-content shows one bar
@@ -3511,6 +3548,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // Same-tick drag sample — render + DOM read this so peach / adjust ring don't wait for rAF setState
   const liveResizeBoxRef = useRef<{ width: number; height: number; scale?: number } | null>(null)
   const freeContentMinRef = useRef({ width: 1, height: 1 }) // Live fit-to-text hug — free shrink floor
+  const freeNowrapMinWRef = useRef<number | null>(null) // Press-time nowrap text width — floor cannot collapse mid-drag
   // Identity-stable apply — handleResize must not close over push/setNodes (phone d3-drag rebind)
   const applyLiveAdjustBoxRef = useRef<(contentW: number, contentH: number, outerAlready?: boolean) => void>(
     () => {}
@@ -4330,13 +4368,68 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // Live L/R pad while selected (⋮⋮ stays centered in the blue↔fill strip as zoom changes).
   // Upright fill stays put via negative margins on the panel (same paint as the pad).
   // Rotated fill stays put: glueFrameChromePad shifts RF XY by half the AABB delta.
+  // Fit: gap tracks frameScale (live on proportional resize). Free: gap tracks painted
+  // text scale (frameScale × contain) so shrink-to-fit resize matches fit-mode gap.
+  const liveBoxForChrome =
+    isResizingRef.current && liveResizeBoxRef.current
+      ? liveResizeBoxRef.current
+      : resizeDimensions // Mid-free-resize sample — same box contain-fit uses
+  const contentScaleObj = contentScaleObjectSize(
+    intrinsicSize,
+    frameTextWrap ? wrapColWidth : null
+  ) // Unscaled object for the grow gap
+  const contentScaleCeil = maxContentScale(contentScaleObj.width, contentScaleObj.height) // Bigger object → bigger gap past place-max
+  // Shared content max box — fit corner-drag and free +'s stop at this same size (contentScaleCeil hug)
+  const maxContentBox =
+    frameTextWrap && wrapColWidth != null
+      ? {
+          width: Math.max(BLOCK_THREE_CHARS_W, Math.round(wrapColWidth * contentScaleCeil)),
+          height: Math.max(BLOCK_MIN_FRAME_H, Math.round(intrinsicSize.height * contentScaleCeil)),
+        }
+      : hugLockedFrameSize(intrinsicSize, contentScaleCeil, 1, frameShape)
+  const maxContentBoxW = Math.max(BLOCK_THREE_CHARS_W, maxContentBox.width)
+  const maxContentBoxH = Math.max(BLOCK_MIN_FRAME_H, maxContentBox.height)
+  const freeChromeContain =
+    isBlock &&
+    frameUnlocked &&
+    isUserResized &&
+    liveBoxForChrome &&
+    liveBoxForChrome.width > 0 &&
+    liveBoxForChrome.height > 0 &&
+    intrinsicSize.width > 0 &&
+    intrinsicSize.height > 0
+      ? freeContentFitScale(
+          Math.min(
+            contentFitBox ? contentFitBox.width : liveBoxForChrome.width,
+            maxContentBoxW // Same ceiling as fit — may exceed fill while +'s grow the frame
+          ),
+          Math.min(
+            contentFitBox ? contentFitBox.height : liveBoxForChrome.height,
+            maxContentBoxH
+          ),
+          Math.max(
+            1,
+            (frameTextWrap && wrapColWidth != null ? wrapColWidth : intrinsicSize.width) *
+              Math.max(FRAME_SCALE_EPSILON, frameScale)
+          ), // Wrap: column; nowrap: natural run
+          Math.max(1, intrinsicSize.height * Math.max(FRAME_SCALE_EPSILON, frameScale)),
+          frameShape,
+          contentFitBox != null || (frameUnlocked && frameTextWrap), // + box / wrap may pass fit-to-text
+          Math.max(FRAME_SCALE_EPSILON, frameScale), // Base for grow-cap math
+          contentScaleCeil // Size-based paint ceiling
+        )
+      : 1
+  const chromeContentScale =
+    isBlock && frameUnlocked && isUserResized && liveBoxForChrome
+      ? clampContentScale(frameScale * freeChromeContain, FRAME_SCALE_EPSILON, contentScaleCeil)
+      : clampContentScale(frameScale, FRAME_SCALE_EPSILON, contentScaleCeil)
   const chromeScale =
-    isBlock && Math.abs(frameScale - 1) > FRAME_SCALE_EPSILON
-      ? Math.max(FRAME_SCALE_EPSILON, frameScale)
-      : 1 // Place + locked resize — gutters track CSS-scaled fill
+    isBlock && Math.abs(chromeContentScale - 1) > FRAME_SCALE_EPSILON
+      ? chromeContentScale
+      : 1 // Gutters track CSS-scaled / contain-fitted fill
   const screenChromeScale = frameScreenChromeScale(rfZoom || 1) // Handles / dots / rotate only
   const adjustChromeX = showFrameChrome
-    ? Math.round(adjustChromeXFlow(rfZoom || 1, chromeScale)) // Same L/R strip in fit and free — unlock must not grow the adjust box
+    ? Math.round(adjustChromeXFlow(rfZoom || 1, chromeScale)) // Fit + free: same gap vs painted text
     : 0
   const handleGutterFlow = showFrameChrome
     ? handleGutterFlowPx(rfZoom || 1, chromeScale) // Live — matches pad so grip stays centered in the strip
@@ -4527,23 +4620,22 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       )
     }
   }, [isBlock, id, getSetNodes])
-  // Stack lines: one per adjust-box side that has a mate further out on that side’s tree.
+  // Stack marks: one per adjust-box side that has a mate further out on that side’s tree.
   // Equality fn is required — a fresh `[]` every store tick re-rendered every frame on pinch
   // (large Notion DB tables → phone Safari tab reload over tunnel).
-  const stackMeta = (promptMessage?.metadata || {}) as Record<string, unknown>
-  // Whether *this* frame is stacked depends only on its own metadata, so it is answered before the
+  // Do not scan nodeInternals while dimensions churn from setViewport (Scroll-mode pan) —
   // store scan below. Without it, every mounted frame walked all of nodeInternals × 4 sides on every
-  // store update: a pan that fired 13 RF `dimensions` changes did ~57k metadata reads and measured
-  // 421ms of blocking. `isBoardNavigating()` does not cover this — wheel/trackpad pan in Scroll mode
-  // goes through setViewport, which fires neither onMoveStart nor onMove.
+  // store update. `isBoardNavigating()` does not cover that path.
+  const stackMeta = (promptMessage?.metadata || {}) as Record<string, unknown>
   const myStackSides = useMemo(() => readSideStacks(stackMeta), [stackMeta])
   const hasAnyStackSide = FRAME_STACK_SIDES.some((side) => !!myStackSides[side])
   const stackSidesRef = useRef(EMPTY_STACK_SIDES) // Last gap list — kept mounted while a frame is dragged
   const stackGapSides = useStore(
     (s) => {
       if (!hasAnyStackSide) return EMPTY_STACK_SIDES
-      if (isFrameDragging()) return stackSidesRef.current // Don't unmount the mark; it tracks the live gap
-      if (isBoardNavigating()) return EMPTY_STACK_SIDES
+      // Zoom/pan/drag: keep the last gap list so the stack mark stays mounted and the
+      // regular blue sim-point stays suppressed on that side (EMPTY cleared both mid-zoom).
+      if (isFrameDragging() || isBoardNavigating()) return stackSidesRef.current
       const mine = myStackSides
       const sides: Array<{ side: FrameStackSide; groupId: string }> = []
       for (const side of FRAME_STACK_SIDES) {
@@ -4561,13 +4653,15 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         })
         if (hasOut) sides.push({ side, groupId: entry.groupId })
       }
-      stackSidesRef.current = sides // Drag keeps this list so the mark stays mounted
+      stackSidesRef.current = sides // Frozen mid-nav/drag so the mark + hide-blue stay stable
       return sides
     },
     (a, b) =>
       a.length === b.length &&
       a.every((x, i) => x.side === b[i].side && x.groupId === b[i].groupId)
   )
+  // Sides where the stack mark owns the sim connection point (hide the blue circle)
+  const stackMarkSides = useMemo(() => new Set(stackGapSides.map((s) => s.side)), [stackGapSides])
 
   // Connection points: selected frame (idle), or the frame under a dragged thread end.
   // Mid-press on the *body* hides them (`pressing`); press on the indicator itself is excluded so
@@ -5312,6 +5406,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // Rotated: RF size = upright AABB so blue adjust chrome tracks live; left edge stays locked.
   // Snap mates repark against that AABB so side-stacks ride rotation (not only the blue box).
   const lastPushedBoxRef = useRef<{ w: number; h: number; rot: number } | null>(null)
+  // Fill size + angle — select chrome must not repark stack mates (fill stays put)
+  const lastPushedFillRef = useRef<{ w: number; h: number; rot: number } | null>(null)
   const resizeDimensionsRef = useRef(resizeDimensions)
   resizeDimensionsRef.current = resizeDimensions
   const frameShapeRef = useRef(frameShape)
@@ -5351,7 +5447,17 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       const rotSame = !!prev && Math.abs(prev.rot - rot) < 0.05
       // Skip only when AABB + angle unchanged (mates already parked for this box)
       if (sizeSame && rotSame && !opts?.forceMates) return
+      const prevFill = lastPushedFillRef.current
+      const fillSame =
+        !!prevFill &&
+        Math.abs(prevFill.w - dims.width) <= 1 &&
+        Math.abs(prevFill.h - dims.height) <= 1
+      const fillRotSame = !!prevFill && Math.abs(prevFill.rot - rot) < 0.05
+      // Select only grows RF chrome around a fixed fill — do not move stack mates
+      const reparkMates =
+        !!opts?.forceMates || (!!prevFill && (!fillSame || !fillRotSame))
       lastPushedBoxRef.current = { w: boxW, h: boxH, rot }
+      lastPushedFillRef.current = { w: dims.width, h: dims.height, rot }
       // Keep the panel DOM in sync (defeats stale inline widths from line-grow helpers)
       if (panelRef.current && Math.abs(rot) > 0.5) {
         panelRef.current.style.width = `${boxW}px`
@@ -5387,11 +5493,19 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             style: { ...node.style, width: boxW, height: boxH },
           }
         })
-        // Keep snap/stack mates flush to the new upright AABB (live while rotating)
-        const withMates = applySnapMateRelayout(next, id, { width: boxW, height: boxH })
-        if (withMates !== next) {
-          changed = true
-          next = withMates
+        // Repark only when fill/rotation changed — not when select bakes chrome into the RF box
+        if (reparkMates) {
+          const withMates = applySnapMateRelayout(
+            next,
+            id,
+            { width: boxW, height: boxH },
+            getLiveBoardZoom() || 1,
+            { width: dims.width, height: dims.height }
+          )
+          if (withMates !== next) {
+            changed = true
+            next = withMates
+          }
         }
         return changed ? next : nodes
       })
@@ -5415,6 +5529,13 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     const boxW = Math.round(aabb.width) // RF + panel outer (fill + chrome)
     const boxH = Math.round(aabb.height)
     lastPushedBoxRef.current = { w: boxW, h: boxH, rot } // Skip the post-setState pushAabb echo
+    const fillW = outerAlready
+      ? Math.max(1, contentW - chromeX * 2)
+      : contentW
+    const fillH = outerAlready
+      ? Math.max(1, contentH - yTop - yBottom)
+      : contentH
+    lastPushedFillRef.current = { w: fillW, h: fillH, rot }
     const panel = panelRef.current
     if (panel) {
       panel.style.width = `${boxW}px` // Peach + painted ring follow the drag now
@@ -5426,9 +5547,10 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     }
     const setNodesFunc = getSetNodes()
     if (!setNodesFunc) return
+    const zoom = getLiveBoardZoom() || 1
     setNodesFunc((nodes: any[]) => {
       let changed = false
-      const next = nodes.map((node: any) => {
+      let next = nodes.map((node: any) => {
         if (node.id !== id) return node
         const styleW =
           typeof node.style?.width === 'number' ? node.style.width : parseFloat(node.style?.width)
@@ -5436,29 +5558,66 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           typeof node.style?.height === 'number'
             ? node.style.height
             : parseFloat(node.style?.height)
-        if (
+        const prevDims = (
+          node.data?.promptMessage?.metadata as
+            | { resizeDimensions?: { width?: number; height?: number } }
+            | undefined
+        )?.resizeDimensions
+        const styleOk =
           Number.isFinite(styleW) &&
           Number.isFinite(styleH) &&
           Math.abs(styleW - boxW) <= 0.5 &&
           Math.abs(styleH - boxH) <= 0.5
-        ) {
-          return node // RF already at this adjust box
-        }
+        const fillOk =
+          !!prevDims &&
+          Math.abs(Number(prevDims.width) - fillW) <= 0.5 &&
+          Math.abs(Number(prevDims.height) - fillH) <= 0.5
+        if (styleOk && fillOk) return node // Nothing to paint
         changed = true
+        const meta = {
+          ...((node.data?.promptMessage?.metadata || {}) as Record<string, unknown>),
+          resizeDimensions: { width: fillW, height: fillH }, // Live fill for stack park
+        }
         return {
           ...node,
           width: boxW,
           height: boxH,
           style: { ...node.style, width: boxW, height: boxH },
+          data: {
+            ...node.data,
+            promptMessage: node.data?.promptMessage
+              ? { ...node.data.promptMessage, metadata: meta }
+              : node.data?.promptMessage,
+          },
         }
       })
+      // Live resize: repark so fill-mids stay aligned and sim-point gap stays natural
+      const selfMeta = ((next.find((n: any) => n.id === id)?.data?.promptMessage?.metadata ||
+        {}) as Record<string, unknown>)
+      const stacked = FRAME_STACK_SIDES.some((side) => !!readSideStacks(selfMeta)[side])
+      if (stacked) {
+        const withMates = applySnapMateRelayout(
+          next,
+          id,
+          { width: boxW, height: boxH },
+          zoom,
+          { width: fillW, height: fillH }
+        )
+        if (withMates !== next) {
+          changed = true
+          next = withMates
+        }
+      }
       return changed ? next : nodes
     })
   }
 
   useEffect(() => {
     if (!isBlock || !isUserResized || !resizeDimensions) {
-      if (!isUserResized) lastPushedBoxRef.current = null // Next resize must push fresh
+      if (!isUserResized) {
+        lastPushedBoxRef.current = null // Next resize must push fresh
+        lastPushedFillRef.current = null
+      }
       return
     }
     // Skip effect while pointer-rotating / adjusting — those gestures push AABB every tick
@@ -5846,10 +6005,23 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     resizeRafRef.current = null
     pendingResizeRef.current = null // Fresh gesture — don't flush a previous drag
     setIsUserResized(true) // Switch from line-grow to explicit frame box
-    const dims = resizeDimensionsRef.current // Live box without putting it in callback deps
-    const startW = dims?.width ?? panelRef.current?.offsetWidth ?? 200
-    const startH = dims?.height ?? panelRef.current?.offsetHeight ?? 40
+    // Fit ratio must use CONTENT size — RF params are the outer box (chrome). Mixing them
+    // inflated scale so fit could not reach free's min and overshot free's max.
+    const dims = resizeDimensionsRef.current // Content / fill box
+    const chromeX0 = adjustChromeXRef.current * 2 // Selected L/R gutters on the RF outer
+    const chromeY0 = adjustChromeYTopRef.current + adjustChromeYBottomRef.current // T/B bands
+    const panelW = panelRef.current?.offsetWidth ?? 200
+    const panelH = panelRef.current?.offsetHeight ?? 40
+    const startW = dims?.width ?? Math.max(1, panelW - chromeX0) // Always content — never outer
+    const startH = dims?.height ?? Math.max(1, panelH - chromeY0)
     lockedResizeStartRef.current = { width: startW, height: startH, scale: frameScaleRef.current } // Locked proportional baseline
+    // Free nowrap: freeze the min-text width floor (not the full hug) so measure cannot lower it
+    if (frameUnlockedRef.current && !frameTextWrapRef.current) {
+      const minW = Math.max(1, freeContentMinRef.current.width) // Live min-scale floor at press
+      freeNowrapMinWRef.current = minW
+    } else {
+      freeNowrapMinWRef.current = null // Wrap / locked — live freeContentMin only
+    }
   }, [])
 
   // Handle resize end - clear resizing flag and persist explicit box size from final params
@@ -5863,6 +6035,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     isFirstResizeCallRef.current = true // Reset first-call bookkeeping
     setIsUserResized(true) // Persist mode: explicit frame box
     lockedResizeStartRef.current = null // Drop drag baseline
+    const frozenNowrapMinW = freeNowrapMinWRef.current // Keep through end clamp, then clear
+    freeNowrapMinWRef.current = null // Next gesture re-captures
 
     const dims = resizeDimensionsRef.current
     const rot = rotationRef.current
@@ -5871,8 +6045,14 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     const colW = wrapColWidthRef.current
     const intrinsic = intrinsicSizeRef.current
     const soleImageEnd = isSoleImageBlockHtml(promptContentRef.current || '')
+    const liveMin = freeContentMinRef.current
     const fillMinEnd =
-      unlocked && !soleImageEnd ? freeContentMinRef.current : { width: FRAME_RESIZE_MIN, height: FRAME_RESIZE_MIN } // Same content floor as fit-to-text
+      unlocked && !soleImageEnd
+        ? {
+            width: Math.max(liveMin.width, frozenNowrapMinW ?? 0), // Nowrap: press-time min-text floor
+            height: liveMin.height,
+          }
+        : { width: FRAME_RESIZE_MIN, height: FRAME_RESIZE_MIN } // Content min — I-bar place seeds match this floor
     const uprightFreeEnd = unlocked && Math.abs(rot) <= 0.5
     const minWEnd = uprightFreeEnd ? fillMinEnd.width + adjustChromeXRef.current * 2 : fillMinEnd.width
     const minHEnd = uprightFreeEnd
@@ -5888,7 +6068,17 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       height = Math.max(content.height, fillMinEnd.height)
     }
     const finalScale = frameScaleRef.current // Latest scale from the drag (avoid stale closure)
-    const safeScale = Math.max(FRAME_SCALE_EPSILON, finalScale) // Epsilon only — no 0.15 shrink floor
+    const endObj = contentScaleObjectSize(
+      intrinsic,
+      wrapping ? colW : null
+    ) // Object size for the grow gap
+    const endCeil = maxContentScale(endObj.width, endObj.height) // Bigger object → bigger gap
+    // Fit: same min/max content band as free; free frameScale may dip while contain-fit holds paint
+    const safeScale = clampContentScale(
+      finalScale,
+      unlocked ? FRAME_SCALE_EPSILON : IBAR_PLACE_SCALE_MIN,
+      endCeil
+    )
     let colToPersist: number | undefined // New wrap column width to store (unlocked-wrap resize sets the point)
     const soleImage = soleImageEnd // Same image check as the content-min floor
     if (soleImage) {
@@ -5922,6 +6112,21 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     if (persistW > 0 && persistH > 0) {
       setResizeDimensions({ width: persistW, height: persistH }) // Fill box the contain-fit uses
       applyLiveAdjustBoxRef.current(width, height, unlockedUprightEnd) // Outer already when upright free
+      // Re-apply after RF’s resize-end commit so top-left lock cannot leave the stack square off the sim point
+      queueMicrotask(() => {
+        const box = lastPushedBoxRef.current
+        if (!box) return
+        const zoom = getLiveBoardZoom() || 1
+        const outer = { width: box.w, height: box.h }
+        const fill = { width: persistW, height: persistH }
+        const setNodesFunc = getSetNodes()
+        if (setNodesFunc) {
+          setNodesFunc((nodes: any[]) =>
+            applySnapMateRelayout(nodes, id, outer, zoom, fill)
+          )
+        }
+        void persistSnapMateRelayout(getNodes(), id, outer, zoom, fill)
+      })
     }
     // Unlocked drag refreshes the last free-resize shape (restored on unlock after fit-to-text).
     if (unlocked) {
@@ -5941,7 +6146,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       ...(soleImage && !unlocked ? { imageFitSize: { width, height } } : {}),
       ...(colToPersist != null ? { wrapColWidth: colToPersist } : {}), // Save the new unlocked wrap point
     })
-  }, [])
+  }, [getNodes, getSetNodes, id])
 
   // Corner-drag: locked → proportional content scale; unlocked → free box + contain-fit
   // When rotated, RF reports AABB size — convert back to unrotated content size.
@@ -5953,14 +6158,20 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     }
     const soleImage = isSoleImageBlockHtml(promptContentRef.current || '') // Images keep the 40px floor
     const unlocked = frameUnlockedRef.current
+    const liveMin = freeContentMinRef.current
     const fillMin =
-      unlocked && !soleImage ? freeContentMinRef.current : { width: FRAME_RESIZE_MIN, height: FRAME_RESIZE_MIN } // Live content hug
+      unlocked && !soleImage
+        ? {
+            width: Math.max(liveMin.width, freeNowrapMinWRef.current ?? 0), // Nowrap: never below press-time min-text
+            height: liveMin.height,
+          }
+        : { width: FRAME_RESIZE_MIN, height: FRAME_RESIZE_MIN } // Content min — place seeds are ≥ this so resize does not jump
     const rot = rotationRef.current
     const uprightFree = unlocked && Math.abs(rot) <= 0.5 // RF params are the outer box
-    const minW = uprightFree ? fillMin.width + adjustChromeXRef.current * 2 : fillMin.width // Outer min includes L/R chrome
-    const minH = uprightFree
-      ? fillMin.height + adjustChromeYTopRef.current + adjustChromeYBottomRef.current
-      : fillMin.height
+    const chromeX = adjustChromeXRef.current * 2 // Live L/R — strip from RF outer for fit ratio
+    const chromeY = adjustChromeYTopRef.current + adjustChromeYBottomRef.current // Live T/B bands
+    const minW = uprightFree ? fillMin.width + chromeX : fillMin.width // Outer min includes L/R chrome
+    const minH = uprightFree ? fillMin.height + chromeY : fillMin.height
     let width = Math.max(params.width, minW) // Free: shrink stops on the content box; grow is free
     let height = Math.max(params.height, minH)
     if (Math.abs(rot) > 0.5) {
@@ -5973,8 +6184,19 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     if (!soleImage && !frameUnlockedRef.current && lockedResizeStartRef.current) {
       // Locked (wrap OR nowrap): proportional content scale — width/text scale together.
       const start = lockedResizeStartRef.current
-      const ratio = width / Math.max(1, start.width) // keepAspectRatio → width tracks height
-      nextScale = Math.max(FRAME_SCALE_EPSILON, start.scale * ratio) // No 0.15 floor — match unbounded grow
+      // RF reports outer (content + chrome). Ratio must be content/content — same band as free paint.
+      const contentDragW = Math.max(1, width - chromeX)
+      const ratio = contentDragW / Math.max(1, start.width) // keepAspectRatio → width tracks height
+      const liveObj = contentScaleObjectSize(
+        intrinsicSizeRef.current,
+        frameTextWrapRef.current ? wrapColWidthRef.current : null
+      )
+      // Same min/max as free paintScale: IBAR_PLACE_SCALE_MIN .. maxContentScale
+      nextScale = clampContentScale(
+        start.scale * ratio,
+        IBAR_PLACE_SCALE_MIN,
+        maxContentScale(liveObj.width, liveObj.height)
+      )
       const colW = wrapColWidthRef.current
       if (frameTextWrapRef.current && colW != null) {
         // Locked WRAP: derive the box from the FIXED column width × scale so NO character reflows —
@@ -6028,6 +6250,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           baseScale
       ) // Wrap: frozen stack height; nowrap: natural painted height
       const fitLive = contentFitBoxRef.current // Grey fit-line box — contain to it, not the whole fill
+      const resizeObj = contentScaleObjectSize(
+        intrinsicSizeRef.current,
+        frameTextWrapRef.current ? wrapColWidthRef.current : null
+      )
+      const resizeCeil = maxContentScale(resizeObj.width, resizeObj.height) // Size-based paint ceiling
       const contain = frameUnlockedRef.current
         ? freeContentFitScale(
             fitLive ? Math.min(fitLive.width, contentW) : contentW,
@@ -6035,10 +6262,15 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             visualW,
             visualH,
             undefined,
-            !!fitLive // Plus box may grow content past the last fit-to-text size
+            !!fitLive, // Plus box may grow content past the last fit-to-text size
+            baseScale,
+            resizeCeil // Cap grow so paint ≤ size-based max
           ) // Shrink/grow to the plus box (or contain to the fill when they sit on the edge)
         : 1
-      const paint = baseScale * contain // Same formula as render paintScale
+      // Free: contain live in min..max band; locked paint is baseScale (already clamped)
+      const paint = frameUnlockedRef.current
+        ? clampContentScale(baseScale * contain, IBAR_PLACE_SCALE_MIN, resizeCeil)
+        : clampContentScale(baseScale * contain, FRAME_SCALE_EPSILON, resizeCeil)
       contentFitRef.current.style.transform =
         Math.abs(paint - 1) > FRAME_SCALE_EPSILON ? `scale(${paint})` : '' // Drop scale when at natural
       const freeNowrap = frameUnlockedRef.current && !frameTextWrapRef.current // Align box = fill, not a wrap column
@@ -6104,10 +6336,13 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       queueMicrotask(() => {
         // Defer so setNodes from pushAabbAndSnapMates has flushed
         const live = getNodes()
-        void persistSnapMateRelayout(live, id, {
-          width: Math.ceil(aabb.width),
-          height: Math.ceil(aabb.height),
-        })
+        void persistSnapMateRelayout(
+          live,
+          id,
+          { width: Math.ceil(aabb.width), height: Math.ceil(aabb.height) },
+          getLiveBoardZoom() || 1,
+          { width: cw, height: ch }
+        )
       })
     },
     [saveRotation, pushAabbAndSnapMates, getNodes, id]
@@ -6379,10 +6614,15 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       )
       // If free-resize shrunk the blocks, bake that contain into frameScale so fit hugs that size.
       // From free: bake the painted scale — wrap contain-fits the column, not the narrower glyph run
-      const nextScale = Math.max(
-        FRAME_SCALE_EPSILON,
-        wasUnlocked ? paintScaleRef.current : baseScale * contain
+      const fitObj = contentScaleObjectSize(
+        { width: naturalW, height: naturalH },
+        frameTextWrap ? wrapColWidthRef.current : null
       )
+      const nextScale = clampContentScale(
+        wasUnlocked ? paintScaleRef.current : baseScale * contain,
+        FRAME_SCALE_EPSILON,
+        maxContentScale(fitObj.width, fitObj.height)
+      ) // Fit-to-text stays ≤ size-based max
       setFrameScale(nextScale) // Persist the on-screen text size
       if (frameTextWrap && resizeDimensionsRef.current) {
         const keepW = resizeDimensionsRef.current.width // Wrap column stays the free width
@@ -6437,7 +6677,15 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         const extra = Math.max(0, painted.width - glyphW) // Column / align-box air beside the glyphs
         const alignShift =
           frameAlignXRef.current === 'right' ? extra : frameAlignXRef.current === 'center' ? extra / 2 : 0 // Glyphs sit on the aligned edge of that box
-        const nextDims = { width: painted.width - extra, height: painted.height } // Hug the painted glyphs, not the wider box
+        // Floor at empty/spaces-only hug — painted.width-extra used to collapse when Range width was 0
+        const floorW =
+          dbBox || isRowCardAtomHtml(promptContent)
+            ? 1 // Atoms / DB own their measure
+            : blockMinFrameWidth(promptContent) * nextScale // Same ~3ch (+ gutter) as locked empty
+        const nextDims = {
+          width: Math.max(floorW, painted.width - extra), // Hug glyphs; never below empty fit-to floor
+          height: Math.max(1, painted.height),
+        }
         setResizeDimensions(nextDims)
         resizeDimensionsRef.current = nextDims
         metaPatch = { ...metaPatch, resizeDimensions: nextDims }
@@ -6815,7 +7063,15 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       if (frameUnlockedRef.current) {
         const contain = freeFitScaleRef.current // Shrink that fit the glyphs between the lines
         if (contain > 0 && Math.abs(contain - 1) > FRAME_SCALE_EPSILON) {
-          scaleOut = Math.max(FRAME_SCALE_EPSILON, scaleOut * contain) // Bake it — otherwise release grows the text back to the + box
+          const wrapObj = contentScaleObjectSize(
+            intrinsicSizeRef.current,
+            col
+          ) // Column is the object width after wrap
+          scaleOut = clampContentScale(
+            scaleOut * contain,
+            FRAME_SCALE_EPSILON,
+            maxContentScale(wrapObj.width, wrapObj.height)
+          ) // Bake; never past size-based max
           frameScaleRef.current = scaleOut
           setFrameScale(scaleOut)
           freeFitScaleRef.current = 1 // The baked scale is the new fit-to-text for this column
@@ -6858,18 +7114,31 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     try { plusEl.setPointerCapture(e.pointerId) } catch { /* already captured / detached */ } // Phone: keep + drag once the finger leaves the mark
     const pointerId = e.pointerId // Release this id on end
     fitLineDraggingRef.current = true // Grow / hug must not fight the live box
-    const maxW = Math.max(BLOCK_THREE_CHARS_W, fill.offsetWidth) // Far edge = fill — contentFit already holds the text pad
-    const maxH = Math.max(BLOCK_MIN_FRAME_H, fill.offsetHeight)
+    const intrinsic = intrinsicSizeRef.current
+    const wrapCol = frameTextWrapRef.current ? wrapColWidthRef.current : null
+    const obj = contentScaleObjectSize(intrinsic, wrapCol) // Same object fit uses for the ceil
+    const ceil = maxContentScale(obj.width, obj.height) // Same paint ceiling as fit-to-text
+    // Same max content box as fit corner-drag — not min(fill, …) (that blocked free below fit max)
+    const maxBox =
+      wrapCol != null && frameTextWrapRef.current
+        ? {
+            width: Math.max(BLOCK_THREE_CHARS_W, Math.round(wrapCol * ceil)),
+            height: Math.max(BLOCK_MIN_FRAME_H, Math.round(intrinsic.height * ceil)),
+          }
+        : hugLockedFrameSize(intrinsic, ceil, 1, frameShapeRef.current)
+    const maxW = Math.max(BLOCK_THREE_CHARS_W, maxBox.width)
+    const maxH = Math.max(BLOCK_MIN_FRAME_H, maxBox.height)
     const prevCol = contentFitBoxRef.current?.col // Keep the basis set on an earlier + drag
     const liveCol = frameTextWrapRef.current ? wrapColWidthRef.current : null // Wrapped: basis = current column
     const col = prevCol ?? liveCol ?? undefined // Scale by this so the first move does not jump the lines
     const onMove = (ev: PointerEvent) => {
-      const rect = fill.getBoundingClientRect() // Fill is stable — plus follows the pointer
+      const rect = fill.getBoundingClientRect() // Fill may grow mid-drag when +'s pass the edge
       const sx = fill.offsetWidth / Math.max(1, rect.width)
       const sy = fill.offsetHeight / Math.max(1, rect.height)
       const localX = (ev.clientX - rect.left) * sx
       const localY = (ev.clientY - rect.top) * sy
-      const w = Math.max(BLOCK_THREE_CHARS_W, Math.min(maxW, 2 * Math.abs(localX - fill.offsetWidth / 2))) // Pair — keep centred
+      // Pointer past the fill edge still grows the + box up to fit max (then frame catches up)
+      const w = Math.max(BLOCK_THREE_CHARS_W, Math.min(maxW, 2 * Math.abs(localX - fill.offsetWidth / 2)))
       const h = Math.max(BLOCK_MIN_FRAME_H, Math.min(maxH, 2 * Math.abs(localY - fill.offsetHeight / 2)))
       const box = {
         width: Math.round(w * 100) / 100, // 2dp — no pixel step
@@ -6878,6 +7147,20 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       }
       contentFitBoxRef.current = box
       setContentFitBox(box) // Live contain-fit
+      // Grow the free frame so +'s can reach fit max (fill used to cap below contentScaleCeil)
+      const needW = Math.ceil(box.width)
+      const needH = Math.ceil(box.height)
+      const cur = resizeDimensionsRef.current
+      const curW = cur?.width ?? fill.offsetWidth
+      const curH = cur?.height ?? fill.offsetHeight
+      if (needW > curW + 0.5 || needH > curH + 0.5) {
+        const next = { width: Math.max(curW, needW), height: Math.max(curH, needH) }
+        resizeDimensionsRef.current = next
+        setResizeDimensions(next)
+        setUnlockedFrameSize(next)
+        unlockedFrameSizeRef.current = next
+        applyLiveAdjustBoxRef.current(next.width, next.height) // RF + panel this tick
+      }
     }
     const onUp = () => {
       fitLineDraggingRef.current = false
@@ -6887,7 +7170,12 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       try { plusEl.releasePointerCapture(pointerId) } catch { /* already released */ } // Drop capture so later taps work
       const box = contentFitBoxRef.current
       if (!box) return // Press without a move — nothing to keep
-      void persistFrameMetaRef.current({ contentFitBox: box, frameUnlocked: true }) // Keep it even at the fill edge — clearing snapped scale + +'s back
+      const grown = resizeDimensionsRef.current // Frame may have grown to the fit-max + box
+      void persistFrameMetaRef.current({
+        contentFitBox: box, // Keep even at the fill edge — clearing snapped scale + +'s back
+        frameUnlocked: true,
+        ...(grown ? { resizeDimensions: grown, unlockedFrameSize: grown } : {}),
+      })
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
@@ -6908,7 +7196,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     if (!isUserResized && !rowCard && !dbFrame && Math.abs(frameScale - 1) <= FRAME_SCALE_EPSILON) {
       return // Row/DB cards + place-scaled frames hug as soon as content is measured
     }
-    // No boardLink/3ch / 40px floor — locked hug must match scaled glyphs (else text sits top-left in empty pad)
+    // Typed content: hug scaled glyphs (min 1). Empty/spaces: floor at content min so place seed is not eaten.
+    const emptyHug = isBlockContentEmpty(promptContent)
     const minW = 1
     const hugSource = shapeFitContentBox(
       dbFrame && databaseExtents ? databaseExtents : intrinsicSize,
@@ -6930,7 +7219,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     setResizeDimensions((prev) => {
       // Wrap keeps fixed columns × scale (not a stale prev.width that still had +2 border).
       // Nowrap hugs width to content.
-      const width =
+      let width =
         frameTextWrap && wrapColWidth != null
           ? Math.round(wrapColWidth * Math.max(FRAME_SCALE_EPSILON, frameScale))
           : frameTextWrap && prev
@@ -6938,7 +7227,12 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             : natural.width
       // Hug height to content — never keep a ≤1px-taller seed (place min 22×scale); that leftover
       // is multiplied into peach under the block with top-left scale origin.
-      const height = natural.height
+      let height = natural.height
+      if (emptyHug) {
+        // I-bar place / empty floor = content resize min (and empty width hug) — do not shrink under it
+        width = Math.max(width, FRAME_RESIZE_MIN)
+        height = Math.max(height, FRAME_RESIZE_MIN)
+      }
       next = { width, height }
       if (
         prev &&
@@ -6991,6 +7285,90 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     isDbFrame,
     databaseExtents,
     frameShape,
+  ])
+
+  // Free nowrap at min text size: typing grows width (like fit) so glyphs stay at min — no further shrink.
+  // Above min: contain-fit still shrinks into the free box (same as before).
+  useEffect(() => {
+    const soleImage = isSoleImageBlockHtml(promptContent) // Sticky image box — never width-led
+    if (
+      !isBlock ||
+      !frameUnlocked ||
+      frameTextWrap || // Wrap reflows / contain-fits; width stays on the + box
+      !isUserResized ||
+      !resizeDimensions ||
+      !intrinsicMeasured ||
+      dragging ||
+      soleImage ||
+      isDbFrame ||
+      isRowCardAtomHtml(promptContent)
+    ) {
+      freeNowrapIntrinsicWRef.current = null // Next free nowrap pass seeds clean
+      return
+    }
+    if (isResizingRef.current || wrapLineDraggingRef.current || fitLineDraggingRef.current) return // Gestures own the box
+    const prevW = freeNowrapIntrinsicWRef.current // Unscaled width before this measure
+    freeNowrapIntrinsicWRef.current = intrinsicSize.width // Seed / advance for the next keystroke
+    if (prevW == null) return // First observe — remember only
+    if (intrinsicSize.width <= prevW + 1) return // Did not grow (delete / glyph noise)
+    const box = resizeDimensions // Free fill box
+    const fitLive = contentFitBoxRef.current // Inset + box when set
+    const constrainW = fitLive ? Math.min(fitLive.width, box.width) : box.width // What contain-fit uses
+    // paintScale if we only contain-fit: min(frameScale, box/intrinsic) — grow only when that would drop below min
+    const paintIfNoGrow = Math.min(
+      Math.max(FRAME_SCALE_EPSILON, frameScale),
+      constrainW / Math.max(1, intrinsicSize.width)
+    )
+    if (paintIfNoGrow >= IBAR_PLACE_SCALE_MIN - FRAME_SCALE_EPSILON) return // Still ≥ min text — contain-fit / air is fine
+    const needW = Math.max(1, Math.ceil(intrinsicSize.width * IBAR_PLACE_SCALE_MIN)) // Width that holds min text
+    if (needW <= constrainW + 0.5) return // Already wide enough for min
+    const nextBox = { width: Math.max(box.width, needW), height: box.height } // Extend width only
+    let changed = false
+    if (nextBox.width > box.width + 0.5) {
+      setResizeDimensions(nextBox) // Grow the free fill
+      resizeDimensionsRef.current = nextBox // Same-tick readers
+      setUnlockedFrameSize(nextBox) // Bookkeeping for fit↔free
+      unlockedFrameSizeRef.current = nextBox
+      applyLiveAdjustBoxRef.current(nextBox.width, nextBox.height) // RF + panel this tick
+      changed = true
+    }
+    if (fitLive && needW > fitLive.width + 0.5) {
+      const nextFit = {
+        width: needW, // + box tracks the min-text run
+        height: fitLive.height,
+        ...(fitLive.col != null ? { col: fitLive.col } : {}),
+      }
+      contentFitBoxRef.current = nextFit
+      setContentFitBox(nextFit)
+      changed = true
+    }
+    if (!changed) return
+    if (persistFrameMetaTimerRef.current) clearTimeout(persistFrameMetaTimerRef.current)
+    persistFrameMetaTimerRef.current = setTimeout(() => {
+      void persistFrameMeta({
+        resizeDimensions: resizeDimensionsRef.current ?? nextBox,
+        frameUnlocked: true,
+        frameScale,
+        unlockedFrameSize: unlockedFrameSizeRef.current ?? nextBox,
+        ...(contentFitBoxRef.current ? { contentFitBox: contentFitBoxRef.current } : {}),
+      })
+    }, 250)
+    return () => {
+      if (persistFrameMetaTimerRef.current) clearTimeout(persistFrameMetaTimerRef.current)
+    }
+  }, [
+    isBlock,
+    frameUnlocked,
+    frameTextWrap,
+    isUserResized,
+    resizeDimensions,
+    intrinsicMeasured,
+    intrinsicSize.width,
+    frameScale,
+    dragging,
+    persistFrameMeta,
+    promptContent,
+    isDbFrame,
   ])
 
   // Auto-select panel when editor is focused or has a text range (not boardLink NodeSelection)
@@ -7642,8 +8020,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     !isRowCardAtomHtml(promptContent) && // Row cards live-hug — max-content blows out to icon-row width
     !isDbFrame && // DB tables live-hug from measureDatabaseBlockExtents — max-content clips the table
     !soleImageContent // Image stays inside the existing box (height may limit)
-  // Empty unresized: explicit px (not max-content) — CSS % children used to inflate ~120×160 boxes
+  // Empty unresized: explicit px (not max-content) — CSS % children used to inflate ~120×160 boxes.
+  // Floor at FRAME_RESIZE_MIN so I-bar / empty match the content resize min (25 one-line jumped on corner-drag).
   const emptyLineHug = growsWithLine && isBlockContentEmpty(promptContent)
+  const emptyHugW = Math.max(frameMinW, FRAME_RESIZE_MIN) // ≥ content min fill width
+  const emptyHugH = FRAME_RESIZE_MIN // Same floor as free/locked corner-drag content min
   const hasBlockContent = isBlock && !isBlockContentEmpty(promptContent) // Lock only when a content block exists
 
   // Sole image: pin an explicit box so contain-fit has a height limit (insert must not grow the frame)
@@ -7876,14 +8257,57 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         )
       : chromeScale // No measure yet
   const frameCornerRadius = frameShape ? 0 : FRAME_CORNER_RADIUS * radiusScale
-  // Free shrink floor = FRAME_RESIZE_MIN (contain-fit shrinks the text below its hug); smaller content keeps its own hug.
-  const freeContentMinW = Math.max(1, Math.min(Math.ceil(contentVisualW), FRAME_RESIZE_MIN)) // Cap floor at 40 so wide text can shrink
-  const freeContentMinH = Math.max(1, Math.min(contentVisualH, FRAME_RESIZE_MIN)) // Cap floor at 40 so tall text can shrink
+  // Free shrink floor: never below unscaled (IBAR_PLACE_SCALE_MIN) visual — not live placeFrameScale(zoom)
+  // (that grew text when zooming out). Above min, free nowrap may contain-fit; at min, width cannot go lower.
+  // Cap with FRAME_RESIZE_MIN so tiny empty still grab-able. Press freezes the floor via freeNowrapMinWRef.
+  const minScaleVisualW = Math.max(1, Math.ceil(intrinsicSize.width * IBAR_PLACE_SCALE_MIN))
+  const minScaleVisualH = Math.max(1, Math.ceil(intrinsicSize.height * IBAR_PLACE_SCALE_MIN))
+  const freeContentMinW = Math.max(
+    1,
+    Math.min(Math.ceil(contentVisualW), Math.max(FRAME_RESIZE_MIN, minScaleVisualW)),
+    freeNowrapMinWRef.current ?? 0 // Free nowrap gesture: keep the press-time min-text floor
+  )
+  const freeContentMinH = Math.max(
+    1,
+    Math.min(contentVisualH, Math.max(FRAME_RESIZE_MIN, minScaleVisualH))
+  )
   freeContentMinRef.current = { width: freeContentMinW, height: freeContentMinH } // handleResize reads this
   const freeOuterMinW = Math.ceil(
     freeContentMinW + (showFrameChrome ? adjustChromeX * 2 : 0)
   ) // RF control is the outer box
   const freeOuterMinH = Math.ceil(freeContentMinH + adjustChromeYTop + adjustChromeYBottom)
+  // Fit min/max content = free paint band (IBAR_PLACE_SCALE_MIN .. contentScaleCeil).
+  // Outer RF limits add chrome scaled to that band — live chrome at the current size blocked shrink.
+  const minLockedContent =
+    !frameUnlocked && !soleImageContent
+      ? hugLockedFrameSize(intrinsicSize, IBAR_PLACE_SCALE_MIN, 1, frameShape)
+      : null
+  const maxLockedContent =
+    !frameUnlocked && !soleImageContent ? { width: maxContentBoxW, height: maxContentBoxH } : null // Same box free +'s use
+
+  const zoomForChrome = rfZoom || 1
+  const liveChromeY = adjustChromeYTop + adjustChromeYBottom // Selected T/B at current chromeScale
+  const chromeYAtScale = (fs: number) => {
+    if (!showFrameChrome || liveChromeY <= 0) {
+      return showFrameChrome ? Math.round(adjustGapYFlow(zoomForChrome, fs)) * 2 : 0
+    }
+    // Scale live T/B pads to the target content scale (property / connections grow with content)
+    return Math.ceil(liveChromeY * (fs / Math.max(FRAME_SCALE_EPSILON, chromeScale)))
+  }
+  const chromeXAtScale = (fs: number) =>
+    showFrameChrome ? Math.round(adjustChromeXFlow(zoomForChrome, fs)) * 2 : 0
+  const minLockedOuterW = minLockedContent
+    ? Math.ceil(minLockedContent.width + chromeXAtScale(IBAR_PLACE_SCALE_MIN))
+    : undefined
+  const minLockedOuterH = minLockedContent
+    ? Math.ceil(minLockedContent.height + chromeYAtScale(IBAR_PLACE_SCALE_MIN))
+    : undefined
+  const maxLockedOuterW = maxLockedContent
+    ? Math.ceil(maxLockedContent.width + chromeXAtScale(contentScaleCeil))
+    : undefined
+  const maxLockedOuterH = maxLockedContent
+    ? Math.ceil(maxLockedContent.height + chromeYAtScale(contentScaleCeil))
+    : undefined
   // Sole-image: fill sticky resizeDimensions directly — CSS scale + unscaled px caused overflow + RO loops
   const applyFrameScale =
     isBlock &&
@@ -7932,11 +8356,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const wrapStackH = wrapContainHRef.current ?? intrinsicSize.height // Frozen wrap height, else live
   const fitBoxW =
     unlockedInnerW != null
-      ? Math.min(contentFitBox?.width ?? unlockedInnerW, unlockedInnerW) // Grey lines, clamped to the fill
+      ? Math.min(contentFitBox?.width ?? unlockedInnerW, maxContentBoxW) // + box may lead while the frame catches up
       : null
   const fitBoxH =
     unlockedInnerH != null
-      ? Math.min(contentFitBox?.height ?? unlockedInnerH, unlockedInnerH)
+      ? Math.min(contentFitBox?.height ?? unlockedInnerH, maxContentBoxH)
       : null
   const heldGap = wrapGapRef.current // Released wrap gap — inset lines must not grow back onto the + box
   const propertyFloor = contentFitRef.current ? measurePropertyColumnWidth(contentFitRef.current) : 0 // Icon + Empty — wider than a short word
@@ -7964,22 +8388,38 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             fitWrapCol * renderFrameScale, // Lines on the + box — contain this stack inside it
             Math.max(1, wrapStackH * renderFrameScale), // Wrapped visual height
             frameShape, // Contain inside the silhouette, not the rect
-            true // May grow past fit-to-text while the lines sit on the + box
+            true, // May grow past fit-to-text while the lines sit on the + box
+            renderFrameScale,
+            contentScaleCeil // Cap grow at size-based max
           )
         : Math.max(
             FRAME_SCALE_EPSILON,
             (heldGap?.width ?? linePaint) / contentPaintForGap // Inset lines — shrink so the property placeholder fits that gap
           )
       : unlockedResized && fitBoxW != null && fitBoxH != null
-        ? freeContentFitScale(fitBoxW, fitBoxH, contentVisualW, contentVisualH, frameShape, contentFitBox != null)
+        ? freeContentFitScale(
+            fitBoxW,
+            fitBoxH,
+            contentVisualW,
+            contentVisualH,
+            frameShape,
+            contentFitBox != null,
+            renderFrameScale,
+            contentScaleCeil // +'s cannot paint past size-based max
+          )
         : 1
-  // Free wrap uses the raw contain — below 0.5 and above fit-to-text. A floor here snapped the glyphs back up.
+  // Free wrap uses the raw contain — a live placeFrameScale(zoom) floor resized text on zoom.
   const liveFreeFitScale = rawFreeFitScale
   // During wrap-line drag, onMove writes freeFitScaleRef (uncapped contain into the press-time box).
   // Replacing it here with a fit against the shrinking peach pinned the scale at 1.
   if (!wrapLineDraggingRef.current) freeFitScaleRef.current = liveFreeFitScale
   const freeFitScale = wrapLineDraggingRef.current ? freeFitScaleRef.current : liveFreeFitScale
-  const paintScale = renderFrameScale * freeFitScale // Place/lock × free contain (phone shrink is on the outer wrapper)
+  // Place/lock × free contain — never above size-based max (fit resize / +'s share this ceiling)
+  const paintScale = clampContentScale(
+    renderFrameScale * freeFitScale,
+    IBAR_PLACE_SCALE_MIN,
+    contentScaleCeil
+  )
   paintScaleRef.current = paintScale // Wrap-line drag reads this — fill-local X / paint = wrapColWidth
   // After wrap / zoom / scale: park bars on the painted PM, not wrapCol×paint (that drifted after zoom).
   useLayoutEffect(() => {
@@ -8208,8 +8648,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       const panel = panelRef.current
       if (panel) {
         if (isBlockContentEmpty(promptContent)) {
-          const w = `${frameMinW}px`
-          const h = `${BLOCK_MIN_FRAME_H}px`
+          const w = `${emptyHugW}px` // Content-min floor — matches I-bar place seed
+          const h = `${emptyHugH}px`
           if (panel.style.width !== w) panel.style.width = w
           if (panel.style.height !== h) panel.style.height = h
         } else {
@@ -8299,8 +8739,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       if (panelRef.current) {
         const html = newContent !== undefined ? newContent : promptContent
         if (isBlockContentEmpty(html)) {
-          panelRef.current.style.width = `${frameMinW}px`
-          panelRef.current.style.height = `${BLOCK_MIN_FRAME_H}px`
+          panelRef.current.style.width = `${emptyHugW}px` // Content-min floor — matches I-bar place seed
+          panelRef.current.style.height = `${emptyHugH}px`
         } else {
           panelRef.current.style.width = 'max-content'
           panelRef.current.style.height = 'fit-content'
@@ -8343,7 +8783,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     resizeDimensions,
     pagePreviewOpen,
     growsWithLine,
-    frameMinW,
+    emptyHugW, // Empty I-bar / content-min floor
+    emptyHugH,
   ])
 
   // Shrink block/flashcard to longest line on blur
@@ -9408,7 +9849,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           : applyFrameScale
             ? scaledLayoutW // Place scale without dims yet — visual box = scaled content
           : emptyLineHug
-            ? frameMinW
+            ? emptyHugW // Content-min floor — matches I-bar place
             : (isRowCardAtomHtml(promptContent) || isDbFrame) && !intrinsicMeasured
               ? frameMinW
               : growsWithLine
@@ -9816,8 +10257,22 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               position={position} // RF places the handle on that corner
               className="nodrag nopan" // Resize only — never start RF frame drag / pan
               style={itemCornerResizeStyle} // White circular handle styling
-              minWidth={frameUnlocked ? (soleImageContent ? FRAME_RESIZE_MIN : freeOuterMinW) : 1} // Free: live content hug
-              minHeight={frameUnlocked ? (soleImageContent ? FRAME_RESIZE_MIN : freeOuterMinH) : 1}
+              minWidth={
+                soleImageContent
+                  ? FRAME_RESIZE_MIN
+                  : frameUnlocked
+                    ? freeOuterMinW // Free: live content hug floor
+                    : (minLockedOuterW ?? 1) // Fit: content at IBAR_PLACE_SCALE_MIN + chrome at that scale
+              }
+              minHeight={
+                soleImageContent
+                  ? FRAME_RESIZE_MIN
+                  : frameUnlocked
+                    ? freeOuterMinH
+                    : (minLockedOuterH ?? 1)
+              }
+              maxWidth={frameUnlocked ? undefined : maxLockedOuterW} // Fit: contentScaleCeil + chrome (same as free paint)
+              maxHeight={frameUnlocked ? undefined : maxLockedOuterH} // Free frame box stays unbounded
               keepAspectRatio={!frameUnlocked && hasBlockContent} // Locked + content: proportional only
               onResizeStart={handleResizeStart} // Arm user-resize mode (line-grow off)
               onResize={handleResize} // Apply explicit width/height while dragging
@@ -9827,7 +10282,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         </>
       )}
 
-      {/* Stacked mates: gap mark on each adjust-box side (independent trees per side) */}
+      {/* Stack under / open stack: mark at the facing sim connection point (arrow when threaded +
+          mate hidden; diamond when unthreaded). Click → Open stack / Stack under / Lock. */}
       {!dragging &&
         stackGapSides.map(({ side, groupId }) => (
           <FrameStackRevealLine
@@ -9841,10 +10297,12 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
 
       {/* Connection indicators — DOM only (not RF Handles); arm the edge connection point.
           Chat-linked sides keep the blue simulator and add the brand line beside it —
-          only while indicators normally show and the chat↔board thread stroke is not drawn. */}
+          only while indicators normally show and the chat↔board thread stroke is not drawn.
+          Stack-mark sides skip the blue circle — the stack icon/arrow is that sim point. */}
       {showIndicators && (
         <>
           {(['left', 'right', 'top', 'bottom'] as const).map((side) => {
+            if (stackMarkSides.has(side)) return null // Stack mark owns this sim connection point
             if (isThreadConnecting && (nearThreadSides & THREAD_SIDE_BIT[side]) === 0) return null // Thread over the frame or its adjust box shows every side
             if (chatThreadVisibleSides.has(side)) return null // Thread stroke owns this end — no simulator
             if (chatLinkLogoSides.has(side) && promptMessage?.id) {
@@ -10580,8 +11038,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               deferredBox={deferredBox}
               contentPadLeft={isBlock ? BLOCK_FRAME_PAD_X : 0}
               frameScale={frameScale} // Blue gutter stays on frameScale — contain must not narrow the adjust box
-              textScale={paintScale} // ⋮⋮ matches the CSS scale on the glyphs (frameScale × free contain)
-              handleGutterFlow={handleGutterFlow}
+              textScale={paintScale} // ⋮⋮ grows/shrinks with painted glyphs on resize
+              handleGutterFlow={adjustChromeX} // Full panel pad — ⋮⋮ centers in that strip
               centerInShape={shapeCenterContent}
               enableCollab={
                 // Notion page bodies stay on HTML/LWW + Notion sync — not Yjs text CRDT
@@ -10733,10 +11191,10 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               ))}
             </div>
           )
-          // +'s = contain-fit box (fill max, or stored contentFitBox) — never ride wrapColWidth
+          // +'s = contain-fit box (fill / stored), max = fit content max — never ride wrapColWidth
           // (that moved the +'s with wrap-line drag; wrap is reflow, fit is scale).
-          const plusW = Math.min(contentFitBox?.width ?? fillW, fillW)
-          const plusH = Math.min(contentFitBox?.height ?? fillH, fillH)
+          const plusW = Math.min(contentFitBox?.width ?? fillW, maxContentBoxW)
+          const plusH = Math.min(contentFitBox?.height ?? fillH, maxContentBoxH)
           const plusLeft = (fillW - plusW) / 2
           const plusTop = (fillH - plusH) / 2
           // Frame-relative glyph — tracks renderFrameScale like wrap bars; never wrap `dash` (height)
