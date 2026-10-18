@@ -128,16 +128,18 @@ export const FRAME_SCREEN_CHROME_BOOST = 1.4
 
 /**
  * Zoom-out floor for resize dots / simulated connection points / blue stroke.
- * Below 100%, chrome rides the board (stops growing on screen). Above 100%, screen-constant.
+ * Below this scale, chrome rides the board (stops growing on screen). Above it, screen-constant.
+ * Near the hard camera floor so handles stay screen-constant across normal 50%–200% zoom.
  */
-export const FRAME_CHROME_ZOOM_FLOOR = 1
+export const FRAME_CHROME_ZOOM_FLOOR = 0.05
 
 /**
  * Flow-space multiplier for frame selection chrome widgets:
  * connection indicators, resize dots + blue stroke, rotate/fit/wrap.
- * Screen-constant when zoomed in; capped at 100% so zoom-out does not swell handles/dots
- * (and stack marks stay mid-gap with `STACK_LINE_GAP` = 2× outset × boost).
- * TipTap ⋮⋮ / add-lines use a separate √ comfort curve (text-relative).
+ * Screen-constant when zoomed in; capped at `FRAME_CHROME_ZOOM_FLOOR` so deep zoom-out
+ * does not swell handles/dots forever (stack marks use live `stackLineGapFlow`).
+ * TipTap wrap / fit-+ use `blockGripChromeScale` (ride zoom-out; 1/zoom at ≥100%).
+ * TipTap ⋮⋮ uses `blockHandleChromeScale` (content curve; full 1/zoom at ≥100%).
  */
 export function frameScreenChromeScale(zoom: number): number {
   const z = Math.max(0.01, zoom) // Guard against 0 / negative store values

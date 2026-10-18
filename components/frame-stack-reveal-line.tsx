@@ -52,6 +52,10 @@ type FrameStackRevealLineProps = {
   stackGroupId: string
   stackSide: FrameStackSide // Direction toward the next mate (adjust-box side)
   frameUiScale?: number
+  /** Selected or frame-hover — fades the mark in/out (stays mounted for the transition). */
+  visible?: boolean
+  /** Keep host `isFrameHovering` while the mark / portaled menu is under the pointer. */
+  onHoverBridge?: (hovering: boolean) => void
 }
 
 function oppositeSide(side: FrameStackSide): FrameStackSide {
@@ -187,6 +191,8 @@ export function FrameStackRevealLine({
   nodeId,
   stackGroupId,
   stackSide,
+  visible = true,
+  onHoverBridge,
 }: FrameStackRevealLineProps) {
   const { getNodes, setNodes } = useReactFlow()
   const mateKeyRef = useRef('')
@@ -1102,6 +1108,11 @@ export function FrameStackRevealLine({
       setMenuOpen(false)
       previewPinnedRef.current = false
       if (previewingRef.current) endPreview() // Unhover-equivalent: hide unless they chose Open
+      // Outside dismiss may leave host hover stuck after the portaled menu
+      const node = document.querySelector(
+        `.react-flow__node[data-id="${CSS.escape(nodeId)}"]`
+      )
+      if (!node?.matches(':hover')) onHoverBridge?.(false)
     }
     const onDown = (e: MouseEvent) => {
       const t = e.target as HTMLElement | null
@@ -1117,7 +1128,7 @@ export function FrameStackRevealLine({
       document.removeEventListener('mousedown', onDown, true)
       document.removeEventListener('keydown', onKey, true)
     }
-  }, [endPreview, menuOpen])
+  }, [endPreview, menuOpen, nodeId, onHoverBridge])
 
   // Derive mate state after hooks (mateStateKey / dragPlaceKey force refresh)
   void mateStateKey
@@ -1304,20 +1315,30 @@ export function FrameStackRevealLine({
   const stackBtnClass =
     'flex h-8 w-8 items-center justify-center rounded-md text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800'
 
+  // Stay hit-able while the menu is open even if the frame lost hover/select mid-fade
+  const markVisible = visible || menuOpen
+
   // Rounded triangle in sim-point blue + white rim — same paint language as ConnectionIndicator
   return (
     <>
       <button
         type="button"
         data-tt-stack-reveal={stackSide}
+        data-tt-stack-reveal-visible={markVisible ? '' : undefined} // CSS opacity fade in/out
         className="nodrag nopan absolute z-[40] flex cursor-pointer items-center justify-center border-0 bg-transparent p-0 text-blue-500 hover:text-blue-600"
         title="Stack"
         aria-label="Stack menu"
         aria-expanded={menuOpen}
+        aria-hidden={!markVisible}
+        tabIndex={markVisible ? 0 : -1}
         onMouseDown={(e) => e.stopPropagation()} // Do not start a frame drag or select the thread
-        onMouseEnter={onEnter}
+        onMouseEnter={(e) => {
+          if (!markVisible) return // Mid fade-out — ignore
+          onHoverBridge?.(true) // Host may show this mark only while hovering
+          onEnter(e)
+        }}
         onMouseLeave={onLinePointerLeave}
-        onClick={onClickLine}
+        onClick={markVisible ? onClickLine : undefined}
         onWheel={onWheelLine}
       >
         <svg
@@ -1353,6 +1374,16 @@ export function FrameStackRevealLine({
             data-tt-stack-line-menu
             role="menu"
             className="fixed z-[1000] flex items-center gap-0.5 rounded-lg border border-gray-200 bg-white p-1 shadow-lg dark:border-[#2f2f2f] dark:bg-[#1f1f1f]"
+            onMouseEnter={() => onHoverBridge?.(true)} // Portaled — panel leave would clear hover
+            onMouseLeave={(e) => {
+              const to = e.relatedTarget as HTMLElement | null
+              if (to?.closest?.('[data-tt-stack-reveal]')) return
+              const node = document.querySelector(
+                `.react-flow__node[data-id="${CSS.escape(nodeId)}"]`
+              )
+              if (node && to && node.contains(to)) return
+              onHoverBridge?.(false)
+            }}
             style={{
               left: menuPos.x,
               top: menuPos.y,

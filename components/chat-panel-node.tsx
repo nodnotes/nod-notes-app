@@ -3524,7 +3524,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const [wrapMeasureTick, setWrapMeasureTick] = useState(0) // Bumped on wrap-drag release — refs clearing alone never re-runs the measure
   const contentFitBoxRef = useRef(contentFitBox) // Live fit box for resize / wrap scale
   contentFitBoxRef.current = contentFitBox
-  const fitLineDraggingRef = useRef(false) // True while dragging a grey content-fit line
+  const fitLineDraggingRef = useRef(false) // True while dragging a grey content-fit +
+  const [fitPlusDragging, setFitPlusDragging] = useState(false) // Hide ⋮⋮ while free + drag is live
   const wrapShiftPosRef = useRef<{ x: number; y: number } | null>(null) // Fit left/center wrap drag: moved RF XY to persist on release
   const wrapDragPaintRef = useRef<number | null>(null) // Paint scale frozen at wrap-line press — contain-fit must not remap the bar
   const freeFitScaleRef = useRef(1) // Last settled contain-fit — reused for the whole wrap-line drag
@@ -4438,11 +4439,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // pushAabb / painted sync read this — callbacks must not close over a stale pad
   const adjustChromeXRef = useRef(0)
   adjustChromeXRef.current = adjustChromeX
-  const chromeBandH = Math.round(CONNECTIONS_GROUP_H * chromeScale) // Property / connections strip
+  const chromeBandH = Math.round(CONNECTIONS_GROUP_H * chromeScale * screenChromeScale) // Strip tracks chrome zoom
   const chromePadX = Math.round(BLOCK_FRAME_PAD_X * chromeScale) // Band inset matches scaled fill pad
   const adjustGapY = showFrameChrome
     ? Math.round(adjustGapYFlow(rfZoom || 1, chromeScale))
-    : 0 // Blue↔fill air when a T/B strip is absent
+    : 0 // Blue↔fill air — grows with chrome zoom like L/R gutters
   const showFrameConnections = useShowFrameConnections() // On shows the Notion mark under unselected frames
   // Properties are blocks inside the frame. The top gap stays only to match a connection row below.
   const hasPropBand = false
@@ -4457,7 +4458,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const connBandPaintH = hasConnBand ? Math.max(chromeBandH, connBandH) : 0
   const dbFooterH =
     isDbFrame && uprightChrome
-      ? Math.round(DB_ROWS_REVEAL_FOOTER_H * chromeScale)
+      ? Math.round(DB_ROWS_REVEAL_FOOTER_H * chromeScale * screenChromeScale)
       : 0 // `+# rows` lives in the bottom adjust band, above connections
   // One row is mirrored on the empty side so the fill stays centered; wrap/footer are not
   const adjustPads =
@@ -6846,8 +6847,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     const locked0 = !frameUnlockedRef.current // Fit-to-text: the wrap bar is the fill edge
     const s0 = Math.max(FRAME_SCALE_EPSILON, frameScaleRef.current) // Locked hug = col × place-scale
     const fillW0 = fill?.offsetWidth ?? 0 // Fill width at press (flow px)
-    const padX0 = BLOCK_FRAME_PAD_X * paint0 // Same pad the line render insets by
-    const fillInnerW = locked0 ? Math.max(0, fillW0 - padX0 * 2) : fillW0 // Free: contentFit (with its pad) may fill the fill
+    // Fit lines sit on the fill edge (same I-bar→line gap as free) — do not inset by pad
+    const fillInnerW = fillW0 // Fit + free: wrap-line space is the fill (free may still clamp to +'s below)
     const plusBox = contentFitBoxRef.current // Stored +'s — default +'s ride the column, so the fill is the max
     const plusInnerW = plusBox ? Math.min(plusBox.width, fillInnerW) : fillInnerW // Far-edge visual: +'s, else the frame
     const spaceCol = Math.max(
@@ -6986,8 +6987,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         : !locked0 || align === 'center'
           ? (fill.offsetWidth - w) / 2 // Free and fit-center: both lines move
           : align === 'right'
-            ? Math.max(0, fill.offsetWidth - padX0 - w) // Fit right: the left line moves
-            : padX0 // Fit left: the right line moves
+            ? Math.max(0, fill.offsetWidth - w) // Fit right: left line on the fill edge
+            : 0 // Fit left: right line on the fill edge
       const dragBox = { left, width: w }
       wrapDragBoxRef.current = dragBox // Render reads this while the pointer is down
       setWrapPaintBox(dragBox)
@@ -7114,6 +7115,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     try { plusEl.setPointerCapture(e.pointerId) } catch { /* already captured / detached */ } // Phone: keep + drag once the finger leaves the mark
     const pointerId = e.pointerId // Release this id on end
     fitLineDraggingRef.current = true // Grow / hug must not fight the live box
+    setFitPlusDragging(true) // Drop ⋮⋮ for the gesture (ref alone does not re-render)
     const intrinsic = intrinsicSizeRef.current
     const wrapCol = frameTextWrapRef.current ? wrapColWidthRef.current : null
     const obj = contentScaleObjectSize(intrinsic, wrapCol) // Same object fit uses for the ceil
@@ -7164,6 +7166,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     }
     const onUp = () => {
       fitLineDraggingRef.current = false
+      setFitPlusDragging(false) // Restore ⋮⋮ after free + drag
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp) // Phone: Safari cancel is not an up
@@ -8434,12 +8437,12 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       if (!wrapActive) wrapGapRef.current = null // Unwrap clears the hold
       if (held) {
         const w = Math.min(held.width, fillW) // Never wider than the frame
-        const pad = BLOCK_FRAME_PAD_X * paintScale // Same side gap the line render uses
+        // Park on fill edges — same as line render (I-bar→line = contentFit pad, not a second inset)
         const left =
           held.align === 'right'
-            ? Math.max(0, fillW - pad - w)
+            ? Math.max(0, fillW - w)
             : held.align === 'left'
-              ? pad
+              ? 0
               : (fillW - w) / 2 // Stay centred in the fill, including after a resize
         setWrapPaintBox((prev) =>
           prev && Math.abs(prev.left - left) < 0.25 && Math.abs(prev.width - w) < 0.25 ? prev : { left, width: w }
@@ -10129,7 +10132,14 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       onMouseEnter={() => setIsFrameHovering(true)} // Page-open menu + keep chrome hover bridge
       onMouseLeave={(e) => {
         const related = e.relatedTarget as HTMLElement | null
-        if (related?.closest?.('[data-frame-chrome]')) return // Moving onto overflow caret / selected chrome
+        // Keep hover for selected chrome, stack mark, and its portaled menu
+        if (
+          related?.closest?.(
+            '[data-frame-chrome], [data-tt-stack-reveal], [data-tt-stack-line-menu]'
+          )
+        ) {
+          return
+        }
         setIsFrameHovering(false)
       }}
       onClick={(e) => {
@@ -10282,8 +10292,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         </>
       )}
 
-      {/* Stack under / open stack: mark at the facing sim connection point (arrow when threaded +
-          mate hidden; diamond when unthreaded). Click → Open stack / Stack under / Lock. */}
+      {/* Stack under / open stack: mark at the facing sim connection point. Stays mounted so
+          select/hover can fade it; idle unselected → opacity 0 (not unmount). */}
       {!dragging &&
         stackGapSides.map(({ side, groupId }) => (
           <FrameStackRevealLine
@@ -10292,6 +10302,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             stackGroupId={groupId}
             stackSide={side}
             frameUiScale={frameUiScale}
+            visible={selected || isFrameHovering}
+            onHoverBridge={setIsFrameHovering} // Keep mark mounted across mark / menu hover
           />
         ))}
 
@@ -11018,7 +11030,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               onBlur={handleEditorBlur}
               onEditorActiveChange={handleEditorActiveChange}
               enableBlockHandles={isBlock && !isFlashcard} // TipTap blocks; ⋮⋮ gutter only while selected
-              showBlockHandles={!!selected && !isFlashcard} // Keep grips mounted while selected — dragging used to unmount them mid-gesture
+              showBlockHandles={!!selected && !isFlashcard && !fitPlusDragging} // Hide ⋮⋮ during free content + drag
               singleLineUntilEnter={isBlock && !isFlashcard && !wrapActive} // nowrap until Enter; wrap mode (locked/unlocked) soft-wraps
               alignInFrame={freeAlignCol != null || (wrapContentWidth != null && !freeLeftStack)} // Fill wrap / free box so center-right can park
               hugCenterStack={freeLeftStack} // Free left: PM hugs the widest block so the spacer can center it
@@ -11125,11 +11137,10 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         )}
         {selected && !groupMulti && (hasBlockContent || frameUnlocked) && !soleImageContent && !isDbFrame && !frameResizing && (() => { // Wrap lines + resize +'s: free empty frames too — fit/free toggle stays off until there is text
           const lineScale = wrapDragPaintRef.current ?? paintScale // Live paint while dragging — a press-only scale left the glyphs stale
-          const padX = BLOCK_FRAME_PAD_X * lineScale // Same side gap as the block to the fill
           const padY = BLOCK_FRAME_PAD_Y * lineScale // Same T/B gap as the block
           const wrapZ = rfZoom || 1
-          const wrapBarChrome = blockGripChromeScale(1, renderFrameScale) // √ curve on frame scale only — zoom-free so shape never changes
-          const barW = 2 * wrapBarChrome * renderFrameScale // Flow thickness — scales with zoom like board content (no screen floor)
+          const wrapBarChrome = blockGripChromeScale(wrapZ, renderFrameScale) // Same zoom floor as ⋮⋮ / resize dots
+          const barW = 2 * wrapBarChrome * renderFrameScale // Flow thickness — screen-constant until the chrome floor
           const hitPad = Math.max(4 * wrapBarChrome * renderFrameScale, screenPadFlow(wrapZ, isMobileMode ? 22 : 4)) // Phone finger ~22px; desktop 4px slop
           const fillW = Math.max(1, unlockedInnerW ?? contentVisualW) // Frame fill — never paint past this
           const fillH = Math.max(1, unlockedInnerH ?? contentVisualH) // Fill height for T/B clamp
@@ -11143,20 +11154,20 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           // Painted content box (zoom-safe) — also while dragging so bars ride the live wrap, not a frozen formula
           const dragBox = wrapLineDraggingRef.current ? wrapDragBoxRef.current : null // Pointer gap — not the word box
           const paintedWrap = dragBox ?? (wrapActive || frameUnlocked ? wrapPaintBox : null) // Free unapplied: wrap-line space (fill / +), not glyphs
+          // Fit: lines on the fill edge (I-bar→line = contentFit pad, same as free). Insetting by
+          // BLOCK_FRAME_PAD_X used to park the line on the glyph edge — I-bar looked flush.
           const visualW = paintedWrap
             ? paintedWrap.width
-            : !frameUnlocked
-              ? Math.max(1, fillW - padX * 2)
-              : fillW // Free unapplied fallback: fill edges so wrap stays settable past short content
+            : fillW // Fit + free unapplied fallback: fill edges
           const colLeft = paintedWrap
             ? paintedWrap.left
             : frameUnlocked
               ? (fillW - visualW) / 2 // Free — column mid-frame
               : frameAlignX === 'right'
-                ? fillW - padX - visualW // Fit-to-content right — line + column on the right
+                ? fillW - visualW // Fit right — line on the fill’s right edge
                 : frameAlignX === 'center'
                   ? (fillW - visualW) / 2
-                  : padX // Fit-to-content left — line on the right of a left-parked column
+                  : 0 // Fit left — line on the fill’s left edge
           const colRight = colLeft + visualW
           const fitToContent = !frameUnlocked // Locked hug — only the free wrap edge
           const showLeft = !fitToContent || frameAlignX === 'right' || frameAlignX === 'center'

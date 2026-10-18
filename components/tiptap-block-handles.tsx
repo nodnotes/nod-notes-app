@@ -10,7 +10,7 @@ import { GripVertical } from 'lucide-react' // ⋮⋮ grip; between-block add is
 import { useReactFlow } from 'reactflow' // Nested RF for chat stubs; board extract prefers context instance
 import { useReactFlowContext } from '@/components/react-flow-context' // Real board screenToFlowPosition from chat
 import { useLiveBoardZoom } from '@/lib/use-live-board-zoom' // Viewport-CSS zoom (store can lag)
-import { adjustChromeXFlow, blockGripChromeScale } from '@/lib/frame-adjust-box' // Strip fallback + √ ⋮⋮ comfort
+import { adjustChromeXFlow, blockHandleChromeScale } from '@/lib/frame-adjust-box' // Strip fallback + ⋮⋮ chrome (no boost)
 import { frameScreenChromeScale } from '@/components/threads/constants' // Inset blue stroke stays ~1.4px on screen
 import { useQueryClient } from '@tanstack/react-query' // Refresh panels after extract-to-card
 import { createClient } from '@/lib/supabase/client' // Persist a new map card from a dragged line
@@ -1796,12 +1796,11 @@ export function TipTapBlockHandles({
   const gutterCenterLeft = fillLeftLocal - padLocal - clearLocal / 2 - GRIP_W / 2
   // Glyph scale, not the blue-gutter scale. Free contain shrinks text below frameScale.
   const glyphScale = Math.max(0.01, textScale ?? contentCssScale)
-  // Content √ comfort only — fill already rides the RF viewport, so including rfZoom
-  // counter-scaled ⋮⋮ during pinch (size jumped on zoom). Chat has no viewport ride.
+  // Content √ comfort × glyph; ≥100% zoom also ×1/zoom (screen-constant vs 100%).
+  // Floor tracks shrink so a hard 0.35 does not leave a huge ⋮⋮ on tiny content.
   const gripChromeScale = Math.max(
-    0.35,
-    blockGripChromeScale(fill ? 1 : rfZoom || 1, glyphScale) *
-      (fill ? glyphScale / hostScale : 1)
+    0.35 * Math.min(1, glyphScale),
+    blockHandleChromeScale(rfZoom || 1, glyphScale) * (fill ? glyphScale / hostScale : 1)
   )
   const gripLayouts = new Map<string | number, HandleLayout>() // keyed by block.from (headers = named keys)
   if (container) {

@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-10-17T19:11:22Z`
+- Snapped at: `2026-10-18T21:57:06Z`
 - Source: local `supabase/migrations/` + remote applied tops (plugin Supabase `list_migrations` on `yhsyhtnnklpkfcpydbst`) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `get_project`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0`. A stray `---` in `.env.local` blocks every command until commented; with that line skipped, `migration list --linked` still fails (`42501` cannot alter `cli_login_postgres`). Remote list is from the Management API. cli-latest reports `v2.121.0`.
@@ -9,6 +9,14 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20261018215706_frame_chrome_zoom_stack_fade_wrap_edge.sql`.
+- **Frame chrome zoom**: ⋮⋮ / wrap dashes / L/R gutters ride board zoom (≥100% ×1/zoom; wrap tracks height on zoom-out); property/connections bands follow screen chrome scale.
+- **Stack mark**: rounded triangle stays mounted and fades in/out on select or hover (120ms); idle unselected stays opacity 0.
+- **Wrap / +**: fit wrap lines park on the fill edge (same I-bar→line gap as free); ⋮⋮ hides while free content + drag is live.
+- Schema unchanged; remote DDL top remains `20260924223511_board_changes_autosave`.
+
+## Prior: Board camera 200 / align vs stack
 
 - DDL: none. Marker `20261017191122_board_camera_200_align_thread_stack.sql`.
 - **Board camera**: 200% is a live fit of current board bounds (size-based gap + pane multiple), not a fixed floor scale.

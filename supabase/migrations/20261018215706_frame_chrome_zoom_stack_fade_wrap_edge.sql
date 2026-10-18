@@ -1,0 +1,2 @@
+-- Frame chrome: ⋮⋮ / wrap / gutters ride zoom correctly; stack mark fades on select/hover; fit wrap parks on fill edge; hide ⋮⋮ during free + drag.
+-- App/docs marker only; no DDL (frame metadata is JSONB). Remote DDL top: 20260924223511_board_changes_autosave.

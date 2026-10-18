@@ -2046,7 +2046,8 @@ span[data-added="true"] {
     transform: translate(-50%, 50%) scale(var(--tt-frame-ui-scale, 1.4)) !important;
   }
 
-  /* Stack mark — rounded triangle; slightly larger than 10px discs, same scale(ui) */
+  /* Stack mark — rounded triangle; slightly larger than 10px discs, same scale(ui).
+     Fade with select/hover (stays mounted; pointer-events off while hidden). */
   [data-panel-container='true'] > [data-tt-stack-reveal] {
     width: 13px !important;
     height: 13px !important;
@@ -2054,6 +2055,13 @@ span[data-added="true"] {
     border: none !important;
     box-shadow: none !important;
     transform-origin: center center !important;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+  }
+  [data-panel-container='true'] > [data-tt-stack-reveal][data-tt-stack-reveal-visible] {
+    opacity: 1;
+    pointer-events: auto;
   }
   [data-panel-container='true'] > [data-tt-stack-reveal='left'] {
     left: calc(-14px * var(--tt-frame-ui-scale, 1.4)) !important;

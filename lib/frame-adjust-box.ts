@@ -7,6 +7,10 @@ import {
   fillOriginFromFlowPosition,
   readFrameChromePad,
 } from '@/lib/frame-chrome-offset' // Upright RF XY is fill; rotated selected uses pad
+import {
+  FRAME_CHROME_ZOOM_FLOOR,
+  frameScreenChromeScale,
+} from '@/components/threads/constants' // Wrap/+ / adjust chrome ui
 
 /** TipTap ⋮⋮ layout width — gutter column tracks this × grip chrome × frameScale. */
 export const GRIP_COL_W = 14
@@ -23,12 +27,35 @@ export const CONNECTIONS_GROUP_H = 14 + CONNECTIONS_ROW_PAD * 2 // One chrome ro
 export const DB_ROWS_REVEAL_FOOTER_H = 24
 
 /**
- * Child `transform: scale` for TipTap ⋮⋮ / add lines (same curve as `tiptap-block-handles`).
- * Zoomed/scaled out → 1 (rides). Zoomed/scaled in → 1/√eff (grows ~√ with big text).
+ * Child `transform: scale` for wrap bars / fit +'s (and add-line hit geometry).
+ * No 1.4× chrome boost (that oversized wrap/+). Big `frameScale` → milder √ counter.
+ * Zooms out with the board (dash width tracks dash height); ≥100% stays screen-constant.
  */
 export function blockGripChromeScale(zoom: number, frameScale: number): number {
-  const effective = Math.max(0.01, zoom) * Math.max(0.15, frameScale)
-  return 1 / Math.max(1, Math.sqrt(effective))
+  const fs = Math.max(0.15, frameScale)
+  const contentPart = 1 / Math.max(1, Math.sqrt(fs)) // Mild counter when text is large
+  const z = Math.max(0.01, zoom) // Guard against 0 / negative store values
+  // <100%: ride so wrap dashes stay proportional. ≥100%: 1/zoom (same family as ⋮⋮).
+  return Math.min(1, 1 / z) * contentPart
+}
+
+/** Extra paint size for ⋮⋮ vs bare √ content (still rides the board with text below 100%). */
+export const BLOCK_HANDLE_CHROME_BOOST = 2
+
+/**
+ * TipTap ⋮⋮ — rides the board below 100% zoom; screen-constant at ≥100%.
+ * Shrunk content: ride 1:1 (no boost — boost stayed huge vs tiny text).
+ * Grown content: boost × √ comfort.
+ * Zoomed in: ×1/zoom so screen size matches 100% (view-relative).
+ */
+export function blockHandleChromeScale(zoom: number, frameScale: number): number {
+  const fs = Math.max(0.15, frameScale)
+  // Content curve only — zoom compensation applied below
+  const content = fs < 1 ? 1 : BLOCK_HANDLE_CHROME_BOOST / Math.sqrt(fs)
+  const z = Math.max(0.01, zoom) // Guard against 0 / negative store values
+  // <100%: ride the board. ≥100%: shrink in flow so painted size stays at the 100% screen size.
+  const zoomPart = Math.min(1, 1 / z)
+  return content * zoomPart
 }
 
 /** Flow px for a small screen-constant pad (resize/connection chrome — not ⋮⋮ gutters). */
@@ -37,8 +64,7 @@ export function screenPadFlow(zoom: number, screenPx: number): number {
 }
 
 /**
- * Grip / gutter air in flow — same √×frameScale curve as the ⋮⋮ itself.
- * Screen-constant ÷zoom pads ballooned around a riding grip when zoomed out.
+ * Grip / gutter air in flow — same ui × √frameScale curve as the ⋮⋮ itself.
  */
 export function gripComfortFlow(zoom: number, frameScale: number, nominalPx: number): number {
   const fs = Math.max(0.15, frameScale)
@@ -55,23 +81,36 @@ export function adjustChromePadScale(frameScale = 1): number {
 }
 
 /**
- * Flow width of the ⋮⋮ column = painted grip + side pads (grip↔fill and grip↔outer).
- * Board px × √content scale — camera zoom must not change the adjust-box width.
+ * Flow multiplier so blue↔fill gutters track adjust-frame chrome on zoom.
+ * Same boost + floor as resize dots — gap stays screen-constant with the handles.
  */
-export function handleGutterFlowPx(_zoom: number, frameScale = 1): number {
-  const fs = adjustChromePadScale(frameScale) // Mild growth with content
-  const gripFlow = GRIP_COL_W * fs // ⋮⋮ column in board px
-  return gripFlow + 2 * GRIP_SIDE_PAD_SCREEN * fs // Air on both sides, same board px
+export function adjustChromeZoomScale(zoom: number): number {
+  return frameScreenChromeScale(zoom) // Identical to --tt-frame-ui-scale
 }
 
-/** Blue↔gutter air in board px. Camera zoom does not change it. */
-export function adjustGapFlowPx(_zoom: number, frameScale = 1): number {
-  return ADJUST_CONTENT_GAP_X * adjustChromePadScale(frameScale) // Usually 0 — grip pads own the strip
+/**
+ * Flow width of the ⋮⋮ column = painted grip + side pads (grip↔fill and grip↔outer).
+ * Below 100%: content-sized (rides the board). At ≥100%: ×1/zoom so the strip
+ * fits the screen-constant ⋮⋮ (same curve as `blockHandleChromeScale`).
+ */
+export function handleGutterFlowPx(zoom: number, frameScale = 1): number {
+  // Boost only when content is ≥1 — shrunk frames keep a tight strip for the smaller ⋮⋮
+  const boost = frameScale < 1 ? 1 : BLOCK_HANDLE_CHROME_BOOST
+  const fs = adjustChromePadScale(frameScale) * boost
+  const contentCol = GRIP_COL_W * fs + 2 * GRIP_SIDE_PAD_SCREEN * fs // Strip below 100%
+  const z = Math.max(0.01, zoom)
+  // Match ⋮⋮: ride when zoomed out; screen-constant when zoomed in
+  return contentCol * Math.min(1, 1 / z)
+}
+
+/** Blue↔gutter air in board px — usually 0; grip pads own the L/R strip. */
+export function adjustGapFlowPx(zoom: number, frameScale = 1): number {
+  return ADJUST_CONTENT_GAP_X * adjustChromePadScale(frameScale) * adjustChromeZoomScale(zoom)
 }
 
 /** Blue↔fill air on T/B when the property / connections strip is absent. */
-export function adjustGapYFlow(_zoom: number, frameScale = 1): number {
-  return ADJUST_CONTENT_GAP_Y * adjustChromePadScale(frameScale) // Mild √ growth with content
+export function adjustGapYFlow(zoom: number, frameScale = 1): number {
+  return ADJUST_CONTENT_GAP_Y * adjustChromePadScale(frameScale) * adjustChromeZoomScale(zoom)
 }
 
 /**
@@ -115,9 +154,9 @@ export function selectedAdjustChromeY(opts: {
   return { yTop, yBottom } // Pads the blue box uses above / below the fill
 }
 
-/** Full L/R pad. ⋮⋮ is centered in this strip. Width is board px × frameScale, not camera zoom. */
+/** Full L/R pad. ⋮⋮ is centered in this strip — tracks content scale + chrome zoom. */
 export function adjustChromeXFlow(zoom: number, frameScale = 1): number {
-  return handleGutterFlowPx(zoom, frameScale) + adjustGapFlowPx(zoom, frameScale) // Both ignore zoom
+  return handleGutterFlowPx(zoom, frameScale) + adjustGapFlowPx(zoom, frameScale)
 }
 
 export type FlowBox = { x: number; y: number; width: number; height: number }
@@ -150,10 +189,11 @@ export function nominalAdjustChromeInsets(
   isDatabase = false // Notion DB frames reserve footer air under the fill
 ): AdjustChromeInsets {
   const fs = metaFrameScale(meta)
-  const x = Math.round(adjustChromeXFlow(zoom, fs)) // Same content-scaled strip as ChatPanelNode
-  const band = Math.round(CONNECTIONS_GROUP_H * fs)
-  const gapY = Math.round(adjustGapYFlow(zoom, fs)) // T/B air tracks content scale
-  const footer = isDatabase ? Math.round(DB_ROWS_REVEAL_FOOTER_H * fs) : 0
+  const ui = adjustChromeZoomScale(zoom) // Same live chrome scale as the painted blue box
+  const x = Math.round(adjustChromeXFlow(zoom, fs)) // Same content + zoom strip as ChatPanelNode
+  const band = Math.round(CONNECTIONS_GROUP_H * fs * ui) // T/B row tracks chrome zoom
+  const gapY = Math.round(adjustGapYFlow(zoom, fs)) // T/B air tracks content + chrome zoom
+  const footer = isDatabase ? Math.round(DB_ROWS_REVEAL_FOOTER_H * fs * ui) : 0
   // Same pads as the painted blue box (selectedAdjustChromeY). Snap is adjust-box to adjust-box.
   const pads = selectedAdjustChromeY({
     gapY, // Air when there is no property / connections row

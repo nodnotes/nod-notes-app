@@ -160,12 +160,13 @@ function stampResizeHandles(node: HTMLElement, ui: number): void {
   })
 }
 
-/** Wrap-column dashes — scale from slot center so thickness holds without crawling. */
+/** Wrap-column dashes — scale from slot center (ride zoom-out; screen-constant ≥100%). */
 function stampWrapDashes(node: HTMLElement, zoom: number): void {
-  const inv = 1 / Math.max(0.01, zoom) // Same 1/zoom as --tt-thread-inv-zoom
+  const z = Math.max(0.01, zoom) // Guard against 0 / negative
+  const inv = Math.min(1, 1 / z) // Same curve as blockGripChromeScale — no fat dashes on zoom-out
   node.querySelectorAll('[data-tt-wrap-dash]').forEach((el) => {
     const dash = el as HTMLElement
-    dash.style.setProperty('transform', `scale(${inv})`) // Screen size; slot top/left stay in flow
+    dash.style.setProperty('transform', `scale(${inv})`) // Slot top/left stay in flow
     dash.style.setProperty('transform-origin', 'center center')
   })
 }

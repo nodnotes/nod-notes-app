@@ -15,7 +15,7 @@ const PARALLEL_INSET = 0.08 // Match legacy 8% inset on the long axis
 
 /**
  * Flow-space outset for stacked facing connection points — same as live `--tt-frame-ui-scale` dots.
- * Capped chrome scale so zoom-out does not swell past 100%.
+ * Capped chrome scale so deep zoom-out does not swell past `FRAME_CHROME_ZOOM_FLOOR`.
  */
 export function stackConnectionOutsetFlow(zoom: number): number {
   return INDICATOR_OUTSET * frameScreenChromeScale(zoom)

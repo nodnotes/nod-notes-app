@@ -31,6 +31,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20261018215706_frame_chrome_zoom_stack_fade_wrap_edge` — Frame chrome zoom for ⋮⋮/wrap/gutters; stack mark fades on select/hover; fit wrap on fill edge; hide ⋮⋮ during free + drag
 - `20261017191122_board_camera_200_align_thread_stack` — Board 200% is live fit of content bounds; edge align stays separate from stack; stack/open/lock on the thread menu between frames
 - `20261007233312_minimap_scope_mask_frame_align_guides` — Minimap scope zoom (not board); min out-of-view mask; nodes follow camera; frame align guides; top-bar content shadow; stacked thread arrows
 - `20261004180541_thread_painted_fill_property_caret_notion_frame` — Threads on the painted fill (offscreen ends included); property I-bar stays in the cell; Add page as frame keeps the Notion body here
