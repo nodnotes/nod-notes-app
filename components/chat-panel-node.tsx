@@ -79,6 +79,7 @@ import {
   maxContentScale,
 } from '@/lib/ibar-place-scale' // Fit + free share min content (1) and size-based max
 import {
+  ADJUST_RING_COLOR, // Blue → wrap-line light blue once overlap-faded away
   getLiveBoardZoom,
 } from '@/lib/frame-chrome-zoom' // Select-time pad + fill-origin for live rAF glue
 import {
@@ -99,6 +100,8 @@ import {
   PHONE_FRAME_PAINT_MAX_PX,
 } from '@/lib/phone-frame-budget' // Phone: big frames must not get their own Safari layer
 import { setFramePanelSelected } from '@/lib/frame-panel-selected' // DB NodeView: live table only while RF-selected
+import { useLargeOverlapOpacity } from '@/lib/frame-overlap-hide' // Board-menu: fade big overlapping frames
+import { useFrontFrameContentClip } from '@/lib/frame-adjust-chrome-occlusion' // Adjust box above overlapping frames; content stays under
 import {
   clearFrameTextEditActive,
   setFrameTextEditActive,
@@ -3339,6 +3342,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       for (const k of keys) setFramePanelSelected(k, false)
     }
   }, [id, promptMessage?.id, selected])
+  // Fade 0..1 from size÷pane while overlapping; mid-drag stays fully opaque
+  const overlapFadeLive = useLargeOverlapOpacity(id)
+  const overlapFade = dragging ? 1 : overlapFadeLive
   const dataCollapsed = data.isResponseCollapsed || false
   const supabase = createClient()
   const queryClient = useQueryClient()
@@ -4354,6 +4360,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const showConnectionBox =
     isThreadConnecting && (nearThreadSides & THREAD_CONNECTION_BOX) !== 0 // Fill shows the connection box
   const groupMulti = useGroupMultiSelect() // Shared box owns handles, dots, and the rotate/reactions row
+  const selectChromeLite = groupMulti // Shared box owns handles, dots, and the rotate/reactions row
+  const overlapHideResizeChrome = overlapFade < 0.99 // Fading large frame: corners / wrap / +'s hide with the fill
+  const bareAdjustBox = selectChromeLite || overlapHideResizeChrome // Ring only — no sim points / rotate row (multi-select look)
   // Mid-press on the body — hide connection indicators only (resize / ⋮⋮ / rotate stay mounted)
   const [pressing, setPressing] = useState(false)
   // Full adjust chrome when selected + idle (not mid-drag / thread connect)
@@ -4429,6 +4438,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       ? chromeContentScale
       : 1 // Gutters track CSS-scaled / contain-fitted fill
   const screenChromeScale = frameScreenChromeScale(rfZoom || 1) // Handles / dots / rotate only
+  // Overlapped by a front frame: raise this node, clip its content under the front frames (chrome stays on top)
+  useFrontFrameContentClip(id, isBlock && Boolean(selected), panelRef, Math.abs(rotation) > 0.5) // Rotated: AABB holes would be wrong
   const adjustChromeX = showFrameChrome
     ? Math.round(adjustChromeXFlow(rfZoom || 1, chromeScale)) // Fit + free: same gap vs painted text
     : 0
@@ -4672,8 +4683,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     !isFlashcard &&
     !dragging &&
     !pressing && // Body mid-press hides simulators; resize corners stay (onFrameChrome exclusion)
-    // Group selection keeps the blue box but not the simulated connection dots.
-    ((selected && !isThreadConnecting && !groupMulti) || (isThreadConnecting && isNearThreadSnap))
+    // Group selection / overlap fade keep the blue box but not the simulated connection dots.
+    ((selected && !isThreadConnecting && !bareAdjustBox) || (isThreadConnecting && isNearThreadSnap))
 
   // Invisible edge connection point — size from live CSS --tt-frame-ui-scale; paint stays transparent
   const connectionPointStyle = (): React.CSSProperties => ({
@@ -9935,7 +9946,11 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             : undefined
         }
         className={cn(
-          'group nopan border relative cursor-grab active:cursor-grabbing overflow-visible transition-[opacity,box-shadow,background-color,border-color] duration-300', // overflow-visible: ⋮⋮ in left chrome; nopan: right-click opens frame menu
+          'group nopan border relative cursor-grab active:cursor-grabbing overflow-visible duration-300', // overflow-visible: ⋮⋮ in left chrome; nopan: right-click opens frame menu
+          // Overlap size-fade must track zoom live — do not transition opacity while fading
+          overlapFade < 0.999
+            ? 'transition-[box-shadow,background-color,border-color]'
+            : 'transition-[opacity,box-shadow,background-color,border-color]',
           isMobileMode && isBlock && !selected && 'nodrag', // Phone: RF drag only after hold (manual controller)
           // Frames are square — no outer rounded-2xl; rotated fill lives on the inner shell only
           !isFillTransparent && !frameShape && !isContentRotated && !isBlock && !phoneBigFrame && 'backdrop-blur-sm', // Safari gives backdrop-filter its own layer at *layout* size — 7k frame = ~1.4GB
@@ -9955,6 +9970,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                 : 'shadow-sm',
           // Blur non-flashcard panels when flashcard study mode is active
           shouldBlur && 'blur-sm opacity-40 pointer-events-none',
+          overlapFade < 0.99 && 'pointer-events-none', // Faded — click through to frames behind
           !isProjectBoard &&
             promptMessage?.id &&
             isFramePending(promptMessage.id) &&
@@ -10047,6 +10063,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         // fade — measured 0.002 opacity while fully on screen mid-pan, i.e. "it doesn't show until I
         // stop, then it flashes". The effect already exempts blocks from the shrink outright; this
         // makes that exemption apply to the first paint too, where it matters.
+        // Base mount opacity only — overlap size-fade is written with !important on the DOM
+        // every zoom tick (React is frozen mid-nav; multiplying here fought the live pump).
         opacity: isInitialShrinkComplete || isBlock ? 1 : 0,
         willChange: dragging && isBlock && !phoneBigFrame ? 'transform' : undefined, // Promoting a big frame on phone = layout-size texture
         // Fill always paints on the inner frame shell (shape-capable surface) — not here
@@ -10222,7 +10240,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         />
       )}
 
-      {/* Selected default frames: square blue ring on the outer panel (RF lines stay hit-only) */}
+      {/* Selected default frames: square blue ring on the outer panel (RF lines stay hit-only).
+          Under a large mate --tt-overlap-chrome fades this so it does not float on top. */}
       {showAdjustFrame && !frameShape && (
         <div
           aria-hidden
@@ -10232,7 +10251,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             // Full panel — not fill-inset (that floated corner handles outside the ring)
             inset: 0,
             borderRadius: 0, // Square ring — fill shell owns --tt-frame-radius
-            boxShadow: 'inset 0 0 0 var(--tt-frame-line-w, 1.4px) #3b82f6', // Live CSS stroke — constant on screen
+            // Stroke; opacity from --tt-overlap-chrome. frame-chrome-zoom restamps this per zoom — same color there
+            boxShadow: `inset 0 0 0 var(--tt-frame-line-w, 1.4px) ${ADJUST_RING_COLOR}`,
             clipPath: !isContentRotated ? shapeClip : undefined,
           }}
         />
@@ -10258,8 +10278,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             />
           ))}
 
-      {/* Selected frames: circular corner handles (hidden while moving / thread drag / group select) */}
-      {showAdjustFrame && !groupMulti && (
+      {/* Selected frames: circular corner handles (hidden while moving / thread drag / group / overlap fill-fade) */}
+      {showAdjustFrame && !selectChromeLite && !overlapHideResizeChrome && (
         <>
           {(['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const).map((position) => (
             <NodeResizeControl
@@ -10336,7 +10356,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                   'nodrag nopan absolute z-[30] rounded-full bg-blue-500',
                   isThreadConnecting
                     ? 'pointer-events-none' // Visual snap target only — don't steal hit from edge Handles
-                    : 'cursor-crosshair hover:bg-blue-600'
+                    : 'pointer-events-auto cursor-crosshair hover:bg-blue-600' // Hittable while the node is click-through
                 )}
                 // Size + white ring + outset from live `--tt-frame-ui-scale` CSS (no React zoom re-render)
               />
@@ -10345,13 +10365,13 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         </>
       )}
 
-      {/* Frame chrome — rotate · fit · wrap · reactions (selected + idle only; hidden while dragging).
+      {/* Frame chrome — rotate · fit · comment (selected + idle; stays above overlapping frames).
           Stay under the adjust box while board preview is open — preview grows the fill, not this row.
           Scale + margin-left from live `--tt-frame-ui-scale` CSS; marginTop keeps clear of indicators. */}
-      {isBlock && !isThreadConnecting && selected && !dragging && !groupMulti && (
+      {isBlock && !isThreadConnecting && selected && !dragging && !bareAdjustBox && (
           <div
             data-frame-chrome
-            className="nodrag nopan absolute z-[25] flex items-center gap-0.5" // Below connection indicators (z-30)
+            className="nodrag nopan absolute z-[25] flex items-center gap-0.5 pointer-events-auto" // Hittable while the node is click-through
             style={{
               left: 0,
               top: '100%',
@@ -10722,6 +10742,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           borderRadius: paintedFrameRadius, // 0 = square fill — same while board preview is open
           // Empty / selected custom borders paint here — panel border is off while adjust chrome is on
           boxShadow: fillShellBorderShadow,
+          // Do NOT set opacity here — overlap fade uses `--tt-overlap-fade` on the RF node (CSS).
+          // Inline opacity freezes at the nav-start value while selected chrome keeps re-rendering.
           // Polygon clips work in CSS; cylinder/ellipse use SVG fill instead (path clip is unreliable).
           // Skip while selected: ⋮⋮ + add lines live in the L chrome (negative left) and must not be
           // cut by the silhouette — grips only mount when selected anyway.
@@ -11135,7 +11157,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
             />
           </div>
         )}
-        {selected && !groupMulti && (hasBlockContent || frameUnlocked) && !soleImageContent && !isDbFrame && !frameResizing && (() => { // Wrap lines + resize +'s: free empty frames too — fit/free toggle stays off until there is text
+        {selected && !selectChromeLite && !overlapHideResizeChrome && (hasBlockContent || frameUnlocked) && !soleImageContent && !isDbFrame && !frameResizing && (() => { // Wrap / +'s hide with overlap fill; free empty frames too — fit/free toggle stays off until text
           const lineScale = wrapDragPaintRef.current ?? paintScale // Live paint while dragging — a press-only scale left the glyphs stale
           const padY = BLOCK_FRAME_PAD_Y * lineScale // Same T/B gap as the block
           const wrapZ = rfZoom || 1

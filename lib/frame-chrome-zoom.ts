@@ -171,11 +171,18 @@ function stampWrapDashes(node: HTMLElement, zoom: number): void {
   })
 }
 
+/**
+ * Ring color: #3b82f6, or wrap-line #93c5fd once the overlap fade (live --tt-overlap-fade on the
+ * node) hits 0 — clamp makes it a step so any visible fill keeps full blue.
+ */
+export const ADJUST_RING_COLOR =
+  'color-mix(in srgb, #3b82f6 clamp(0%, calc(var(--tt-overlap-fade, 1) * 100000%), 100%), #93c5fd)'
+
 /** Blue adjust ring stroke width — screen-constant via --tt-frame-line-w. */
 function stampAdjustRing(node: HTMLElement, ui: number): void {
   const linePx = `${ui}px` // 1.4/zoom in flow px so the painted line stays the same thickness on screen
   node.querySelectorAll('[data-tt-adjust-ring]').forEach((el) => {
-    ;(el as HTMLElement).style.boxShadow = `inset 0 0 0 ${linePx} #3b82f6` // Paint that screen thickness
+    ;(el as HTMLElement).style.boxShadow = `inset 0 0 0 ${linePx} ${ADJUST_RING_COLOR}` // Paint that screen thickness
   })
 }
 

@@ -1486,6 +1486,42 @@ span[data-added="true"] {
     pointer-events: none !important;
   }
 
+  /* Overlap size-fade (board menu).
+     --tt-overlap-fade: large overlapping frames fade their fill with size.
+     --tt-overlap-chrome: under a large mate the adjust box / sim points / rotate row hide so
+     they do not float on top of the overlapping frame; frame fill/content stays painted. */
+  .react-flow__node[data-tt-overlap-fade] [data-tt-frame-fill='true'],
+  .react-flow__node[data-tt-overlap-fade] [data-tt-wrap-line],
+  .react-flow__node[data-tt-overlap-fade] [data-tt-fit-plus] {
+    opacity: var(--tt-overlap-fade, 1) !important;
+  }
+  .react-flow__node[data-tt-overlap-fade] [data-tt-adjust-ring],
+  .react-flow__node[data-tt-overlap-fade] [data-tt-connection-box],
+  .react-flow__node[data-tt-overlap-fade] .react-flow__resize-control.handle,
+  .react-flow__node[data-tt-overlap-fade] .react-flow__resize-control.line,
+  .react-flow__node[data-tt-overlap-fade] [data-frame-chrome],
+  .react-flow__node[data-tt-overlap-fade] [data-tt-connection-indicator] {
+    opacity: var(--tt-overlap-chrome, var(--tt-overlap-fade, 1)) !important;
+  }
+
+  /* Selected frame under a front frame (lib/frame-adjust-chrome-occlusion.ts): raised so the
+     adjust box paints on top; content shells are clip-path'd under the front frame. Node + panel
+     go click-through so the holes reach the front frame; clipped shells + chrome re-arm hits. */
+  .react-flow__node.tt-front-clip {
+    z-index: 100000 !important;
+    pointer-events: none !important;
+  }
+  .react-flow__node.tt-front-clip [data-panel-container='true'] {
+    pointer-events: none !important;
+  }
+  .react-flow__node.tt-front-clip [data-tt-front-clip-target] {
+    pointer-events: auto !important;
+  }
+  /* 0.4 = OVER_FRONT_ALPHA in frame-adjust-chrome-occlusion.ts; doubled attr outranks the overlap-fade rule */
+  .react-flow__node.tt-front-clip [data-panel-container='true'] [data-tt-over-front][data-tt-over-front] {
+    opacity: calc(0.4 * var(--tt-overlap-chrome, var(--tt-overlap-fade, 1))) !important;
+  }
+
   /* Animated flowing dotted edges - dashes flow along the path like Supabase schema visualizer */
   .react-flow__edge-path[style*="animation"] {
     animation: flow-dash 1.5s linear infinite !important;
