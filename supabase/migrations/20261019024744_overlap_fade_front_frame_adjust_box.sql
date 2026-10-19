@@ -1,0 +1,2 @@
+-- Hide large overlapping: board-menu toggle; big overlapping frames fade with zoom (bare light-blue box when gone); selected frame's adjust box paints above front frames at 40% over them.
+-- App/docs marker only; no DDL (frame metadata is JSONB). Remote DDL top: 20260924223511_board_changes_autosave.

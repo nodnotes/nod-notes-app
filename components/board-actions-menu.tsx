@@ -4,6 +4,7 @@
 
 import { useEffect, useLayoutEffect, useRef } from 'react' // Escape close + autofocus + in-window place
 import {
+  EyeOff, // Hide large overlapping frames toggle
   Scan, // Capture — 4 disconnected rounded corners
   ClipboardPaste,
   LayoutTemplate, // Create public template — same glyph Add template used
@@ -38,6 +39,8 @@ export type BoardActionsMenuProps = {
   canUndo?: boolean // Enables Undo when history exists
   canRedo?: boolean // Enables Redo when history exists
   canPaste?: boolean // Enables Paste when a frame clipboard exists
+  hideLargeOverlapEnabled?: boolean // Ghost big-on-view frames that overlap another
+  onHideLargeOverlapChange?: (on: boolean) => void // Persist board-menu toggle
   onAction: (action: BoardActionId) => void // Parent wires create / zoom / undo
   onClose: () => void // Dismiss on Escape / outside
   className?: string
@@ -53,6 +56,33 @@ type RowDef =
       disabled?: boolean
     }
   | { kind: 'separator' }
+  | {
+      kind: 'toggle'
+      id: 'hideLargeOverlap'
+      label: string
+      icon: React.ReactNode
+      on: boolean
+    }
+
+/** Notion-style switch parked on the right of a toggle row. */
+function MenuToggle({ on }: { on: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        'ml-auto relative h-4 w-7 shrink-0 rounded-full transition-colors',
+        on ? 'bg-blue-500' : 'bg-gray-200 dark:bg-gray-600'
+      )}
+    >
+      <span
+        className={cn(
+          'absolute top-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-[left]',
+          on ? 'left-3.5' : 'left-0.5'
+        )}
+      />
+    </span>
+  )
+}
 
 /** Notion-style floating menu for empty-board right-click. */
 export function BoardActionsMenu({
@@ -61,6 +91,8 @@ export function BoardActionsMenu({
   canUndo = false,
   canRedo = false,
   canPaste = false,
+  hideLargeOverlapEnabled = false,
+  onHideLargeOverlapChange,
   onAction,
   onClose,
   className,
@@ -142,6 +174,14 @@ export function BoardActionsMenu({
     },
     { kind: 'separator' },
     {
+      kind: 'toggle',
+      id: 'hideLargeOverlap',
+      label: 'Hide large overlapping',
+      icon: <EyeOff className="h-4 w-4" />,
+      on: hideLargeOverlapEnabled,
+    },
+    { kind: 'separator' },
+    {
       kind: 'action',
       id: 'copyLink',
       label: 'Copy link',
@@ -163,14 +203,14 @@ export function BoardActionsMenu({
         'board-actions-menu node-popup z-[1000] tt-menu-surface rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] p-1 outline-none',
         className
       )}
-      data-tt-menu-width="220"
+      data-tt-menu-width="240"
       style={{
         position: 'fixed', // Body portal — absolute was trapped under the welcome overlay by board `isolate`
         left: `${x}px`,
         top: `${y}px`,
         right: 'auto',
-        width: 220,
-        maxWidth: 'min(220px, calc(100vw - 24px))',
+        width: 240,
+        maxWidth: 'min(240px, calc(100vw - 24px))',
         boxSizing: 'border-box',
         transform: 'translate(-50%, -100%)', // Anchor above click
         transformOrigin: 'center bottom',
@@ -205,6 +245,25 @@ export function BoardActionsMenu({
                 key={`sep-${index}`}
                 className="my-1 h-px bg-black/10 dark:bg-white/10 mx-1" // Hairline that still reads on the frosted menu
               />
+            )
+          }
+          if (row.kind === 'toggle') {
+            return (
+              <Button
+                key={row.id}
+                variant="ghost"
+                size="sm"
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onHideLargeOverlapChange?.(!row.on) // Flip + keep menu open
+                }}
+                className="h-8 w-full min-w-0 shrink-0 justify-start gap-0 px-2 text-sm font-normal"
+              >
+                <span className="mr-2 shrink-0 text-gray-500 dark:text-gray-400">{row.icon}</span>
+                <span className="min-w-0 flex-1 truncate text-left">{row.label}</span>
+                <MenuToggle on={row.on} />
+              </Button>
             )
           }
           return (

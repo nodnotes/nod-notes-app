@@ -132,6 +132,7 @@ import {
   endBoardNavigating,
   isBoardNavigating,
   registerBoardZoomCssReader,
+  registerBoardZoomTickHook,
   subscribeBoardNavigating,
   syncBoardZoomCss,
   touchBoardNavigating,
@@ -143,6 +144,13 @@ import {
   stopFrameChromeZoomPump,
 } from '@/lib/frame-chrome-zoom' // Exact screen-constant chrome on selected frames (live zoom)
 import { beginFrameDragging, endFrameDragging, isFrameDragging } from '@/lib/frame-dragging' // Skip O(n) work mid-drag on large boards
+import {
+  clearLargeOverlapOpacities,
+  invalidateLargeOverlapFadeDomCache,
+  isLargeOverlapClickThrough,
+  setLargeOverlapFadeContext,
+  tickLargeOverlapFade,
+} from '@/lib/frame-overlap-hide' // Board-menu: fade big-on-screen overlapping frames
 import {
   clearFrameTextEditActive,
   isFrameTextEditActive,
@@ -1481,8 +1489,47 @@ function BoardFlowInner({
       updateNodeInternals(ids) // Same remeasure a frame reselect runs
     })
   }, [rfStore, updateNodeInternals])
-  const { setReactFlowInstance, registerSetNodes, isLocked, layoutMode, setLayoutMode, setIsDeterministicMapping, panelWidth: contextPanelWidth, isPromptBoxCentered, lineStyle, setLineStyle, arrowDirection, setArrowDirection, boardRule: contextBoardRule, boardStyle: contextBoardStyle, boardFont, clickedEdge: contextClickedEdge, setClickedEdge: setContextClickedEdge, fillColor, borderColor, borderWeight, borderStyle, flashcardMode, setFlashcardMode, selectedTag, setSelectedTag, isDrawing, setIsDrawing, drawTool, setDrawTool, drawShape, setDrawShape, setFillColor, setBorderColor, setBorderWeight, setBorderStyle, registerMapUndoRedo, registerMapTakeSnapshot, snapEnabled, setSnapEnabled, edgeSnapEnabled } = useReactFlowContext()
+  const { setReactFlowInstance, registerSetNodes, isLocked, layoutMode, setLayoutMode, setIsDeterministicMapping, panelWidth: contextPanelWidth, isPromptBoxCentered, lineStyle, setLineStyle, arrowDirection, setArrowDirection, boardRule: contextBoardRule, boardStyle: contextBoardStyle, boardFont, clickedEdge: contextClickedEdge, setClickedEdge: setContextClickedEdge, fillColor, borderColor, borderWeight, borderStyle, flashcardMode, setFlashcardMode, selectedTag, setSelectedTag, isDrawing, setIsDrawing, drawTool, setDrawTool, drawShape, setDrawShape, setFillColor, setBorderColor, setBorderWeight, setBorderStyle, registerMapUndoRedo, registerMapTakeSnapshot, snapEnabled, setSnapEnabled, edgeSnapEnabled, hideLargeOverlapEnabled, setHideLargeOverlapEnabled } = useReactFlowContext()
   const { rotation: boardRotation, setScrollMode, setRotationAroundViewCenter, adoptRotation } = useBoardRotation() // Subscribe so I-bar / overlays re-place when the camera twists
+
+  // Overlap fade: flow×zoom math ticked from the board zoom CSS pump (every frame mid-gesture).
+  // Refs keep the tick closure stable so `nodes` churn cannot tear down the pump hook.
+  const overlapFadeNodesRef = useRef(nodes)
+  overlapFadeNodesRef.current = nodes
+  const overlapFadePaneRef = useRef(paneSize)
+  overlapFadePaneRef.current = paneSize
+  useEffect(() => {
+    if (!hideLargeOverlapEnabled) {
+      registerBoardZoomTickHook(null)
+      setLargeOverlapFadeContext(null)
+      clearLargeOverlapOpacities() // Pref off — wipe fades + caches
+      return
+    }
+    setLargeOverlapFadeContext({
+      enabled: true,
+      getNodes: () => reactFlowInstance?.getNodes() ?? overlapFadeNodesRef.current,
+      getViewport: () => reactFlowInstance?.getViewport() ?? { x: 0, y: 0, zoom: 1 },
+      getPaneSize: () => overlapFadePaneRef.current,
+    })
+    registerBoardZoomTickHook((zoom) => tickLargeOverlapFade(zoom))
+    tickLargeOverlapFade() // Seed once for the current camera
+    const unsubNav = subscribeBoardNavigating(() => {
+      if (!isBoardNavigating()) tickLargeOverlapFade() // Settled zoom — final paint
+    })
+    return () => {
+      unsubNav()
+      registerBoardZoomTickHook(null)
+      // Soft unregister — keep last paint; next mount re-binds getters without a dead gap
+      setLargeOverlapFadeContext(null)
+    }
+  }, [hideLargeOverlapEnabled, reactFlowInstance])
+
+  // Overlap pairs / pane size change while idle — zoom pump is not running
+  useEffect(() => {
+    if (!hideLargeOverlapEnabled) return
+    if (isFrameDragging()) return // Position still in flux — tick on drag-stop instead
+    tickLargeOverlapFade()
+  }, [hideLargeOverlapEnabled, nodes, paneSize.width, paneSize.height])
 
   const chatPanelCountRef = useRef(0) // Frame count is stable mid-drag — skip the O(n) scan per tick
   const chatPanelCount = useMemo(() => {
@@ -6971,6 +7018,7 @@ function BoardFlowInner({
     const markWheelNavigating = (liveZoom: number) => {
       beginBoardNavigating(liveZoom) // rAF pump keeps CSS chrome live for the burst
       syncBoardZoomCss(liveZoom, rfStore.getState().domNode)
+      if (hideLargeOverlapEnabled) tickLargeOverlapFade(liveZoom) // Wheel may skip RF onMove
       endBoardNavigating(140)
       scheduleWheelSettle()
     }
@@ -8107,6 +8155,15 @@ function BoardFlowInner({
         if (node.type === 'chatPanel') {
           endFrameDragging()
           setFrameMountRecomputeKey((k) => k + 1)
+          if (hideLargeOverlapEnabled) {
+            invalidateLargeOverlapFadeDomCache()
+            const retick = () => tickLargeOverlapFade(undefined, { includeDragging: true })
+            requestAnimationFrame(() => {
+              retick()
+              requestAnimationFrame(retick) // After RF clears dragging
+            })
+            setTimeout(retick, 64) // After frame-drag settle
+          }
         }
         const finalPosition =
           lastPos?.id === nodeId ? { x: lastPos.x, y: lastPos.y } : node.position
@@ -11135,6 +11192,11 @@ function BoardFlowInner({
         // (nodes/chrome still painted lower). inset:0 gives a definite full-height box.
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
         onNodeDragStart={(event, node) => {
+          // Faded overlap frames are not draggable — let the gesture reach frames behind
+          if (node?.type === 'chatPanel' && isLargeOverlapClickThrough(node.id)) {
+            event.preventDefault()
+            return
+          }
           if (node?.type === 'chatPanel') beginFrameDragging()
           // Do NOT cancel long-press here — RF threshold 0 fires drag-start on touchstart
           // (canceling here blocked hold→menu). Cancel on first real move in onNodeDrag instead.
@@ -11212,6 +11274,16 @@ function BoardFlowInner({
         onNodeDragStop={(event, node) => {
           if (node?.type === 'chatPanel') {
             endFrameDragging()
+            // Re-arm overlap fade with committed positions (drag skipped the mover; DOM may remount)
+            if (hideLargeOverlapEnabled) {
+              invalidateLargeOverlapFadeDomCache()
+              const retick = () => tickLargeOverlapFade(undefined, { includeDragging: true })
+              requestAnimationFrame(() => {
+                retick()
+                requestAnimationFrame(retick) // After RF clears dragging on the mover
+              })
+              setTimeout(retick, 64) // After frame-drag settle class
+            }
             setFrameMountRecomputeKey((k) => k + 1) // Refresh deferred TipTap mount set after drag
             // Multiplayer: broadcast final position to peers (+ debounced DB snapshot)
             const selected = nodesRef.current.filter((n) => n.selected && n.type === 'chatPanel')
@@ -11537,6 +11609,8 @@ function BoardFlowInner({
         onNodeClick={(event, node) => {
           // Long-press already opened the frame menu — skip click-select
           if (longPressRef.current?.consumeFired()) return
+          // Overlap-faded frames are pointer-events:none; guard if a click still arrives
+          if (node?.type === 'chatPanel' && isLargeOverlapClickThrough(node.id)) return
           // Clear I-bar cursor when clicking on a node/panel
           if (iBarPosition || iBarInputAnchor) {
             setIBarPosition(null)
@@ -11775,13 +11849,17 @@ function BoardFlowInner({
         onMoveStart={(_event, viewport) => {
           // One-finger pan wasn’t covered by pinch-only freeze — fast pan over DB OOMed Safari
           beginBoardNavigating(viewport.zoom)
+          if (hideLargeOverlapEnabled) tickLargeOverlapFade(viewport.zoom)
         }}
         onMoveEnd={(_event, _viewport) => {
           endBoardNavigating()
           setFrameMountRecomputeKey((k) => k + 1) // Mount/unmount deferred TipTap after pan settles
+          if (hideLargeOverlapEnabled) tickLargeOverlapFade() // Settled camera — refresh overlap fade
         }}
         onMove={(event, viewport) => {
           touchBoardNavigating(viewport.zoom) // Freeze React; CSS chrome tracks live zoom
+          // Direct tick — do not rely only on the zoom CSS hook (can be cleared across remounts)
+          if (hideLargeOverlapEnabled) tickLargeOverlapFade(viewport.zoom)
           // At max zoom-in while gesturing → unlock further zoom-in; min stays live 200% fit
           if (!embedded) {
             const nextZoom = expandZoomRange(zoomRangeRef.current, { liveZoom: viewport.zoom })
@@ -12774,6 +12852,8 @@ function BoardFlowInner({
             canUndo={canMapUndo}
             canRedo={canMapRedo}
             canPaste={false}
+            hideLargeOverlapEnabled={hideLargeOverlapEnabled}
+            onHideLargeOverlapChange={setHideLargeOverlapEnabled}
             onAction={handleBoardMenuAction}
             onClose={() => {
               setBoardMenuPosition(null)

@@ -26,6 +26,13 @@ const NAV_WATCHDOG_MS = 1200 // Re-armed per move tick; only fires when a gestur
 let lastZoomCss = '' // Skip redundant style writes mid-pinch
 let zoomCssRaf = 0 // rAF pump while navigating — live chrome without React
 let zoomCssReader: (() => { zoom: number; el: HTMLElement | null }) | null = null
+/** Optional per-zoom-tick hook (overlap fade) — runs even when chrome CSS is unchanged. */
+let zoomTickHook: ((zoom: number) => void) | null = null
+
+/** BoardFlow registers live work that must track zoom every frame (overlap size fade). */
+export function registerBoardZoomTickHook(hook: ((zoom: number) => void) | null): void {
+  zoomTickHook = hook
+}
 
 function flowElFallback(): HTMLElement | null {
   return (
@@ -74,8 +81,9 @@ function applyZoomCss(el: HTMLElement, zoom: number): void {
  */
 export function syncBoardZoomCss(zoom: number, el?: HTMLElement | null): void {
   const target = el ?? zoomCssReader?.().el ?? flowElFallback()
-  if (!target) return
-  applyZoomCss(target, zoom)
+  if (target) applyZoomCss(target, zoom)
+  // Always fire — overlap fade must track continuous zoom even when --tt-board-zoom is unchanged
+  zoomTickHook?.(zoom)
 }
 
 /** rAF while navigating — polls live zoom so chrome tracks even without onMove. */
