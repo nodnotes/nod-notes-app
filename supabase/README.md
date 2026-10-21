@@ -31,6 +31,7 @@ Latest on Nod Notes (DDL):
 - `20260810020000_ai_copilot_foundation` — `ai_threads`, `ai_messages`, `ai_context_snapshots`, `ai_action_log`
 
 Latest local marker (no DDL):
+- `20261021203307_cover_inward_nav_caret_screen_seat` — Cover cue (inward nav » + selected-coverer corner carets); nav » stays on the closed-nav screen seat
 - `20261021193623_hide_zoom_ibar_minimap_print_pan` — Hide-large ease (I-bar behind the hidden frame, corner carets, nav cue); 200% pan enclosure; minimap print-view letterbox
 - `20261019024744_overlap_fade_front_frame_adjust_box` — Hide large overlapping toggle; selected adjust box above front frames
 - `20261018215706_frame_chrome_zoom_stack_fade_wrap_edge` — Frame chrome zoom for ⋮⋮/wrap/gutters; stack mark fades on select/hover; fit wrap on fill edge; hide ⋮⋮ during free + drag

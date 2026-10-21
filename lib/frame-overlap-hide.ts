@@ -38,11 +38,90 @@ export const CLICK_THROUGH_OPACITY = FADE_HIDE_CUTOFF
 /** @deprecated Use FADE_END_FRAC. */
 export const BIG_VIEW_FRAC = FADE_END_FRAC
 
-type FlowBox = { id: string; x: number; y: number; w: number; h: number; viewFrac: number }
+type FlowBox = {
+  id: string
+  x: number
+  y: number
+  w: number
+  h: number
+  viewFrac: number
+  selected?: boolean // Only the hide tick sets this — used to flip the nav »
+}
 
 /** Positive-area flow AABB overlap (zoom-invariant). */
 function flowBoxesOverlap(a: FlowBox, b: FlowBox): boolean {
   return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+}
+
+/** Share of the inner frame that must lie inside the outer frame to count as covered. */
+const COVER_AREA = 0.9
+
+/** `inner` is fully (or almost fully) inside `outer` — measurement slop still counts. */
+function flowBoxContains(outer: FlowBox, inner: FlowBox): boolean {
+  const x1 = Math.max(outer.x, inner.x) // Overlap left
+  const y1 = Math.max(outer.y, inner.y) // Overlap top
+  const x2 = Math.min(outer.x + outer.w, inner.x + inner.w) // Overlap right
+  const y2 = Math.min(outer.y + outer.h, inner.y + inner.h) // Overlap bottom
+  const iw = x2 - x1
+  const ih = y2 - y1
+  if (iw <= 0 || ih <= 0) return false // No overlap
+  const area = inner.w * inner.h
+  if (!(area > 0)) return false
+  return (iw * ih) / area >= COVER_AREA // Covered by the outer frame
+}
+
+/** Frames whose box covers another frame (nav cue; selected ones also get inward corner carets). */
+function coveringIds(frames: FlowBox[]): { all: string[]; selected: string[] } {
+  const all: string[] = []
+  const selected: string[] = []
+  for (let i = 0; i < frames.length; i++) {
+    const outer = frames[i]
+    let covers = false
+    for (let j = 0; j < frames.length; j++) {
+      if (i === j) continue
+      if (!flowBoxContains(outer, frames[j])) continue
+      covers = true // Someone sits under this frame
+      break
+    }
+    if (!covers) continue
+    all.push(outer.id)
+    if (outer.selected) selected.push(outer.id) // Adjust-box » only while selected
+  }
+  return { all, selected }
+}
+
+/** A visible frame covers another — Free-nav » points up-right (zoom-hidden coverer stays zoom-out). */
+let navCaretPointsInward = false
+/** Selected covering frames — inward corner carets stay mounted; CSS fade hides them if the fill hides. */
+let coverCaretIds = new Set<string>()
+
+/** Fill used to decide whether a coverer is itself zoom-hidden. */
+function coverFillOf(id: string, ops?: Map<string, OverlapFadeOp>): number {
+  return ops?.get(id)?.fill ?? desiredById.get(id)?.fill ?? opacityById.get(id)?.fill ?? 1
+}
+
+/** Inward nav while any visible frame covers another; zoom-hidden fill → zoom-out ». */
+function applyCoverCue(frames: FlowBox[], ops?: Map<string, OverlapFadeOp>): void {
+  const { all, selected } = coveringIds(frames)
+  const visibleCover = all.some((id) => coverFillOf(id, ops) > 0.02) // Unselected cover still counts
+  const anyHidden = frames.some((f) => coverFillOf(f.id, ops) <= 0.02) // Too-big hide wins the nav heading
+  const nextInward = visibleCover && !anyHidden // Cover cue, not the zoom-out cue
+  const nextIds = new Set(selected)
+  let idsChanged = nextIds.size !== coverCaretIds.size
+  if (!idsChanged) {
+    for (const id of nextIds) {
+      if (!coverCaretIds.has(id)) {
+        idsChanged = true
+        break
+      }
+    }
+  }
+  const inwardChanged = nextInward !== navCaretPointsInward
+  navCaretPointsInward = nextInward
+  coverCaretIds = nextIds
+  if (!idsChanged && !inwardChanged) return
+  hideEpoch += 1 // React inward carets + any store readers
+  notify()
 }
 
 function stylePx(v: unknown): number {
@@ -134,6 +213,7 @@ export function computeLargeOverlapOpacities(
       w: size.width,
       h: size.height,
       viewFrac,
+      selected: node.selected === true, // Nav » flips only while this frame is selected
     })
   }
 
@@ -167,6 +247,7 @@ export function computeLargeOverlapOpacities(
       out.set(a.id, { fill: 1, chrome: 1 })
     }
   }
+  applyCoverCue(frames, out) // Same boxes — nav inward if any visible frame covers another
   return out
 }
 
@@ -280,18 +361,51 @@ function anyFramesZoomHidden(): boolean {
   return false
 }
 
+/** Toggle one board-root flag only when it actually changes. */
+function syncBoardFlag(root: Element, name: string, on: boolean): void {
+  if (on === root.hasAttribute(name)) return // Same as last paint
+  if (on) root.setAttribute(name, '')
+  else root.removeAttribute(name)
+}
+
 /**
- * Board root flag for the Free-nav hide cue. Set as soon as a hide starts so the
- * caret eases in with the fill; drop it when every frame is showing again.
+ * Board root flags for the Free-nav hide cue. Show it as soon as a hide starts so it
+ * eases in with the fill; flip it while a selected frame covers another and is still showing.
  */
 function syncNavHideZoomCaret(): void {
   if (typeof document === 'undefined') return
   const root = document.querySelector('[data-board-root]')
   if (!root) return
-  const next = anyFramesZoomHidden()
-  if (next === root.hasAttribute('data-tt-frames-zoom-hidden')) return // Same as last paint
-  if (next) root.setAttribute('data-tt-frames-zoom-hidden', '')
-  else root.removeAttribute('data-tt-frames-zoom-hidden')
+  syncBoardFlag(root, 'data-tt-frames-zoom-hidden', anyFramesZoomHidden()) // Show the » (down-left)
+  syncBoardFlag(root, 'data-tt-nav-caret-inward', navCaretPointsInward) // Up-right while a visible frame covers another
+}
+
+/**
+ * Show the Free-nav » up-right while any visible frame covers another (selection not required).
+ * A too-big hide still wins — that cue stays the down-left zoom-out ».
+ */
+export function syncSelectedFrameCoverCaret(nodes: Node[]): void {
+  if (typeof document === 'undefined') return
+  const root = document.querySelector('[data-board-root]')
+  if (!root) return
+  const frames: FlowBox[] = []
+  for (const node of nodes) {
+    if (node.type !== 'chatPanel' || node.hidden) continue // Same frames the hide tick measures
+    const size = frameFlowSize(node)
+    if (size.width < 1 || size.height < 1) continue
+    const abs = absFlowPosition(node, nodes)
+    frames.push({
+      id: node.id,
+      x: abs.x,
+      y: abs.y,
+      w: size.width,
+      h: size.height,
+      viewFrac: 0,
+      selected: node.selected === true, // Corner » still only on a selected coverer
+    })
+  }
+  applyCoverCue(frames) // Zoom-hidden selected stays on the down-left »
+  syncBoardFlag(root, 'data-tt-nav-caret-inward', navCaretPointsInward)
 }
 
 function resolveNodeEl(id: string): HTMLElement | null {
@@ -591,9 +705,10 @@ export function clearLargeOverlapOpacities(): void {
   for (const id of [...opacityById.keys()]) clearFadeDom(id)
   panelCache.clear()
   nodeCache.clear()
-  desiredById = new Map() // Drop hide targets so the nav caret does not stick
+  desiredById = new Map() // Drop hide targets so the zoom-out nav caret does not stick
   if (typeof document !== 'undefined') {
     document.querySelector('[data-board-root]')?.removeAttribute('data-tt-frames-zoom-hidden')
+    // data-tt-nav-caret-inward stays — a selected frame can cover others with the pref off
   }
   if (opacityById.size === 0) return
   opacityById = new Map()
@@ -677,6 +792,18 @@ export function useLargeOverlapChromeOpacity(id: string | undefined | null): num
 
 export function useLargeOverlapHidden(id: string | undefined | null): boolean {
   return useLargeOverlapOpacity(id) <= 0.02
+}
+
+/** True when this selected frame covers another — inward corner carets, opposite the zoom-out set. */
+export function useSelectedFrameCoversOther(id: string | undefined | null): boolean {
+  return useSyncExternalStore(
+    subscribeLargeOverlapHide,
+    () => {
+      void hideEpoch
+      return !!id && coverCaretIds.has(id)
+    },
+    () => false
+  )
 }
 
 export function getLargeOverlapHideEpoch(): number {

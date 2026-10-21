@@ -1,0 +1,2 @@
+-- Cover cue: Free-nav » points up-right while a visible frame covers another (selection not required); selected coverer gets inward corner carets outside the adjust box. Zoom-hidden (too-big) frames keep the down-left zoom-out ». Nav » stays on the closed-nav screen seat when the minimap opens.
+-- App/docs marker only; no DDL (frame metadata is JSONB). Remote DDL top: 20260924223511_board_changes_autosave.

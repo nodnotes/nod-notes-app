@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-10-21T19:36:23Z`
+- Snapped at: `2026-10-21T20:33:07Z`
 - Source: local `supabase/migrations/` + remote applied tops (plugin Supabase `list_migrations` on `yhsyhtnnklpkfcpydbst`) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `get_project`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0`. A stray `---` in `.env.local` blocks every command until commented; with that line skipped, `migration list --linked` still fails (`42501` cannot alter `cli_login_postgres`). Remote list is from the Management API. cli-latest reports `v2.121.0`.
@@ -9,6 +9,13 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20261021203307_cover_inward_nav_caret_screen_seat.sql`.
+- **Cover cue**: Free-nav » points up-right while a visible frame covers another (selection not required); a selected coverer also gets inward corner carets on the same outside seats as the zoom-hidden set. A too-big hide keeps the down-left zoom-out ».
+- **Nav seat**: that » stays vertically centered on the closed Free nav’s screen Y when the minimap opens (column is bottom-anchored).
+- Schema unchanged; remote applied list (Management API) still tops out at `20260924223511_board_changes_autosave`.
+
+## Prior: Hide-zoom ease / I-bar / minimap print / pan
 
 - DDL: none. Marker `20261021193623_hide_zoom_ibar_minimap_print_pan.sql`.
 - **Hide large overlapping**: fill eases out and back; I-bar, typed letters, and caret stay behind the hidden frame; corner carets and a nav cue ease with the hide; adjust blue follows the fill.

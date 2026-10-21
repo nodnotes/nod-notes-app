@@ -102,7 +102,7 @@ import {
 } from '@/lib/phone-frame-budget' // Phone: big frames must not get their own Safari layer
 import { setFramePanelSelected } from '@/lib/frame-panel-selected' // DB NodeView: live table only while RF-selected
 import { isMarqueeFrameSelectArmed } from '@/lib/frame-drag-transient' // Drag-select owns selection — editor must not snap it back
-import { useLargeOverlapOpacity } from '@/lib/frame-overlap-hide' // Board-menu: fade big overlapping frames
+import { useLargeOverlapOpacity, useSelectedFrameCoversOther } from '@/lib/frame-overlap-hide' // Board-menu: fade big overlapping frames; inward carets when this selection covers another
 import { useFrontFrameContentClip } from '@/lib/frame-adjust-chrome-occlusion' // Adjust box above overlapping frames; content stays under
 import {
   clearFrameTextEditActive,
@@ -3363,6 +3363,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // Fade 0..1 from size÷pane while overlapping; mid-drag stays fully opaque
   const overlapFadeLive = useLargeOverlapOpacity(id)
   const overlapFade = dragging ? 1 : overlapFadeLive
+  const coversOtherFrame = useSelectedFrameCoversOther(id) // Inward corner » while this selected frame covers another
   const dataCollapsed = data.isResponseCollapsed || false
   const supabase = createClient()
   const queryClient = useQueryClient()
@@ -10286,8 +10287,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
         />
       )}
 
-      {/* Selected frame: double carets outside each corner — opacity tracks the hide ease */}
-      {showAdjustFrame && <FrameHideZoomCarets />}
+      {/* Selected frame: outward » when this fill is zoom-hidden; inward » when it covers another */}
+      {showAdjustFrame && <FrameHideZoomCarets inward={coversOtherFrame} />}
 
       {/* Side lines stay mounted while moving (touch events stick to the touchstart target —
           unmounting it mid-drag strands RF's touchmove and the frame stops following) */}

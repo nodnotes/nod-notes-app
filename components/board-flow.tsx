@@ -160,9 +160,10 @@ import {
   isLargeOverlapClickThrough,
   isOverlapHideClickThrough,
   setLargeOverlapFadeContext,
+  syncSelectedFrameCoverCaret,
   tickLargeOverlapFade,
   zoomToRevealLargeOverlap,
-} from '@/lib/frame-overlap-hide' // Board-menu: fade big-on-screen overlapping frames
+} from '@/lib/frame-overlap-hide' // Board-menu: fade big-on-screen overlapping frames; nav » when a selection covers another
 import {
   clearFrameTextEditActive,
   isFrameTextEditActive,
@@ -1617,13 +1618,19 @@ function BoardFlowInner({
     }
   }, [hideLargeOverlapEnabled, reactFlowInstance, syncZoomFloorFromNodes])
 
-  // Overlap pairs / pane size change while idle — zoom pump is not running
+  // Overlap pairs / selection / pane size change while idle — zoom pump is not running.
+  // Cover cue runs even with the hide pref off (a selected frame can cover others at 200%).
   useEffect(() => {
-    if (!hideLargeOverlapEnabled) return
     if (isFrameDragging()) return // Position still in flux — tick on drag-stop instead
     invalidateLargeOverlapFadeDomCache() // New/remounted frames need fresh node lookups
+    const prefOn = hideLargeOverlapEnabled
     // DOM size for hug frames may land a frame later than this commit
-    requestAnimationFrame(() => tickLargeOverlapFade())
+    requestAnimationFrame(() => {
+      if (isFrameDragging()) return
+      syncSelectedFrameCoverCaret(overlapFadeNodesRef.current) // » up-right while any visible frame covers another
+      if (!prefOn) return
+      tickLargeOverlapFade()
+    })
   }, [hideLargeOverlapEnabled, nodes, paneSize.width, paneSize.height])
 
   const chatPanelCountRef = useRef(0) // Frame count is stable mid-drag — skip the O(n) scan per tick
@@ -2754,6 +2761,8 @@ function BoardFlowInner({
   const [minimapLeft, setMinimapLeft] = useState<number>(MINIMAP_LEFT)
   const [navBottomTransition, setNavBottomTransition] = useState(false) // Gate bottom animation until after load settle
   const boardRootRef = useRef<HTMLDivElement>(null) // Map column box — chrome is absolute on this (outside RF)
+  const mapChromeRef = useRef<HTMLDivElement>(null) // Bottom-anchored Free nav + minimap column
+  const freeNavRowRef = useRef<HTMLDivElement>(null) // Nav row height — » parks at that closed-nav screen seat
 
   useEffect(() => {
     const el = boardRootRef.current?.querySelector('.react-flow') as HTMLElement | null
@@ -2764,6 +2773,17 @@ function BoardFlowInner({
     ro.observe(el)
     return () => ro.disconnect()
   }, [conversationId, reactFlowInstance])
+  // Stamp the Free nav height on the column so the » can sit at the closed-nav screen Y
+  useLayoutEffect(() => {
+    const nav = freeNavRowRef.current
+    const col = mapChromeRef.current
+    if (!nav || !col) return
+    const sync = () => col.style.setProperty('--tt-free-nav-h', `${nav.offsetHeight}px`)
+    sync()
+    const ro = new ResizeObserver(sync)
+    ro.observe(nav)
+    return () => ro.disconnect()
+  }, [])
   // Sync from localStorage on first client render so nav bottom isn't wrong before effects run
   const [isMinimapHidden, setIsMinimapHidden] = useState(() => {
     if (typeof window === 'undefined') return false
@@ -12476,6 +12496,7 @@ function BoardFlowInner({
       {!embedded && !hideMapChrome && (
        <>
        <div
+         ref={mapChromeRef}
          className="fixed z-20 flex flex-col items-stretch"
          data-map-chrome // Present mode hides Free nav + minimap
          data-nn-safe-bottom // Capacitor: lift above home indicator via globals.css
@@ -12515,6 +12536,7 @@ function BoardFlowInner({
           }}
         >
           <div
+            ref={freeNavRowRef}
             className={cn(
               // Zoom % grows/shrinks on the left; rotate + pan stay right (ml-auto)
               // Hairline matches Actions/Layout/Draw mode pill (`pill-select`) so chrome reads on the board
@@ -12724,20 +12746,22 @@ function BoardFlowInner({
               ) : null)}
           </div>
         </div>
-          {/* Same » as hidden-frame corners — down-left, bottom-right of the column (minimap when open) */}
+          {/* Same » as hidden-frame corners. Seat is the closed-nav height at the column
+              floor — the stack grows up, so this Y stays put when the minimap opens. */}
           <div
             aria-hidden
-            data-tt-nav-hide-zoom-caret
-            className="pointer-events-none absolute z-[1]"
+            className="pointer-events-none absolute z-[1] flex items-center"
             style={{
-              left: '100%', // Just past the minimap / Free nav right edge
-              bottom: 0, // Column floor = minimap bottom when open, nav bottom when closed
+              left: '100%', // Just past the column right edge
+              bottom: 0, // Column bottom is screen-fixed (nav sits here when the minimap is closed)
+              height: 'var(--tt-free-nav-h, 38px)', // Closed Free nav — » stays mid-row on that seat
               width: 14, // Same local size as FrameHideZoomCarets (chrome is already screen px)
-              height: 14,
               marginLeft: 8, // Air between the column and the cue
             }}
           >
-            <HideZoomCaretSvg rot={HIDE_ZOOM_CARET_ROT_DOWN_LEFT} />
+            <div data-tt-nav-hide-zoom-caret>
+              <HideZoomCaretSvg rot={HIDE_ZOOM_CARET_ROT_DOWN_LEFT} />
+            </div>
           </div>
        </div>
 

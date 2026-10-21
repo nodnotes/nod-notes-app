@@ -1528,13 +1528,31 @@ span[data-added="true"] {
   .react-flow__node.tt-overlap-hide-tween [data-tt-hide-zoom-caret] {
     transition: opacity var(--tt-overlap-hide-ms, 200ms) ease-out;
   }
-  /* Free-nav cue: same double caret, eases with hide/show (flag on [data-board-root]). */
+  /* Inward carets: a frame sits under this selected one. Follow the fill — hide with a too-big fade. */
+  [data-tt-cover-inward-caret] {
+    opacity: var(--tt-overlap-fade, 1);
+  }
+  .react-flow__node.tt-overlap-hide-tween [data-tt-cover-inward-caret] {
+    transition: opacity var(--tt-overlap-hide-ms, 200ms) ease-out;
+  }
+  /* Free-nav cue: same double caret, eases with hide/show (flag on [data-board-root]).
+     Zoom-hidden frame → down-left (zoom out). A visible frame that covers another
+     sets data-tt-nav-caret-inward (up-right), selected or not. A too-big hide
+     drops the inward flag so the cue stays zoom-out. */
   [data-tt-nav-hide-zoom-caret] {
     opacity: 0;
-    transition: opacity var(--tt-overlap-hide-ms, 200ms) ease-out;
+    transform: none;
+    transform-origin: center center;
+    transition:
+      opacity var(--tt-overlap-hide-ms, 200ms) ease-out,
+      transform var(--tt-overlap-hide-ms, 200ms) ease-out;
   }
   [data-board-root][data-tt-frames-zoom-hidden] [data-tt-nav-hide-zoom-caret] {
     opacity: 1;
+  }
+  [data-board-root][data-tt-nav-caret-inward] [data-tt-nav-hide-zoom-caret] {
+    opacity: 1; /* Cover cue is visible on its own — hide-zoom is not required */
+    transform: rotate(180deg); /* Down-left » becomes up-right */
   }
   /* Fully hidden: faded chrome stays mounted (so it can ease back) but must not catch clicks. */
   .react-flow__node.tt-overlap-fade-pass .react-flow__resize-control.handle,
