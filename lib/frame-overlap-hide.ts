@@ -1,23 +1,39 @@
-// Fade frames that grow large on screen when they overlap another frame.
+// Hide frames that grow large on screen when they overlap another frame.
 // Opt-in via board-menu pref (`nodnotes-hide-large-overlap`); default off.
 //
-// Opacity tracks **flow size × live zoom ÷ pane** (no getBoundingClientRect mid-zoom —
-// layout reads lag the RF viewport transform). Ticked from the board zoom CSS pump
-// every frame so continuous wheel/pinch stays in lockstep.
+// No opacity fade while zooming — fill stays solid until FADE_HIDE_FRAC, then eases
+// out over FADE_HIDE_MS. Size is still flow × live zoom ÷ pane (no getBoundingClientRect
+// mid-zoom). Ticked from the board zoom CSS pump every frame.
 
 import { useSyncExternalStore } from 'react'
 import type { Node } from 'reactflow'
 import { absFlowPosition, nodeFlowSize } from '@/components/use-block-group-drag'
 import { refreshFrontFrameClips } from '@/lib/frame-adjust-chrome-occlusion' // Keep selected adjust box above mates mid-zoom
 
-/** View-fraction where overlapping frames start to dim (either axis). */
+/** View-fraction where the old size-fade used to start (either axis). Kept to place the hide. */
 export const FADE_START_FRAC = 0.22
 
-/** View-fraction where overlapping frames are fully gone (either axis). */
+/** View-fraction where the old size-fade used to finish (either axis). */
 export const FADE_END_FRAC = 0.55
 
-/** Opacity below this → no hit target (clicks pass through to frames behind). */
-export const CLICK_THROUGH_OPACITY = 0.99
+/**
+ * Opacity the old linear fade used as its hide step.
+ * The hide view-fraction is where that fade would have crossed this — not a live opacity.
+ */
+export const FADE_HIDE_CUTOFF = 0.4
+
+/**
+ * Overlapping frames stay fully opaque until this pane coverage, then the hide ease runs.
+ * Same zoom as the old cutoff (linear fade would have been at FADE_HIDE_CUTOFF).
+ */
+export const FADE_HIDE_FRAC =
+  FADE_START_FRAC + (1 - FADE_HIDE_CUTOFF) * (FADE_END_FRAC - FADE_START_FRAC)
+
+/** How long the hide/show eases. Zoom itself does not fade the fill. */
+export const FADE_HIDE_MS = 200
+
+/** Opacity below this → no hit target (clicks pass through to frames behind). Matches hide cutoff. */
+export const CLICK_THROUGH_OPACITY = FADE_HIDE_CUTOFF
 
 /** @deprecated Use FADE_END_FRAC. */
 export const BIG_VIEW_FRAC = FADE_END_FRAC
@@ -38,7 +54,12 @@ function stylePx(v: unknown): number {
   return 0
 }
 
-/** Best flow size — measured RF, style, or saved resizeDimensions. */
+/**
+ * Best flow size for overlap fade.
+ * RF/metadata often keep a place-seed or fill stub while the panel has already hugged larger —
+ * always Math.max with the painted panel (same truth chat-panel pushAabb uses).
+ * offsetWidth is flow CSS px (viewport scale is on the parent) — safe mid-zoom, unlike gBCR.
+ */
 function frameFlowSize(node: Node): { width: number; height: number } {
   const sw = stylePx(node.style?.width)
   const sh = stylePx(node.style?.height)
@@ -49,20 +70,31 @@ function frameFlowSize(node: Node): { width: number; height: number } {
   const mh = typeof dims?.height === 'number' && dims.height > 0 ? dims.height : stylePx(dims?.height)
   const nw = typeof node.width === 'number' && node.width > 0 ? node.width : 0
   const nh = typeof node.height === 'number' && node.height > 0 ? node.height : 0
-  const width = Math.max(nw, sw, mw)
-  const height = Math.max(nh, sh, mh)
+  const measured = (node as Node & { measured?: { width?: number; height?: number } }).measured
+  const msw = typeof measured?.width === 'number' && measured.width > 0 ? measured.width : 0
+  const msh = typeof measured?.height === 'number' && measured.height > 0 ? measured.height : 0
+  let width = Math.max(nw, sw, mw, msw)
+  let height = Math.max(nh, sh, mh, msh)
+  // Prefer panel over RF node — hug/max-content lives on the panel; node box can lag
+  const panel = resolvePanel(node.id)
+  const domEl = panel ?? resolveNodeEl(node.id)
+  if (domEl) {
+    const dw = domEl.offsetWidth
+    const dh = domEl.offsetHeight
+    if (dw > 0) width = Math.max(width, dw)
+    if (dh > 0) height = Math.max(height, dh)
+  }
   if (width > 0 && height > 0) return { width, height }
   return nodeFlowSize(node)
 }
 
 /**
  * Opacity for an overlapping frame from its max axis coverage of the pane.
- * Linear across the band (no smoothstep) so continuous zoom feels 1:1 with size.
+ * Solid until FADE_HIDE_FRAC, then 0. The 0 is painted with a CSS opacity ease
+ * (FADE_HIDE_MS) — this value is the target, not the tween.
  */
 export function opacityFromViewFrac(viewFrac: number): number {
-  if (viewFrac <= FADE_START_FRAC) return 1
-  if (viewFrac >= FADE_END_FRAC) return 0
-  return 1 - (viewFrac - FADE_START_FRAC) / (FADE_END_FRAC - FADE_START_FRAC)
+  return viewFrac >= FADE_HIDE_FRAC ? 0 : 1
 }
 
 /** Fill + adjust-chrome opacities for one frame. */
@@ -119,14 +151,14 @@ export function computeLargeOverlapOpacities(
       if (!flowBoxesOverlap(a, frames[j])) continue
       overlapsSomeone = true
       const b = frames[j]
-      // Mate is large enough to enter the fade band — it can cover us
-      if (b.viewFrac >= FADE_START_FRAC) {
+      // Mate is large enough to hide — it can cover us
+      if (b.viewFrac >= FADE_HIDE_FRAC) {
         maxCovererOp = Math.max(maxCovererOp, opacityFromViewFrac(b.viewFrac))
       }
     }
 
-    if (a.viewFrac >= FADE_START_FRAC && overlapsSomeone) {
-      // Large overlapping frame — fade fill as it fills the view; adjust box stays
+    if (a.viewFrac >= FADE_HIDE_FRAC && overlapsSomeone) {
+      // Large overlapping frame — hide fill (eased in paint); adjust box stays
       out.set(a.id, { fill: opacityFromViewFrac(a.viewFrac), chrome: 1 })
     } else if (maxCovererOp > 0) {
       // Under a large mate: content + adjust box both stay (box paints above the mate)
@@ -136,6 +168,53 @@ export function computeLargeOverlapOpacities(
     }
   }
   return out
+}
+
+/**
+ * Furthest-out scale at which every overlapping frame is still under the hide step.
+ * 200% must sit here (or further out) or a giant frame stays hidden at the fit stop.
+ * Null when nothing can hide (one frame, no overlap, or empty pane).
+ */
+export function zoomToRevealLargeOverlap(
+  nodes: Node[],
+  paneW: number,
+  paneH: number
+): number | null {
+  if (paneW <= 0 || paneH <= 0) return null // Pane not measured — keep the fit floor
+  const frames: FlowBox[] = []
+  for (const node of nodes) {
+    if (node.type !== 'chatPanel' || node.hidden) continue // Same set the hide tick uses
+    const size = frameFlowSize(node)
+    if (size.width < 1 || size.height < 1) continue
+    const abs = absFlowPosition(node, nodes)
+    frames.push({
+      id: node.id,
+      x: abs.x,
+      y: abs.y,
+      w: size.width,
+      h: size.height,
+      viewFrac: 0, // Overlap is flow-space — zoom does not change pairs
+    })
+  }
+  if (frames.length < 2) return null // Hide only runs when two frames overlap
+  // Strictly under FADE_HIDE_FRAC so viewFrac >= hide still cannot fire at 200%
+  const revealFrac = FADE_HIDE_FRAC * 0.98
+  let furthest: number | null = null
+  for (let i = 0; i < frames.length; i++) {
+    const a = frames[i]
+    let overlapsSomeone = false
+    for (let j = 0; j < frames.length; j++) {
+      if (i === j) continue
+      if (!flowBoxesOverlap(a, frames[j])) continue
+      overlapsSomeone = true
+      break
+    }
+    if (!overlapsSomeone) continue // Isolated frames never hide — don't pull 200% for them
+    const zShow = revealFrac * Math.min(paneW / a.w, paneH / a.h) // viewFrac = max(w z / paneW, h z / paneH)
+    if (!(zShow > 0) || !Number.isFinite(zShow)) continue
+    furthest = furthest == null ? zShow : Math.min(furthest, zShow) // Largest overlapping frame wins
+  }
+  return furthest
 }
 
 /** @deprecated Prefer computeLargeOverlapOpacities. */
@@ -164,7 +243,14 @@ export type LargeOverlapFadeContext = {
 
 let fadeCtx: LargeOverlapFadeContext | null = null
 let opacityById = new Map<string, OverlapFadeOp>()
+/** Latest computed opacities — hide tween may withhold 0 from opacityById until the ease ends. */
+let desiredById = new Map<string, OverlapFadeOp>()
 let hideEpoch = 0
+/** Frames whose fill is easing to 0; store keeps the pre-hide opacity so hits stay until it's gone. */
+const hideTweenIds = new Set<string>()
+/** Frames easing from hidden back to solid. */
+const showTweenIds = new Set<string>()
+const tweenGen = new Map<string, number>()
 const listeners = new Set<() => void>()
 /** Cached panel shells / RF nodes — avoid querySelector every zoom frame. */
 const panelCache = new Map<string, HTMLElement>()
@@ -172,8 +258,40 @@ const nodeCache = new Map<string, HTMLElement>()
 
 const FULL_OP: OverlapFadeOp = { fill: 1, chrome: 1 }
 
+/** Adjust-box stroke. Faded value matches the wrap-line light blue. */
+const ADJUST_BLUE = '#3b82f6'
+const ADJUST_BLUE_FADED = '#93c5fd'
+
+/** Ease target for the adjust-box stroke. CSS transitions it while `.tt-overlap-hide-tween` is on. */
+function paintAdjustBlue(nodeEl: HTMLElement, faded: boolean): void {
+  nodeEl.style.setProperty('--tt-adjust-blue', faded ? ADJUST_BLUE_FADED : ADJUST_BLUE)
+}
+
 function notify(): void {
   listeners.forEach((fn) => fn())
+}
+
+/** True while a hide ease is running or any frame's target fill is gone. */
+function anyFramesZoomHidden(): boolean {
+  if (hideTweenIds.size > 0) return true // Hide ease just started — show the nav cue now
+  for (const op of desiredById.values()) {
+    if (op.fill <= 0.02) return true // Already hidden (tween finished)
+  }
+  return false
+}
+
+/**
+ * Board root flag for the Free-nav hide cue. Set as soon as a hide starts so the
+ * caret eases in with the fill; drop it when every frame is showing again.
+ */
+function syncNavHideZoomCaret(): void {
+  if (typeof document === 'undefined') return
+  const root = document.querySelector('[data-board-root]')
+  if (!root) return
+  const next = anyFramesZoomHidden()
+  if (next === root.hasAttribute('data-tt-frames-zoom-hidden')) return // Same as last paint
+  if (next) root.setAttribute('data-tt-frames-zoom-hidden', '')
+  else root.removeAttribute('data-tt-frames-zoom-hidden')
 }
 
 function resolveNodeEl(id: string): HTMLElement | null {
@@ -228,18 +346,72 @@ function clearFadeDom(id: string): void {
     nodeEl.style.removeProperty('pointer-events')
     nodeEl.style.removeProperty('--tt-overlap-fade')
     nodeEl.style.removeProperty('--tt-overlap-chrome')
+    nodeEl.style.removeProperty('--tt-overlap-hide-ms')
+    nodeEl.style.removeProperty('--tt-adjust-blue')
     nodeEl.removeAttribute('data-tt-overlap-fade')
-    nodeEl.classList.remove('tt-overlap-fade-pass')
+    nodeEl.classList.remove('tt-overlap-fade-pass', 'tt-overlap-hide-tween')
   }
+  hideTweenIds.delete(id)
+  showTweenIds.delete(id)
+  tweenGen.set(id, (tweenGen.get(id) ?? 0) + 1) // Stale hide timeout must not re-apply click-through
   panelCache.delete(id)
   nodeCache.delete(id)
+}
+
+/** Ease a hidden fill back to solid, then drop the fade vars so zoom stays unfaded. */
+function armShowTween(id: string, nodeEl: HTMLElement): void {
+  const gen = (tweenGen.get(id) ?? 0) + 1 // Cancels an in-flight hide timeout
+  tweenGen.set(id, gen)
+  nodeEl.classList.add('tt-overlap-hide-tween')
+  nodeEl.style.setProperty('--tt-overlap-hide-ms', `${FADE_HIDE_MS}ms`)
+  window.setTimeout(() => {
+    if (tweenGen.get(id) !== gen) return
+    showTweenIds.delete(id)
+    nodeEl.classList.remove('tt-overlap-hide-tween')
+    if (desiredById.get(id)?.fill === 0) return // Hid again before the show finished
+    if (!nodeEl.isConnected) return
+    nodeEl.style.removeProperty('--tt-overlap-fade')
+    nodeEl.style.removeProperty('--tt-overlap-chrome')
+    nodeEl.style.removeProperty('--tt-overlap-hide-ms')
+    nodeEl.style.removeProperty('--tt-adjust-blue')
+    nodeEl.removeAttribute('data-tt-overlap-fade')
+    nodeEl.style.removeProperty('pointer-events')
+    nodeEl.classList.remove('tt-overlap-fade-pass')
+  }, FADE_HIDE_MS)
+}
+
+function armHideTween(id: string, nodeEl: HTMLElement): void {
+  const gen = (tweenGen.get(id) ?? 0) + 1
+  tweenGen.set(id, gen)
+  nodeEl.classList.add('tt-overlap-hide-tween')
+  nodeEl.style.setProperty('--tt-overlap-hide-ms', `${FADE_HIDE_MS}ms`)
+  window.setTimeout(() => {
+    if (tweenGen.get(id) !== gen) return
+    nodeEl.classList.remove('tt-overlap-hide-tween')
+    if (!hideTweenIds.has(id)) return
+    hideTweenIds.delete(id)
+    const want = desiredById.get(id)
+    if (!want || want.fill !== 0) return // Zoomed back out during the ease
+    const prev = opacityById.get(id)
+    if (!prev || prev.fill !== 0) {
+      const next = new Map(opacityById)
+      next.set(id, { fill: 0, chrome: want.chrome })
+      opacityById = next
+      hideEpoch += 1
+      notify() // React click-through waits until the fill has actually eased out
+    }
+    if (!nodeEl.isConnected) return
+    nodeEl.style.setProperty('pointer-events', 'none', 'important')
+    nodeEl.classList.add('tt-overlap-fade-pass')
+  }, FADE_HIDE_MS)
 }
 
 /**
  * Drive fade via CSS vars on the RF node, not inline opacity —
  * selected-frame React reconciles wipe inline styles on fill/chrome every tick.
  * `--tt-overlap-fade` → fill; `--tt-overlap-chrome` → adjust box. Click-through
- * only while the fill is faded (under-mate keeps content hittable).
+ * only once the hide ease has finished (mid-fade and the ease stay hittable).
+ * The hide eases; zoom before FADE_HIDE_FRAC does not change fill opacity.
  */
 function paintOpacitiesOnDom(map: Map<string, OverlapFadeOp>): void {
   if (typeof document === 'undefined') return
@@ -250,20 +422,73 @@ function paintOpacitiesOnDom(map: Map<string, OverlapFadeOp>): void {
     if (!nodeEl) continue
     const fill = Math.max(0, Math.min(1, op.fill))
     const chrome = Math.max(0, Math.min(1, op.chrome))
+    const prevFill = opacityById.get(id)?.fill ?? 1
     const active = fill < 0.999 || chrome < 0.999
-    const passThrough = fill < CLICK_THROUGH_OPACITY // Fill fade only — not chrome-only under-mate
     if (!active) {
+      // Still hidden or mid-hide — ease back to solid instead of popping the fill on
+      if (
+        showTweenIds.has(id) ||
+        hideTweenIds.has(id) ||
+        nodeEl.classList.contains('tt-overlap-hide-tween') ||
+        nodeEl.hasAttribute('data-tt-overlap-fade')
+      ) {
+        if (!showTweenIds.has(id)) {
+          showTweenIds.add(id)
+          hideTweenIds.delete(id) // Don't commit click-through when the hide ease is reversed
+          const alreadyTweening = nodeEl.classList.contains('tt-overlap-hide-tween')
+          armShowTween(id, nodeEl)
+          if (alreadyTweening) {
+            nodeEl.style.setProperty('--tt-overlap-fade', '1') // Class already on — retarget this frame
+            paintAdjustBlue(nodeEl, false) // Stroke eases back to blue with the fill
+          } else {
+            requestAnimationFrame(() => {
+              if (!nodeEl.isConnected || !showTweenIds.has(id)) return
+              nodeEl.style.setProperty('--tt-overlap-fade', '1') // From 0 next frame so the ease runs
+              paintAdjustBlue(nodeEl, false)
+            })
+          }
+        }
+        nodeEl.setAttribute('data-tt-overlap-fade', '')
+        nodeEl.style.setProperty('--tt-overlap-chrome', '1')
+        nodeEl.style.removeProperty('pointer-events')
+        nodeEl.classList.remove('tt-overlap-fade-pass')
+        continue
+      }
+      hideTweenIds.delete(id)
+      tweenGen.set(id, (tweenGen.get(id) ?? 0) + 1)
       nodeEl.style.removeProperty('--tt-overlap-fade')
       nodeEl.style.removeProperty('--tt-overlap-chrome')
+      nodeEl.style.removeProperty('--tt-overlap-hide-ms')
+      nodeEl.style.removeProperty('--tt-adjust-blue')
       nodeEl.removeAttribute('data-tt-overlap-fade')
+      nodeEl.style.removeProperty('pointer-events')
+      nodeEl.classList.remove('tt-overlap-fade-pass', 'tt-overlap-hide-tween')
+      continue
+    }
+    nodeEl.style.setProperty('--tt-overlap-chrome', String(chrome))
+    nodeEl.setAttribute('data-tt-overlap-fade', '')
+    const enteringHide = fill === 0 && prevFill > FADE_HIDE_CUTOFF && !hideTweenIds.has(id)
+    if (enteringHide) {
+      showTweenIds.delete(id) // A new hide replaces an in-flight show
+      hideTweenIds.add(id)
+      armHideTween(id, nodeEl)
+      // Leave --tt-overlap-fade at the pre-hide value this frame so the ease has a from-state
+      requestAnimationFrame(() => {
+        if (!nodeEl.isConnected || !hideTweenIds.has(id)) return
+        nodeEl.style.setProperty('--tt-overlap-fade', '0')
+        paintAdjustBlue(nodeEl, true) // Stroke eases blue → light blue with the fill
+      })
       nodeEl.style.removeProperty('pointer-events')
       nodeEl.classList.remove('tt-overlap-fade-pass')
       continue
     }
+    if (hideTweenIds.has(id) && fill === 0) continue // Ease owns the var until it finishes
+    if (fill > 0 && hideTweenIds.has(id)) hideTweenIds.delete(id) // Zoomed back out mid-hide
     nodeEl.style.setProperty('--tt-overlap-fade', String(fill))
-    nodeEl.style.setProperty('--tt-overlap-chrome', String(chrome))
-    nodeEl.setAttribute('data-tt-overlap-fade', '')
+    // Fully gone (not mid-ease): pass clicks through. Hide ease withholds that until it ends.
+    const passThrough = fill < CLICK_THROUGH_OPACITY && !hideTweenIds.has(id)
     if (passThrough) {
+      paintAdjustBlue(nodeEl, true) // Stay light blue once the ease has finished
       nodeEl.style.setProperty('pointer-events', 'none', 'important')
       nodeEl.classList.add('tt-overlap-fade-pass')
     } else {
@@ -276,6 +501,7 @@ function paintOpacitiesOnDom(map: Map<string, OverlapFadeOp>): void {
     clearFadeDom(id)
   }
   refreshFrontFrameClips() // Mates fading in/out mid-zoom change what covers the selected frame
+  syncNavHideZoomCaret() // Free-nav caret: on while any large overlapping frame is hidden
 }
 
 /**
@@ -322,8 +548,17 @@ export function tickLargeOverlapFade(
 
 /** Publish fade opacities + paint DOM. */
 export function publishLargeOverlapOpacities(next: Map<string, OverlapFadeOp>): void {
+  desiredById = next
   // Always paint — even when values are unchanged, drag may have remounted the node DOM
   paintOpacitiesOnDom(next)
+  // Hold the pre-hide fill in the store so React click-through waits out the ease
+  const stored = new Map(next)
+  for (const id of hideTweenIds) {
+    const want = next.get(id)
+    const prev = opacityById.get(id)
+    if (want && want.fill === 0 && prev && prev.fill > 0) stored.set(id, prev)
+  }
+  next = stored
   let changed = next.size !== opacityById.size
   if (!changed) {
     for (const [id, op] of next) {
@@ -356,6 +591,10 @@ export function clearLargeOverlapOpacities(): void {
   for (const id of [...opacityById.keys()]) clearFadeDom(id)
   panelCache.clear()
   nodeCache.clear()
+  desiredById = new Map() // Drop hide targets so the nav caret does not stick
+  if (typeof document !== 'undefined') {
+    document.querySelector('[data-board-root]')?.removeAttribute('data-tt-frames-zoom-hidden')
+  }
   if (opacityById.size === 0) return
   opacityById = new Map()
   hideEpoch += 1
@@ -365,6 +604,15 @@ export function clearLargeOverlapOpacities(): void {
 /** True when this frame must not receive select / drag (clicks pass through). */
 export function isLargeOverlapClickThrough(id: string | undefined | null): boolean {
   return getLargeOverlapFillOpacity(id) < CLICK_THROUGH_OPACITY
+}
+
+/** Store fill or painted `tt-overlap-fade-pass` — the store can lag the hide ease by ~200ms. */
+export function isOverlapHideClickThrough(id: string | undefined | null): boolean {
+  if (!id) return false
+  if (getLargeOverlapFillOpacity(id) < CLICK_THROUGH_OPACITY) return true
+  if (typeof document === 'undefined') return false
+  const el = document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"]`)
+  return el?.classList.contains('tt-overlap-fade-pass') === true
 }
 
 /** @deprecated Prefer clearLargeOverlapOpacities. */

@@ -72,6 +72,7 @@ import {
   type FrameStackSide,
 } from '@/lib/frame-side-stacks' // Thread-pair stack trees (menu-created)
 import { FrameStackRevealLine } from '@/components/frame-stack-reveal-line' // Stack under → mark at sim connection point
+import { FrameHideZoomCarets } from '@/components/frame-hide-zoom-carets' // Hidden selected frame → outward corner carets
 import { findEditorBlockAtClientPoint } from '@/lib/tiptap/block-selection' // Click in frame padding → block (rotation-safe)
 import { useLiveBoardZoom } from '@/lib/use-live-board-zoom' // Viewport-CSS zoom (not lagging RF store)
 import {
@@ -79,7 +80,7 @@ import {
   maxContentScale,
 } from '@/lib/ibar-place-scale' // Fit + free share min content (1) and size-based max
 import {
-  ADJUST_RING_COLOR, // Blue → wrap-line light blue once overlap-faded away
+  ADJUST_RING_COLOR, // Blue → light blue, eased with the overlap hide
   getLiveBoardZoom,
 } from '@/lib/frame-chrome-zoom' // Select-time pad + fill-origin for live rAF glue
 import {
@@ -100,6 +101,7 @@ import {
   PHONE_FRAME_PAINT_MAX_PX,
 } from '@/lib/phone-frame-budget' // Phone: big frames must not get their own Safari layer
 import { setFramePanelSelected } from '@/lib/frame-panel-selected' // DB NodeView: live table only while RF-selected
+import { isMarqueeFrameSelectArmed } from '@/lib/frame-drag-transient' // Drag-select owns selection — editor must not snap it back
 import { useLargeOverlapOpacity } from '@/lib/frame-overlap-hide' // Board-menu: fade big overlapping frames
 import { useFrontFrameContentClip } from '@/lib/frame-adjust-chrome-occlusion' // Adjust box above overlapping frames; content stays under
 import {
@@ -1920,6 +1922,12 @@ function TipTapContentLive({
       onBlur: ({ editor: ed }) => {
         // Call custom onBlur callback if provided
         onBlurRef.current?.()
+        // Drag-select blurs every live editor it deselects. A leftover text range must not
+        // reselect this frame — that fights the rect and loops setState through PureEditorContent.
+        if (isMarqueeFrameSelectArmed() && !isPanelSelectedRef.current) {
+          onEditorActiveChangeRef.current?.(false) // Marquee owns the selection set
+          return
+        }
         // Keep frame selected only for a real TEXT range (format popup). boardLink atoms use
         // NodeSelection (from≠to) — counting that re-selected the frame on every pane click.
         if (ed && onEditorActiveChangeRef.current) {
@@ -2069,7 +2077,11 @@ function TipTapContentLive({
     if (!editor || editor.isDestroyed) return
     const editing = isFrameTextEditActive(hostNodeId)
     const next = canEdit && !!isPanelSelected && !(fitToText && !editing)
-    if (editor.isEditable !== next) editor.setEditable(next)
+    // emitUpdate false: default setEditable emits `update` while the editor is still focused,
+    // which auto-selects this frame and clears the marquee. Editable still updates via setOptions.
+    if (editor.isEditable !== next) editor.setEditable(next, false)
+    // Marquee still owns selection this commit. Blur reports a text range and reselects this frame.
+    if (isMarqueeFrameSelectArmed()) return
     const dom = editor.view?.dom as HTMLElement | undefined
     if (dom) dom.style.cursor = fitToText && isPanelSelected && !editing ? 'grab' : '' // I-beam only once the caret owns the text
     // Drop any caret / native selection when the frame becomes unselected.
@@ -2288,6 +2300,11 @@ function TipTapContentLive({
 
     const checkEditorActive = () => {
       try {
+        // Same guard as onBlur: selectionUpdate from a marquee deselect must not snap selection back.
+        if (isMarqueeFrameSelectArmed() && !isPanelSelectedRef.current) {
+          onEditorActiveChange?.(false) // Leave the rect's frames selected
+          return
+        }
         const sel = editor.state.selection
         // Text range only — NodeSelection on boardLink/databaseBlock is from≠to and must NOT
         // keep/re-select the host frame after a board (pane) click deselects it.
@@ -2778,9 +2795,10 @@ function TipTapContent(
     () => false
   )
   const everLiveRef = useRef(false) // Already-live frames stay live — unmounting mid-pan remounts DB NodeViews
+  // Selection is not a mount. A marquee would init one editor per frame, and each
+  // PureEditorContent mount setStates until React hits max update depth.
   const wantLive =
     mountImmediately ||
-    liveProps.isPanelSelected ||
     liveProps.isFlashcard ||
     !liveProps.enableBlockHandles ||
     mountContent
@@ -4192,12 +4210,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
      !responseMessage && 
      (!promptMessage?.content || promptMessage.content.trim() === '' || promptMessage.content === '<p></p>' || promptMessage.content === '<p><br></p>'))
   const mountReason = useFrameContentMountReason(id) // always / warm / near — proximity is not enough
-  // A frame with a current DOM snapshot renders cold pixel-identically, so proximity no longer earns
-  // a live editor: mounting is reserved for interaction (hover, pointer-down, selection). Frames with
-  // no capture yet still promote on proximity so the board warms itself once and then stays cheap.
-  // A frame with a current DOM snapshot renders cold pixel-identically, so proximity no longer earns
-  // a live editor: mounting is reserved for interaction (hover, pointer-down, selection). Frames with
-  // no capture yet still promote on proximity so the board warms itself once and then stays cheap.
+  // A snapshot stays cold on proximity and on selection. Hover and pointer-down mount the editor.
+  // Selecting used to mount one TipTap per frame and max out update depth in PureEditorContent.
   // Subscribe to store epoch so the first idle capture flips coldReady without a content edit.
   const snapshotEpoch = useSyncExternalStore(
     subscribeFrameSnapshots,
@@ -4223,10 +4237,10 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const stayColdOnNear = isPhoneLikeBoard() || (coldReady && !isDbFrame) // Phone: tap (warm) only
   const mountContent =
     mountReason !== false && !(mountReason === 'near' && stayColdOnNear)
+  // Selected frames stay on the snapshot. Mounting TipTap here is what crashed marquee select.
   const contentDeferred =
     isBlock &&
     !isFlashcard &&
-    !selected &&
     promptMessage?.metadata?.fadeIn !== true &&
     !mountContent
   // Not gated on `contentDeferred`: `TipTapContent` also renders cold when a gesture blocks a *first*
@@ -4238,7 +4252,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // typing, but it is persisted on the message, so months later those frames still skip the box — and
   // the gesture gate defers them anyway. On this board 5 of 9 frames carry it, which is most of what
   // "frames don't show until I release" was.
-  const coldBoxEligible = isBlock && !isFlashcard && !selected
+  // Keep the cached box while selected — otherwise the snapshot path has no size to paint.
+  const coldBoxEligible = isBlock && !isFlashcard
   // Stable key — metadata object identity changes on every message patch would rebuild the box
   // and re-fire the deferred setNodes effect (fights auto-size strip → max update depth).
   const deferredMetaKey = JSON.stringify({
@@ -4361,8 +4376,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     isThreadConnecting && (nearThreadSides & THREAD_CONNECTION_BOX) !== 0 // Fill shows the connection box
   const groupMulti = useGroupMultiSelect() // Shared box owns handles, dots, and the rotate/reactions row
   const selectChromeLite = groupMulti // Shared box owns handles, dots, and the rotate/reactions row
-  const overlapHideResizeChrome = overlapFade < 0.99 // Fading large frame: corners / wrap / +'s hide with the fill
-  const bareAdjustBox = selectChromeLite || overlapHideResizeChrome // Ring only — no sim points / rotate row (multi-select look)
+  const overlapHideResizeChrome = false // Overlap hide fades handles / wrap / +'s in CSS — unmounting them made the show ease pop on
+  const bareAdjustBox = selectChromeLite // Group box only. Sim points and rotate/fit/react stay mounted so they can fade back in
   // Mid-press on the body — hide connection indicators only (resize / ⋮⋮ / rotate stay mounted)
   const [pressing, setPressing] = useState(false)
   // Full adjust chrome when selected + idle (not mid-drag / thread connect)
@@ -4439,7 +4454,13 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
       : 1 // Gutters track CSS-scaled / contain-fitted fill
   const screenChromeScale = frameScreenChromeScale(rfZoom || 1) // Handles / dots / rotate only
   // Overlapped by a front frame: raise this node, clip its content under the front frames (chrome stays on top)
-  useFrontFrameContentClip(id, isBlock && Boolean(selected), panelRef, Math.abs(rotation) > 0.5) // Rotated: AABB holes would be wrong
+  useFrontFrameContentClip(
+    id,
+    isBlock && Boolean(selected),
+    panelRef,
+    Math.abs(rotation) > 0.5, // Rotated: AABB holes would be wrong
+    selectChromeLite // Bare multi-select box stays solid on top of a front frame
+  )
   const adjustChromeX = showFrameChrome
     ? Math.round(adjustChromeXFlow(rfZoom || 1, chromeScale)) // Fit + free: same gap vs painted text
     : 0
@@ -4495,11 +4516,12 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   adjustChromeYBottomRef.current = adjustChromeYBottom
   // Wrapped property rows: grow the adjust-box top gap to the painted strip (CSS scale is visual-only)
   useLayoutEffect(() => {
+    // Property icons live in the fill. There is no top strip, so propBandH is unused.
+    // Writing chromeBandH here ran on every selected frame (live zoom changes the rounded
+    // height) and nested setState until React hit max update depth while selecting many.
+    if (!hasPropBand) return
     const host = propHeaderHostRef.current
-    if (!host || !hasPropBand) {
-      if (propBandH !== chromeBandH) setPropBandH(chromeBandH) // Reset when the strip is gone
-      return
-    }
+    if (!host) return // Header not mounted yet — measure on the next commit
     const measure = () => {
       const inner = host.querySelector('[data-tt-property-header]') as HTMLElement | null
       const raw = inner?.offsetHeight ?? 0 // Unscaled 14px icons + 2px air — same size as frame text
@@ -4516,11 +4538,10 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   }, [hasPropBand, chromePropertyHeaders.length, chromeScale, chromeBandH, selected, resizeDimensions?.width, frameScale])
   // Wrapped connection rows: grow the bottom gap the same way (extra is not mirrored on top)
   useLayoutEffect(() => {
+    // Same as the property strip: no row means connBandH is unused. Do not mirror chromeBandH.
+    if (!hasConnBand) return
     const host = connHeaderHostRef.current // Outer band — inner header is the unscaled row
-    if (!host || !hasConnBand) {
-      if (connBandH !== chromeBandH) setConnBandH(chromeBandH) // Reset when the strip is gone
-      return
-    }
+    if (!host) return // Header not mounted yet — measure on the next commit
     const measure = () => {
       const inner = host.querySelector('[data-tt-connections-header]') as HTMLElement | null
       const raw = inner?.offsetHeight ?? 0 // Unscaled row — may wrap past one line
@@ -4683,7 +4704,8 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
     !isFlashcard &&
     !dragging &&
     !pressing && // Body mid-press hides simulators; resize corners stay (onFrameChrome exclusion)
-    // Group selection / overlap fade keep the blue box but not the simulated connection dots.
+    // Selected frame (idle), or the frame under a dragged thread end.
+    // Overlap hide keeps the dots mounted and fades them with --tt-overlap-fade.
     ((selected && !isThreadConnecting && !bareAdjustBox) || (isThreadConnecting && isNearThreadSnap))
 
   // Invisible edge connection point — size from live CSS --tt-frame-ui-scale; paint stays transparent
@@ -7389,6 +7411,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   const handleEditorActiveChange = useCallback((isActive: boolean) => {
     editorActiveRef.current = isActive
     if (isActive && !selected) {
+      // Drag-select deselects a focused editor; reselecting it clears the others, marquee sync
+      // puts them back, and React dies in PureEditorContent (max update depth).
+      if (isMarqueeFrameSelectArmed()) return
       if (isEditorAutoSelectSuppressed()) return // Pane just deselected — don't snap it back
       // Editor is active (focused or has selection) but panel is not selected - auto-select it
       // First deselect all other nodes, then select this one
@@ -7406,6 +7431,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
   // auto-select effect cannot immediately re-select (boardLink title is contentEditable inside PM).
   useEffect(() => {
     if (selected) return
+    // Drag-select flips `selected` on every frame the rect enters. Rewriting the PM caret
+    // here fires selectionUpdate, which was snapping this frame back and looping the editor.
+    if (isMarqueeFrameSelectArmed()) return
     const ed = promptEditorRef.current
     if (!ed || ed.isDestroyed) return
     const root = ed.view.dom as HTMLElement
@@ -9970,7 +9998,7 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
                 : 'shadow-sm',
           // Blur non-flashcard panels when flashcard study mode is active
           shouldBlur && 'blur-sm opacity-40 pointer-events-none',
-          overlapFade < 0.99 && 'pointer-events-none', // Faded — click through to frames behind
+          overlapFade <= 0 && 'pointer-events-none', // Click-through only once the hide ease has finished
           !isProjectBoard &&
             promptMessage?.id &&
             isFramePending(promptMessage.id) &&
@@ -10257,6 +10285,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
           }}
         />
       )}
+
+      {/* Selected frame: double carets outside each corner — opacity tracks the hide ease */}
+      {showAdjustFrame && <FrameHideZoomCarets />}
 
       {/* Side lines stay mounted while moving (touch events stick to the touchstart target —
           unmounting it mid-drag strands RF's touchmove and the frame stops following) */}
@@ -10920,9 +10951,9 @@ function ChatPanelNodeInner({ data, selected, id, dragging }: NodeProps<PanelNod
               isBlock ? undefined : 'px-3 py-3'
             )}
             style={{
-              ...(unlockedResized && selected
-                ? { pointerEvents: 'auto' } // Spacer is none — keep text / I-bar hittable
-                : {}),
+              ...(unlockedResized && selected && overlapFade > 0
+                ? { pointerEvents: 'auto' } // Visible free frame: spacer is none — keep text / I-bar hittable
+                : {}), // Hidden (overlapFade 0): inherit click-through so the cursor places behind this frame
               ...(isBlock
                 ? shapeCenterContent
                   ? {

@@ -8,7 +8,7 @@ import {
   clampMinimapScopeZoom,
   minimapClientToFlow,
   minimapGrabbedViewOrigin,
-  minimapScopeForHalfView,
+  minimapMaskClipRect,
   minimapViewportMaskRect,
   readMinimapViewBox,
   type MinimapFlowRect,
@@ -63,6 +63,7 @@ export function PreviewMinimap({
   const scopeZoomRef = useRef(1) // Wheel scrub starts from the live effective scope
   // Freeze auto scope for the whole minimap drag so half-view does not rescale mid-gesture
   const dragScopeZoomRef = useRef<number | null>(null)
+  const stickRef = useRef({ zoom: Number.NaN, frame: null as MinimapFlowRect | null }) // Last in-view box at this nested zoom
   const [dragEpoch, setDragEpoch] = useState(0) // Re-render when drag ends so auto scope resumes
 
   const zoom = state.transform[2] || 1
@@ -80,47 +81,27 @@ export function PreviewMinimap({
     width: state.width / zoom,
     height: state.height / zoom,
   }
-  const content =
-    state.nodes.length > 0
-      ? (() => {
-          let minX = Infinity
-          let minY = Infinity
-          let maxX = -Infinity
-          let maxY = -Infinity
-          for (const n of state.nodes) {
-            minX = Math.min(minX, n.x)
-            minY = Math.min(minY, n.y)
-            maxX = Math.max(maxX, n.x + n.width)
-            maxY = Math.max(maxY, n.y + n.height)
-          }
-          return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
-        })()
-      : null
-  const liveAutoScope = minimapScopeForHalfView(viewBB, content, width, height, 5)
+  const liveAutoScope = 1 // Fit nested nodes in view; wheel still scrubs scope until that board zooms
   const scopeZoom =
     dragScopeZoomRef.current ??
     (scopeMode === 'manual' ? manualScopeZoom : liveAutoScope)
   scopeZoomRef.current = scopeZoom
 
-  const geometry = useMemo(
-    () => computePreviewMinimapGeometry(state, width, height, 5, scopeZoom),
-    // dragEpoch bumps after drag so the frozen scope ref is dropped
-    [state, width, height, scopeZoom, dragEpoch]
-  )
-  // Hole = full board camera (same as BoardMiniMap)
+  const geometry = useMemo(() => {
+    const next = computePreviewMinimapGeometry(state, width, height, 5, scopeZoom, stickRef.current)
+    stickRef.current = next.stick // Hold the frame across pans at this nested zoom
+    return next
+  }, [state, width, height, scopeZoom, dragEpoch])
+  // Hole = camera ∩ viewBox-inset (same edge gap as BoardMiniMap)
   const maskRect = useMemo(
-    () =>
-      minimapViewportMaskRect(
-        geometry.viewBB,
-        { x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height },
-        geometry.viewScale
-      ),
+    () => minimapViewportMaskRect(geometry.viewBB, minimapMaskClipRect(geometry), geometry.viewScale),
     [
       geometry.viewBB,
       geometry.x,
       geometry.y,
       geometry.width,
       geometry.height,
+      geometry.offset,
       geometry.viewScale,
     ]
   )
@@ -217,7 +198,7 @@ export function PreviewMinimap({
   }, [onPan, zoomable, zoomStep, state.transform, state.width, state.height, width, height])
 
   const maskColor =
-    resolvedTheme === 'dark' ? 'rgba(42, 42, 58, 0.35)' : 'rgba(200, 200, 200, 0.2)'
+    resolvedTheme === 'dark' ? 'rgba(0, 0, 0, 0.62)' : 'rgba(0, 0, 0, 0.28)' // Out-of-view wash; hole is the nested camera
 
   return (
     <div
@@ -245,17 +226,20 @@ export function PreviewMinimap({
             height={node.height}
             rx={5}
             ry={5}
-            fill={node.selected ? '#9ca3af' : '#e5e7eb'}
+            fill={node.selected ? '#9ca3af' : '#b6bac3'} // Dark enough to read on the white hole
             stroke="transparent"
           />
         ))}
         <path
           className="react-flow__minimap-mask"
-          d={`M${geometry.x - geometry.offset},${geometry.y - geometry.offset}h${geometry.width + geometry.offset * 2}v${geometry.height + geometry.offset * 2}h${-geometry.width - geometry.offset * 2}z
-        M${maskRect.x},${maskRect.y}h${maskRect.width}v${maskRect.height}h${-maskRect.width}z`}
+          d={`M${geometry.x - geometry.offset},${geometry.y - geometry.offset}h${geometry.width + geometry.offset * 2}v${geometry.height + geometry.offset * 2}h${-geometry.width - geometry.offset * 2}z${
+            maskRect
+              ? ` M${maskRect.x},${maskRect.y}h${maskRect.width}v${maskRect.height}h${-maskRect.width}z`
+              : '' // Camera left the map — keep the frame, no full-widget hole
+          }`}
           fill={maskColor}
           fillRule="evenodd"
-          stroke="none"
+          stroke="none" /* Evenodd path stays unstroked — a stroke would also ring the outer bounds */
           pointerEvents="none"
         />
       </svg>

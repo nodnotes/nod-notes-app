@@ -1,0 +1,2 @@
+-- Hide large overlapping eases out and back (I-bar, typed letters, and caret stay behind the hidden frame; corner carets + nav cue; adjust blue eases with the fill). 200% pan enclosure is one pane past the fit box, and the zoom floor drops so a giant overlap can show at that stop. Minimap paints nodes in the camera and letterboxes a print-view aspect. Unbent threads hop outside fills.
+-- App/docs marker only; no DDL (frame metadata is JSONB). Remote DDL top: 20260924223511_board_changes_autosave.

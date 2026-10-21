@@ -106,7 +106,7 @@ type EditableThreadProps = EdgeProps<ThreadEdgeData>
 function sameAttach(a: XYPosition | null, b: XYPosition | null): boolean {
   if (!a && !b) return true // Both missing
   if (!a || !b) return false // One side gained or lost a painted box
-  return Math.abs(a.x - b.x) < 0.25 && Math.abs(a.y - b.y) < 0.25 // Subpixel noise from offset reads
+  return Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) < 1 // Offset reads jitter under a pixel — that must not be a new end
 }
 
 /** Flow box of a frame node — prefer RF measure, then style, then saved resize box. */
@@ -213,13 +213,6 @@ export function EditableThread({
     connectionOverlapsFrames(sourceNode, targetNode, sourceHandleId, targetHandleId)
       ? closestClearConnection(sourceNode, targetNode)
       : null
-  const usedSourceSide = clearPair
-    ? sideFromHandleId(clearPair.sourceHandle, sourceSide) ?? sourceSide
-    : sourceSide
-  const usedTargetSide = clearPair
-    ? sideFromHandleId(clearPair.targetHandle, targetSide) ?? targetSide
-    : targetSide
-
   // Selected chrome resizes every zoom tick. After deselect, the store width can still be
   // that adjust box — read the panel that is actually painted, including once chrome is gone.
   const endpointSelected = Boolean(sourceNode?.selected || targetNode?.selected)
@@ -228,11 +221,47 @@ export function EditableThread({
   const sourceFlowY = sourceNode?.positionAbsolute?.y ?? sourceNode?.position.y
   const targetFlowX = targetNode?.positionAbsolute?.x ?? targetNode?.position.x
   const targetFlowY = targetNode?.positionAbsolute?.y ?? targetNode?.position.y
+  // clearPair reads the painted fill. Selection chrome moves that fill, the layout
+  // effect below writes new ends, and the next read picks the other pair. Two hops
+  // while the frames stay put; a third is that loop, so keep the pair we already took.
+  const pairLatch = useRef<{ pos: string; pair: typeof clearPair; flips: number }>({
+    pos: '',
+    pair: null,
+    flips: 0,
+  })
+  const pairPos = `${endpointSelected ? 1 : 0}|${Math.round(sourceFlowX ?? 0)}|${Math.round(sourceFlowY ?? 0)}|${Math.round(targetFlowX ?? 0)}|${Math.round(targetFlowY ?? 0)}` // Whole pixels — subpixel glue is not a move
+  const livePairKey = clearPair ? `${clearPair.sourceHandle}:${clearPair.targetHandle}` : '' // Sides only — the object is new every render
+  if (pairLatch.current.pos !== pairPos) {
+    pairLatch.current = { pos: pairPos, pair: clearPair, flips: 0 } // Frame moved or selection changed — trust this read
+  } else {
+    const latchedKey = pairLatch.current.pair
+      ? `${pairLatch.current.pair.sourceHandle}:${pairLatch.current.pair.targetHandle}`
+      : ''
+    if (latchedKey !== livePairKey && pairLatch.current.flips < 2) {
+      pairLatch.current = { pos: pairPos, pair: clearPair, flips: pairLatch.current.flips + 1 } // Accept one correction, then one settle
+    }
+  }
+  const stableClearPair = pairLatch.current.pair // Pair the stroke and the persist effect both use
+  const usedSourceSide = stableClearPair
+    ? sideFromHandleId(stableClearPair.sourceHandle, sourceSide) ?? sourceSide
+    : sourceSide
+  const usedTargetSide = stableClearPair
+    ? sideFromHandleId(stableClearPair.targetHandle, targetSide) ?? targetSide
+    : targetSide
   const [paintedEnds, setPaintedEnds] = useState<{
     source: XYPosition | null
     target: XYPosition | null
   } | null>(null)
+  const paintedWriteCap = useRef(0) // Layout writes for this measure key — a third nests until max update depth
+  const paintedWriteKey = useRef('') // Zoom / move / side the cap belongs to — not the measured point
   useLayoutEffect(() => {
+    // The point itself is not part of the key. A write moves that point, which would
+    // reset the cap and keep the nested updates going.
+    const measureKey = `${pairPos}|${Math.round(liveZoom * 1000)}|${navEpoch}|${usedSourceSide}|${usedTargetSide}`
+    if (paintedWriteKey.current !== measureKey) {
+      paintedWriteKey.current = measureKey // New zoom tick, move, or accepted side — two fresh writes
+      paintedWriteCap.current = 0
+    }
     const dragging = isFrameDragging() // A drag moves the node every tick — don't freeze the last box
     const sourcePt = connectionPointPainted(sourceNode, usedSourceSide) // Fill edge after this commit's chrome
     const targetPt = connectionPointPainted(targetNode, usedTargetSide)
@@ -243,6 +272,10 @@ export function EditableThread({
       if (sameAttach(prev?.source ?? null, nextSource) && sameAttach(prev?.target ?? null, nextTarget)) {
         return prev // Same pixel — don't render the thread again
       }
+      // New ends change the path, which changes the next painted read. Two writes
+      // settle selection chrome. Returning prev bails, so a third cannot nest.
+      if (paintedWriteCap.current >= 2) return prev
+      paintedWriteCap.current += 1 // Count only a write that actually schedules a render
       return { source: nextSource, target: nextTarget }
     })
   }, [
@@ -286,27 +319,47 @@ export function EditableThread({
     )
   }, [id, sourceHandleId, targetHandleId, setEdges])
 
+  const persistPairRef = useRef('') // Sides already sent — writing them again nested setEdges
   // Remember the closer sides so the next move, reload, and peers don't snap back to the overlap.
+  // Selection chrome flips the pair. Saving that from this effect nested setEdges until max update depth.
   useEffect(() => {
-    if (!clearPair) return // Current sides already stay outside both frames
-    if (sourceHandleId === clearPair.sourceHandle && targetHandleId === clearPair.targetHandle) return
-    setEdges((edges) =>
-      edges.map((e) => {
+    if (endpointSelected) return // Fill is still moving — save after the frames are idle
+    if (!stableClearPair) {
+      persistPairRef.current = '' // No hop to remember
+      return
+    }
+    const nextSource = stableClearPair.sourceHandle // Side the latch settled on
+    const nextTarget = stableClearPair.targetHandle
+    const haveSource = normalizeHandleId(sourceHandleId) || sourceHandleId // left-indicator and left are one side
+    const haveTarget = normalizeHandleId(targetHandleId) || targetHandleId
+    if (haveSource === nextSource && haveTarget === nextTarget) {
+      persistPairRef.current = '' // Store matches — a later move may save again
+      return
+    }
+    const key = `${nextSource}:${nextTarget}` // Pair identity, not a new object each read
+    if (persistPairRef.current === key) return // This write already happened and the store did not stick
+    persistPairRef.current = key
+    setEdges((edges) => {
+      let changed = false // map() is a new array even when the thread already has these sides
+      const next = edges.map((e) => {
         if (e.id !== id) return e
         const prev = (e.data as ThreadEdgeData | undefined) ?? {}
+        if (e.sourceHandle === nextSource && e.targetHandle === nextTarget) return e // Already stored
+        changed = true
         return {
           ...e,
-          sourceHandle: clearPair.sourceHandle, // Side that leaves the source frame
-          targetHandle: clearPair.targetHandle, // Side that enters the target frame
+          sourceHandle: nextSource, // Side that leaves the source frame
+          targetHandle: nextTarget, // Side that enters the target frame
           data: {
             ...prev,
-            sourceHandle: clearPair.sourceHandle,
-            targetHandle: clearPair.targetHandle,
+            sourceHandle: nextSource,
+            targetHandle: nextTarget,
           },
         }
       })
-    )
-  }, [clearPair?.sourceHandle, clearPair?.targetHandle, id, sourceHandleId, targetHandleId, setEdges])
+      return changed ? next : edges // Same array — do not re-render the board
+    })
+  }, [endpointSelected, stableClearPair?.sourceHandle, stableClearPair?.targetHandle, id, sourceHandleId, targetHandleId, setEdges])
 
   const shouldShowPoints = useStore((store) => {
     const src = store.nodeInternals.get(source)

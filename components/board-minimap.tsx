@@ -25,8 +25,11 @@ import {
   computeMinimapGeometry,
   minimapClientToFlow,
   minimapGrabbedViewOrigin,
-  minimapScopeForHalfView,
+  minimapNodesInViewBounds,
+  fitAspectInRect,
+  minimapMaskClipRect,
   minimapViewportMaskRect,
+  stickMinimapFrame,
   readMinimapViewBox,
   type MinimapFlowRect,
 } from '@/lib/minimap-geometry'
@@ -44,6 +47,7 @@ type BoardMiniMapProps = {
   offsetScale?: number
   ariaLabel?: string
   onClick?: (event: ReactMouseEvent, position: { x: number; y: number }) => void
+  maskAspect?: number | null // Paper/aspect letterbox; null = live camera hole
 }
 
 const ARIA_LABEL_KEY = 'nodnotes-minimap-desc'
@@ -54,14 +58,26 @@ function asColorFn(color: string | ((node: Node) => string) | undefined, fallbac
   return () => fixed
 }
 
+function measuredSide(value: unknown): number {
+  if (typeof value === 'number' && value > 0) return value // RF measured width/height
+  if (typeof value === 'string') {
+    const n = parseFloat(value) // style "240px" before RF measure lands
+    if (n > 0) return n
+  }
+  return 0
+}
+
+function nodeFlowSize(n: Node): { w: number; h: number } {
+  return {
+    w: measuredSide(n.width) || measuredSide(n.style?.width),
+    h: measuredSide(n.height) || measuredSide(n.style?.height),
+  }
+}
+
 function isMinimapNode(n: Node) {
-  return (
-    !n.hidden &&
-    !!n.width &&
-    !!n.height &&
-    n.type !== 'frameShimmer' &&
-    n.type !== 'placeholder'
-  )
+  if (n.hidden || n.type === 'frameShimmer' || n.type === 'placeholder') return false
+  const { w, h } = nodeFlowSize(n)
+  return w > 0 && h > 0 // Skip unmeasured frames — a 0 rect cannot mark the map
 }
 
 /** Viewport + content AABBs for viewBox (no node list — keeps store compares cheap). */
@@ -96,7 +112,7 @@ const selectMinimapNodes = (s: ReactFlowState) => s.getNodes().filter(isMinimapN
 const selectNodeOrigin = (s: ReactFlowState) => s.nodeOrigin
 
 /**
- * Board minimap framed to the full board. The mask hole is the current view.
+ * Board minimap framed to the nodes in the current camera. The mask hole is that camera.
  * Renders in the Free-nav chrome slot (not RF Panel) — still needs ReactFlowProvider.
  */
 function BoardMiniMapInner({
@@ -112,6 +128,7 @@ function BoardMiniMapInner({
   offsetScale = 5,
   ariaLabel = 'Board mini map',
   onClick,
+  maskAspect = null,
 }: BoardMiniMapProps) {
   const store = useStoreApi()
   const svgRef = useRef<SVGSVGElement>(null)
@@ -132,8 +149,9 @@ function BoardMiniMapInner({
   const scopeZoomRef = useRef(1) // Wheel scrub starts from the live effective scope
   // Freeze auto scope for the whole minimap drag so half-view does not rescale mid-gesture
   const dragScopeZoomRef = useRef<number | null>(null)
+  const stickRef = useRef({ zoom: Number.NaN, frame: null as MinimapFlowRect | null }) // Last in-view box at this board zoom
   const [, setDragEpoch] = useState(0) // Re-render when drag ends so auto scope resumes
-  const { viewBB, content, rfId } = useStore(selectMinimapFrame, minimapFrameEq)
+  const { viewBB, rfId } = useStore(selectMinimapFrame, minimapFrameEq)
   const boardZoom = useStore((s) => s.transform[2]) // Board zoom drops manual override
   const prevBoardZoomRef = useRef(boardZoom)
   const nodes = useStore(selectMinimapNodes, shallow)
@@ -148,33 +166,39 @@ function BoardMiniMapInner({
 
   const elementWidth = typeof style?.width === 'number' ? style.width : 196
   const elementHeight = typeof style?.height === 'number' ? style.height : 120
-  const liveAutoScope = minimapScopeForHalfView(
-    viewBB,
-    content,
-    elementWidth,
-    elementHeight,
-    offsetScale
-  )
+  const liveAutoScope = 1 // Fit the on-screen nodes; wheel still scrubs scope until the board zooms
   const scopeZoom =
     dragScopeZoomRef.current ??
     (scopeMode === 'manual' ? manualScopeZoom : liveAutoScope)
   scopeZoomRef.current = scopeZoom
 
-  // Frame the live board camera (full board view) — not the content AABB
+  // Frame in-view marks so they fill the widget; hold that box while board zoom is unchanged
+  const visibleContent = minimapNodesInViewBounds(
+    nodes.map((node) => {
+      const { x, y } = getNodePositionWithOrigin(node, nodeOrigin).positionAbsolute
+      const { w, h } = nodeFlowSize(node)
+      return { x, y, width: w, height: h }
+    }),
+    viewBB
+  )
+  const stuck = stickMinimapFrame(visibleContent, boardZoom, stickRef.current)
+  stickRef.current = stuck
   const geometry = computeMinimapGeometry(
     viewBB,
-    content,
+    stuck.frame,
     elementWidth,
     elementHeight,
     offsetScale,
     scopeZoom
   )
-  // Hole = full board camera (same aspect / extent as the pane)
-  const maskRect = minimapViewportMaskRect(
+  // Hole = camera ∩ viewBox-inset so the dimmed band keeps offsetScale from the chrome
+  const cameraHole = minimapViewportMaskRect(
     geometry.viewBB,
-    { x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height },
+    minimapMaskClipRect(geometry),
     geometry.viewScale
   )
+  const maskRect =
+    cameraHole && maskAspect ? fitAspectInRect(cameraHole, maskAspect) : cameraHole
   const colorFn = asColorFn(nodeColor, '#e5e7eb')
   const labelledBy = `${ARIA_LABEL_KEY}-${rfId}`
   const shapeRendering =
@@ -316,14 +340,16 @@ function BoardMiniMapInner({
         {ariaLabel ? <title id={labelledBy}>{ariaLabel}</title> : null}
         {nodes.map((node) => {
           const { x, y } = getNodePositionWithOrigin(node, nodeOrigin).positionAbsolute
-          const w = node.width ?? 0
-          const h = node.height ?? 0
+          const size = nodeFlowSize(node)
+          const minFlow = geometry.viewScale * 3 // At least ~3 CSS px so a short frame still reads
+          const w = Math.max(size.w, minFlow)
+          const h = Math.max(size.h, minFlow)
           return (
             <rect
               key={node.id}
               className={cn('react-flow__minimap-node', node.selected && 'selected')}
-              x={x}
-              y={y}
+              x={x - (w - size.w) / 2} // Grow around the frame center when bumped to the minimum
+              y={y - (h - size.h) / 2}
               width={w}
               height={h}
               rx={5}
@@ -336,11 +362,14 @@ function BoardMiniMapInner({
         })}
         <path
           className="react-flow__minimap-mask"
-          d={`M${geometry.x - geometry.offset},${geometry.y - geometry.offset}h${geometry.width + geometry.offset * 2}v${geometry.height + geometry.offset * 2}h${-geometry.width - geometry.offset * 2}z
-        M${maskRect.x},${maskRect.y}h${maskRect.width}v${maskRect.height}h${-maskRect.width}z`}
+          d={`M${geometry.x - geometry.offset},${geometry.y - geometry.offset}h${geometry.width + geometry.offset * 2}v${geometry.height + geometry.offset * 2}h${-geometry.width - geometry.offset * 2}z${
+            maskRect
+              ? ` M${maskRect.x},${maskRect.y}h${maskRect.width}v${maskRect.height}h${-maskRect.width}z`
+              : '' // Camera left the map — keep the frame, no full-widget hole
+          }`}
           fill={maskColor}
           fillRule="evenodd"
-          stroke={maskStrokeColor}
+          stroke={maskStrokeColor} /* Evenodd path stays unstroked — a stroke would also ring the outer bounds */
           pointerEvents="none"
         />
       </svg>

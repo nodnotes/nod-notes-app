@@ -86,6 +86,28 @@ export function getLiveBoardBounds(
   return minimapBoardBounds(content, pane, null) // Size-based gap — not the tight expand gap
 }
 
+/**
+ * One pane of flow on every side of the 200% fit box.
+ * At max zoom-out the furthest object can travel to the opposite edge and just leave the view.
+ * Do not fit 200% to this box — that would make view == world and cancel the travel.
+ */
+export function expandBoundsForCrossScreenPan(
+  bounds: MinimapFlowRect,
+  paneW: number,
+  paneH: number,
+  zoom: number
+): MinimapFlowRect {
+  const z = zoom > 0 ? zoom : 1 // Guard a 0 floor so pad stays finite
+  const padX = paneW > 0 ? paneW / z : 0 // Screen width in flow — left object can fully exit right
+  const padY = paneH > 0 ? paneH / z : 0
+  return {
+    x: bounds.x - padX,
+    y: bounds.y - padY,
+    width: bounds.width + padX * 2,
+    height: bounds.height + padY * 2,
+  }
+}
+
 /** RF translateExtent for live board bounds — infinite only while pane is unmeasured. */
 export function boardTranslateExtent(
   bounds: MinimapFlowRect | null
@@ -213,18 +235,23 @@ export function getBoardZoom200(
   content: MinimapFlowRect | null,
   paneW: number,
   paneH: number,
-  hard: BoardZoomRange = BOARD_ZOOM_HARD
+  hard: BoardZoomRange = BOARD_ZOOM_HARD,
+  revealZoom?: number | null // Hide-large-overlap: sit at/under the scale that shows a giant frame
 ): { zoom: number; centerX: number; centerY: number } {
   const bounds = getLiveBoardBounds(content, paneW, paneH)
   if (!bounds) {
+    const empty = clampBoardZoom(1 / BOARD_BOUNDS_MIN_PANE_SCALE, hard) // Default roomy 200%
     return {
-      zoom: clampBoardZoom(1 / BOARD_BOUNDS_MIN_PANE_SCALE, hard), // Default roomy 200%
+      zoom: revealZoom != null && revealZoom > 0 ? Math.min(empty, clampBoardZoom(revealZoom, hard)) : empty,
       centerX: 0,
       centerY: 0,
     }
   }
+  let zoom = zoomToFitBounds(bounds, paneW, paneH, hard)
+  // Fit-bounds can still leave a giant overlapping frame above FADE_HIDE_FRAC — pull 200% out
+  if (revealZoom != null && revealZoom > 0) zoom = Math.min(zoom, clampBoardZoom(revealZoom, hard))
   return {
-    zoom: zoomToFitBounds(bounds, paneW, paneH, hard),
+    zoom,
     centerX: bounds.x + bounds.width / 2,
     centerY: bounds.y + bounds.height / 2,
   }
@@ -408,9 +435,10 @@ export function applyBoardZoomFloor(
   content: MinimapFlowRect | null,
   paneW: number,
   paneH: number,
-  hard: BoardZoomRange = BOARD_ZOOM_HARD
+  hard: BoardZoomRange = BOARD_ZOOM_HARD,
+  revealZoom?: number | null // Same reveal as getBoardZoom200 — keep the 200% label on this floor
 ): BoardZoomRange {
-  const fit = getBoardZoom200(content, paneW, paneH, hard).zoom // Live 200% scale
+  const fit = getBoardZoom200(content, paneW, paneH, hard, revealZoom).zoom // Live 200% scale
   const maxZoom = Math.min(hard.maxZoom, Math.max(current.maxZoom, fit, BOARD_ZOOM_IN_SCALE))
   return {
     minZoom: Math.min(fit, maxZoom), // Camera must not go past labeled 200%

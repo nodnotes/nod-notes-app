@@ -109,12 +109,26 @@ export function connectionDirection(side: Position): XYPosition {
   return { x: 0, y: -1 }; // Bottom side points up
 }
 
-/** Handle length for a Miro-like cubic. The hook is a wide arc, not a corner at the tip. */
-function smoothHandle(along: number, span: number): number {
-  const broad = Math.min(360, Math.max(72, span * 0.5)); // Half the gap — curvature is spread along the stroke
-  if (along >= 0) return broad; // Already heading with the arrow
-  const perp = Math.sqrt(Math.max(0, span * span - along * along)); // How far off the arrow axis the other end sits
-  return Math.min(broad, Math.max(72, perp * 0.85)); // Turn back across that offset so a long reversal does not pinch
+/** Visible peak of a sideways bow, in flow px. A short gap still reads; a long gap stays a bow. */
+const BOW_PEAK_MIN = 44
+/** Long same-side threads used to stop here. Half the span past this became a loop. */
+const BOW_PEAK_MAX = 88
+/** t=0.5 of a perpendicular cubic sits at 3/4 of the handle, so the handle is 4/3 of the peak. */
+const BOW_HANDLE_SCALE = 4 / 3
+
+/**
+ * Handle length for a Miro-like cubic.
+ * Sideways bows (the other end is across, including a thread eased off its neighbor) stay at the old 44–88 peak.
+ * A forward hook can be wider so the arrow still meets the side flat.
+ */
+export function smoothThreadHandle(along: number, span: number): number {
+  const broad = Math.min(360, Math.max(72, span * 0.5)); // Wide hook when the other end is ahead of this side
+  const perp = Math.sqrt(Math.max(0, span * span - along * along)); // How far the other end sits off the arrow axis
+  const peak = Math.min(BOW_PEAK_MAX, Math.max(BOW_PEAK_MIN, perp * 0.5)); // Old same-side arch
+  const bow = peak * BOW_HANDLE_SCALE; // Handle that actually reaches that peak
+  if (along > perp) return broad; // More ahead than aside — keep the wide hook so the tip does not corner
+  if (along >= 0) return bow; // Mostly sideways — modest arch, not a half-span loop
+  return Math.min(broad, Math.max(72, Math.min(bow, perp * 0.85))); // Turning back: clear the gap without a tall loop
 }
 
 /** Unit direction the stroke leaves a side. */
@@ -148,8 +162,8 @@ function pathIntoArrowBack(args: {
   const dy = endY - sourceY; // Span Y to the back of the head
   const span = Math.hypot(dx, dy) || 1; // Endpoint distance
   const out = leaveDirection(sourcePosition); // Unit leave direction
-  const leave = smoothHandle(dx * out.x + dy * out.y, span); // How far to exit the source
-  const arrive = smoothHandle(dx * dirX + dy * dirY, span); // How far behind the arrow to pull
+  const leave = smoothThreadHandle(dx * out.x + dy * out.y, span); // How far to exit the source
+  const arrive = smoothThreadHandle(dx * dirX + dy * dirY, span); // How far behind the arrow to pull
   const c1x = sourceX + out.x * leave; // First control, perpendicular to the source side
   const c1y = sourceY + out.y * leave;
   const c2x = endX - dirX * arrive; // Second control, on the arrow axis

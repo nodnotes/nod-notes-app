@@ -230,18 +230,25 @@ function useBoardFilterFrames(): { selectedCount: number; nodes: Node[] } {
   const { reactFlowInstance } = useReactFlowContext()
   const [nodes, setNodes] = useState<Node[]>([])
   const [selectedCount, setSelectedCount] = useState(0)
+  const sigRef = useRef('') // Skip setState when the selection set did not change
 
   useEffect(() => {
     const refresh = () => {
       if (!reactFlowInstance) {
+        if (sigRef.current === '0') return // Already empty
+        sigRef.current = '0'
         setNodes([])
         setSelectedCount(0)
         return
       }
       const all = reactFlowInstance.getNodes() // Live RF snapshot
       const frames = all.filter(isBoardFrameNode) // Frame-only
+      const selected = frames.filter((n) => n.selected)
+      const sig = `${all.length}:${selected.map((n) => n.id).join(',')}` // Count + which frames
+      if (sig === sigRef.current) return // Marquee fires this once per frame — don't re-render each time
+      sigRef.current = sig
       setNodes(all) // Keep full list for harvest (filter inside builder)
-      setSelectedCount(frames.filter((n) => n.selected).length) // Selection count
+      setSelectedCount(selected.length) // Selection count
     }
     refresh()
     window.addEventListener('node-selected', refresh) // Selection events
@@ -258,6 +265,8 @@ function useBoardFilterFrames(): { selectedCount: number; nodes: Node[] } {
 function useFilterSortUi() {
   return useSyncExternalStore(subscribeBoardFilterSortUi, getBoardFilterSortUi, getBoardFilterSortUi)
 }
+
+const EMPTY_SORTS: DatabaseSort[] = [] // Stable stand-in so a closed strip does not re-measure every render
 
 /** Content search scope shown beside the contains pill. Text is the default. */
 const CONTENT_SEARCH_TARGETS: Array<{ id: ContentSearchTarget; label: string }> = [
@@ -1168,8 +1177,9 @@ export function BoardFilterSortBar() {
 
   const filters = scope === 'board' ? boardFilters : frameFilters
   const setFilters = scope === 'board' ? setBoardFilters : setFrameFilters
-  // Sort is table-only — never board/frame freeform sorts
-  const sorts = tableSortTarget?.sorts ?? []
+  // Sort is table-only — never board/frame freeform sorts.
+  // A fresh [] every render re-ran the place effect and setState'd while the strip was closed.
+  const sorts = tableSortTarget?.sorts ?? EMPTY_SORTS
   const sortProperties = tableSortTarget?.properties ?? []
 
   const { total: boardTableCount, selected: selectedTableCount } = useMemo(
@@ -1204,8 +1214,9 @@ export function BoardFilterSortBar() {
     const active = scope === 'board' ? appliedFilters(filters) : []
     setLiveBoardFilters(active) // board-flow node rebuilds also read this
     if (!reactFlowInstance) return
-    reactFlowInstance.setNodes((nds) =>
-      nds.map((n) => {
+    reactFlowInstance.setNodes((nds) => {
+      let changed = false // Selecting frames must not replace the node list when hide flags match
+      const next = nds.map((n) => {
         if (n.type !== 'chatPanel') return n
         const meta = (n.data?.promptMessage?.metadata || {}) as Record<string, unknown>
         if (meta.isBlock !== true) return n
@@ -1213,15 +1224,18 @@ export function BoardFilterSortBar() {
         const filterHidden = active.length > 0 && !nodeMatchesBoardFilters(n, active)
         const hidden = stackHidden || filterHidden
         if (n.hidden === hidden) return n
+        changed = true
         return { ...n, hidden }
       })
-    )
+      return changed ? next : nds
+    })
   }, [filters, scope, reactFlowInstance])
 
-  // Place plate vs mode pill: left while ≤ pill width, else center; wrap at maxWidth
+  // Place plate vs mode pill: left while ≤ pill width, else center; wrap at maxWidth.
+  // Closed strip: one clear, then stop. setPlace(null) on every parent render nested until max update depth.
   useLayoutEffect(() => {
     if (!open) {
-      setPlace(null)
+      setPlace((prev) => (prev === null ? prev : null))
       return
     }
 

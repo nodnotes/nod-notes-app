@@ -1166,15 +1166,16 @@ span[data-added="true"] {
     background-color: #171717 !important; /* Dark background matching sidebar */
   }
 
-  /* Mask is an SVG evenodd <path> in flow units — never CSS-size it (196×120 clips the overlay to the origin). Never stroke it (the viewport hole would get a second border). Hole size is clamped in JS so a min dimmed band always remains when zoomed out. */
+  /* Mask is an SVG evenodd <path> in flow units — never CSS-size it (196×120 clips the overlay to the origin). Never stroke it (that would ring both the outer bounds and the hole). Hole size is clamped in JS so a min dimmed band always remains when zoomed out. */
   .minimap-custom-size .react-flow__minimap-mask {
-    stroke: none; /* Fill-only overlay; stroke draws both outer bounds and the inner window */
+    stroke: none; /* Fill-only overlay; the current-view ring is a separate rect */
+    fill: rgba(0, 0, 0, 0.16) !important; /* Lighter wash so frame marks still read under the dim */
   }
 
-  /* Dark mode minimap mask fill — match nav #2a2a3a */
+  /* Dark mode minimap mask — black wash over #171717 so the hole stays the lighter window */
   .dark .minimap-custom-size .react-flow__minimap-mask {
-    fill: rgba(42, 42, 58, 0.45) !important;
-    stroke: none; /* Same: no inner window ring */
+    fill: rgba(0, 0, 0, 0.40) !important;
+    stroke: none; /* Same: no inner window ring on the evenodd path */
   }
 
   /* Ensure minimap SVG and viewport indicator are properly scaled */
@@ -1382,6 +1383,11 @@ span[data-added="true"] {
     display: none !important;
   }
 
+  /* In-node ring stays with the frame. The bare box is the copy in the group layer, above every frame. */
+  .react-flow.tt-group-select .react-flow__node [data-tt-adjust-ring] {
+    opacity: 0 !important;
+  }
+
   /* Group resize box replaces the dotted multi-select rect; the rect still receives gap drags. */
   .react-flow.tt-group-select .react-flow__nodesselection-rect {
     background: transparent !important;
@@ -1486,21 +1492,61 @@ span[data-added="true"] {
     pointer-events: none !important;
   }
 
-  /* Overlap size-fade (board menu).
-     --tt-overlap-fade: large overlapping frames fade their fill with size.
-     --tt-overlap-chrome: under a large mate the adjust box / sim points / rotate row hide so
-     they do not float on top of the overlapping frame; frame fill/content stays painted. */
+  /* Overlap hide (board menu).
+     --tt-overlap-fade: fill, sim points, corner handles, rotate/fit/react.
+     --tt-adjust-blue: adjust-box stroke, eased with that hide (registered so the color tweens).
+     --tt-overlap-chrome: ring stays up (light blue once hidden). */
+  @property --tt-adjust-blue {
+    syntax: '<color>';
+    inherits: true;
+    initial-value: #3b82f6;
+  }
+  .react-flow__node.tt-overlap-hide-tween {
+    transition: --tt-adjust-blue var(--tt-overlap-hide-ms, 200ms) ease-out;
+  }
   .react-flow__node[data-tt-overlap-fade] [data-tt-frame-fill='true'],
   .react-flow__node[data-tt-overlap-fade] [data-tt-wrap-line],
-  .react-flow__node[data-tt-overlap-fade] [data-tt-fit-plus] {
+  .react-flow__node[data-tt-overlap-fade] [data-tt-fit-plus],
+  .react-flow__node[data-tt-overlap-fade] .react-flow__resize-control.handle,
+  .react-flow__node[data-tt-overlap-fade] [data-frame-chrome],
+  .react-flow__node[data-tt-overlap-fade] [data-tt-connection-indicator] {
     opacity: var(--tt-overlap-fade, 1) !important;
+  }
+  /* Hide ease only — zoom does not fade the fill before this. */
+  .react-flow__node.tt-overlap-hide-tween [data-tt-frame-fill='true'],
+  .react-flow__node.tt-overlap-hide-tween [data-tt-wrap-line],
+  .react-flow__node.tt-overlap-hide-tween [data-tt-fit-plus],
+  .react-flow__node.tt-overlap-hide-tween .react-flow__resize-control.handle,
+  .react-flow__node.tt-overlap-hide-tween [data-frame-chrome],
+  .react-flow__node.tt-overlap-hide-tween [data-tt-connection-indicator] {
+    transition: opacity var(--tt-overlap-hide-ms, 200ms) ease-out !important;
+  }
+  /* Corner carets: inverse of the fill, so they ease in as the frame hides and out as it returns. */
+  [data-tt-hide-zoom-caret] {
+    opacity: calc(1 - var(--tt-overlap-fade, 1));
+  }
+  .react-flow__node.tt-overlap-hide-tween [data-tt-hide-zoom-caret] {
+    transition: opacity var(--tt-overlap-hide-ms, 200ms) ease-out;
+  }
+  /* Free-nav cue: same double caret, eases with hide/show (flag on [data-board-root]). */
+  [data-tt-nav-hide-zoom-caret] {
+    opacity: 0;
+    transition: opacity var(--tt-overlap-hide-ms, 200ms) ease-out;
+  }
+  [data-board-root][data-tt-frames-zoom-hidden] [data-tt-nav-hide-zoom-caret] {
+    opacity: 1;
+  }
+  /* Fully hidden: faded chrome stays mounted (so it can ease back) but must not catch clicks. */
+  .react-flow__node.tt-overlap-fade-pass .react-flow__resize-control.handle,
+  .react-flow__node.tt-overlap-fade-pass [data-frame-chrome],
+  .react-flow__node.tt-overlap-fade-pass [data-tt-connection-indicator],
+  .react-flow__node.tt-overlap-fade-pass [data-tt-wrap-line],
+  .react-flow__node.tt-overlap-fade-pass [data-tt-fit-plus] {
+    pointer-events: none !important;
   }
   .react-flow__node[data-tt-overlap-fade] [data-tt-adjust-ring],
   .react-flow__node[data-tt-overlap-fade] [data-tt-connection-box],
-  .react-flow__node[data-tt-overlap-fade] .react-flow__resize-control.handle,
-  .react-flow__node[data-tt-overlap-fade] .react-flow__resize-control.line,
-  .react-flow__node[data-tt-overlap-fade] [data-frame-chrome],
-  .react-flow__node[data-tt-overlap-fade] [data-tt-connection-indicator] {
+  .react-flow__node[data-tt-overlap-fade] .react-flow__resize-control.line {
     opacity: var(--tt-overlap-chrome, var(--tt-overlap-fade, 1)) !important;
   }
 
@@ -1508,7 +1554,8 @@ span[data-added="true"] {
      adjust box paints on top; content shells are clip-path'd under the front frame. Node + panel
      go click-through so the holes reach the front frame; clipped shells + chrome re-arm hits. */
   .react-flow__node.tt-front-clip {
-    z-index: 100000 !important;
+    /* Rank breaks the tie when the overlapping frame is multi-selected and raised too */
+    z-index: calc(100000 + var(--tt-front-rank, 0)) !important;
     pointer-events: none !important;
   }
   .react-flow__node.tt-front-clip [data-panel-container='true'] {
@@ -1522,6 +1569,15 @@ span[data-added="true"] {
     opacity: calc(0.4 * var(--tt-overlap-chrome, var(--tt-overlap-fade, 1))) !important;
   }
 
+  /* Hidden frame is click-through end to end, including while selected.
+     Selected free text sets pointer-events:auto so the I-bar stays hittable while the fill is up;
+     that inline value (and .tt-front-clip re-arm) must not keep the box once the hide ease has finished. */
+  .react-flow__node.tt-overlap-fade-pass .react-flow__resize-control.line,
+  .react-flow__node.tt-overlap-fade-pass .tt-frame-resize-line,
+  .react-flow__node.tt-overlap-fade-pass [data-panel-container='true'],
+  .react-flow__node.tt-overlap-fade-pass [data-panel-container='true'] * {
+    pointer-events: none !important;
+  }
   /* Animated flowing dotted edges - dashes flow along the path like Supabase schema visualizer */
   .react-flow__edge-path[style*="animation"] {
     animation: flow-dash 1.5s linear infinite !important;
@@ -1934,7 +1990,7 @@ span[data-added="true"] {
   .react-flow__node-chatPanel .tt-frame-resize-line.top,
   .react-flow__node-freehand .tt-frame-resize-line.top {
     height: var(--tt-frame-line-hit, 6px) !important;
-    background-image: linear-gradient(#3b82f6, #3b82f6) !important;
+    background-image: linear-gradient(var(--tt-adjust-blue, #3b82f6), var(--tt-adjust-blue, #3b82f6)) !important;
     background-size: 100% var(--tt-frame-line-w, 1.5px) !important;
   }
   .react-flow__node-chatPanel .react-flow__resize-control.line.bottom,
@@ -1942,7 +1998,7 @@ span[data-added="true"] {
   .react-flow__node-chatPanel .tt-frame-resize-line.bottom,
   .react-flow__node-freehand .tt-frame-resize-line.bottom {
     height: var(--tt-frame-line-hit, 6px) !important;
-    background-image: linear-gradient(#3b82f6, #3b82f6) !important;
+    background-image: linear-gradient(var(--tt-adjust-blue, #3b82f6), var(--tt-adjust-blue, #3b82f6)) !important;
     background-size: 100% var(--tt-frame-line-w, 1.5px) !important;
   }
   .react-flow__node-chatPanel .react-flow__resize-control.line.left,
@@ -1950,7 +2006,7 @@ span[data-added="true"] {
   .react-flow__node-chatPanel .tt-frame-resize-line.left,
   .react-flow__node-freehand .tt-frame-resize-line.left {
     width: var(--tt-frame-line-hit, 6px) !important;
-    background-image: linear-gradient(#3b82f6, #3b82f6) !important;
+    background-image: linear-gradient(var(--tt-adjust-blue, #3b82f6), var(--tt-adjust-blue, #3b82f6)) !important;
     background-size: var(--tt-frame-line-w, 1.5px) 100% !important;
   }
   .react-flow__node-chatPanel .react-flow__resize-control.line.right,
@@ -1958,7 +2014,7 @@ span[data-added="true"] {
   .react-flow__node-chatPanel .tt-frame-resize-line.right,
   .react-flow__node-freehand .tt-frame-resize-line.right {
     width: var(--tt-frame-line-hit, 6px) !important;
-    background-image: linear-gradient(#3b82f6, #3b82f6) !important;
+    background-image: linear-gradient(var(--tt-adjust-blue, #3b82f6), var(--tt-adjust-blue, #3b82f6)) !important;
     background-size: var(--tt-frame-line-w, 1.5px) 100% !important;
   }
   /* Square adjust ring paints the stroke — keep line controls as invisible hit targets only.
@@ -1997,7 +2053,7 @@ span[data-added="true"] {
   .dark .react-flow__node-freehand .react-flow__resize-control.line.right,
   .dark .react-flow__node-chatPanel .tt-frame-resize-line.right,
   .dark .react-flow__node-freehand .tt-frame-resize-line.right {
-    background-image: linear-gradient(#60a5fa, #60a5fa) !important;
+    background-image: linear-gradient(var(--tt-adjust-blue, #60a5fa), var(--tt-adjust-blue, #60a5fa)) !important;
   }
   .dark .react-flow__node-chatPanel .react-flow__resize-control.line.tt-frame-resize-line-hit.top,
   .dark .react-flow__node-freehand .react-flow__resize-control.line.tt-frame-resize-line-hit.top,

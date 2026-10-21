@@ -63,7 +63,10 @@ export function NavZoomControl({ className }: { className?: string }) {
   const readZ200 = () => {
     const nodes = reactFlowInstance.getNodes().filter(isBoardBoundNode)
     const content = nodes.length > 0 ? getNodesBounds(nodes, nodeOrigin) : null
-    return getBoardZoom200(content, paneW, paneH)
+    const fit = getBoardZoom200(content, paneW, paneH)
+    // RF minZoom is the live 200% stop — may sit below fit so a hidden large frame can show
+    const zoom = minZoom > 0 ? Math.min(fit.zoom, minZoom) : fit.zoom
+    return { ...fit, zoom }
   }
 
   /** Zoom in place — keep the flow point under the pane center; clamp into board bounds. */
@@ -101,7 +104,7 @@ export function NavZoomControl({ className }: { className?: string }) {
     updateZoom()
     const interval = setInterval(updateZoom, 100)
     return () => clearInterval(interval)
-  }, [reactFlowInstance, isEditingZoom, isDraggingZoom, paneW, paneH, nodeOrigin])
+  }, [reactFlowInstance, isEditingZoom, isDraggingZoom, paneW, paneH, nodeOrigin, minZoom])
 
   // Scrub: RF zoomTo (d3 constrain); soft-snap onto the 200% floor only (never block zoom-in)
   const applyScrubZoom = (rawZoom: number) => {

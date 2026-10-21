@@ -44,6 +44,7 @@ import {
   SNAP_OVERLAP_MIN,
   snapArmPx,
 } from '@/lib/frame-edge-snap-prefs' // Arm distance + overlap — More → Snap
+import { readOnThread } from '@/lib/threads/on-thread-frame' // A frame on a thread slides the path, not the edge magnet
 
 export type { FrameStackSide }
 export { isSnapLockedMeta }
@@ -1327,89 +1328,6 @@ export function useFrameNestStackDrag({
     [clearUi, getNodes, setNodes, takeSnapshot]
   )
 
-  const dragSnapRafRef = useRef<number | null>(null) // Coalesce edge-snap scans to one per frame
-  const pendingSnapDragRef = useRef<{
-    event: { clientX: number; clientY: number } | undefined
-    node: Node
-  } | null>(null)
-
-  const runSnapDragTick = useCallback(
-    (_event: { clientX: number; clientY: number } | undefined, node: Node) => {
-      if (!edgeSnapRef.current) {
-        // User turned off Snap to frames — clear any armed magnet
-        if (dropUiRef.current || snapRef.current) clearUi()
-        return
-      }
-      const live = getNodes()
-      const liveNode = live.find((n) => n.id === node.id) || node
-      const dragNode = { ...liveNode, position: node.position }
-      const meta = nodeMeta(liveNode)
-
-      const snapDrag =
-        unstackedThisDragRef.current
-          ? (() => {
-              const m = { ...nodeMeta(dragNode) }
-              delete m.sideStacks
-              delete m.stackGroupId
-              delete m.stackSide
-              delete m.stackIndex
-              delete m.stackAnchor
-              delete m.stackExpanded
-              delete m.parentStackHidden
-              return {
-                ...dragNode,
-                data: {
-                  ...dragNode.data,
-                  promptMessage: dragNode.data?.promptMessage
-                    ? { ...dragNode.data.promptMessage, metadata: m }
-                    : dragNode.data?.promptMessage,
-                },
-              }
-            })()
-          : dragNode
-      const armed = snapRef.current
-      const snap = findFrameEdgeSnap(
-        snapDrag,
-        live,
-        snapArmPx(zoom),
-        unstackedThisDragRef.current ? excludeSnapSidesRef.current : undefined,
-        zoom,
-        armed ? { targetId: armed.targetId, side: armed.side } : null
-      )
-      if (!snap) {
-        if (dropUiRef.current) clearUi()
-        return
-      }
-
-      snapRef.current = snap
-      // Align-only: park the dragged frame — no stack diamond / dropUi chrome
-      if (dropUiRef.current) clearUi()
-
-      const nextPos = absToNodePosition(dragNode, snap.snappedAbs, live)
-      const cur = dragNode.position
-      if (Math.abs(cur.x - nextPos.x) > 0.5 || Math.abs(cur.y - nextPos.y) > 0.5) {
-        setNodes((nds) =>
-          nds.map((n) => (n.id === dragNode.id ? { ...n, position: nextPos } : n))
-        )
-      }
-    },
-    [clearUi, getNodes, setNodes, zoom]
-  )
-
-  const scheduleSnapDragTick = useCallback(
-    (event: { clientX: number; clientY: number } | undefined, node: Node) => {
-      pendingSnapDragRef.current = { event, node }
-      if (dragSnapRafRef.current != null) return
-      dragSnapRafRef.current = requestAnimationFrame(() => {
-        dragSnapRafRef.current = null
-        const pending = pendingSnapDragRef.current
-        if (!pending) return
-        runSnapDragTick(pending.event, pending.node)
-      })
-    },
-    [runSnapDragTick]
-  )
-
   const onNodeDrag = useCallback(
     (_event: { clientX: number; clientY: number } | undefined, node: Node) => {
       if (isLocked || node.type !== 'chatPanel') {
@@ -1471,19 +1389,13 @@ export function useFrameNestStackDrag({
           }
         }
       }
-
-      scheduleSnapDragTick(_event, node)
+      // Magnet is applied in magnetizeDragChanges, on this same pointer sample.
     },
-    [clearUi, getNodes, isLocked, scheduleSnapDragTick, setNodes, unstackNode]
+    [clearUi, getNodes, isLocked, setNodes, unstackNode]
   )
 
   const onNodeDragStop = useCallback(
     async (_event: unknown, node: Node) => {
-      if (dragSnapRafRef.current != null) {
-        cancelAnimationFrame(dragSnapRafRef.current)
-        dragSnapRafRef.current = null
-      }
-      pendingSnapDragRef.current = null
       const snap = snapRef.current
       const lockSession = lockDragRef.current
       const didUnstack = unstackedThisDragRef.current
@@ -1578,5 +1490,60 @@ export function useFrameNestStackDrag({
     [clearUi, conversationId, getNodes, isLocked, setNodes, takeSnapshot]
   )
 
-  return { dropUi, onNodeDrag, onNodeDragStart, onNodeDragStop, clearUi }
+  /**
+   * Rewrite this drag sample onto the magnet before React Flow commits it.
+   * A later setNodes fought the next pointer sample (absolute from the grab) and the frame jittered.
+   */
+  const magnetizeDragChanges = useCallback(
+    (
+      changes: Array<{
+        type?: string
+        id?: string
+        dragging?: boolean
+        position?: { x: number; y: number }
+        positionAbsolute?: { x: number; y: number }
+      }>,
+      liveIn: Node[]
+    ) => {
+      if (!edgeSnapRef.current || isLocked || lockDragRef.current) return changes // Snap off, or the group moves as one
+      const moves = changes.filter((c) => c.type === 'position' && c.dragging === true && c.position)
+      if (moves.length !== 1) return changes // Several frames — keep the selection rigid
+      const change = moves[0]
+      const node = liveIn.find((n) => n.id === change.id)
+      if (!node || node.type !== 'chatPanel' || !change.position) return changes
+      if (readOnThread(node.data?.promptMessage?.metadata as Record<string, unknown>)) return changes // Path drag owns XY
+      const meta = nodeMeta(node)
+      if (groupIdsOf(meta).length > 0 && !isSnapLockedMeta(meta) && !unstackedThisDragRef.current) {
+        return changes // Unstack owns this drag until the link clears — then later samples can magnetize
+      }
+      const dragNode = { ...node, position: change.position }
+      const armed = snapRef.current
+      const snap = findFrameEdgeSnap(
+        dragNode,
+        liveIn,
+        snapArmPx(zoom),
+        unstackedThisDragRef.current ? excludeSnapSidesRef.current : undefined,
+        zoom,
+        armed ? { targetId: armed.targetId, side: armed.side } : null
+      )
+      if (!snap) {
+        snapRef.current = null // Left the magnet
+        return changes
+      }
+      snapRef.current = snap // Release parks this same edge
+      const nextPos = absToNodePosition(dragNode, snap.snappedAbs, liveIn)
+      if (
+        Math.abs(change.position.x - nextPos.x) <= 0.5 &&
+        Math.abs(change.position.y - nextPos.y) <= 0.5
+      ) {
+        return changes // Already on the park
+      }
+      return changes.map((c) =>
+        c === change ? { ...c, position: nextPos, positionAbsolute: nextPos } : c
+      )
+    },
+    [isLocked, zoom]
+  )
+
+  return { dropUi, onNodeDrag, onNodeDragStart, onNodeDragStop, clearUi, magnetizeDragChanges }
 }

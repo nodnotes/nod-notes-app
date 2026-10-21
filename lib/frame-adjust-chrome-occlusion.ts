@@ -8,6 +8,7 @@
 
 import { useLayoutEffect, type RefObject } from 'react'
 import { useStore } from 'reactflow'
+import { isFrameDragging, registerFrameDragEndHook } from '@/lib/frame-dragging' // Clip stays put mid-drag
 
 /** Node class: raised + click-through shell (globals.css). */
 const RAISED_CLASS = 'tt-front-clip'
@@ -36,31 +37,54 @@ function paintsInFront(other: HTMLElement, self: HTMLElement): boolean {
   return (self.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 // Later sibling wins
 }
 
-/** Screen boxes of overlapping frames that normally paint in front of `nodeEl`. */
-function frontFrameBoxes(nodeEl: HTMLElement, panelRect: DOMRect): Box[] {
+/** Selected frames that paint in front of `nodeEl` — the covered frame ranks strictly above them. */
+function selectedFrontRank(nodeEl: HTMLElement): number {
   const parent = nodeEl.parentElement
-  if (!parent) return []
+  if (!parent) return 0
+  let rank = 0 // 0 = only unselected frames are in front
+  parent.querySelectorAll(':scope > .react-flow__node-chatPanel.selected').forEach((el) => {
+    const other = el as HTMLElement
+    if (other !== nodeEl && paintsInFront(other, nodeEl)) rank += 1 // Multi-selected overlapping frame counts
+  })
+  return rank
+}
+
+type FrontCover = { holes: Box[]; raise: boolean } // holes = visible fills; raise = chrome or fill still covers
+
+function fadeGone(el: HTMLElement, prop: string): boolean {
+  const fade = parseFloat(el.style.getPropertyValue(prop)) // Unset → still painted
+  return Number.isFinite(fade) && fade <= 0.01
+}
+
+/** Overlapping frames in front of `nodeEl`. Hidden fill still raises us when its adjust box is up. */
+function frontCover(nodeEl: HTMLElement, panelRect: DOMRect): FrontCover {
+  const parent = nodeEl.parentElement
+  if (!parent) return { holes: [], raise: false }
   const panelBox: Box = {
     left: panelRect.left - CHROME_REACH_PX, // Include frames that only meet the hanging chrome
     top: panelRect.top - CHROME_REACH_PX,
     right: panelRect.right + CHROME_REACH_PX,
     bottom: panelRect.bottom + CHROME_REACH_PX,
   }
-  const out: Box[] = []
+  const holes: Box[] = []
+  let raise = false
   parent.querySelectorAll(':scope > .react-flow__node-chatPanel').forEach((el) => {
     const other = el as HTMLElement
     if (other === nodeEl) return
-    const fade = parseFloat(other.style.getPropertyValue('--tt-overlap-fade')) // Live overlap size-fade of the mate
-    if (Number.isFinite(fade) && fade <= 0.01) return // Faded away — nothing covers us; mid-fade still covers
+    const fillGone = fadeGone(other, '--tt-overlap-fade') // Fill hidden by size
+    const chromeGone = fadeGone(other, '--tt-overlap-chrome') // Adjust box hidden too
+    if (fillGone && chromeGone) return // Nothing left to cover us; mid-fade still covers
+    if (fillGone) return // Overlap-hide fill is gone — its chrome must not raise frames underneath
     if (!paintsInFront(other, nodeEl)) return
     const fill = other.querySelector('[data-tt-frame-fill="true"]') as HTMLElement | null
     const r = (fill ?? other).getBoundingClientRect() // Fill = visible body (adjust pads excluded)
     if (r.width <= 0 || r.height <= 0) return
     if (r.right <= panelBox.left || r.left >= panelBox.right) return
     if (r.bottom <= panelBox.top || r.top >= panelBox.bottom) return
-    out.push({ left: r.left, top: r.top, right: r.right, bottom: r.bottom })
+    raise = true // This frame's box or fill paints over us — including a multi-selected mate
+    if (!fillGone) holes.push({ left: r.left, top: r.top, right: r.right, bottom: r.bottom }) // Don't punch out content under an invisible fill
   })
-  return out
+  return { holes, raise }
 }
 
 /** evenodd path: huge outer rect (keeps shadows) minus each hole, in the target's local px. */
@@ -167,8 +191,44 @@ function clearChromeFade(panel: HTMLElement | null): void {
   panel.querySelectorAll(`[${OVER_FRONT_ATTR}]`).forEach((el) => el.removeAttribute(OVER_FRONT_ATTR)) // Widgets back to full
 }
 
+/** Nodes that should stay raised — a class/style rewrite must not drop them. */
+const wantRaised = new WeakSet<HTMLElement>()
+/** How many frames paint in front — higher rank paints above those frames. */
+const raiseRank = new WeakMap<HTMLElement, number>()
+/** Per node, puts the raise back when React Flow replaces class or style. */
+const raiseGuards = new Map<string, MutationObserver>()
+
+function restoreRaise(nodeEl: HTMLElement): void {
+  if (!wantRaised.has(nodeEl)) return // Deselected or nothing in front — leave the stack alone
+  const rank = String(raiseRank.get(nodeEl) ?? 0) // Covered frame ranks above the frame covering it
+  if (nodeEl.style.getPropertyValue('--tt-front-rank').trim() !== rank) {
+    nodeEl.style.setProperty('--tt-front-rank', rank) // React style writes drop the custom prop
+  }
+  if (!nodeEl.classList.contains(RAISED_CLASS)) nodeEl.classList.add(RAISED_CLASS) // React className writes drop the raise
+}
+
+function disconnectRaiseGuard(nodeId: string): void {
+  const obs = raiseGuards.get(nodeId) // One observer per selected frame
+  if (!obs) return
+  obs.disconnect() // Stop before clearClip removes the class, or it would be put back
+  raiseGuards.delete(nodeId)
+}
+
+function connectRaiseGuard(nodeId: string, nodeEl: HTMLElement): void {
+  disconnectRaiseGuard(nodeId) // Replace any guard left from the previous run
+  const obs = new MutationObserver(() => restoreRaise(nodeEl)) // Class rewrite only — before the next paint
+  // `style` is the drag transform. Watching it ran this guard on every move and rewrote the node under the cursor.
+  obs.observe(nodeEl, { attributes: true, attributeFilter: ['class'] })
+  raiseGuards.set(nodeId, obs)
+}
+
 function clearClip(nodeEl: HTMLElement | null, panel: HTMLElement | null): void {
-  nodeEl?.classList.remove(RAISED_CLASS)
+  if (nodeEl) {
+    wantRaised.delete(nodeEl) // Observer must not restore this raise
+    raiseRank.delete(nodeEl)
+    nodeEl.classList.remove(RAISED_CLASS)
+    nodeEl.style.removeProperty('--tt-front-rank')
+  }
   clearChromeFade(panel)
   panel?.querySelectorAll(`[${TARGET_ATTR}]`).forEach((el) => {
     const t = el as HTMLElement
@@ -177,10 +237,10 @@ function clearClip(nodeEl: HTMLElement | null, panel: HTMLElement | null): void 
   })
 }
 
-function applyClip(nodeEl: HTMLElement, panel: HTMLElement): void {
-  const holes = frontFrameBoxes(nodeEl, panel.getBoundingClientRect())
-  if (holes.length === 0) {
-    clearClip(nodeEl, panel)
+function applyClip(nodeEl: HTMLElement, panel: HTMLElement, solidChrome = false): void {
+  const { holes, raise } = frontCover(nodeEl, panel.getBoundingClientRect())
+  if (!raise) {
+    clearClip(nodeEl, panel) // No front frame still painting over this one
     return
   }
   panel.querySelectorAll(TARGET_SELECTOR).forEach((el) => {
@@ -195,17 +255,39 @@ function applyClip(nodeEl: HTMLElement, panel: HTMLElement): void {
       t.setAttribute(TARGET_ATTR, '')
     }
   })
-  applyChromeFade(panel, holes) // Chrome over front frames → semi-transparent
-  nodeEl.classList.add(RAISED_CLASS) // Front frame meets panel or hanging chrome
+  if (solidChrome) clearChromeFade(panel) // Multi-select bare box stays solid — a 40% ring reads as behind
+  else applyChromeFade(panel, holes) // Single-select chrome over front frames → semi-transparent
+  raiseRank.set(nodeEl, selectedFrontRank(nodeEl)) // Above a multi-selected overlapping frame, not tied with it
+  wantRaised.add(nodeEl)
+  restoreRaise(nodeEl) // Above the overlapping frame even when that frame is multi-selected too
+}
+
+/**
+ * nodeInternals is a new Map on every position tick.
+ * Treating those as equal while a frame is moving keeps this hook from reclipping
+ * (getBoundingClientRect on every frame) on the same frames the transform is moving.
+ */
+function internalsEqual(prev: unknown, next: unknown): boolean {
+  if (prev === next) return true // Same map — selection did not move
+  if (prev == null || next == null) return false // Select / deselect still reclips
+  return isFrameDragging() // Mid-drag maps are position noise
 }
 
 /** Live selected frames — the overlap-fade pump re-applies these mid-zoom (React is frozen then). */
-const liveClips = new Map<string, { nodeEl: HTMLElement; panel: HTMLElement }>()
+const liveClips = new Map<string, { nodeEl: HTMLElement; panel: HTMLElement; solidChrome: boolean }>()
 
 /** Re-raise / re-clip every live selected frame — call after overlap fade paints a zoom tick. */
 export function refreshFrontFrameClips(): void {
-  liveClips.forEach(({ nodeEl, panel }) => {
-    if (nodeEl.isConnected && panel.isConnected) applyClip(nodeEl, panel) // Mate fade-in/out changes what covers us
+  liveClips.forEach(({ nodeEl, panel, solidChrome }) => {
+    if (nodeEl.isConnected && panel.isConnected) applyClip(nodeEl, panel, solidChrome) // Mate fade-in/out changes what covers us
+  })
+}
+
+let dragEndReclipArmed = false // Module can evaluate twice (HMR) — one hook is enough
+if (typeof window !== 'undefined' && !dragEndReclipArmed) {
+  dragEndReclipArmed = true
+  registerFrameDragEndHook(() => {
+    requestAnimationFrame(() => refreshFrontFrameClips()) // Final boxes, after the last transform write
   })
 }
 
@@ -217,31 +299,42 @@ export function useFrontFrameContentClip(
   nodeId: string,
   enabled: boolean,
   panelRef: RefObject<HTMLElement | null>,
-  rotated: boolean
+  rotated: boolean,
+  solidChrome = false // Multi-select: bare box, fully opaque over the front frame
 ): void {
-  // Stable Map ref; null when off → unselected frames never re-render from this
-  const internals = useStore((s) => (enabled ? s.nodeInternals : null))
+  // Null when off → unselected frames never re-render from this. Equal while dragging so the move does not reclip.
+  const internals = useStore((s) => (enabled ? s.nodeInternals : null), internalsEqual)
   const zoom = useStore((s) => (enabled ? s.transform[2] : 1)) // Screen-constant widgets resize with zoom → re-place mask boxes
 
   useLayoutEffect(() => {
     const panel = panelRef.current
     const nodeEl = (panel?.closest('.react-flow__node') as HTMLElement | null) ?? null
     if (!panel || !nodeEl) return
-    if (!enabled || !internals || rotated) {
+    if (!enabled || !internals || rotated || solidChrome) {
+      disconnectRaiseGuard(nodeId) // Do not put the class back after we drop it
       liveClips.delete(nodeId)
-      clearClip(nodeEl, panel)
+      clearClip(nodeEl, panel) // Multi-select: frame stays put; its bare box is drawn above the frames
       return
     }
-    liveClips.set(nodeId, { nodeEl, panel }) // Pump keeps us current while zooming
-    const raf = requestAnimationFrame(() => applyClip(nodeEl, panel)) // After RF writes transforms
+    liveClips.set(nodeId, { nodeEl, panel, solidChrome }) // Pump keeps us current while zooming
+    connectRaiseGuard(nodeId, nodeEl) // Next className write would hide the box until a drag
+    applyClip(nodeEl, panel, solidChrome) // This paint — do not wait for drag to bump zIndex
+    const raf = requestAnimationFrame(() => {
+      if (isFrameDragging()) return // Move owns the transform — reclip once on release
+      if (nodeEl.isConnected && panel.isConnected) applyClip(nodeEl, panel, solidChrome) // After RF writes transforms
+    })
     return () => {
       cancelAnimationFrame(raf)
+      disconnectRaiseGuard(nodeId)
       liveClips.delete(nodeId)
     }
-  }, [internals, zoom, enabled, rotated, nodeId, panelRef])
+  }, [internals, zoom, enabled, rotated, solidChrome, nodeId, panelRef])
 
   useLayoutEffect(() => {
     const panel = panelRef.current
-    return () => clearClip((panel?.closest('.react-flow__node') as HTMLElement | null) ?? null, panel)
-  }, [panelRef])
+    return () => {
+      disconnectRaiseGuard(nodeId) // Unmount must not restore a raise we are clearing
+      clearClip((panel?.closest('.react-flow__node') as HTMLElement | null) ?? null, panel)
+    }
+  }, [panelRef, nodeId])
 }

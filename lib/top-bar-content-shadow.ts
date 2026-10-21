@@ -188,9 +188,21 @@ function addGeometrySpan(spans: Span[], strokes: StrokeRun[], geom: SVGGeometryE
   clusterXs(xs, bar.width, 0, depth, spans) // Chord of the fill, no pad past its edges
 }
 
+/** True when overlap-hide has taken the fill (and its text) off the board. */
+function isOverlapHideGone(el: Element): boolean {
+  const node = el.closest('.react-flow__node')
+  if (!(node instanceof HTMLElement)) return false
+  if (node.classList.contains('tt-overlap-fade-pass')) return true // Hide ease finished
+  const raw = node.style.getPropertyValue('--tt-overlap-fade')
+  if (raw === '') return false // Not in the hide set
+  const fade = Number(raw)
+  return Number.isFinite(fade) && fade < 0.08 // Fill is gone — don't shadow the ghost
+}
+
 function nodeHidden(node: HTMLElement): boolean {
   if (node.style.visibility === 'hidden' || node.style.display === 'none') return true // Filter-hidden frames
-  return node.getAttribute('aria-hidden') === 'true'
+  if (node.getAttribute('aria-hidden') === 'true') return true
+  return isOverlapHideGone(node) // Zoom-hidden fill still occupies the DOM
 }
 
 function blockHasText(el: Element): boolean {
@@ -459,6 +471,7 @@ function visiblePaintBottom(x: number, y: number, flow: Element): number | null 
   for (const el of stack) {
     if (!(el instanceof Element)) continue
     if (el.closest('[data-edit-top-bar]')) continue // The bar and its shadow strips
+    if (isOverlapHideGone(el)) continue // Parent fill is gone; child opacity still reads as 1
     if (!flow.contains(el)) continue // Chrome beside the board
     if (
       el.classList.contains('react-flow__pane') ||
@@ -668,7 +681,7 @@ export function watchTopBarContentShadow(
       subtree: true,
       childList: true, // Frames added / removed
       attributes: true,
-      attributeFilter: ['style', 'class', 'd', 'transform'], // Pan, drag, thread paths, selection
+      attributeFilter: ['style', 'class', 'd', 'transform', 'data-tt-overlap-fade'], // Pan, drag, hide-large-overlap
     })
   }
   const column = mapColumn(bar)

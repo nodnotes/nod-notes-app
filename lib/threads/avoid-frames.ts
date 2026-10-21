@@ -6,6 +6,7 @@ import {
   sampleSmoothThreadBezier,
   connectionDirection,
   clampArrowHead,
+  smoothThreadHandle,
   type SmoothThreadBezier,
 } from '@/components/threads/path/bezier' // Same cubic family as an unbent smooth thread
 import { readFrameChromePad } from '@/lib/frame-chrome-offset' // Selection gutter — the fill, not the adjust box, is the obstacle
@@ -405,16 +406,20 @@ function bowCubic(
   const lanePt = horizontal
     ? { x: (source.x + end.x) / 2, y: laneOut } // Where the middle should sit
     : { x: laneOut, y: (source.y + end.y) / 2 }
-  const handle = Math.min(360, Math.max(72, span * 0.5)) // Same handle scale as an unbent smooth thread
-  const c1 = { x: source.x + out.x * handle, y: source.y + out.y * handle } // On the source side
-  const c2 = { x: end.x - inn.x * handle, y: end.y - inn.y * handle } // On the arrival side
+  const dx = end.x - source.x // Stroke span X — same input the direct thread uses
+  const dy = end.y - source.y // Stroke span Y
+  const strokeSpan = Math.hypot(dx, dy) || 1 // Length the hook is scaled against
+  const leaveLen = smoothThreadHandle(dx * out.x + dy * out.y, strokeSpan) // Same leave hook as a direct thread
+  const arriveLen = smoothThreadHandle(dx * inn.x + dy * inn.y, strokeSpan) // Same arrival hook — sideways stays a short bow
+  const c1 = { x: source.x + out.x * leaveLen, y: source.y + out.y * leaveLen } // On the source side
+  const c2 = { x: end.x - inn.x * arriveLen, y: end.y - inn.y * arriveLen } // On the arrival side
   const natural = cubicAt(source, c1, c2, end, 0.5) // Middle of that normal curve
-  const dx = lanePt.x - natural.x // How far the lane sits off the normal curve
-  const dy = lanePt.y - natural.y
-  const dist = Math.hypot(dx, dy) // Size of the ease
+  const offX = lanePt.x - natural.x // How far the lane sits off the normal curve
+  const offY = lanePt.y - natural.y
+  const dist = Math.hypot(offX, offY) // Size of the ease
   const built = dist < 0.5
     ? { path: `M${source.x},${source.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${end.x},${end.y}`, samples: cubicSamples(source, c1, c2, end), mid: natural }
-    : displaceSmooth(source, c1, c2, end, dx / dist, dy / dist, dist) // Same curve, middle eased onto the lane
+    : displaceSmooth(source, c1, c2, end, offX / dist, offY / dist, dist) // Same curve, middle eased onto the lane
   const crossed = (frames: FrameObstacle[]) => {
     const hit: FrameObstacle[] = [] // Frames this bow still enters
     const samples = built.samples // The perpendicular path, not a diagonal cubic

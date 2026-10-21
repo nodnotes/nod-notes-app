@@ -1,4 +1,9 @@
-import { computeMinimapGeometry } from '@/lib/minimap-geometry'
+import {
+  computeMinimapGeometry,
+  minimapNodesInViewBounds,
+  stickMinimapFrame,
+  type MinimapFlowRect,
+} from '@/lib/minimap-geometry'
 
 export const PREVIEW_MINIMAP_STATE_MESSAGE = 'nodnotes-preview-minimap-state'
 export const PREVIEW_MINIMAP_COMMAND_MESSAGE = 'nodnotes-preview-minimap-command'
@@ -48,30 +53,14 @@ export function getFocusedPreviewIframe(pageId: string): HTMLIFrameElement | nul
   )
 }
 
-function previewNodesBounds(nodes: PreviewMinimapNode[]) {
-  if (nodes.length === 0) {
-    return { x: 0, y: 0, width: 0, height: 0 }
-  }
-  let minX = Infinity
-  let minY = Infinity
-  let maxX = -Infinity
-  let maxY = -Infinity
-  for (const node of nodes) {
-    minX = Math.min(minX, node.x)
-    minY = Math.min(minY, node.y)
-    maxX = Math.max(maxX, node.x + node.width)
-    maxY = Math.max(maxY, node.y + node.height)
-  }
-  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
-}
-
 /** Same viewBox math as BoardMiniMap — host renders preview snapshot in the chrome slot. */
 export function computePreviewMinimapGeometry(
   state: PreviewMinimapState,
   elementWidth: number,
   elementHeight: number,
   offsetScale = 5,
-  scopeZoom = 1 // Independent of host + nested cameras — 1 fits the board view
+  scopeZoom = 1, // Independent of host + nested cameras — 1 fits the board view
+  held?: { zoom: number; frame: MinimapFlowRect | null } // Same pan-stick as the host minimap
 ) {
   const zoom = state.transform[2]
   const viewBB = {
@@ -80,14 +69,21 @@ export function computePreviewMinimapGeometry(
     width: state.width / zoom,
     height: state.height / zoom,
   }
-  const content = state.nodes.length > 0 ? previewNodesBounds(state.nodes) : null
-  return computeMinimapGeometry(
-    viewBB,
-    content,
-    elementWidth,
-    elementHeight,
-    offsetScale,
-    scopeZoom
-  )
+  const visible =
+    state.nodes.length > 0
+      ? minimapNodesInViewBounds(state.nodes, viewBB) // Same in-view slice as the board minimap
+      : null
+  const stuck = stickMinimapFrame(visible, zoom, held ?? { zoom: Number.NaN, frame: null })
+  return {
+    ...computeMinimapGeometry(
+      viewBB,
+      stuck.frame,
+      elementWidth,
+      elementHeight,
+      offsetScale,
+      scopeZoom
+    ),
+    stick: stuck,
+  }
 }
 

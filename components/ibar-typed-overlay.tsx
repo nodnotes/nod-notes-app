@@ -13,15 +13,10 @@ export function IBarTypedText({ zoom }: { zoom: number }) {
       const next = (event as CustomEvent<{ text?: string }>).detail?.text // Full capture buffer
       if (typeof next === 'string') setText(next) // Paint letters immediately (no TipTap wait)
     }
-    const onReady = () => setText('') // Frame owns the glyphs now — drop the overlay copy
+    // Stay up until the I-bar unmounts. seed-applied can fire while the new frame is still
+    // under the hidden large frame — clearing here made the letters vanish with the caret.
     window.addEventListener('tt-ibar-typed-seed', onSeed)
-    window.addEventListener('tt-ibar-editor-ready', onReady)
-    window.addEventListener('tt-ibar-seed-applied', onReady) // Fallback if ready never fires
-    return () => {
-      window.removeEventListener('tt-ibar-typed-seed', onSeed)
-      window.removeEventListener('tt-ibar-editor-ready', onReady)
-      window.removeEventListener('tt-ibar-seed-applied', onReady)
-    }
+    return () => window.removeEventListener('tt-ibar-typed-seed', onSeed)
   }, [])
   if (!text) return null // Idle I-bar is just the caret
   const phone =

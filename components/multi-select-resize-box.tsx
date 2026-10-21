@@ -53,7 +53,8 @@ type Snap = {
   data: Record<string, unknown> | null // Freehand payload
 }
 
-type BoundsState = { box: FlowBox; count: number } | null // Null when fewer than two objects
+type MemberRing = FlowBox & { id: string; rotation: number; z: number } // One bare box, painted above the frames
+type BoundsState = { box: FlowBox; count: number; members: MemberRing[] } | null // Null when fewer than two objects
 
 /** Opposite corner stays fixed while the dragged corner moves. */
 function anchorFor(box: FlowBox, corner: Corner): { x: number; y: number } {
@@ -230,9 +231,22 @@ export function MultiSelectResizeBox({ canEdit, onCommit }: Props) {
         if (node.selected && GROUP_SELECT_TYPES.has(node.type || '')) selected.push(node) // Group members only
       })
       if (selected.length < 2 || s.userSelectionActive) return null // Marquee draws its own rect
-      const box = unionBoxes(selected.map(paintedBox).filter((item): item is FlowBox => !!item))
+      const members: MemberRing[] = [] // Bare box of each selected frame, drawing, or shape
+      selected.forEach((node, order) => {
+        const painted = paintedBox(node) // Same rect the in-node ring uses
+        if (!painted) return
+        const geom = readLiveGroupGeom(node.id) // Content angle, so a turned frame's box stays turned
+        members.push({
+          ...painted,
+          id: node.id,
+          rotation: geom?.rotation ?? 0,
+          z: (typeof node.zIndex === 'number' ? node.zIndex : 0) * 100000 + order, // Later sibling breaks a z tie
+        })
+      })
+      members.sort((a, b) => b.z - a.z) // Covered frame's box paints last, so it sits on the overlapping frame
+      const box = unionBoxes(members)
       if (!box) return null // Not measured yet
-      return { box, count: selected.length }
+      return { box, count: selected.length, members }
     },
     (a, b) =>
       a === b ||
@@ -242,7 +256,12 @@ export function MultiSelectResizeBox({ canEdit, onCommit }: Props) {
         a.box.x === b.box.x &&
         a.box.y === b.box.y &&
         a.box.width === b.box.width &&
-        a.box.height === b.box.height)
+        a.box.height === b.box.height &&
+        a.members.length === b.members.length &&
+        a.members.every((m, i) => {
+          const n = b.members[i]
+          return m.id === n.id && m.x === n.x && m.y === n.y && m.width === n.width && m.height === n.height && m.rotation === n.rotation && m.z === n.z
+        }))
   )
 
   const transform = useStore(
@@ -632,6 +651,24 @@ export function MultiSelectResizeBox({ canEdit, onCommit }: Props) {
         transformOrigin: '0 0', // Same origin as the node viewport
       }}
     >
+      {live?.members.map((member) => (
+        <div
+          key={member.id} // One bare box per selected frame — not the frame fill
+          aria-hidden
+          data-tt-adjust-ring
+          className="pointer-events-none" // The group box owns the hits
+          style={{
+            position: 'absolute',
+            left: member.x, // Painted ring origin in flow space
+            top: member.y,
+            width: member.width,
+            height: member.height,
+            boxShadow: `inset 0 0 0 ${ui}px #3b82f6`, // Screen-constant stroke, above every frame
+            transform: member.rotation ? `rotate(${member.rotation}deg)` : undefined, // Match a turned frame
+            transformOrigin: 'center center',
+          }}
+        />
+      ))}
       <div
         className="tt-group-resize"
         data-panel-container="true" // Chrome CSS targets this box like a frame

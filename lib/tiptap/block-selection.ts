@@ -356,6 +356,7 @@ export function setEditorBlockHighlight(
   range: { from: number; to: number } | null
 ) {
   if (!editor || editor.isDestroyed) return
+  if (!range && highlightKey.getState(editor.state)?.find().length === 0) return // Already clear — dispatch re-enters every deselected frame
   const tr = editor.state.tr
   if (!range) {
     tr.setMeta(highlightKey, 'clear')

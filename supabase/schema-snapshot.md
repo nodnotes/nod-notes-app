@@ -1,7 +1,7 @@
 # Supabase schema snapshot
 
 - Project: `yhsyhtnnklpkfcpydbst` (Nod Notes)
-- Snapped at: `2026-10-18T21:57:06Z`
+- Snapped at: `2026-10-21T19:36:23Z`
 - Source: local `supabase/migrations/` + remote applied tops (plugin Supabase `list_migrations` on `yhsyhtnnklpkfcpydbst`) + `.temp` service versions
 - Service versions (from `supabase/.temp` / `get_project`): postgres `17.6.1.052`, gotrue `v2.196.0`, rest `v14.5`, storage `v1.73.1`
 - CLI: `supabase` `2.90.0`. A stray `---` in `.env.local` blocks every command until commented; with that line skipped, `migration list --linked` still fails (`42501` cannot alter `cli_login_postgres`). Remote list is from the Management API. cli-latest reports `v2.121.0`.
@@ -9,6 +9,21 @@
 - Production: **https://nodnotes.com** (Vercel `nod-notes`, Cloudflare DNS A → `76.76.21.21`)
 
 ## This save
+
+- DDL: none. Marker `20261021193623_hide_zoom_ibar_minimap_print_pan.sql`.
+- **Hide large overlapping**: fill eases out and back; I-bar, typed letters, and caret stay behind the hidden frame; corner carets and a nav cue ease with the hide; adjust blue follows the fill.
+- **Board camera**: 200% pan enclosure is one pane past the fit box; the zoom floor drops so a giant overlap can show at that stop.
+- **Minimap**: paints nodes that intersect the camera; Print view letterboxes the mask hole to paper / aspect.
+- **Threads**: unbent paths hop to a side pair that stays outside both fills.
+- Schema unchanged; remote applied list (Management API) still tops out at `20260924223511_board_changes_autosave`.
+
+## Prior: Overlap fade / front-frame adjust box
+
+- DDL: none. Marker `20261019024744_overlap_fade_front_frame_adjust_box.sql`.
+- **Hide large overlapping**: board-menu toggle; big overlapping frames fade with zoom; selected frame's adjust box paints above front frames.
+- Schema unchanged; remote DDL top remains `20260924223511_board_changes_autosave`.
+
+## Prior: Frame chrome zoom / stack fade / wrap edge
 
 - DDL: none. Marker `20261018215706_frame_chrome_zoom_stack_fade_wrap_edge.sql`.
 - **Frame chrome zoom**: ⋮⋮ / wrap dashes / L/R gutters ride board zoom (≥100% ×1/zoom; wrap tracks height on zoom-out); property/connections bands follow screen chrome scale.

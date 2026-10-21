@@ -10,11 +10,10 @@ export type MinimapFlowRect = {
 export const MINIMAP_SCOPE_ZOOM = { min: 0.25, max: 8 } as const
 
 /**
- * Minimum dimmed “out of view” band on each side of the minimap (CSS px).
- * When the board is zoomed out the true viewport can fill the SVG — clamp the hole
- * so this mask always remains visible.
+ * Extra dimmed inset (CSS px) on top of the viewBox offset.
+ * 0 — the edge gap is `geometry.offset` only (offsetScale), not a second band.
  */
-export const MINIMAP_MASK_MIN_CSS_PX = 8
+export const MINIMAP_MASK_MIN_CSS_PX = 0
 
 /**
  * Floor board gap (flow px) when content is tiny — roomy padding for 200% / pan enclosure.
@@ -56,9 +55,6 @@ export function boardBoundsGapForAxis(contentPx: number): number {
 export function clampMinimapScopeZoom(z: number) {
   return Math.max(MINIMAP_SCOPE_ZOOM.min, Math.min(MINIMAP_SCOPE_ZOOM.max, z))
 }
-
-/** Auto mode sizes the board-view hole to this fraction of the minimap (limiting axis). */
-export const MINIMAP_AUTO_VIEW_FRACTION = 0.5
 
 /** Axis-aligned intersection; null when the rects miss. */
 export function rectIntersection(
@@ -117,85 +113,133 @@ export function minimapBoardBounds(
 }
 
 /**
- * Auto minimap scope so the current board view covers ~50% of the SVG (limiting axis).
- * Frames the live camera (not content). Manual wheel overrides until the next board zoom.
- */
-export function minimapScopeForHalfView(
-  viewBB: MinimapFlowRect,
-  _content: MinimapFlowRect | null,
-  elementWidth: number,
-  elementHeight: number,
-  offsetScale = 5,
-  targetFraction = MINIMAP_AUTO_VIEW_FRACTION
-): number {
-  const boundingRect = minimapBoundingRect(null, viewBB) // Full board view
-  if (boundingRect.width <= 0 || boundingRect.height <= 0) return 1
-  if (viewBB.width <= 0 || viewBB.height <= 0) return 1
-  const fitScale = Math.max(
-    boundingRect.width / Math.max(elementWidth, 1),
-    boundingRect.height / Math.max(elementHeight, 1)
-  ) // Flow units per CSS px at view-fit (scope 1)
-  // Same padding factor computeMinimapGeometry uses at scope 1
-  const frameW = fitScale * (elementWidth + 2 * offsetScale)
-  const frameH = fitScale * (elementHeight + 2 * offsetScale)
-  const frac = Math.max(viewBB.width / frameW, viewBB.height / frameH) // Hole share at scope 1
-  if (!(frac > 0) || !Number.isFinite(frac)) return 1
-  // Hole share scales with scope → pick scope so the share lands on the target
-  return clampMinimapScopeZoom(targetFraction / frac)
-}
-
-/**
- * Evenodd hole for the out-of-view mask = the full board camera (`viewBB`).
- * Never clipped to content — the square matches what the pane actually shows.
- * A min dimmed band still stays when the camera would fill the SVG.
+ * Evenodd hole = camera clipped to the painted map.
+ * Miss → null (no hole, all dimmed). Do not punch the whole widget — that jumped
+ * the mask when the furthest object left the screen.
  */
 export function minimapViewportMaskRect(
   viewBB: MinimapFlowRect,
   frame: MinimapFlowRect, // Painted minimap world (geometry x/y/width/height)
   viewScale: number, // Flow units per CSS px on the minimap
   minMaskCssPx = MINIMAP_MASK_MIN_CSS_PX
-): MinimapFlowRect {
-  const hole = viewBB // Full board view — not content
+): MinimapFlowRect | null {
   const pad = minMaskCssPx * Math.max(viewScale, 1e-6) // Flow inset that must stay dimmed
-  const maxW = Math.max(0, frame.width - pad * 2)
-  const maxH = Math.max(0, frame.height - pad * 2)
-  // Uniform scale when the camera is larger than the inset frame — keep true view aspect
-  const fit =
-    hole.width > maxW || hole.height > maxH
-      ? Math.min(maxW / Math.max(hole.width, 1e-6), maxH / Math.max(hole.height, 1e-6), 1)
-      : 1
-  const width = hole.width * fit
-  const height = hole.height * fit
-  // Keep the hole on the camera center, then clamp inside the frame inset
-  let x = hole.x + (hole.width - width) / 2
-  let y = hole.y + (hole.height - height) / 2
-  const minX = frame.x + pad
-  const minY = frame.y + pad
-  const maxX = frame.x + frame.width - pad - width
-  const maxY = frame.y + frame.height - pad - height
-  if (maxX >= minX) x = Math.min(Math.max(x, minX), maxX)
-  else x = minX
-  if (maxY >= minY) y = Math.min(Math.max(y, minY), maxY)
-  else y = minY
-  return { x, y, width, height }
+  const inner: MinimapFlowRect = {
+    x: frame.x + pad,
+    y: frame.y + pad,
+    width: Math.max(0, frame.width - pad * 2),
+    height: Math.max(0, frame.height - pad * 2),
+  }
+  return rectIntersection(viewBB, inner) // Overlap only — full contain already returns `inner`
+}
+
+/** Largest same-center rect with this width/height ratio that fits in `box`. */
+export function fitAspectInRect(box: MinimapFlowRect, aspect: number): MinimapFlowRect {
+  if (!(aspect > 0) || box.width <= 0 || box.height <= 0) return box
+  const boxAspect = box.width / box.height
+  if (boxAspect > aspect) {
+    const width = box.height * aspect // Box is wider — dim the sides
+    return { x: box.x + (box.width - width) / 2, y: box.y, width, height: box.height }
+  }
+  const height = box.width / aspect // Box is taller — dim the top/bottom
+  return { x: box.x, y: box.y + (box.height - height) / 2, width: box.width, height }
+}
+
+/** ViewBox minus its offset — the hole stays this far from the widget edge. */
+export function minimapMaskClipRect(geometry: {
+  x: number
+  y: number
+  width: number
+  height: number
+  offset: number
+}): MinimapFlowRect {
+  const pad = geometry.offset // Same air computeMinimapGeometry added around the fit
+  return {
+    x: geometry.x + pad,
+    y: geometry.y + pad,
+    width: Math.max(0, geometry.width - pad * 2),
+    height: Math.max(0, geometry.height - pad * 2),
+  }
 }
 
 /**
- * World rect the minimap frames against = the live board camera (full board view).
- * Content is ignored — the map follows what the pane shows, not the content AABB.
+ * World rect the minimap frames against = nodes currently in the camera, with air
+ * so marks are not flush to the widget. Empty view falls back to the camera.
  */
 export function minimapBoundingRect(
-  _content: MinimapFlowRect | null,
+  content: MinimapFlowRect | null,
   view: MinimapFlowRect
 ): MinimapFlowRect {
-  return view
+  if (!content || content.width <= 0 || content.height <= 0) return view // Nothing measured — show the camera
+  const padX = Math.max(12, content.width * 0.06) // Slight air so a frame on the edge is not clipped
+  const padY = Math.max(12, content.height * 0.06)
+  return {
+    x: content.x - padX,
+    y: content.y - padY,
+    width: content.width + padX * 2,
+    height: content.height + padY * 2,
+  }
+}
+
+/** Union two AABBs. Nulls drop out. */
+export function unionFlowRects(
+  a: MinimapFlowRect | null,
+  b: MinimapFlowRect | null
+): MinimapFlowRect | null {
+  if (!a) return b
+  if (!b) return a
+  const x = Math.min(a.x, b.x)
+  const y = Math.min(a.y, b.y)
+  const right = Math.max(a.x + a.width, b.x + b.width)
+  const bottom = Math.max(a.y + a.height, b.y + b.height)
+  return { x, y, width: right - x, height: bottom - y }
+}
+
+/**
+ * Keep the last in-view frame while board zoom is unchanged.
+ * Panning the furthest object off-screen used to fall back to the camera and snap
+ * the widget to a huge empty board; the object should stay under the mask instead.
+ * A zoom change resets so on-screen marks still fill the widget.
+ */
+export function stickMinimapFrame(
+  visible: MinimapFlowRect | null,
+  boardZoom: number,
+  prev: { zoom: number; frame: MinimapFlowRect | null }
+): { zoom: number; frame: MinimapFlowRect | null } {
+  const zoomChanged = !(prev.zoom > 0) || Math.abs(prev.zoom - boardZoom) > 1e-6
+  if (zoomChanged) return { zoom: boardZoom, frame: visible } // New camera scale — reframe
+  return { zoom: boardZoom, frame: unionFlowRects(prev.frame, visible) } // Pan: keep / grow, never drop to camera
+}
+
+/** AABB of the on-screen part of each node. Null when nothing intersects the camera. */
+export function minimapNodesInViewBounds(
+  nodes: MinimapFlowRect[],
+  view: MinimapFlowRect
+): MinimapFlowRect | null {
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  let any = false
+  for (const node of nodes) {
+    if (node.width <= 0 || node.height <= 0) continue
+    const hit = rectIntersection(node, view) // Visible slice only — a huge off-screen frame must not shrink the rest
+    if (!hit) continue
+    any = true
+    minX = Math.min(minX, hit.x)
+    minY = Math.min(minY, hit.y)
+    maxX = Math.max(maxX, hit.x + hit.width)
+    maxY = Math.max(maxY, hit.y + hit.height)
+  }
+  if (!any) return null
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
 
 /**
  * Full minimap SVG geometry (viewBox + mask), shared by board + preview minimaps.
  *
- * Frames the live board camera (full board view), not content. Scope zooms the
- * minimap around that camera; the mask hole is the same viewBB.
+ * Frames nodes in the current camera so those marks fill the widget. Scope 1 fits
+ * that box; the mask hole is the camera clipped to the viewBox inset (edge gap).
  */
 export function computeMinimapGeometry(
   viewBB: MinimapFlowRect,
@@ -205,7 +249,7 @@ export function computeMinimapGeometry(
   offsetScale = 5,
   scopeZoom = 1 // 1 = framing fit; >1 closer look; <1 more padding — not board zoom
 ) {
-  const boundingRect = minimapBoundingRect(content, viewBB) // Full board view
+  const boundingRect = minimapBoundingRect(content, viewBB) // Nodes on screen, else the camera
   const scaledWidth = boundingRect.width / Math.max(elementWidth, 1)
   const scaledHeight = boundingRect.height / Math.max(elementHeight, 1)
   const fitScale = Math.max(scaledWidth, scaledHeight) // Flow units per CSS px at view-fit
@@ -216,9 +260,9 @@ export function computeMinimapGeometry(
   const offset = offsetScale * viewScale
   const width = viewWidth + offset * 2
   const height = viewHeight + offset * 2
-  // Always center on the board camera so pan updates the map with the view
-  const anchorX = viewBB.x + viewBB.width / 2
-  const anchorY = viewBB.y + viewBB.height / 2
+  // Center on the framed nodes so the camera hole moves across them as you pan
+  const anchorX = boundingRect.x + boundingRect.width / 2
+  const anchorY = boundingRect.y + boundingRect.height / 2
   const x = anchorX - width / 2
   const y = anchorY - height / 2
   return {

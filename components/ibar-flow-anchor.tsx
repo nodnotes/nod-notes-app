@@ -16,7 +16,7 @@ export function IBarFlowAnchor({
   flowX: number
   flowY: number
   boardRotation: number
-  children: (layout: { left: number; top: number; paneScale: number }) => ReactNode
+  children: (layout: { left: number; top: number; paneScale: number; zoom: number }) => ReactNode
 }) {
   // Position + size both use live zoom — never navigationZoom freeze (that snapped size on settle).
   const viewport = useStore(
@@ -29,5 +29,5 @@ export function IBarFlowAnchor({
   )
   const pane = flowToPane(flowX, flowY, { x: viewport.x, y: viewport.y, zoom: viewport.liveZoom }, boardRotation)
   const paneScale = ibarPaneScale(viewport.liveZoom) // Tracks pinch continuously; no post-zoom resize
-  return <>{children({ left: pane.x, top: pane.y, paneScale })}</>
+  return <>{children({ left: pane.x, top: pane.y, paneScale, zoom: viewport.liveZoom })}</>
 }

@@ -578,6 +578,8 @@ export function TipTapBlockHandles({
   propertyHeaderArmedRef.current = propertyHeaderArmed
   // Bottom connections strip armed — chrome-only (no TipTap cells). Cleared with the selection.
   const [connectionsHeaderArmed, setConnectionsHeaderArmed] = useState(false)
+  const connectionsHeaderArmedRef = useRef(false) // Clear reads this so an already-idle frame does not setState
+  connectionsHeaderArmedRef.current = connectionsHeaderArmed
   const anchorRef = useRef<EditorBlockRef | null>(null) // Anchor block for Shift range-select
   // Keep latest layouts in refs so transaction refresh doesn’t need stale state
   const hoverRef = useRef<HandleLayout | null>(null)
@@ -600,9 +602,17 @@ export function TipTapBlockHandles({
 
   // Drop block wash + selection + menu (frame deselect, click away, etc.)
   const clearBlockSelection = useCallback(() => {
+    const armed =
+      selectionRef.current.length > 0 ||
+      propertyHeaderArmedRef.current ||
+      connectionsHeaderArmedRef.current ||
+      menuRef.current != null ||
+      connectionsMenuRef.current != null
+    if (!armed) return // setSelection([]) is a new array — it re-rendered every deselected frame until max update depth
     if (editor) setEditorBlockHighlight(editor, null) // Wipe single + multi wash
     selectionRef.current = []
     propertyHeaderArmedRef.current = false
+    connectionsHeaderArmedRef.current = false
     setSelection([])
     setPropertyHeaderArmed(false) // Header is not a separate selection — drop with the cells
     setConnectionsHeaderArmed(false) // Connections strip wash / grip arm
@@ -621,9 +631,9 @@ export function TipTapBlockHandles({
   // Frame deselected → drop hover/caret grips and any armed block selection
   useEffect(() => {
     if (isPanelSelected) return
-    setHover(null) // No ⋮⋮ on unselected frame hover
-    setFocusLayout(null)
-    clearBlockSelection()
+    setHover((prev) => (prev === null ? prev : null)) // No ⋮⋮ on unselected frame hover
+    setFocusLayout((prev) => (prev === null ? prev : null))
+    clearBlockSelection() // No-op when this frame has no armed block
   }, [isPanelSelected, clearBlockSelection])
 
   // Apply a multi-block selection: update state + paint the multi-range wash.

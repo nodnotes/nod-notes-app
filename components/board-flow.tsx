@@ -106,7 +106,17 @@ import {
 import { attachFreehandLassoSelect } from '@/lib/freehand-lasso-select' // Draw bar Lasso — freehand trail, auto-closed
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
-import { useEffect, useLayoutEffect, useRef, useMemo, useState, useCallback } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useMemo,
+  useState,
+  useCallback,
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { useTheme } from '@/components/theme-provider'
 import { Button } from '@/components/ui/button'
@@ -148,8 +158,10 @@ import {
   clearLargeOverlapOpacities,
   invalidateLargeOverlapFadeDomCache,
   isLargeOverlapClickThrough,
+  isOverlapHideClickThrough,
   setLargeOverlapFadeContext,
   tickLargeOverlapFade,
+  zoomToRevealLargeOverlap,
 } from '@/lib/frame-overlap-hide' // Board-menu: fade big-on-screen overlapping frames
 import {
   clearFrameTextEditActive,
@@ -218,8 +230,14 @@ import {
 import { minStackIndex, stripNonThreadStacks } from '@/lib/frame-side-stacks' // Thread-pair stack z-order + migrate
 import { FrameNestStackOverlay } from './frame-nest-stack-overlay' // Snap preview line on host edge
 import { IBarFlowAnchor } from './ibar-flow-anchor' // I-bar placement without BoardFlow pan/zoom re-renders
+import { IBarTypedText } from './ibar-typed-overlay' // Letters at the caret until the new frame has painted them
 import { placeFrameScale } from '@/lib/ibar-place-scale' // Zoom-compensated frameScale for board place
-import { markIbarLiveCreate } from '@/lib/ibar-live-create' // Keep Yjs off for in-session I-bar creates
+import {
+  IBAR_STACK_BEFORE_NODE_ID,
+  insertIbarSpawnInStack,
+  planIbarSpawnUnderCover,
+} from '@/lib/ibar-spawn-stack' // Spawn under overlap at the caret, not appended on top
+import { isIbarLiveCreate, markIbarLiveCreate } from '@/lib/ibar-live-create' // Keep Yjs off for in-session I-bar creates
 import {
   armMarqueeFrameSelect,
   clearMarqueeFrameSelect,
@@ -250,6 +268,10 @@ import {
 } from '@/components/collab/board-cursors' // Peer cursors + pointer publish
 import { NodNotesBrandMark } from './personalize-ai-modal'
 import { NavZoomControl } from './nav-zoom-control' // Zoom % lives in bottom nav (not top bar)
+import {
+  HideZoomCaretSvg,
+  HIDE_ZOOM_CARET_ROT_DOWN_LEFT,
+} from './frame-hide-zoom-carets' // Same » as hidden-frame corners — nav cue when zoom hid a frame
 import { NavRotateControl } from './nav-rotate-control' // Board rotate icon — right of zoom %
 import { BoardRotationProvider, useBoardRotation } from './board-rotation-context' // Two-finger twist + nav camera heading
 import { applyBoardRotationToPositionChanges, boardRotationRef, viewportKeepingPanePoint } from '@/lib/board-rotation' // Camera-aware pane ↔ flow
@@ -262,6 +284,16 @@ import {
 import { panViewportToFlowOrigin } from '@/lib/minimap-viewport-pan' // Phone minimap drag keeps the grabbed point under the pointer
 import { viewportToRestore, writeBoardViewport } from '@/lib/board-viewport-persist' // Reload keeps pan/zoom; board switch still fits
 import { BoardMiniMap } from './board-minimap' // Full-board frame; white mask hole is the current view
+import {
+  MINIMAP_PRINT_PRESETS,
+  minimapPrintAspect,
+  minimapPrintUsesOrientation,
+  readMinimapPrintId,
+  readMinimapPrintLandscape,
+  writeMinimapPrintId,
+  writeMinimapPrintLandscape,
+  type MinimapPrintId,
+} from '@/lib/minimap-print-view' // Map menu paper/aspect letterboxes the hole
 import { PreviewMinimap } from './preview-minimap' // Host minimap for selected nested preview
 import {
   PREVIEW_MINIMAP_COMMAND_MESSAGE,
@@ -334,6 +366,7 @@ import {
   applyBoardD3Constrain,
   applyBoardZoomFloor,
   boardTranslateExtent,
+  expandBoundsForCrossScreenPan,
   expandSoftBounds,
   expandZoomRange,
   getLiveBoardBounds,
@@ -475,6 +508,40 @@ function isFrameAdjustBoxTarget(target: EventTarget | null): boolean {
   if (!el) return false
   if (el.closest('.react-flow__resize-control.handle')) return false // Corner knobs still resize
   return !!el.closest('.react-flow__resize-control.line, .tt-frame-resize-line, [data-tt-adjust-ring]')
+}
+
+/** True when a visible selection should take the empty-board click (deselect, no I-bar).
+ *  A large frame that has finished hiding is click-through — it must not block the cursor behind it. */
+function selectionBlocksEmptyPlace(nodes: Node[], selectedIds: readonly string[]): boolean {
+  const ids = new Set(selectedIds) // Ref can lead the nodes array by a frame
+  for (const n of nodes) {
+    if (n.selected) ids.add(n.id) // Live selection
+  }
+  if (ids.size === 0) return false // Nothing selected — place the I-bar
+  for (const id of ids) {
+    const n = nodes.find((node) => node.id === id)
+    if (!n) return true // Unknown id — keep the deselect click
+    if ((n.type === 'chatPanel' || n.type === 'blockGroup') && isOverlapHideClickThrough(n.id)) {
+      continue // Hidden large frame — the box already passes the click through
+    }
+    return true // A visible frame, drawing, or shape still owns the click
+  }
+  return false // Only hidden frames are selected — place the cursor behind them
+}
+
+/** Drop frame selection before I-bar capture — a still-selected frame keeps TipTap focused. */
+function releaseFramesForIBarCapture(
+  setNodes: Dispatch<SetStateAction<Node[]>>,
+  selectedIdsRef: MutableRefObject<string[]>
+) {
+  suppressEditorAutoSelect(500) // Blur must not snap the prior selection back on
+  clearFrameTextEditActive()
+  selectedIdsRef.current = []
+  setNodes((nds) =>
+    nds.map((n) =>
+      (n.type === 'chatPanel' || n.type === 'blockGroup') && n.selected ? { ...n, selected: false } : n
+    )
+  )
 }
 
 /** True when the click belongs to block/corner chrome, not the frame menu. */
@@ -927,6 +994,7 @@ function BoardFlowInner({
   const [zoomRange, setZoomRange] = useState<BoardZoomRange>(BOARD_ZOOM_DEFAULT)
   const zoomRangeRef = useRef(zoomRange)
   zoomRangeRef.current = zoomRange
+  const hideLargeOverlapEnabledRef = useRef(false) // Context lands later — floor reads this each sync
   const [translateExtent, setTranslateExtent] = useState<BoardTranslateExtent>(
     BOARD_TRANSLATE_EXTENT_INFINITE
   )
@@ -992,7 +1060,15 @@ function BoardFlowInner({
       })
       const content = measured.length > 0 ? getNodesBounds(measured) : null
       const board = getLiveBoardBounds(content, paneW, paneH)
-      const nextExtent = boardTranslateExtent(board)
+      const reveal = hideLargeOverlapEnabledRef.current
+        ? zoomToRevealLargeOverlap(list, paneW, paneH) // 200% must show the largest overlapping frame
+        : null
+      let nextZoom = applyBoardZoomFloor(zoomRangeRef.current, content, paneW, paneH, undefined, reveal)
+      // Pan box is the 200% fit plus one screen each way — 200% itself still fits `board`
+      const panBoard = board
+        ? expandBoundsForCrossScreenPan(board, paneW, paneH, nextZoom.minZoom)
+        : null
+      const nextExtent = boardTranslateExtent(panBoard)
       if (!translateExtentsEqual(translateExtentRef.current, nextExtent)) {
         translateExtentRef.current = nextExtent
         setTranslateExtent(nextExtent)
@@ -1006,7 +1082,6 @@ function BoardFlowInner({
         store as { d3Zoom?: Parameters<typeof applyBoardD3Constrain>[0] } | undefined
       )?.d3Zoom
       if (d3Zoom) applyBoardD3Constrain(d3Zoom)
-      let nextZoom = applyBoardZoomFloor(zoomRangeRef.current, content, paneW, paneH)
       if (liveZoom != null || (content && content.width > 0)) {
         nextZoom = expandZoomRange(nextZoom, {
           liveZoom,
@@ -1033,8 +1108,15 @@ function BoardFlowInner({
             height: number
           }
         | undefined
-      zoomApi?.setMinZoom?.(nextZoom.minZoom) // Live 200% floor into d3 + store
-      zoomApi?.setMaxZoom?.(nextZoom.maxZoom)
+      const liveMin = (store as { minZoom?: number } | undefined)?.minZoom // Store already has this floor
+      const liveMax = (store as { maxZoom?: number } | undefined)?.maxZoom
+      // Same floor still notified every subscriber. That remeasured frames and setNodes until max update depth.
+      if (zoomApi?.setMinZoom && (liveMin == null || Math.abs(liveMin - nextZoom.minZoom) > 1e-6)) {
+        zoomApi.setMinZoom(nextZoom.minZoom) // Live 200% floor into d3 + store
+      }
+      if (zoomApi?.setMaxZoom && (liveMax == null || Math.abs(liveMax - nextZoom.maxZoom) > 1e-6)) {
+        zoomApi.setMaxZoom(nextZoom.maxZoom) // Same guard — an equal max still woke the store
+      }
       const liveZ = zoomApi?.transform?.[2]
       // If camera is past the new 200% floor (content shrunk / first sync), snap up in place
       if (
@@ -1499,20 +1581,31 @@ function BoardFlowInner({
   const overlapFadePaneRef = useRef(paneSize)
   overlapFadePaneRef.current = paneSize
   useEffect(() => {
+    hideLargeOverlapEnabledRef.current = hideLargeOverlapEnabled // Floor + hide tick share this
     if (!hideLargeOverlapEnabled) {
       registerBoardZoomTickHook(null)
       setLargeOverlapFadeContext(null)
       clearLargeOverlapOpacities() // Pref off — wipe fades + caches
+      syncZoomFloorFromNodes(overlapFadeNodesRef.current) // Restore fit-bounds 200% (no reveal)
       return
     }
     setLargeOverlapFadeContext({
       enabled: true,
-      getNodes: () => reactFlowInstance?.getNodes() ?? overlapFadeNodesRef.current,
+      // Prefer React `nodes` (optimistic creates land here first); RF store can lag one commit.
+      // Drag is skipped in tick math, so live RF positions mid-drag are not needed here.
+      getNodes: () => {
+        const fromReact = overlapFadeNodesRef.current
+        const fromRf = reactFlowInstance?.getNodes()
+        if (!fromRf || fromRf.length === 0) return fromReact
+        if (fromReact.length > fromRf.length) return fromReact // New frame not in RF yet
+        return fromRf
+      },
       getViewport: () => reactFlowInstance?.getViewport() ?? { x: 0, y: 0, zoom: 1 },
       getPaneSize: () => overlapFadePaneRef.current,
     })
     registerBoardZoomTickHook((zoom) => tickLargeOverlapFade(zoom))
     tickLargeOverlapFade() // Seed once for the current camera
+    syncZoomFloorFromNodes(overlapFadeNodesRef.current) // Drop 200% so a hidden giant frame can reappear
     const unsubNav = subscribeBoardNavigating(() => {
       if (!isBoardNavigating()) tickLargeOverlapFade() // Settled zoom — final paint
     })
@@ -1522,13 +1615,15 @@ function BoardFlowInner({
       // Soft unregister — keep last paint; next mount re-binds getters without a dead gap
       setLargeOverlapFadeContext(null)
     }
-  }, [hideLargeOverlapEnabled, reactFlowInstance])
+  }, [hideLargeOverlapEnabled, reactFlowInstance, syncZoomFloorFromNodes])
 
   // Overlap pairs / pane size change while idle — zoom pump is not running
   useEffect(() => {
     if (!hideLargeOverlapEnabled) return
     if (isFrameDragging()) return // Position still in flux — tick on drag-stop instead
-    tickLargeOverlapFade()
+    invalidateLargeOverlapFadeDomCache() // New/remounted frames need fresh node lookups
+    // DOM size for hug frames may land a frame later than this commit
+    requestAnimationFrame(() => tickLargeOverlapFade())
   }, [hideLargeOverlapEnabled, nodes, paneSize.width, paneSize.height])
 
   const chatPanelCountRef = useRef(0) // Frame count is stable mid-drag — skip the O(n) scan per tick
@@ -1591,7 +1686,19 @@ function BoardFlowInner({
   // emits select changes when the count changes, so the frame you just moved stays selected.
   useEffect(() => {
     return rfStore.subscribe((state) => {
-      if (state.userSelectionActive) armMarqueeFrameSelect()
+      if (state.userSelectionActive) {
+        armMarqueeFrameSelect() // Following select changes belong to the rect
+      } else if (isMarqueeFrameSelectArmed()) {
+        // After this event's frame effects. Clearing inside handleNodesChange ran first,
+        // so deselect blur reselected one frame and looped PureEditorContent.
+        setTimeout(() => {
+          if (rfStore.getState().userSelectionActive) return // A new rect started
+          const ae = document.activeElement as HTMLElement | null // Caret left in a frame the rect dropped
+          const host = ae?.closest?.('.react-flow__node')
+          if (ae && host && !host.classList.contains('selected')) ae.blur() // Flag still armed — blur must not reselect
+          clearMarqueeFrameSelect()
+        }, 0)
+      }
       syncMarqueeSelection(state)
     })
   }, [rfStore])
@@ -2281,9 +2388,13 @@ function BoardFlowInner({
   useEffect(() => {
     if (!nodes || nodes.length === 0) return
 
-    setNodes((nds) =>
-      nds.map((node) => {
+    setNodes((nds) => {
+      let changed = false // A new array for an unchanged fill re-entered this effect on large selections
+      const next = nds.map((node) => {
         if (!node.selected) return node
+        const data = node.data as { fillColor?: string } | undefined
+        if (data?.fillColor === fillColor) return node // Selected frame already has this fill
+        changed = true
         return {
           ...node,
           data: {
@@ -2292,16 +2403,21 @@ function BoardFlowInner({
           },
         }
       })
-    )
+      return changed ? next : nds // Same array — React bails
+    })
   }, [fillColor, setNodes]) // Dep on nodes omitted to avoid loop, but using functional update form of setNodes
 
   // Separate effects for each property to avoid unnecessary updates? 
   // actually, if we use functional setNodes, we don't depend on 'nodes'.
 
   useEffect(() => {
-    setNodes((nds) =>
-      nds.map((node) => {
+    setNodes((nds) => {
+      let changed = false // Same guard as fill — do not clone selected frames that already match
+      const next = nds.map((node) => {
         if (!node.selected) return node
+        const data = node.data as { borderColor?: string } | undefined
+        if (data?.borderColor === borderColor) return node
+        changed = true
         return {
           ...node,
           data: {
@@ -2310,13 +2426,18 @@ function BoardFlowInner({
           },
         }
       })
-    )
+      return changed ? next : nds
+    })
   }, [borderColor, setNodes])
 
   useEffect(() => {
-    setNodes((nds) =>
-      nds.map((node) => {
+    setNodes((nds) => {
+      let changed = false
+      const next = nds.map((node) => {
         if (!node.selected) return node
+        const data = node.data as { borderWeight?: number } | undefined
+        if (data?.borderWeight === borderWeight) return node
+        changed = true
         return {
           ...node,
           data: {
@@ -2325,13 +2446,18 @@ function BoardFlowInner({
           },
         }
       })
-    )
+      return changed ? next : nds
+    })
   }, [borderWeight, setNodes])
 
   useEffect(() => {
-    setNodes((nds) =>
-      nds.map((node) => {
+    setNodes((nds) => {
+      let changed = false
+      const next = nds.map((node) => {
         if (!node.selected) return node
+        const data = node.data as { borderStyle?: string } | undefined
+        if (data?.borderStyle === borderStyle) return node
+        changed = true
         return {
           ...node,
           data: {
@@ -2340,7 +2466,8 @@ function BoardFlowInner({
           },
         }
       })
-    )
+      return changed ? next : nds
+    })
   }, [borderStyle, setNodes])
 
 
@@ -2721,6 +2848,9 @@ function BoardFlowInner({
   const supabaseForMinimap = createClient() // Create Supabase client for useUserPreference
   const { mode: minimapMode, setMode: setMinimapMode, isLoading: isLoadingMinimapMode } = useUserPreference(supabaseForMinimap, 'minimapMode', 'shown')
   const [minimapContextMenuPosition, setMinimapContextMenuPosition] = useState<{ x: number; y: number } | null>(null)
+  const [minimapPrintId, setMinimapPrintId] = useState<MinimapPrintId>(readMinimapPrintId) // Print crop; View = live camera
+  const [minimapPrintLandscape, setMinimapPrintLandscape] = useState(readMinimapPrintLandscape) // Flip paper sides
+  const minimapPrintAspectRatio = minimapPrintAspect(minimapPrintId, minimapPrintLandscape) // null = no letterbox
   const [isBottomGapHovering, setIsBottomGapHovering] = useState(false) // Track if hovering over bottom gap (shared with prompt pill)
   const isMinimapHoveringRef = useRef(false) // Ref to track hover state for reliable checking in timeouts
   const minimapHideTimeoutRef = useRef<NodeJS.Timeout | null>(null) // Track hide timeout for minimap
@@ -3063,7 +3193,9 @@ function BoardFlowInner({
   useEffect(() => {
     if (!minimapContextMenuPosition) return
 
-    const handleClick = () => {
+    const handleClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      if (target.closest('[data-map-menu]')) return // Print / orientation stay open
       setMinimapContextMenuPosition(null)
     }
 
@@ -3368,6 +3500,7 @@ function BoardFlowInner({
     onNodeDrag: onFrameNestStackDrag,
     onNodeDragStart: onFrameNestStackDragStart,
     onNodeDragStop: onFrameNestStackDragStop,
+    magnetizeDragChanges,
   } = useFrameNestStackDrag({
     conversationId,
     getNodes: () => reactFlowInstance.getNodes(),
@@ -3379,6 +3512,8 @@ function BoardFlowInner({
       void refetchMessages()
     },
   })
+  const magnetizeDragChangesRef = useRef(magnetizeDragChanges) // Latest magnet without recreating handleNodesChange
+  magnetizeDragChangesRef.current = magnetizeDragChanges
 
   const {
     insertFrameOnThread,
@@ -5335,13 +5470,14 @@ function BoardFlowInner({
       if (marquee) return true // Selection-rect multi-select
       return false // Drop mousedown / drag-start auto-select
     })
-    if (marquee && !rfStore.getState().userSelectionActive) {
-      clearMarqueeFrameSelect() // Marquee batch consumed
-    }
+    if (changesToProcess.length === 0) return // Nothing but duplicate measurements
+    // Flag stays armed through this commit. Clearing here ran before frame effects, so
+    // deselect blur reselected one frame and looped PureEditorContent. The effect below clears it.
 
     if (midDragPositionOnly) {
       let updatedChanges = snapEnabled ? updateHelperLines(changesToProcess, nodes) : changesToProcess
       updatedChanges = constrainOnThreadPositionChanges(updatedChanges, nodes)
+      updatedChanges = magnetizeDragChangesRef.current(updatedChanges, nodes) // Same sample as the pointer — no second write
       onNodesChange(updatedChanges)
       return
     }
@@ -5624,19 +5760,15 @@ function BoardFlowInner({
       setIsSelectedNodeDragging(true)
     }
 
-    // Update selected node ref first
+    // Update selected node ref first. One event for the whole batch — per-frame
+    // dispatch re-rendered the filter strip until its layout effect hit max update depth.
+    let selectionChanged = false
     changesToProcess.forEach((change) => {
       if (change.type === 'select' && change.selected) {
         selectedNodeIdRef.current = change.id
-        // Dispatch after select so Filter/Sort toolbar can re-read getNodes()
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new Event('node-selected'))
-        }
+        selectionChanged = true
       } else if (change.type === 'select' && !change.selected) {
-        // Deselect — same event so Sort greys when the table loses selection
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new Event('node-selected'))
-        }
+        selectionChanged = true
         // If this node was deselected, check if any other node is selected
         const selectedNode = nodes && Array.isArray(nodes) ? nodes.find((n) => n.id === change.id && n.selected) : null
         if (!selectedNode) {
@@ -5661,10 +5793,14 @@ function BoardFlowInner({
 
     // On-thread frames: project onto the path last so helper lines cannot pull them off
     updatedChanges = constrainOnThreadPositionChanges(updatedChanges, nodes)
+    updatedChanges = magnetizeDragChangesRef.current(updatedChanges, nodes) // Park in this sample, not a follow-up setNodes
 
     // Call the original handler - this is necessary for React Flow to work
     // (Only if we haven't already called it above for placeholder interaction)
     onNodesChange(updatedChanges)
+    if (selectionChanged && typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('node-selected')) // After apply so listeners read the new set
+    }
 
     // In linear mode, if there was a selection change, prevent any viewport adjustments
     // by setting a flag that onMove will check
@@ -6519,7 +6655,14 @@ function BoardFlowInner({
       delete (node as { parentId?: string }).parentId // RF treats the key as parented even if undefined
       delete (node as { parentNode?: string }).parentNode
       delete (node as { extent?: unknown }).extent
-      if (typeof node.zIndex !== 'number' || node.zIndex < 1) node.zIndex = 1 // Above dashed group (0); keep Layers order
+      const metaZ = layerZIndexFromMeta(
+        node.data?.promptMessage?.metadata as Record<string, unknown> | undefined
+      )
+      if (typeof metaZ === 'number') {
+        node.zIndex = metaZ // I-bar under-cover spawns may persist 0 — must not bump to 1
+      } else if (typeof node.zIndex !== 'number' || node.zIndex < 1) {
+        node.zIndex = 1 // Above dashed group (0); keep Layers order
+      }
     }
 
     // Deduplicate nodes by ID to prevent duplicate key errors
@@ -6598,6 +6741,7 @@ function BoardFlowInner({
       const updatedExistingNodesCanvas = nodesToUpdateCanvas.map(node => {
         const existingNode = nodes.find(n => n.id === node.id)
         const sameParent = existingNode?.parentId === node.parentId
+        const liveIbar = isIbarLiveCreate(existingNode?.data?.promptMessage?.id)
         return {
           ...node,
           // Keep position only when group parenting did not change (relative vs absolute)
@@ -6605,15 +6749,31 @@ function BoardFlowInner({
           parentId: node.parentId,
           extent: node.extent,
           style: node.style ?? existingNode?.style,
-          zIndex: node.zIndex ?? existingNode?.zIndex, // Cards above group frame
+          zIndex: liveIbar
+            ? existingNode?.zIndex ?? node.zIndex
+            : node.zIndex ?? existingNode?.zIndex, // In-session I-bar stack must not be rebuilt to 1
+          selected: liveIbar ? existingNode?.selected : node.selected,
           // Always take freshly computed draggable (!isLocked && !boardLocked). Do NOT prefer
           // existingNode.draggable — `false ?? true` stays false and stuck frames until anchor toggle.
           draggable: node.type === 'blockGroup' ? false : node.draggable,
         }
       })
 
-      // Merge: unchanged nodes + updated nodes + new nodes
-      const updatedCanvasNodes = [...unchangedNodesCanvas, ...updatedExistingNodesCanvas, ...trulyNewNodesCanvas]
+      // Merge: unchanged + updated, then insert new panels before their cover (not always last)
+      let updatedCanvasNodes: Node[] = [...unchangedNodesCanvas, ...updatedExistingNodesCanvas]
+      for (const n of trulyNewNodesCanvas) {
+        const meta = n.data?.promptMessage?.metadata as Record<string, unknown> | undefined
+        const metaZ = layerZIndexFromMeta(meta)
+        const toInsert =
+          typeof metaZ === 'number' ? { ...n, zIndex: metaZ } : n
+        updatedCanvasNodes = insertIbarSpawnInStack(
+          updatedCanvasNodes,
+          toInsert,
+          typeof meta?.[IBAR_STACK_BEFORE_NODE_ID] === 'string'
+            ? (meta[IBAR_STACK_BEFORE_NODE_ID] as string)
+            : undefined
+        )
+      }
       
       // Take snapshot only when exactly ONE new panel is added (incremental creation, not bulk load)
       // This ensures each panel can be undone individually, not all at once
@@ -8317,9 +8477,7 @@ function BoardFlowInner({
         return id
       },
       hasSelectedFrame: () =>
-        nodesRef.current.some(
-          (n) => n.selected && (n.type === 'chatPanel' || n.type === 'blockGroup')
-        ) || selectedNodeIdsRef.current.length > 0,
+        selectionBlocksEmptyPlace(nodesRef.current, selectedNodeIdsRef.current), // Hidden large frames don't eat the tap
       selectFrame: (nodeId) => {
         clearFrameTextEditActive() // First select → Delete removes frame
         const ae = document.activeElement as HTMLElement | null
@@ -10495,20 +10653,60 @@ function BoardFlowInner({
       pushSeed()
     }
 
+    // True when the spawned frame's glyphs are on screen at the caret (not under the hidden frame)
+    const spawnedGlyphsVisible = (panelId: string) => {
+      const node = document.querySelector(
+        `.react-flow__node[data-id="${panelId}"]`
+      ) as HTMLElement | null
+      const pm = node?.querySelector?.('.ProseMirror') as HTMLElement | null
+      if (!pm || !(pm.textContent || '').trim()) return false // Editor has not painted the letters yet
+      let el: HTMLElement | null = pm
+      while (el && el !== document.body) {
+        const opacity = parseFloat(getComputedStyle(el).opacity || '1')
+        if (opacity < 0.2) return false // Fade / hidden ancestor — letters are not actually on screen
+        el = el.parentElement
+      }
+      const rect = pm.getBoundingClientRect()
+      if (rect.width < 1 || rect.height < 1) return false
+      const pos = iBarPositionRef.current ?? iBarCreatePosRef.current
+      const screen = pos && reactFlowInstance?.flowToScreenPosition(pos)
+      if (!screen) return false
+      return (
+        screen.x >= rect.left - 24 &&
+        screen.x <= rect.right + 48 &&
+        screen.y >= rect.top - 12 &&
+        screen.y <= rect.bottom + 12
+      ) // Caret sits on the new frame's text
+    }
+
     // Shared path for desktop keydown chars and iOS soft-keyboard `input` (full buffer string)
     const applyIBarText = (nextText: string) => {
-      if (!isCapturing()) return
+      if (!isCapturing()) {
+        if (!iBarPositionRef.current) return // No caret — nothing to type into
+        iBarArmedRef.current = true // Caret is up; a hidden frame's blur must not drop the next key
+      }
 
-      if (tipTapHasFocus()) {
+      if (tipTapHasFocus() && spawnedGlyphsVisible(`panel-${iBarPendingMessageIdRef.current}`)) {
         window.dispatchEvent(
           new CustomEvent('tt-ibar-seed-applied', {
             detail: { messageId: iBarPendingMessageIdRef.current },
           })
         )
-        return
+        return // Frame is showing the letters — this key belongs to TipTap
       }
 
-      if (nextText === iBarTypeBufferRef.current) return // No change (composition tick / duplicate input)
+      if (nextText === iBarTypeBufferRef.current && (iBarCreatingRef.current || !nextText)) return // No change (composition tick / duplicate input)
+
+      // Letters at the caret now — the frame under a hidden large frame may still be mounting
+      window.dispatchEvent(
+        new CustomEvent('tt-ibar-typed-seed', {
+          detail: {
+            messageId: iBarPendingMessageIdRef.current ?? undefined,
+            text: nextText,
+            html: bufferToHtml(nextText),
+          },
+        })
+      )
 
       // First non-empty buffer: spawn the frame immediately (no await) so text never blanks
       if (!iBarCreatingRef.current) {
@@ -10520,8 +10718,7 @@ function BoardFlowInner({
 
         iBarCreatingRef.current = true
         iBarCreatePosRef.current = pos
-        setIBarPosition(null)
-        iBarPositionRef.current = null
+        // Keep the caret + typed letters up until TipTap has the glyphs (setIBarPosition null hid them under the large frame)
         setIBarBlockMenu(null) // Typing spawned a frame — menu is no longer pre-frame
         setIsCreatingInlineNote(true)
 
@@ -10539,6 +10736,19 @@ function BoardFlowInner({
         markIbarLiveCreate(messageId) // This tab: no Yjs until reload (avoids create-remount merge split)
         const html = isSlashSpawn ? '<p></p>' : bufferToHtml(iBarTypeBufferRef.current)
         const prefsShape = parseFrameShape(readDefaultFrameShape()) // Shape menu → Set default
+        const deselectedForStack = nodesRef.current.map((n) => ({ ...n, selected: false }))
+        const stackPlan = reactFlowInstance
+          ? planIbarSpawnUnderCover(
+              deselectedForStack,
+              pos.x,
+              pos.y,
+              (p) => reactFlowInstance.flowToScreenPosition(p)
+            )
+          : { insertIndex: deselectedForStack.length, zIndex: 0 }
+        const spawnUnderCover = stackPlan.insertIndex < deselectedForStack.length
+        const coverNodeId = spawnUnderCover
+          ? deselectedForStack[stackPlan.insertIndex]?.id
+          : undefined
         const optimisticMessage = {
           id: messageId,
           role: 'user' as const,
@@ -10551,6 +10761,12 @@ function BoardFlowInner({
               ? frameShapeSpawnMeta(prefsShape) // Spawn as the saved silhouette
               : placeScaleMetadata(zoom)), // Same screen size as the I-bar at this zoom
             ...(isSlashSpawn ? { slashMenuPending: true } : {}),
+            ...(coverNodeId
+              ? {
+                  zIndex: stackPlan.zIndex, // Survives messages→panels rebuild (was forced to 1 + appended last)
+                  [IBAR_STACK_BEFORE_NODE_ID]: coverNodeId,
+                }
+              : {}),
           }),
         }
 
@@ -10561,13 +10777,22 @@ function BoardFlowInner({
         const placeBox = placeScaleNodeBox(
           optimisticMessage.metadata as { resizeDimensions?: { width: number; height: number } }
         )
-        setNodes((nds) => [
-          ...nds.map((n) => ({ ...n, selected: false })),
-          {
+        setNodes((nds) => {
+          const deselected = nds.map((n) => ({ ...n, selected: false }))
+          const caret = iBarPositionRef.current ?? iBarCreatePosRef.current ?? pos
+          const stack = planIbarSpawnUnderCover(
+            deselected,
+            caret.x,
+            caret.y,
+            (p) => reactFlowInstance!.flowToScreenPosition(p)
+          )
+          const spawnUnderCover = stack.insertIndex < deselected.length // Caret under another frame — stay behind it
+          const spawnNode = {
             id: panelId,
-            type: 'chatPanel',
+            type: 'chatPanel' as const,
             position: notePosition,
-            selected: true,
+            selected: !spawnUnderCover, // Selected + front-clip would raise this node above the cover
+            zIndex: stack.zIndex, // Below the cover's inline z when set; same-z inserts before it in the array
             ...(placeBox || {}), // Explicit box so typed glyphs paint at place scale immediately
             data: {
               promptMessage: optimisticMessage,
@@ -10576,8 +10801,13 @@ function BoardFlowInner({
               isResponseCollapsed: false,
               ...(prefsShape ? { frameShape: prefsShape } : {}), // First paint before metadata effect
             },
-          },
-        ])
+          }
+          return [
+            ...deselected.slice(0, stack.insertIndex),
+            spawnNode,
+            ...deselected.slice(stack.insertIndex),
+          ]
+        })
 
         // Patch message caches so a later refetch merges instead of dropping the optimistic row
         const patch = (key: unknown[]) => {
@@ -10696,13 +10926,28 @@ function BoardFlowInner({
         return
       }
 
-      if (!isCapturing()) return
+      if (!isCapturing()) {
+        if (!iBarPositionRef.current) return // No caret — nothing to type into
+        iBarArmedRef.current = true // Caret is up; a hidden frame's blur must not drop the next key
+      }
 
-      // Menu search / other fields own keys — don't spawn a frame from those keystrokes
+      // Menu search / other fields own keys — don't spawn a frame from those keystrokes.
+      // A hidden large frame's editor still holds the caret after the I-bar is placed behind it;
+      // that keystroke must spawn, not type into the invisible frame.
       const keyTarget = event.target as HTMLElement | null
+      const keyHost = keyTarget?.closest?.('.react-flow__node')
+      const keyHostId = keyHost?.getAttribute('data-id')
+      const keyInHiddenFrame = isOverlapHideClickThrough(keyHostId) // Store or painted tt-overlap-fade-pass
+      const iBarOwnsTyping = !!(
+        iBarArmedRef.current &&
+        iBarPositionRef.current &&
+        keyTarget?.closest?.('.react-flow__node [contenteditable="true"]')
+      ) // Double-click / prior selection can leave TipTap focused while the caret is on the board
       if (
         keyTarget &&
         keyTarget !== iBarInputRef.current &&
+        !keyInHiddenFrame &&
+        !iBarOwnsTyping &&
         keyTarget.closest('input, textarea, [contenteditable="true"], .block-actions-menu')
       ) {
         return
@@ -10774,8 +11019,8 @@ function BoardFlowInner({
       const isBackspace = event.key === 'Backspace'
       if (!isPrintable && !isEnter && !isBackspace) return
 
-      // TipTap already focused on the spawned frame — stop capturing so typing is normal
-      if (tipTapHasFocus()) {
+      // TipTap already focused on the spawned frame — stop capturing once its glyphs are on screen
+      if (tipTapHasFocus() && spawnedGlyphsVisible(`panel-${iBarPendingMessageIdRef.current}`)) {
         window.dispatchEvent(
           new CustomEvent('tt-ibar-seed-applied', {
             detail: { messageId: iBarPendingMessageIdRef.current },
@@ -10800,17 +11045,31 @@ function BoardFlowInner({
       if (el) el.value = iBarTypeBufferRef.current
     }
 
-    // Frame editor took over — stop document capture
+    // Frame editor took over — stop document capture once its glyphs are actually on screen
     const onSeedApplied = (event: Event) => {
       const messageId = (event as CustomEvent<{ messageId?: string }>).detail?.messageId
       if (!messageId || messageId !== iBarPendingMessageIdRef.current) return
+      const liveIdEarly = `panel-${messageId}`
+      if (!spawnedGlyphsVisible(liveIdEarly)) {
+        // Frame is still covered or empty — keep the letters on the caret and the keyboard on capture
+        iBarArmedRef.current = true
+        const capture = iBarInputRef.current
+        if (capture && document.activeElement !== capture) capture.focus({ preventScroll: true })
+        return
+      }
       iBarTypeBufferRef.current = ''
       iBarPendingMessageIdRef.current = null
       iBarCreatePosRef.current = null
       iBarCreatingRef.current = false
       iBarArmedRef.current = false
+      setIBarPosition(null) // Caret + typed overlay leave once the frame is showing the glyphs
+      iBarPositionRef.current = null
       setIsCreatingInlineNote(false)
       setIBarInputAnchor(null) // Release capture-field anchor now that TipTap owns the keyboard
+      const liveId = `panel-${messageId}`
+      setNodes((nds) =>
+        nds.map((n) => (n.id === liveId ? { ...n, selected: true } : n))
+      ) // Under-cover spawns were unselected so front-clip would not raise them
       const el = iBarInputRef.current
       if (el) {
         el.value = ''
@@ -10857,6 +11116,11 @@ function BoardFlowInner({
     
     if (!reactFlowInstance) return
 
+    const ae = document.activeElement as HTMLElement | null
+    if (ae?.closest?.('.react-flow__node')) ae.blur() // Same as onPaneClick — don’t leave TipTap focused
+
+    releaseFramesForIBarCapture(setNodes, selectedNodeIdsRef) // Double-click skipped the deselect-only path
+
     const { x: flowX, y: flowY } = reactFlowInstance.screenToFlowPosition({
       x: event.clientX,
       y: event.clientY,
@@ -10875,7 +11139,13 @@ function BoardFlowInner({
       zoom: viewport.zoom,
     })
     focusIBarCapture() // Same tap/double-tap gesture → soft keyboard on iOS
-  }, [reactFlowInstance, focusIBarCapture])
+    window.setTimeout(() => {
+      if (!iBarArmedRef.current || !iBarPositionRef.current || iBarCreatingRef.current) return
+      const focused = document.activeElement as HTMLElement | null
+      const hostId = focused?.closest?.('.react-flow__node')?.getAttribute('data-id')
+      if (hostId) focusIBarCapture() // Any frame editor — I-bar owns the next key
+    }, 0)
+  }, [reactFlowInstance, focusIBarCapture, setNodes])
   
   // Handle drag and drop for shapes from dropdown - matches shapes-pro-example
   // Also accepts AI sidebar chat blocks → create a page frame (user-initiated placement only)
@@ -11147,6 +11417,21 @@ function BoardFlowInner({
     return () => root.removeEventListener('wheel', onWheel, { capture: true })
   }, [reactFlowInstance, boardRotation, navScrollMode, zoomRange, hideMapChrome, setClampedViewport])
 
+  // New identities here re-ran React Flow's passive store sync on every board render.
+  const hideRfAttribution = useMemo(() => ({ hideAttribution: true }), []) // Watermark off; Pro license by launch
+  const fitViewOptions = useMemo(
+    () => ({
+      padding: 0.2, // Margin when the board first fits its frames
+      minZoom: zoomRange.minZoom, // Auto-fit may zoom out to 200%
+      maxZoom: 1, // Auto-fit stops at the 100% default — zoom in further by hand
+    }),
+    [zoomRange.minZoom]
+  )
+  const onBoardSelectionChange = useCallback(() => {
+    window.dispatchEvent(new Event('tt-selection-changed')) // Top-bar frame lock reads selection
+    ensureFrameChromeZoomPump() // Stamp chrome vars as soon as a frame is selected
+  }, [])
+
   return (
     <PhoneFrameDragProvider manualDragNodeId={phoneManualDragNodeId}>
     <FrameViewportMountProvider
@@ -11181,7 +11466,7 @@ function BoardFlowInner({
       <FrameNestStackOverlay ui={frameNestStackUi} />
       <ReactFlow
         // Hide React Flow watermark; Pro license by launch
-        proOptions={{ hideAttribution: true }}
+        proOptions={hideRfAttribution}
         elevateNodesOnSelect={false} // Layers zIndex is the stack — RF's selected +1000 hid every reorder
         nodes={nodes}
         edges={edges}
@@ -11285,9 +11570,10 @@ function BoardFlowInner({
               setTimeout(retick, 64) // After frame-drag settle class
             }
             setFrameMountRecomputeKey((k) => k + 1) // Refresh deferred TipTap mount set after drag
-            // Multiplayer: broadcast final position to peers (+ debounced DB snapshot)
+            // Live store has the magnetized position. The drag event node is still the raw grab point.
+            const liveNode = reactFlowInstance?.getNodes().find((n) => n.id === node.id) ?? node
             const selected = nodesRef.current.filter((n) => n.selected && n.type === 'chatPanel')
-            publishNodesLayouts(selected.length > 0 ? selected : [node])
+            publishNodesLayouts(selected.length > 0 ? selected : [liveNode])
             const w =
               typeof node.width === 'number'
                 ? node.width
@@ -11301,7 +11587,7 @@ function BoardFlowInner({
                   ? (node.style as { height: number }).height
                   : 72
             absorbContentBox(
-              { x: node.position.x, y: node.position.y, width: w, height: h },
+              { x: liveNode.position.x, y: liveNode.position.y, width: w, height: h },
               reactFlowInstance?.getViewport().zoom
             )
           }
@@ -11338,10 +11624,7 @@ function BoardFlowInner({
         edgesUpdatable={canEdit && !isLocked} // Drag either end to detach / reconnect (view-only off)
         edgeUpdaterRadius={20} // Hit area for grabbing a thread endpoint
         onEdgeUpdate={handleThreadReconnect}
-        onSelectionChange={() => {
-          window.dispatchEvent(new Event('tt-selection-changed')) // Top-bar frame lock reads selection
-          ensureFrameChromeZoomPump() // Stamp chrome vars as soon as a frame is selected
-        }}
+        onSelectionChange={onBoardSelectionChange}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
         onConnect={async (params) => {
@@ -11719,12 +12002,12 @@ function BoardFlowInner({
             return
           }
 
-          // Live nodes + ref — ref alone lagged a frame after phone pointerup select
-          const hasSelectedPanel =
-            selectedNodeIdsRef.current.length > 0 ||
-            nodesRef.current.some(
-              (n) => n.selected && (n.type === 'chatPanel' || n.type === 'blockGroup')
-            )
+          // Live nodes + ref — ref alone lagged a frame after phone pointerup select.
+          // A hidden large frame does not count: the click places the I-bar behind it.
+          const hasSelectedPanel = selectionBlocksEmptyPlace(
+            nodesRef.current,
+            selectedNodeIdsRef.current
+          )
           if (hasSelectedPanel) {
             // Deselect in this click (don't only rely on RF resetSelectedElements after us)
             suppressEditorAutoSelect(500)
@@ -11745,6 +12028,9 @@ function BoardFlowInner({
             }
             return
           }
+
+          // Prior frame selection (including hidden overlap) leaves TipTap focused — release before capture.
+          releaseFramesForIBarCapture(setNodes, selectedNodeIdsRef)
 
           const { x: flowX, y: flowY } = reactFlowInstance.screenToFlowPosition({
             x: event.clientX,
@@ -11767,6 +12053,12 @@ function BoardFlowInner({
             zoom: viewport.zoom,
           })
           focusIBarCapture() // Must focus editable in this tap turn or iPhone keyboard never opens
+          // Deselect effects run after this click and can put the caret back in the hidden editor.
+          window.setTimeout(() => {
+            if (!iBarArmedRef.current || !iBarPositionRef.current || iBarCreatingRef.current) return
+            const focused = document.activeElement as HTMLElement | null
+            if (focused?.closest?.('.react-flow__node')) focusIBarCapture() // Deselect effects can restore TipTap focus
+          }, 0)
         }}
         defaultViewport={restoredViewport ?? { x: 0, y: 0, zoom: embedded ? 0.8 : 1 }}
         // Init-fit only while a contentful board is loading — empty / new-board create must not zoom.
@@ -11780,11 +12072,7 @@ function BoardFlowInner({
           !!conversationId &&
           (isMessagesPending || messages.length > 0)
         }
-        fitViewOptions={{
-          padding: 0.2,
-          minZoom: zoomRange.minZoom, // Auto-fit may zoom out to 200%
-          maxZoom: 1, // Auto-fit stops at the 100% default — zoom in further by hand
-        }}
+        fitViewOptions={fitViewOptions}
         className={cn(
           'h-full w-full bg-gray-50 dark:bg-[#0f0f0f]',
           isThreadConnecting && 'tt-thread-connecting', // Invisible edge points stay snappable while dragging a thread
@@ -12408,11 +12696,14 @@ function BoardFlowInner({
               ) : !focusedPreviewId ? (
             <BoardMiniMap
               nodeColor={(node) => {
-                return node.selected ? '#9ca3af' : '#e5e7eb'
+                const fill = (node.data as { fillColor?: string } | undefined)?.fillColor
+                if (typeof fill === 'string' && fill.length > 0) return fill // Frame paint, so a yellow frame stays yellow
+                return node.selected ? '#9ca3af' : '#b6bac3' // Unfilled frames still read on the white hole
               }}
               maskColor={resolvedTheme === 'dark'
-                ? 'rgba(42, 42, 58, 0.35)'
-                : 'rgba(200, 200, 200, 0.2)'}
+                ? 'rgba(0, 0, 0, 0.40)' // Lighter wash; hole is camera or the print crop
+                : 'rgba(0, 0, 0, 0.16)'}
+              maskAspect={minimapPrintAspectRatio}
               maskStrokeColor="none"
               pannable={true}
               zoomable={true}
@@ -12433,6 +12724,21 @@ function BoardFlowInner({
               ) : null)}
           </div>
         </div>
+          {/* Same » as hidden-frame corners — down-left, bottom-right of the column (minimap when open) */}
+          <div
+            aria-hidden
+            data-tt-nav-hide-zoom-caret
+            className="pointer-events-none absolute z-[1]"
+            style={{
+              left: '100%', // Just past the minimap / Free nav right edge
+              bottom: 0, // Column floor = minimap bottom when open, nav bottom when closed
+              width: 14, // Same local size as FrameHideZoomCarets (chrome is already screen px)
+              height: 14,
+              marginLeft: 8, // Air between the column and the cue
+            }}
+          >
+            <HideZoomCaretSvg rot={HIDE_ZOOM_CARET_ROT_DOWN_LEFT} />
+          </div>
        </div>
 
       </>
@@ -12479,7 +12785,7 @@ function BoardFlowInner({
           flowY={iBarPosition.y}
           boardRotation={boardRotation}
         >
-          {({ left, top, paneScale }) => {
+          {({ left, top, paneScale, zoom }) => {
           // Match frame ⋮⋮ (GRIP_H 16 / icon 14) and center on the caret — items-start left the 24×16
           // button top-aligned so the dots sat high relative to the 18px I-bar.
           const caretH = 18 * paneScale
@@ -12589,6 +12895,8 @@ function BoardFlowInner({
               animation: 'blink 1s step-end infinite',
             }}
           />
+          {/* Glyphs sit on the caret until the new frame (above the hidden one) has them */}
+          <IBarTypedText zoom={zoom} />
         </div>
           )
           }}
@@ -12933,18 +13241,19 @@ function BoardFlowInner({
         document.body
       )}
 
-      {/* Map menu — right-click Free nav / minimap (Shown / Hidden / Hover) */}
+      {/* Map menu — visibility + print crop (letterboxes the mask hole) */}
       {!embedded && !hideMapChrome && minimapContextMenuPosition && (
         <div
           data-map-menu
-          className="fixed z-[100] bg-white dark:bg-[#1f1f1f] rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] py-1 min-w-[180px]"
+          className="fixed z-[100] bg-white dark:bg-[#1f1f1f] rounded-lg shadow-lg border border-gray-200 dark:border-[#2f2f2f] py-1 min-w-[220px] overflow-y-auto"
           style={{
             // Open above + to the right of cursor so bottom-left chrome stays on-screen
             left: `${minimapContextMenuPosition.x}px`,
             top: `${minimapContextMenuPosition.y}px`,
             transform: 'translateY(-100%)',
-            marginTop: '-4px',
+            marginTop: '-8px',
             marginLeft: '4px',
+            maxHeight: `${Math.max(180, minimapContextMenuPosition.y - 16)}px`, // Stay above the click / minimap
           }}
           onClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => {
@@ -13000,6 +13309,64 @@ function BoardFlowInner({
               <span>Show on hover</span>
             </button>
           </div>
+          <div className="px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-[#2f2f2f]">
+            Print view
+          </div>
+          <div className="py-1">
+            {MINIMAP_PRINT_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                onClick={() => {
+                  setMinimapPrintId(preset.id) // Stay open so orientation can follow
+                  writeMinimapPrintId(preset.id)
+                  if (preset.id === 'wide') {
+                    setMinimapPrintLandscape(true) // 16:9 is landscape unless they flip it
+                    writeMinimapPrintLandscape(true)
+                  }
+                }}
+                className="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-[#2a2a3a] flex items-center gap-2"
+              >
+                {minimapPrintId === preset.id && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-gray-700 dark:bg-gray-300" />
+                )}
+                {minimapPrintId !== preset.id && <span className="w-1.5 h-1.5" />}
+                <span>{preset.label}</span>
+                {preset.size && (
+                  <span className="ml-auto text-xs text-gray-400 dark:text-gray-500">{preset.size}</span>
+                )}
+              </button>
+            ))}
+          </div>
+          {minimapPrintUsesOrientation(minimapPrintId) && (
+            <div className="py-1 border-t border-gray-200 dark:border-[#2f2f2f]">
+              <button
+                onClick={() => {
+                  setMinimapPrintLandscape(false)
+                  writeMinimapPrintLandscape(false)
+                }}
+                className="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-[#2a2a3a] flex items-center gap-2"
+              >
+                {!minimapPrintLandscape && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-gray-700 dark:bg-gray-300" />
+                )}
+                {minimapPrintLandscape && <span className="w-1.5 h-1.5" />}
+                <span>Portrait</span>
+              </button>
+              <button
+                onClick={() => {
+                  setMinimapPrintLandscape(true)
+                  writeMinimapPrintLandscape(true)
+                }}
+                className="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-[#2a2a3a] flex items-center gap-2"
+              >
+                {minimapPrintLandscape && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-gray-700 dark:bg-gray-300" />
+                )}
+                {!minimapPrintLandscape && <span className="w-1.5 h-1.5" />}
+                <span>Landscape</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
 
